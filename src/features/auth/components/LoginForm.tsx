@@ -35,6 +35,13 @@ export function LoginForm() {
         redirect: false,
       });
 
+      if (result?.error === "EmailNotVerified") {
+        setServerError(
+          "Please verify your email before signing in. Check your inbox for the verification link."
+        );
+        return;
+      }
+
       if (result?.error) {
         setServerError("Invalid email or password. Please try again.");
         return;

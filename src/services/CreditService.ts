@@ -89,6 +89,8 @@ export class CreditService {
    * Deduct credits for a clip request submission.
    * TODO: Call this from RequestService when request submission is built.
    */
+  // TODO: PostgreSQL — wrap the transaction insert + wallet update in a single
+  //   DB transaction (BEGIN/COMMIT) so both succeed or both roll back atomically.
   async deductCredits(
     userId: string,
     amount: number,
@@ -99,11 +101,8 @@ export class CreditService {
     if (!wallet) throw new Error("Credit wallet not found for user.");
     if (wallet.balance < amount) throw new Error("Insufficient credits.");
 
-    const updated = await creditWalletRepository.updateBalance(
-      wallet.id,
-      wallet.balance - amount
-    );
-
+    // Insert the transaction record FIRST — if this fails (e.g. constraint error),
+    // the wallet balance is never touched and no credits are lost.
     await creditTransactionRepository.create({
       userId,
       amount: -amount,
@@ -111,6 +110,11 @@ export class CreditService {
       description,
       referenceId: referenceId ?? null,
     });
+
+    const updated = await creditWalletRepository.updateBalance(
+      wallet.id,
+      wallet.balance - amount
+    );
 
     return updated;
   }

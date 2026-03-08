@@ -36,6 +36,10 @@ export class AuthService {
     const passwordValid = await bcrypt.compare(password, identity.passwordHash);
     if (!passwordValid) return null;
 
+    if (!user.emailVerified) {
+      throw new Error("EmailNotVerified");
+    }
+
     return user;
   }
 

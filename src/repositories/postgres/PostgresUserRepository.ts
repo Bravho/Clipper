@@ -9,6 +9,7 @@ function rowToUser(row: Record<string, unknown>): User {
     email: row.email as string,
     name: row.full_name as string,
     role: row.role as Role,
+    emailVerified: row.email_verified as boolean,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -74,6 +75,13 @@ export class PostgresUserRepository implements IUserRepository {
     );
     if (!rows[0]) throw new Error(`User not found: ${id}`);
     return rowToUser(rows[0]);
+  }
+
+  async markEmailVerified(id: string): Promise<void> {
+    await this.db.query(
+      "UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = $1",
+      [id]
+    );
   }
 
   async delete(id: string): Promise<void> {

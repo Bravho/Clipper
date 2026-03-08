@@ -17,12 +17,27 @@ export const ROUTES = {
   OWNERSHIP: "/ownership",
   PRIVACY: "/privacy",
 
+  // Email verification
+  VERIFY_EMAIL: "/verify-email",
+  VERIFY_EMAIL_CONFIRM: "/verify-email/confirm",
+
   // Authenticated (role-specific)
   DASHBOARD: "/dashboard",
   STAFF: "/staff",
   ADMIN: "/admin",
   ACCOUNT: "/account",
+
+  // Requester Portal — Phase 2B
+  REQUESTS: "/dashboard/requests",
+  REQUESTS_NEW: "/dashboard/requests/new",
+  CREDITS: "/dashboard/credits",
+  LEGAL: "/dashboard/legal",
 } as const;
+
+/** Build a request detail URL. */
+export function requestDetailPath(requestId: string): string {
+  return `/dashboard/requests/${requestId}`;
+}
 
 /**
  * Returns the home dashboard route for a given role.

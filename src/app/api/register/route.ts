@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { signupSchema } from "@/features/auth/validation/signupSchema";
 import { accountService, AccountService } from "@/services/AccountService";
+import { emailVerificationService } from "@/services/EmailVerificationService";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { ConsentInput } from "@/services/ConsentService";
 import { PolicyType } from "@/domain/enums/PolicyType";
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
 
     const passwordHash = await AccountService.hashPassword(data.password);
 
-    await accountService.createRequesterAccount({
+    const { user } = await accountService.createRequesterAccount({
       name: data.name,
       email: data.email,
       provider: AuthProvider.Credentials,
@@ -63,7 +64,12 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       },
     });
 
-    return NextResponse.json({ success: true }, { status: 201 });
+    await emailVerificationService.generateAndSend(user.id, user.email, user.name);
+
+    return NextResponse.json(
+      { success: true, requiresVerification: true },
+      { status: 201 }
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "An unexpected error occurred.";

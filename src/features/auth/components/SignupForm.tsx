@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { signIn } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
@@ -15,7 +14,6 @@ import { ROUTES } from "@/config/routes";
 export function SignupForm() {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
 
   const {
     register,
@@ -42,22 +40,8 @@ export function SignupForm() {
         return;
       }
 
-      // Auto sign-in after successful registration
-      setSuccess(true);
-      const signInResult = await signIn("credentials", {
-        email: data.email,
-        password: data.password,
-        redirect: false,
-      });
-
-      if (signInResult?.ok) {
-        router.push(ROUTES.DASHBOARD);
-        router.refresh();
-      } else {
-        router.push(
-          `${ROUTES.LOGIN}?message=Account created. Please sign in.`
-        );
-      }
+      // Account created — redirect to verify-email page
+      router.push(`${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}`);
     } catch {
       setServerError("An unexpected error occurred. Please try again.");
     }
@@ -71,12 +55,6 @@ export function SignupForm() {
           role="alert"
         >
           {serverError}
-        </div>
-      )}
-
-      {success && (
-        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          Account created! Signing you in&hellip;
         </div>
       )}
 

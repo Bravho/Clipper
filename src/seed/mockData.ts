@@ -10,6 +10,10 @@ import type { AuthIdentity } from "@/domain/models/AuthIdentity";
 import type { CreditWallet } from "@/domain/models/CreditWallet";
 import type { CreditTransaction } from "@/domain/models/CreditTransaction";
 import type { TermsAcceptance } from "@/domain/models/TermsAcceptance";
+import {
+  SEED_REQUEST_TRANSACTIONS,
+  SEED_REQUESTER_WALLET_OVERRIDE,
+} from "@/seed/requestSeedData";
 
 // ---------------------------------------------------------------------------
 // Seed account credentials (for development / testing)
@@ -91,10 +95,12 @@ export const SEED_WALLETS: CreditWallet[] = [
   {
     id: "wallet-requester-001",
     userId: "user-requester-001",
-    balance: CREDITS_CONFIG.SIGNUP_BONUS_CREDITS,
+    // Phase 2B: balance reflects signup bonus + admin grant - request charges.
+    // See SEED_REQUESTER_WALLET_OVERRIDE in requestSeedData.ts for the override.
+    balance: SEED_REQUESTER_WALLET_OVERRIDE.balance ?? CREDITS_CONFIG.SIGNUP_BONUS_CREDITS,
     initialCreditsGranted: true,
     createdAt: now,
-    updatedAt: now,
+    updatedAt: SEED_REQUESTER_WALLET_OVERRIDE.updatedAt ?? now,
   },
   // Staff and admin do not have credit wallets
 ];
@@ -111,6 +117,8 @@ export const SEED_TRANSACTIONS: CreditTransaction[] = [
     referenceId: null,
     createdAt: now,
   },
+  // Phase 2B: request charge transactions appended
+  ...SEED_REQUEST_TRANSACTIONS,
 ];
 
 // ---- Terms acceptances ----------------------------------------------------

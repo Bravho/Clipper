@@ -12,6 +12,7 @@ export interface IUserRepository {
   findByEmail(email: string): Promise<User | null>;
   create(input: CreateUserInput): Promise<User>;
   update(id: string, data: Partial<Pick<User, "name" | "role">>): Promise<User>;
+  markEmailVerified(id: string): Promise<void>;
   delete(id: string): Promise<void>;
   listAll(): Promise<User[]>;
 }
