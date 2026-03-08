@@ -1,0 +1,52 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env*.local
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# testing
+coverage/
+
+# temporary files
+*.tmp
+*.temp
+
+# typescript
+*.tsbuildinfo
+
+# uploads or generated files
+/uploads
+/public/uploads
+
+# database local files
+*.sqlite
+*.db
