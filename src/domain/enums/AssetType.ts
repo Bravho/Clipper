@@ -10,6 +10,8 @@
 export enum AssetType {
   Video = "video",
   Image = "image",
+  /** Final edited clip uploaded by staff — stored in clips/ folder. */
+  EditedClip = "edited_clip",
 }
 
 /** Upload status of a single asset record. */

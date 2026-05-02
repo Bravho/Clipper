@@ -46,7 +46,7 @@ export const SEED_USERS: User[] = [
     id: "user-staff-001",
     email: "staff@clipper.internal",
     name: "Sam Staff",
-    role: Role.Staff,
+    role: Role.Editor,
     createdAt: now,
     updatedAt: now,
   },

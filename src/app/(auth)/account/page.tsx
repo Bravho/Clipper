@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "My Account" };
 
 const roleBadge: Record<Role, "blue" | "green" | "red"> = {
   [Role.Requester]: "blue",
-  [Role.Staff]: "green",
+  [Role.Editor]: "green",
   [Role.Admin]: "red",
 };
 

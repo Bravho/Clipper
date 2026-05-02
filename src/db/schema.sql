@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   email      TEXT        NOT NULL UNIQUE,
   full_name  TEXT        NOT NULL,
   role       TEXT        NOT NULL DEFAULT 'requester'
-                         CHECK (role IN ('requester', 'staff', 'admin')),
+                         CHECK (role IN ('requester', 'editor', 'admin')),
   email_verified BOOLEAN     NOT NULL DEFAULT FALSE,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()

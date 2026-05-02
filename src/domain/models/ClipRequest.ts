@@ -1,5 +1,6 @@
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform } from "@/domain/enums/Platform";
+import { EffortClass } from "@/domain/enums/EffortClass";
 
 /**
  * Core clip request entity.
@@ -70,6 +71,25 @@ export interface ClipRequest {
   submittedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+
+  // ── Staff-only fields (Phase 2C) ──────────────────────────────────────────
+  // These fields are managed by staff and NEVER exposed directly to requesters.
+
+  /**
+   * Staff-assigned effort classification.
+   * Set at acceptance. Used for due date estimation and capacity planning.
+   * TODO: PostgreSQL — `effort_class` TEXT NULLABLE on clip_requests table.
+   */
+  effortClass?: EffortClass | null;
+
+  /**
+   * The staff member who accepted and owns this request.
+   * Set when staff accepts (Submitted/Rejected → Editing).
+   * Cleared when the request is rejected or resumed from hold.
+   * While set, only the assigned staff (or admin) can perform workflow actions.
+   * TODO: PostgreSQL — `assigned_staff_id` TEXT NULLABLE FK → users.id
+   */
+  assignedStaffId?: string | null;
 }
 
 /** Input for creating a new draft request. */
@@ -101,3 +121,9 @@ export type SubmitClipRequestInput = {
   creditConfirmed: true;
   rightsConfirmed: true;
 };
+
+/**
+ * Input for updating staff-specific fields on a request.
+ * Only staff or admin may call this.
+ */
+export type UpdateStaffFieldsInput = Partial<Pick<ClipRequest, "effortClass">>;

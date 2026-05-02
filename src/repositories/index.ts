@@ -45,3 +45,17 @@ export const clipRequestRepository = new MockClipRequestRepository();
 export const requestStatusHistoryRepository = new MockRequestStatusHistoryRepository();
 export const uploadedAssetRepository = new MockUploadedAssetRepository();
 export const publishingLinkRepository = new MockPublishingLinkRepository();
+
+// ── Phase 2C — Mock (TODO: replace with Postgres implementations) ────────────
+import { MockInternalNoteRepository } from "./mock/MockInternalNoteRepository";
+
+// TODO: PostgreSQL Phase 2C — replace each Mock* below with Postgres* equivalent.
+//   PostgresInternalNoteRepository
+export const internalNoteRepository = new MockInternalNoteRepository();
+
+// ── Phase 2D — Mock (TODO: replace with Postgres implementations) ────────────
+import { MockProductionReviewRepository } from "./mock/MockProductionReviewRepository";
+
+// TODO: PostgreSQL Phase 2D — replace each Mock* below with Postgres* equivalent.
+//   PostgresProductionReviewRepository
+export const productionReviewRepository = new MockProductionReviewRepository();

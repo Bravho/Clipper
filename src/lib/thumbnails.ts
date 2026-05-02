@@ -94,6 +94,7 @@ export async function generateImageThumbnail(
       Key: destKey,
       Body: thumbBuffer,
       ContentType: "image/jpeg",
+      ACL: "public-read",
     })
   );
 

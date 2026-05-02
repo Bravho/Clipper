@@ -33,7 +33,7 @@ export default withAuth(
       if (role !== Role.Admin) {
         return NextResponse.redirect(
           new URL(
-            role === Role.Staff ? ROUTES.STAFF : ROUTES.DASHBOARD,
+            role === Role.Editor ? ROUTES.STAFF : ROUTES.DASHBOARD,
             req.url
           )
         );
@@ -42,7 +42,7 @@ export default withAuth(
 
     // /staff — Staff or Admin
     if (pathname.startsWith(ROUTES.STAFF)) {
-      if (role !== Role.Staff && role !== Role.Admin) {
+      if (role !== Role.Editor && role !== Role.Admin) {
         return NextResponse.redirect(new URL(ROUTES.DASHBOARD, req.url));
       }
     }

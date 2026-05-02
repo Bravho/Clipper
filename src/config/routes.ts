@@ -47,7 +47,7 @@ export function getRoleHomePath(role: Role): string {
   switch (role) {
     case Role.Admin:
       return ROUTES.ADMIN;
-    case Role.Staff:
+    case Role.Editor:
       return ROUTES.STAFF;
     case Role.Requester:
     default:

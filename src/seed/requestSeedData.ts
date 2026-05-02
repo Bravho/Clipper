@@ -27,6 +27,7 @@ import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform } from "@/domain/enums/Platform";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { TransactionType } from "@/domain/enums/TransactionType";
+import { EffortClass } from "@/domain/enums/EffortClass";
 import type { ClipRequest } from "@/domain/models/ClipRequest";
 import type { RequestStatusHistory } from "@/domain/models/RequestStatusHistory";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
@@ -187,6 +188,8 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     submittedAt: d("2026-02-20T11:05:00Z"),
     createdAt: d("2026-02-19T14:00:00Z"),
     updatedAt: d("2026-02-20T11:05:00Z"),
+    // Staff fields (Phase 2C)
+    effortClass: EffortClass.Standard,
   },
 
   // ── req-003: Accepted for Production (confirmed due date) ─────────────────
@@ -213,6 +216,8 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     submittedAt: d("2026-02-25T14:10:00Z"),
     createdAt: d("2026-02-24T10:00:00Z"),
     updatedAt: d("2026-03-02T09:00:00Z"),
+    // Staff fields (Phase 2C)
+    effortClass: EffortClass.Simple,
   },
 
   // ── req-004: Editing (in production, confirmed date) ──────────────────────
@@ -239,6 +244,9 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     submittedAt: d("2026-02-18T09:35:00Z"),
     createdAt: d("2026-02-17T16:00:00Z"),
     updatedAt: d("2026-02-28T13:00:00Z"),
+    // Staff fields (Phase 2C)
+    effortClass: EffortClass.Standard,
+    assignedStaffId: "user-staff-001",
   },
 
   // ── req-005: Published (posted to channels) ───────────────────────────────
@@ -265,6 +273,8 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     submittedAt: d("2026-01-28T16:05:00Z"),
     createdAt: d("2026-01-27T11:00:00Z"),
     updatedAt: d("2026-02-08T12:00:00Z"),
+    // Staff fields (Phase 2C)
+    effortClass: EffortClass.Complex,
   },
 
   // ── req-006: Delivered (all links available) ──────────────────────────────
@@ -291,6 +301,8 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     submittedAt: d("2026-01-12T10:05:00Z"),
     createdAt: d("2026-01-11T09:00:00Z"),
     updatedAt: d("2026-01-22T14:00:00Z"),
+    // Staff fields (Phase 2C)
+    effortClass: EffortClass.Standard,
   },
 
   // ── req-007: On Hold (with reason) ────────────────────────────────────────
@@ -318,6 +330,8 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     submittedAt: d("2026-03-01T13:05:00Z"),
     createdAt: d("2026-02-28T10:00:00Z"),
     updatedAt: d("2026-03-03T11:00:00Z"),
+    // Staff fields (Phase 2C)
+    effortClass: EffortClass.Standard,
   },
 
   // ── req-008: Rejected (with reason) ──────────────────────────────────────
@@ -344,6 +358,8 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     submittedAt: d("2026-02-08T08:05:00Z"),
     createdAt: d("2026-02-07T15:00:00Z"),
     updatedAt: d("2026-02-10T09:30:00Z"),
+    // Staff fields (Phase 2C)
+    effortClass: null,
   },
 
   // ── req-009: Submitted (awaiting review, no confirmed date) ───────────────
