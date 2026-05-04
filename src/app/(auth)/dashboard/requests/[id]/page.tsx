@@ -10,6 +10,7 @@ import {
   uploadedAssetRepository,
   publishingLinkRepository,
   requestStatusHistoryRepository,
+  videoGenerationJobRepository,
 } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Card } from "@/components/ui/Card";
@@ -39,17 +40,19 @@ export default async function RequestDetailPage({
   }
 
   // Load supporting data in parallel
-  const [assets, publishingLinks, statusHistory] = await Promise.all([
+  const [assets, publishingLinks, statusHistory, pipelineJob] = await Promise.all([
     uploadedAssetRepository.findByRequestId(id),
     publishingLinkRepository.findByRequestId(id),
     requestStatusHistoryRepository.findByRequestId(id),
+    videoGenerationJobRepository.findByRequestId(id),
   ]);
 
   const view = requestPresentationService.buildRequestView(
     request,
     assets,
     publishingLinks,
-    statusHistory
+    statusHistory,
+    pipelineJob?.currentStep ?? null
   );
 
   const isDraft = request.status === RequestStatus.Draft;
@@ -104,6 +107,17 @@ export default async function RequestDetailPage({
         {/* Queue info */}
         {view.queueDisplay.show && (
           <p className="mt-2 text-sm text-slate-500">{view.queueDisplay.message}</p>
+        )}
+
+        {/* Pipeline progress — shown during production */}
+        {view.pipelineProgress && (
+          <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+              <p className="text-sm font-semibold text-blue-800">{view.pipelineProgress.label}</p>
+            </div>
+            <p className="mt-1 text-xs text-blue-600">{view.pipelineProgress.description}</p>
+          </div>
         )}
 
         {/* Due date */}

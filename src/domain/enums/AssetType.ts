@@ -12,6 +12,16 @@ export enum AssetType {
   Image = "image",
   /** Final edited clip uploaded by staff — stored in clips/ folder. */
   EditedClip = "edited_clip",
+
+  // ── AI Pipeline asset types ─────────────────────────────────────────────────
+  /** Raw 15s video produced by Kling AI from requester images. */
+  AIGeneratedBaseVideo = "ai_generated_base_video",
+  /** Raw voice recording uploaded by staff for ElevenLabs conversion. */
+  StaffVoiceRecording = "staff_voice_recording",
+  /** Professional voice audio produced by ElevenLabs Speech-to-Speech. */
+  ProcessedVoice = "processed_voice",
+  /** FFmpeg-composed final clip (one record per exported ratio). */
+  FinalClip = "final_clip",
 }
 
 /** Upload status of a single asset record. */

@@ -150,6 +150,24 @@ export default async function StaffRequestDetailPage({
         </div>
       )}
 
+      {/* AI Video Pipeline shortcut — shown when request is in Editing */}
+      {request.status === RequestStatus.Editing && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-5 py-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-blue-800">AI Video Production Pipeline</p>
+            <p className="mt-0.5 text-xs text-blue-600">
+              Generate and publish a 15-second short video using ChatGPT, Kling AI, ElevenLabs and FFmpeg.
+            </p>
+          </div>
+          <a
+            href={`/staff/requests/${params.id}/pipeline`}
+            className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Open Pipeline →
+          </a>
+        </div>
+      )}
+
       {/* Workflow actions */}
       {view.statusPresentation.nextActions.length > 0 && (
         <Section title="Actions">

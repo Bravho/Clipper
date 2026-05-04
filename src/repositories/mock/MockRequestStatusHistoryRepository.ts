@@ -3,7 +3,6 @@ import {
   RequestStatusHistory,
   CreateStatusHistoryInput,
 } from "@/domain/models/RequestStatusHistory";
-import { SEED_STATUS_HISTORY } from "@/seed/requestSeedData";
 
 // TODO: PostgreSQL — replace with PostgresRequestStatusHistoryRepository.
 //   Status history is append-only. No updates or deletes.
@@ -16,9 +15,6 @@ declare global {
 function getStore(): Map<string, RequestStatusHistory> {
   if (!global.__mockStatusHistoryStore) {
     global.__mockStatusHistoryStore = new Map();
-    SEED_STATUS_HISTORY.forEach((h) =>
-      global.__mockStatusHistoryStore!.set(h.id, { ...h })
-    );
   }
   return global.__mockStatusHistoryStore;
 }

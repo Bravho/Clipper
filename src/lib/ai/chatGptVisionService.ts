@@ -1,0 +1,146 @@
+import { GoogleGenAI } from "@google/genai";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { AI_CONFIG } from "@/config/aiTools";
+import { spacesClient } from "@/lib/spaces";
+import { Platform } from "@/domain/enums/Platform";
+import { ScenePlan } from "@/domain/models/VideoGenerationJob";
+
+export interface ChatGptContentOutput {
+  scenePlan: ScenePlan[];
+  scriptThai: string;
+  scriptEnglish: string;
+  hookThai: string;
+  hookEnglish: string;
+  captionThai: string;
+  captionEnglish: string;
+  captionChinese: string;
+  theme: string;
+}
+
+export interface GenerateContentParams {
+  imageUrls: string[];
+  description: string;
+  targetAudience: string;
+  targetPlatforms: Platform[];
+  preferredStyle: string;
+  videoDurationSeconds?: number;
+}
+
+const SYSTEM_PROMPT = `You are an expert social media video producer specialising in short-form viral content for Thai and international audiences.
+
+Your task is to analyse uploaded images and a brief description, then produce a complete production plan for a 15-second short video.
+
+Requirements:
+- Script structure: [3s hook] + [10s main content] + [2s call-to-action]
+- The first 3 seconds (hook) MUST stop the viewer from scrolling. Use the most surprising, emotionally engaging, or curiosity-inducing element available.
+- Spoken language: Thai only. English is only for the subtitle overlay translation.
+- Thai script: natural spoken Thai, ~40-50 words, fits comfortably within 15 seconds.
+- English script: faithful translation of the Thai script for bilingual subtitle overlay.
+- Captions: platform post captions with hashtags in three languages (Thai, English, Simplified Chinese).
+- Scene plan: break the video into ~3 scenes whose total duration equals 15 seconds.
+
+Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
+
+Schema:
+{
+  "scenePlan": [
+    {
+      "sceneNumber": 1,
+      "durationSeconds": 5,
+      "visualDescription": "string",
+      "imageIndexes": [0],
+      "motionNotes": "string"
+    }
+  ],
+  "scriptThai": "string",
+  "scriptEnglish": "string",
+  "hookThai": "string",
+  "hookEnglish": "string",
+  "captionThai": "string",
+  "captionEnglish": "string",
+  "captionChinese": "string",
+  "theme": "string"
+}`;
+
+function buildUserPrompt(params: GenerateContentParams): string {
+  return [
+    `Video description: ${params.description}`,
+    `Target audience: ${params.targetAudience}`,
+    `Target platforms: ${params.targetPlatforms.join(", ")}`,
+    `Preferred style/tone: ${params.preferredStyle}`,
+    `Duration: ${params.videoDurationSeconds ?? 15} seconds`,
+    `Number of uploaded images: ${params.imageUrls.length}`,
+    "Analyse the images above and produce the complete production plan as JSON.",
+  ].join("\n");
+}
+
+/**
+ * Extract the DO Spaces storage key from a public or CDN URL.
+ * Handles both path-style (endpoint/bucket/key) and CDN (cdn-endpoint/key).
+ */
+function extractStorageKey(url: string): string {
+  const bucket = process.env.DO_SPACES_BUCKET ?? "";
+  const cdnEndpoint = process.env.DO_SPACES_CDN_ENDPOINT;
+  if (cdnEndpoint && url.startsWith(cdnEndpoint)) {
+    return url.slice(cdnEndpoint.length).replace(/^\//, "");
+  }
+  // Path-style URL: https://endpoint/bucket/key
+  const parts = url.split(`/${bucket}/`);
+  if (parts.length >= 2) return parts.slice(1).join(`/${bucket}/`);
+  // Fallback: everything after the third slash segment
+  return url.replace(/^https?:\/\/[^/]+\//, "");
+}
+
+/**
+ * Download an image from DO Spaces using the authenticated S3 client
+ * (avoids 403 errors on non-public objects).
+ */
+async function downloadImageAsBase64(
+  url: string
+): Promise<{ data: string; mimeType: string }> {
+  const key = extractStorageKey(url);
+  const bucket = process.env.DO_SPACES_BUCKET!;
+  const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+  }
+  const buffer = Buffer.concat(chunks);
+  return {
+    data: buffer.toString("base64"),
+    mimeType: res.ContentType ?? "image/jpeg",
+  };
+}
+
+export async function generateScenePlanAndScript(
+  params: GenerateContentParams
+): Promise<ChatGptContentOutput> {
+  const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+
+  // Download all images and encode as base64 inline parts
+  const imageParts = await Promise.all(
+    params.imageUrls.map(async (url) => {
+      const { data, mimeType } = await downloadImageAsBase64(url);
+      return { inlineData: { data, mimeType } };
+    })
+  );
+
+  const contents = [
+    ...imageParts,
+    { text: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}` },
+  ];
+
+  const response = await ai.models.generateContent({
+    model: AI_CONFIG.gemini.visionModel,
+    contents,
+    config: {
+      responseMimeType: "application/json",
+      temperature: 0.7,
+    },
+  });
+
+  const raw = response.text ?? "";
+  if (!raw) throw new Error("Gemini returned an empty response");
+
+  return JSON.parse(raw) as ChatGptContentOutput;
+}

@@ -39,10 +39,18 @@ export const ALL_PLATFORMS: Platform[] = [
 
 /**
  * Platforms shown in the requester request form.
- * TventApp and CDN are excluded — they are used internally by staff
- * for publishing link records, not selected by requesters.
+ * TventApp is mandatory (always pre-selected). CDN is excluded (internal only).
  */
 export const FORM_PLATFORMS: Platform[] = [
+  Platform.TventApp,   // mandatory — always selected, shown first
+  Platform.TikTok,
+  Platform.Facebook,
+  Platform.Instagram,
+  Platform.YouTube,
+];
+
+/** Platforms that the requester may optionally check (Tvent is mandatory, not optional). */
+export const OPTIONAL_FORM_PLATFORMS: Platform[] = [
   Platform.TikTok,
   Platform.Facebook,
   Platform.Instagram,

@@ -3,7 +3,9 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
-import { clipRequestRepository, internalNoteRepository } from "@/repositories";
+import { clipRequestRepository, internalNoteRepository, videoGenerationJobRepository } from "@/repositories";
+import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
+import { PIPELINE_STEP_LABELS } from "@/domain/enums/VideoGenerationStep";
 import { StaffStatusBadge } from "@/features/staff/components/StaffStatusBadge";
 
 export const metadata: Metadata = { title: "Editing — Staff" };
@@ -38,6 +40,7 @@ export default async function EditingPage() {
     editingRequests.map(async (req) => ({
       req,
       latestNote: await internalNoteRepository.findLatestByRequestId(req.id),
+      pipelineJob: await videoGenerationJobRepository.findByRequestId(req.id),
     }))
   );
 
@@ -134,18 +137,21 @@ export default async function EditingPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {editingRows.map(({ req, latestNote }) => {
+            {editingRows.map(({ req, latestNote, pipelineJob }) => {
               const days = daysLabel(req.confirmedDueDate);
               const isOverdue = !!req.confirmedDueDate && req.confirmedDueDate < new Date();
               const isLockedByOther =
                 !!req.assignedStaffId && req.assignedStaffId !== currentUser.id;
+              const pipelineFailed = pipelineJob?.status === VideoGenerationJobStatus.Failed;
+              const pipelineActive = pipelineJob?.status === VideoGenerationJobStatus.Active;
+              const borderColor = pipelineFailed ? "border-orange-300" : isOverdue ? "border-red-200" : "border-slate-200";
               return (
                 <div
                   key={req.id}
-                  className={`rounded-lg border bg-white p-5 ${isOverdue ? "border-red-200" : "border-slate-200"}`}
+                  className={`rounded-lg border bg-white p-5 ${borderColor}`}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="font-semibold text-slate-900">{req.title}</h3>
                         <StaffStatusBadge status={req.status} />
@@ -159,6 +165,17 @@ export default async function EditingPage() {
                         }`}>
                           {days.text}
                         </span>
+                        {/* Pipeline status badge */}
+                        {pipelineFailed && (
+                          <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-700">
+                            ⚠ Pipeline failed
+                          </span>
+                        )}
+                        {pipelineActive && pipelineJob && (
+                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                            ⚙ {PIPELINE_STEP_LABELS[pipelineJob.currentStep]}
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-4 text-xs text-slate-500">
                         <span>
@@ -177,12 +194,24 @@ export default async function EditingPage() {
                         </p>
                       )}
                     </div>
-                    <Link
-                      href={`/staff/requests/${req.id}`}
-                      className="shrink-0 rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                    >
-                      Open →
-                    </Link>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {pipelineJob && (
+                        <a
+                          href={`/staff/requests/${req.id}/pipeline`}
+                          className={`rounded-md px-3 py-2 text-sm font-medium text-white ${
+                            pipelineFailed ? "bg-orange-600 hover:bg-orange-700" : "bg-blue-600 hover:bg-blue-700"
+                          }`}
+                        >
+                          {pipelineFailed ? "Retry Pipeline" : "Pipeline →"}
+                        </a>
+                      )}
+                      <Link
+                        href={`/staff/requests/${req.id}`}
+                        className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Open →
+                      </Link>
+                    </div>
                   </div>
                 </div>
               );

@@ -92,3 +92,49 @@ export function buildClipKey(
 ): string {
   return `clips/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
 }
+
+// ── AI Pipeline storage keys ────────────────────────────────────────────────
+// Separate folders with distinct lifecycle policies for each pipeline stage.
+
+/**
+ * Key for a Kling AI-generated base video (15s raw output).
+ * Lifecycle: retained for 8 years (same as final clips — needed for reproductions).
+ */
+export function buildAiVideoKey(userId: string, requestId: string): string {
+  return `ai_videos/${userId}/${utcDateSegment()}/${requestId}/${uuid()}.mp4`;
+}
+
+/**
+ * Key for a staff voice recording uploaded for ElevenLabs conversion.
+ * Lifecycle: retained for 8 years.
+ */
+export function buildVoiceRecordingKey(
+  userId: string,
+  requestId: string,
+  fileName: string
+): string {
+  return `voice_recordings/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
+}
+
+/**
+ * Key for the ElevenLabs-processed professional voice audio.
+ * Lifecycle: retained for 8 years.
+ */
+export function buildProcessedVoiceKey(userId: string, requestId: string): string {
+  return `processed_audio/${userId}/${utcDateSegment()}/${requestId}/${uuid()}.mp3`;
+}
+
+/**
+ * Key for a final FFmpeg-exported clip in a specific aspect ratio.
+ * Lifecycle: retained for 8 years.
+ *
+ * @param ratio  e.g. "9-16", "16-9", "1-1", "4-5" (slashes replaced with dashes for path safety)
+ */
+export function buildFinalClipKey(
+  userId: string,
+  requestId: string,
+  ratio: "9:16" | "16:9" | "1:1" | "4:5"
+): string {
+  const safeRatio = ratio.replace(":", "-");
+  return `final_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;
+}

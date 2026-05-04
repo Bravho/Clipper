@@ -7,8 +7,6 @@ import {
 } from "@/domain/models/ClipRequest";
 import { RequestStatus, ACTIVE_STATUSES } from "@/domain/enums/RequestStatus";
 import { CREDITS_CONFIG } from "@/config/credits";
-import { SEED_CLIP_REQUESTS } from "@/seed/requestSeedData";
-import { ADMIN_SEED_CLIP_REQUESTS } from "@/seed/adminSeedData";
 
 // TODO: PostgreSQL — replace this entire class with PostgresClipRequestRepository.
 //   The interface contract (IClipRequestRepository) stays the same.
@@ -22,9 +20,6 @@ declare global {
 function getStore(): Map<string, ClipRequest> {
   if (!global.__mockClipRequestStore) {
     global.__mockClipRequestStore = new Map();
-    [...SEED_CLIP_REQUESTS, ...ADMIN_SEED_CLIP_REQUESTS].forEach((r) =>
-      global.__mockClipRequestStore!.set(r.id, { ...r })
-    );
   }
   return global.__mockClipRequestStore;
 }

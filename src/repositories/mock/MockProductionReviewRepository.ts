@@ -5,7 +5,6 @@ import {
   UpdateProductionReviewInput,
 } from "@/domain/models/ProductionReview";
 import { ProductionReviewStatus } from "@/domain/enums/ProductionReviewStatus";
-import { SEED_PRODUCTION_REVIEWS } from "@/seed/adminSeedData";
 
 // TODO: PostgreSQL — replace this entire class with PostgresProductionReviewRepository.
 //   The interface contract (IProductionReviewRepository) stays the same.
@@ -19,9 +18,6 @@ declare global {
 function getStore(): Map<string, ProductionReview> {
   if (!global.__mockProductionReviewStore) {
     global.__mockProductionReviewStore = new Map();
-    SEED_PRODUCTION_REVIEWS.forEach((r) =>
-      global.__mockProductionReviewStore!.set(r.id, { ...r })
-    );
   }
   return global.__mockProductionReviewStore;
 }

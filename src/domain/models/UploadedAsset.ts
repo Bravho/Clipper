@@ -46,6 +46,12 @@ export interface UploadedAsset {
   // Upload lifecycle
   uploadStatus: AssetUploadStatus;
 
+  /**
+   * Video aspect ratio — only set for FinalClip assets.
+   * Null for all other asset types.
+   */
+  videoRatio?: "9:16" | "16:9" | "1:1" | "4:5" | null;
+
   /** Date when this raw upload will be deleted per the 90-day retention policy. */
   scheduledDeletionAt: Date;
 
@@ -59,5 +65,5 @@ export type CreateUploadedAssetInput = Omit<
 >;
 
 export type UpdateUploadedAssetInput = Partial<
-  Pick<UploadedAsset, "storageKey" | "storageUrl" | "thumbnailKey" | "thumbnailUrl" | "uploadStatus">
+  Pick<UploadedAsset, "storageKey" | "storageUrl" | "thumbnailKey" | "thumbnailUrl" | "uploadStatus" | "videoRatio">
 >;

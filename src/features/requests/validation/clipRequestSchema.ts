@@ -36,11 +36,10 @@ export const clipRequestFormSchema = z.object({
     .min(5, "Please describe your target audience.")
     .max(500, "Target audience must be 500 characters or fewer."),
 
-  // Radio button — exactly 1 platform stored as a single-item array
-  // to remain compatible with the TEXT[] DB column.
+  // Checkboxes — one or more platforms. Tvent is always included (enforced in UI).
   targetPlatforms: z
     .array(z.enum(platformValues))
-    .length(1, "Please select a target platform."),
+    .min(1, "Please select at least one platform."),
 
   preferredStyle: z
     .string()
@@ -81,13 +80,13 @@ export function validateUploadCount(count: number): string | null {
 
 // ── Style and language options ───────────────────────────────────────────────
 
-export const STYLE_OPTIONS = [
+export const STYLE_OPTIONS: { value: string; label: string }[] = [
   { value: "Dynamic / Energetic", label: "Dynamic / Energetic" },
   { value: "Calm / Informative", label: "Calm / Informative" },
   { value: "Fun / Playful", label: "Fun / Playful" },
   { value: "Professional / Corporate", label: "Professional / Corporate" },
   { value: "Cinematic / Dramatic", label: "Cinematic / Dramatic" },
   { value: "Minimalist / Clean", label: "Minimalist / Clean" },
-] as const;
+];
 
 // LANGUAGE_OPTIONS removed — preferred language is no longer collected on the form.

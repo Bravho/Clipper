@@ -15,6 +15,7 @@ export default async function StaffLayout({
   const navLinks = [
     { href: "/staff", label: "Dashboard" },
     { href: "/staff/editing", label: "Editing" },
+    { href: "/staff/pipeline", label: "AI Pipeline" },
     { href: "/staff/production", label: "Production" },
     { href: "/staff/publishing", label: "Publishing" },
     { href: "/staff/on-hold", label: "On Hold" },

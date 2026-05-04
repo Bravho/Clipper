@@ -4,6 +4,11 @@ import { UploadedAsset } from "@/domain/models/UploadedAsset";
 import { PublishingLink } from "@/domain/models/PublishingLink";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { PLATFORM_LABELS } from "@/domain/enums/Platform";
+import {
+  VideoGenerationStep,
+  PIPELINE_STEP_LABELS,
+  PIPELINE_STEP_DESCRIPTIONS,
+} from "@/domain/enums/VideoGenerationStep";
 
 /**
  * RequestPresentationService — converts domain models into requester-facing
@@ -59,6 +64,12 @@ export interface RequesterRequestView {
   statusHistory: RequestStatusHistory[];
   holdReason: string | null;
   rejectionReason: string | null;
+  /** Pipeline progress — only present when status is Editing and a pipeline job exists. */
+  pipelineProgress: {
+    step: VideoGenerationStep;
+    label: string;
+    description: string;
+  } | null;
   /** Brief fields */
   description: string;
   targetAudience: string;
@@ -264,15 +275,31 @@ export class RequestPresentationService {
     }
   }
 
+  /** Build pipeline progress display for the requester (only during Editing). */
+  getPipelineProgress(
+    status: RequestStatus,
+    pipelineStep: VideoGenerationStep | null
+  ): RequesterRequestView["pipelineProgress"] {
+    if (status !== RequestStatus.Editing || !pipelineStep) return null;
+    return {
+      step: pipelineStep,
+      label: PIPELINE_STEP_LABELS[pipelineStep],
+      description: PIPELINE_STEP_DESCRIPTIONS[pipelineStep],
+    };
+  }
+
   /**
    * Build a full RequesterRequestView from domain model parts.
    * This is the primary method used by the Request Detail page.
+   *
+   * @param pipelineStep  Optional current VideoGenerationStep — shown during Editing status.
    */
   buildRequestView(
     request: ClipRequest,
     assets: UploadedAsset[],
     publishingLinks: PublishingLink[],
-    statusHistory: RequestStatusHistory[]
+    statusHistory: RequestStatusHistory[],
+    pipelineStep: VideoGenerationStep | null = null
   ): RequesterRequestView {
     return {
       id: request.id,
@@ -289,6 +316,7 @@ export class RequestPresentationService {
       statusHistory,
       holdReason: request.holdReason,
       rejectionReason: request.rejectionReason,
+      pipelineProgress: this.getPipelineProgress(request.status, pipelineStep),
       description: request.description,
       targetAudience: request.targetAudience,
       targetPlatforms: request.targetPlatforms.map(

@@ -59,3 +59,13 @@ import { MockProductionReviewRepository } from "./mock/MockProductionReviewRepos
 // TODO: PostgreSQL Phase 2D — replace each Mock* below with Postgres* equivalent.
 //   PostgresProductionReviewRepository
 export const productionReviewRepository = new MockProductionReviewRepository();
+
+// ── AI Video Pipeline — Mock (TODO: replace with Postgres implementations) ───
+import { MockVideoGenerationJobRepository } from "./mock/MockVideoGenerationJobRepository";
+import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordRepository";
+
+// TODO: PostgreSQL (pipeline phase) — replace each Mock* below with Postgres* equivalent.
+//   PostgresVideoGenerationJobRepository
+//   PostgresVideoPublishRecordRepository
+export const videoGenerationJobRepository = new MockVideoGenerationJobRepository();
+export const videoPublishRecordRepository = new MockVideoPublishRecordRepository();

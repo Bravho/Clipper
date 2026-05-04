@@ -4,8 +4,7 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 import { creditService } from "@/services/CreditService";
-import { CREDITS_CONFIG } from "@/config/credits";
-import { NewRequestForm } from "@/features/requests/components/NewRequestForm";
+import { PackageSelector } from "@/features/requests/components/PackageSelector";
 
 export const metadata: Metadata = { title: "New Request — RClipper" };
 
@@ -32,13 +31,11 @@ export default async function NewRequestPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900">New Clip Request</h1>
         <p className="mt-2 text-slate-500 text-sm">
-          Fill out the form below to submit a new clip request. Each around-10-seconds
-          clip costs {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits. Our team will review your
-          brief and begin production once accepted.
+          Select a production package to get started.
         </p>
       </div>
 
-      <NewRequestForm creditBalance={balance} />
+      <PackageSelector creditBalance={balance} />
     </div>
   );
 }

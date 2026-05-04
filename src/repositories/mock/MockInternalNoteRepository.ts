@@ -3,8 +3,6 @@ import {
   InternalNote,
   CreateInternalNoteInput,
 } from "@/domain/models/InternalNote";
-import { SEED_INTERNAL_NOTES } from "@/seed/staffSeedData";
-import { ADMIN_SEED_INTERNAL_NOTES } from "@/seed/adminSeedData";
 
 // TODO: PostgreSQL — replace this entire class with PostgresInternalNoteRepository.
 //   The interface contract (IInternalNoteRepository) stays the same.
@@ -19,9 +17,6 @@ declare global {
 function getStore(): Map<string, InternalNote> {
   if (!global.__mockInternalNoteStore) {
     global.__mockInternalNoteStore = new Map();
-    [...SEED_INTERNAL_NOTES, ...ADMIN_SEED_INTERNAL_NOTES].forEach((n) =>
-      global.__mockInternalNoteStore!.set(n.id, { ...n })
-    );
   }
   return global.__mockInternalNoteStore;
 }

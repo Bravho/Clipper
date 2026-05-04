@@ -10,12 +10,13 @@ import {
   SubmitClipRequestValues,
   STYLE_OPTIONS,
 } from "@/features/requests/validation/clipRequestSchema";
-import { FORM_PLATFORMS, PLATFORM_LABELS } from "@/domain/enums/Platform";
+import { FORM_PLATFORMS, OPTIONAL_FORM_PLATFORMS, PLATFORM_LABELS, Platform } from "@/domain/enums/Platform";
 import {
   MAX_UPLOAD_COUNT,
   MAX_IMAGE_SIZE_BYTES,
   MAX_VIDEO_SIZE_BYTES,
   ACCEPTED_MIME_TYPES,
+  ACCEPTED_IMAGE_MIME_TYPES,
   ACCEPTED_VIDEO_MIME_TYPES,
 } from "@/domain/enums/AssetType";
 import { CREDITS_CONFIG } from "@/config/credits";
@@ -34,13 +35,19 @@ interface PendingFile {
 
 interface NewRequestFormProps {
   creditBalance: number;
+  /** When true, only image uploads are accepted (no video files). */
+  imageOnly?: boolean;
+  /** Override the credit cost shown and validated. Defaults to REQUEST_COST_CREDITS. */
+  creditCost?: number;
 }
 
-const COST = CREDITS_CONFIG.REQUEST_COST_CREDITS;
 const MAX_IMAGE_SIZE_MB = MAX_IMAGE_SIZE_BYTES / (1024 * 1024);
 const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE_BYTES / (1024 * 1024);
 
-export function NewRequestForm({ creditBalance }: NewRequestFormProps) {
+export function NewRequestForm({ creditBalance, imageOnly = false, creditCost }: NewRequestFormProps) {
+  const COST = creditCost ?? CREDITS_CONFIG.REQUEST_COST_CREDITS;
+  const acceptedTypes = imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_MIME_TYPES;
+
   const router = useRouter();
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -56,21 +63,24 @@ export function NewRequestForm({ creditBalance }: NewRequestFormProps) {
   } = useForm<SubmitClipRequestValues>({
     resolver: zodResolver(submitClipRequestSchema),
     defaultValues: {
-      targetPlatforms: [],
+      targetPlatforms: [Platform.TventApp] as SubmitClipRequestValues["targetPlatforms"],
       preferredStyle: "",
       creditConfirmed: undefined,
       rightsConfirmed: undefined,
     },
   });
 
-  // Radio — single platform stored as a one-item array for DB compatibility
+  // Checkboxes — multi-select. Tvent is always included and cannot be removed.
   const watchedPlatforms = watch("targetPlatforms") ?? [];
-  const selectedPlatform = watchedPlatforms[0] ?? null;
 
-  const handlePlatformSelect = (platform: string) => {
+  const handlePlatformToggle = (platform: Platform) => {
+    const current = watchedPlatforms as Platform[];
+    const next = current.includes(platform)
+      ? current.filter((p) => p !== platform)
+      : [...current, platform];
     setValue(
       "targetPlatforms",
-      [platform] as SubmitClipRequestValues["targetPlatforms"],
+      next as SubmitClipRequestValues["targetPlatforms"],
       { shouldValidate: true }
     );
   };
@@ -96,16 +106,14 @@ export function NewRequestForm({ creditBalance }: NewRequestFormProps) {
       const isVideo = ACCEPTED_VIDEO_MIME_TYPES.includes(
         file.type as (typeof ACCEPTED_VIDEO_MIME_TYPES)[number]
       );
-      const maxSize = isVideo ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES;
-      const maxSizeMB = isVideo ? MAX_VIDEO_SIZE_MB : MAX_IMAGE_SIZE_MB;
 
-      if (pendingFiles.length + files.indexOf(file) >= MAX_UPLOAD_COUNT) {
+      if (imageOnly && isVideo) {
+        error = "Only image files are accepted for this package.";
+      } else if (pendingFiles.length + files.indexOf(file) >= MAX_UPLOAD_COUNT) {
         error = `Maximum ${MAX_UPLOAD_COUNT} files allowed.`;
-      } else if (file.size > maxSize) {
-        error = `File exceeds ${maxSizeMB} MB limit.`;
-      } else if (
-        !ACCEPTED_MIME_TYPES.includes(file.type as (typeof ACCEPTED_MIME_TYPES)[number])
-      ) {
+      } else if (file.size > (isVideo ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES)) {
+        error = `File exceeds ${isVideo ? MAX_VIDEO_SIZE_MB : MAX_IMAGE_SIZE_MB} MB limit.`;
+      } else if (!acceptedTypes.includes(file.type as never)) {
         error = "Unsupported file type.";
       }
 
@@ -282,46 +290,56 @@ export function NewRequestForm({ creditBalance }: NewRequestFormProps) {
         </legend>
         <div className="flex flex-col gap-5">
 
-          {/* Target platform — radio (single select) */}
+          {/* Target platforms — checkboxes (multi-select), Tvent mandatory */}
           <div>
             <p className="mb-2 text-sm font-medium text-slate-700">
-              Target platform <span className="text-red-500">*</span>
+              Target platforms <span className="text-red-500">*</span>
             </p>
             <p className="mb-3 text-xs text-slate-500">
-              Choose where this clip is intended to perform best.
+              Select all platforms where you want this clip published. Tvent is always included.
             </p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {FORM_PLATFORMS.map((platform) => {
-                const isSelected = selectedPlatform === platform;
+            <div className="flex flex-col gap-2">
+              {/* Tvent — mandatory, always checked, cannot be unchecked */}
+              <label className="flex cursor-not-allowed items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm">
+                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border-2 border-blue-600 bg-blue-600">
+                  <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+                <span className="font-medium text-blue-800">{PLATFORM_LABELS[Platform.TventApp]}</span>
+                <span className="ml-auto text-xs text-blue-500 font-medium">Required</span>
+              </label>
+
+              {/* Optional platforms */}
+              {OPTIONAL_FORM_PLATFORMS.map((platform) => {
+                const isChecked = (watchedPlatforms as Platform[]).includes(platform);
                 return (
                   <label
                     key={platform}
-                    className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
-                      isSelected
-                        ? "border-blue-600 bg-blue-50 text-blue-800"
+                    className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                      isChecked
+                        ? "border-blue-300 bg-blue-50 text-blue-800"
                         : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                     }`}
                   >
-                    <input
-                      type="radio"
-                      name="targetPlatformRadio"
-                      className="sr-only"
-                      value={platform}
-                      checked={isSelected}
-                      onChange={() => handlePlatformSelect(platform)}
-                    />
-                    {/* Radio circle */}
                     <span
-                      className={`flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
-                        isSelected
-                          ? "border-blue-600"
-                          : "border-slate-300"
+                      className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border-2 ${
+                        isChecked ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"
                       }`}
+                      onClick={() => handlePlatformToggle(platform)}
                     >
-                      {isSelected && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
+                      {isChecked && (
+                        <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none">
+                          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
                       )}
                     </span>
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={isChecked}
+                      onChange={() => handlePlatformToggle(platform)}
+                    />
                     {PLATFORM_LABELS[platform]}
                   </label>
                 );
@@ -376,14 +394,15 @@ export function NewRequestForm({ creditBalance }: NewRequestFormProps) {
             <span className="text-blue-600 underline">browse</span>
           </p>
           <p className="mt-1 text-xs text-slate-400">
-            Images up to {MAX_IMAGE_SIZE_MB} MB · Videos up to {MAX_VIDEO_SIZE_MB} MB · Up to{" "}
-            {MAX_UPLOAD_COUNT} files
+            {imageOnly
+              ? `Images only (JPEG, PNG, WebP, GIF) · Up to ${MAX_IMAGE_SIZE_MB} MB each · Up to ${MAX_UPLOAD_COUNT} files`
+              : `Images up to ${MAX_IMAGE_SIZE_MB} MB · Videos up to ${MAX_VIDEO_SIZE_MB} MB · Up to ${MAX_UPLOAD_COUNT} files`}
           </p>
           <input
             id="file-input"
             type="file"
             multiple
-            accept={ACCEPTED_MIME_TYPES.join(",")}
+            accept={acceptedTypes.join(",")}
             className="sr-only"
             onChange={handleFileInput}
           />
