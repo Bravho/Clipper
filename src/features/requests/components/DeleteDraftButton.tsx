@@ -15,7 +15,7 @@ export function DeleteDraftButton({ requestId }: DeleteDraftButtonProps) {
     e.preventDefault();
     e.stopPropagation();
 
-    if (!confirm("Delete this draft? This cannot be undone.")) return;
+    if (!confirm("ลบแบบร่างนี้? ไม่สามารถย้อนกลับได้")) return;
 
     setIsDeleting(true);
     try {
@@ -34,7 +34,7 @@ export function DeleteDraftButton({ requestId }: DeleteDraftButtonProps) {
       disabled={isDeleting}
       className="text-xs text-red-400 hover:text-red-600 disabled:opacity-50 transition-colors"
     >
-      {isDeleting ? "Deleting..." : "Delete"}
+      {isDeleting ? "กำลังลบ..." : "ลบ"}
     </button>
   );
 }

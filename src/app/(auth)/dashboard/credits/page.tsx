@@ -14,8 +14,10 @@ export const metadata: Metadata = { title: "Credits — RClipper" };
 const TRANSACTION_LABELS: Record<TransactionType, string> = {
   [TransactionType.SignupBonus]: "Signup Bonus",
   [TransactionType.RequestCharge]: "Request Charge",
+  [TransactionType.RequestRefund]: "Refund",
   [TransactionType.AdminCredit]: "Credit Grant",
   [TransactionType.AdminDebit]: "Credit Deduction",
+  [TransactionType.DiscountApplied]: "Discount Applied",
 };
 
 const TRANSACTION_VARIANTS: Record<
@@ -24,8 +26,10 @@ const TRANSACTION_VARIANTS: Record<
 > = {
   [TransactionType.SignupBonus]: "green",
   [TransactionType.RequestCharge]: "red",
+  [TransactionType.RequestRefund]: "green",
   [TransactionType.AdminCredit]: "blue",
   [TransactionType.AdminDebit]: "red",
+  [TransactionType.DiscountApplied]: "blue",
 };
 
 export default async function CreditsPage() {

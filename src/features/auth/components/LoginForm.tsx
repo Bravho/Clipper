@@ -37,13 +37,13 @@ export function LoginForm() {
 
       if (result?.error === "EmailNotVerified") {
         setServerError(
-          "Please verify your email before signing in. Check your inbox for the verification link."
+          "กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ ตรวจสอบกล่องจดหมายเพื่อรับลิงก์ยืนยัน"
         );
         return;
       }
 
       if (result?.error) {
-        setServerError("Invalid email or password. Please try again.");
+        setServerError("อีเมลหรือรหัสผ่านไม่ถูกต้อง กรุณาลองอีกครั้ง");
         return;
       }
 
@@ -56,7 +56,7 @@ export function LoginForm() {
         router.refresh();
       }
     } catch {
-      setServerError("An unexpected error occurred. Please try again.");
+      setServerError("เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
     }
   };
 
@@ -72,7 +72,7 @@ export function LoginForm() {
       )}
 
       <Input
-        label="Email address"
+        label="อีเมล"
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
@@ -81,7 +81,7 @@ export function LoginForm() {
       />
 
       <Input
-        label="Password"
+        label="รหัสผ่าน"
         type="password"
         autoComplete="current-password"
         placeholder="••••••••"
@@ -90,26 +90,26 @@ export function LoginForm() {
       />
 
       <Button type="submit" fullWidth loading={isSubmitting}>
-        Sign in
+        เข้าสู่ระบบ
       </Button>
 
       <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-slate-200" />
-        <span className="text-xs text-slate-400">or</span>
+        <span className="text-xs text-slate-400">หรือ</span>
         <div className="flex-1 border-t border-slate-200" />
       </div>
 
-      <GoogleSignInButton label="Sign in with Google" />
+      <GoogleSignInButton label="เข้าสู่ระบบด้วย Google" />
 
       <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-slate-200" />
-        <span className="text-xs text-slate-400">new here?</span>
+        <span className="text-xs text-slate-400">ยังไม่มีบัญชี?</span>
         <div className="flex-1 border-t border-slate-200" />
       </div>
 
       <Link href={ROUTES.SIGNUP} className="w-full">
         <Button variant="outline" fullWidth>
-          Create a free account
+          สร้างบัญชีฟรี
         </Button>
       </Link>
     </form>

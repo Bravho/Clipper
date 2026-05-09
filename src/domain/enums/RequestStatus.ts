@@ -29,6 +29,7 @@ export enum RequestStatus {
   Delivered = "delivered",
   OnHold = "on_hold",
   Rejected = "rejected",
+  RevisionRequested = "revision_requested",
 }
 
 /** Statuses where the request is actively progressing (not terminal, not draft). */

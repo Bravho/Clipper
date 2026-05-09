@@ -11,8 +11,7 @@ const validBase = {
   description: "A description that is long enough to pass validation here.",
   targetAudience: "Young adults interested in tech",
   targetPlatforms: [Platform.TikTok],
-  preferredStyle: "Dynamic / Energetic",
-  preferredLanguage: "English",
+  durationSeconds: 15,
 };
 
 describe("clipRequestFormSchema", () => {
@@ -77,28 +76,38 @@ describe("clipRequestFormSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects empty preferredStyle", () => {
-    const result = clipRequestFormSchema.safeParse({
-      ...validBase,
-      preferredStyle: "",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects empty preferredLanguage", () => {
-    const result = clipRequestFormSchema.safeParse({
-      ...validBase,
-      preferredLanguage: "",
-    });
-    expect(result.success).toBe(false);
-  });
-
   it("rejects short targetAudience", () => {
     const result = clipRequestFormSchema.safeParse({
       ...validBase,
       targetAudience: "abc",
     });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts durationSeconds within range", () => {
+    expect(clipRequestFormSchema.safeParse({ ...validBase, durationSeconds: 5 }).success).toBe(true);
+    expect(clipRequestFormSchema.safeParse({ ...validBase, durationSeconds: 30 }).success).toBe(true);
+  });
+
+  it("rejects durationSeconds below minimum", () => {
+    const result = clipRequestFormSchema.safeParse({ ...validBase, durationSeconds: 4 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.flatten().fieldErrors.durationSeconds).toBeDefined();
+    }
+  });
+
+  it("rejects durationSeconds above maximum", () => {
+    const result = clipRequestFormSchema.safeParse({ ...validBase, durationSeconds: 31 });
+    expect(result.success).toBe(false);
+  });
+
+  it("coerces string durationSeconds to number", () => {
+    const result = clipRequestFormSchema.safeParse({ ...validBase, durationSeconds: "15" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.durationSeconds).toBe(15);
+    }
   });
 });
 

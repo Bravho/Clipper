@@ -541,6 +541,104 @@ export class VideoGenerationService {
     });
   }
 
+  /**
+   * Requester-triggered: skip the staff content-review gate and start Kling
+   * directly using the AI analysis already shown to the requester.
+   */
+  async startFromRequesterApproval(
+    requestId: string,
+    requesterId: string,
+    analysis: {
+      scenePlan: string;
+      scriptThai: string;
+      scriptEnglish: string;
+      hookThai: string;
+      hookEnglish: string;
+      captionThai: string;
+      captionEnglish: string;
+      captionChinese: string;
+    }
+  ): Promise<VideoGenerationJob> {
+    const existing = await videoGenerationJobRepository.findByRequestId(requestId);
+
+    // Job was pre-created by the analyze endpoint at AwaitingContentApproval.
+    // Update it with the requester-approved (possibly edited) data and start Kling.
+    if (existing?.currentStep === VideoGenerationStep.AwaitingContentApproval) {
+      const updated = await videoGenerationJobRepository.update(existing.id, {
+        currentStep: VideoGenerationStep.GeneratingBaseVideo,
+        approvedScenePlan: analysis.scenePlan,
+        approvedScriptThai: analysis.scriptThai,
+        approvedScriptEnglish: analysis.scriptEnglish,
+        approvedHookThai: analysis.hookThai,
+        approvedHookEnglish: analysis.hookEnglish,
+        approvedCaptionThai: analysis.captionThai,
+        approvedCaptionEnglish: analysis.captionEnglish,
+        approvedCaptionChinese: analysis.captionChinese,
+        contentApprovedBy: requesterId,
+      });
+      this._runKlingGeneration(updated).catch(async (err) => {
+        console.error("Kling generation failed:", err);
+        await videoGenerationJobRepository.update(existing.id, {
+          status: VideoGenerationJobStatus.Failed,
+          currentStep: VideoGenerationStep.Failed,
+          failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+        });
+      });
+      return updated;
+    }
+
+    if (existing && existing.status === VideoGenerationJobStatus.Active) {
+      throw new Error("An active pipeline already exists for this request");
+    }
+
+    const job = await videoGenerationJobRepository.create({
+      requestId,
+      status: VideoGenerationJobStatus.Active,
+      currentStep: VideoGenerationStep.GeneratingBaseVideo,
+      scenePlan: analysis.scenePlan,
+      scriptThai: analysis.scriptThai,
+      scriptEnglish: analysis.scriptEnglish,
+      hookThai: analysis.hookThai,
+      hookEnglish: analysis.hookEnglish,
+      captionThai: analysis.captionThai,
+      captionEnglish: analysis.captionEnglish,
+      captionChinese: analysis.captionChinese,
+      approvedScenePlan: analysis.scenePlan,
+      approvedScriptThai: analysis.scriptThai,
+      approvedScriptEnglish: analysis.scriptEnglish,
+      approvedHookThai: analysis.hookThai,
+      approvedHookEnglish: analysis.hookEnglish,
+      approvedCaptionThai: analysis.captionThai,
+      approvedCaptionEnglish: analysis.captionEnglish,
+      approvedCaptionChinese: analysis.captionChinese,
+      klingTaskId: null,
+      baseVideoAssetId: null,
+      elevenLabsVoiceId: AI_CONFIG.elevenLabs.defaultVoiceId,
+      voiceRecordingAssetId: null,
+      processedVoiceAssetId: null,
+      finalExport_9_16_assetId: null,
+      finalExport_16_9_assetId: null,
+      finalExport_1_1_assetId: null,
+      finalExport_4_5_assetId: null,
+      failedAtStep: null,
+      contentApprovedBy: requesterId,
+      videoApprovedBy: null,
+      voiceApprovedBy: null,
+      finalApprovedBy: null,
+    });
+
+    this._runKlingGeneration(job).catch(async (err) => {
+      console.error("Kling generation failed:", err);
+      await videoGenerationJobRepository.update(job.id, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+      });
+    });
+
+    return job;
+  }
+
   /** Get the current pipeline job for a request. */
   async getCurrentJob(requestId: string): Promise<VideoGenerationJob | null> {
     return videoGenerationJobRepository.findByRequestId(requestId);
@@ -549,14 +647,47 @@ export class VideoGenerationService {
   /**
    * Retry a failed pipeline step.
    * Restarts only from the step that actually failed — not from the beginning.
+   * Optionally accepts requester-edited content to apply to approved fields before retrying.
    */
-  async retryPipeline(jobId: string): Promise<VideoGenerationJob> {
+  async retryPipeline(
+    jobId: string,
+    editedContent?: {
+      hookThai: string | null;
+      hookEnglish: string | null;
+      scriptThai: string | null;
+      scriptEnglish: string | null;
+      scenes: { visualDescription: string; motionNotes: string }[];
+    }
+  ): Promise<VideoGenerationJob> {
     const job = await this._getJob(jobId);
     if (job.currentStep !== VideoGenerationStep.Failed) {
       throw new Error("Can only retry a pipeline that is in Failed state");
     }
 
     const failedAt = job.failedAtStep ?? VideoGenerationStep.AnalyzingContent;
+
+    // Apply requester edits to approved fields before retrying
+    if (editedContent) {
+      const existingPlan = JSON.parse(
+        job.approvedScenePlan ?? job.scenePlan ?? "[]"
+      ) as ScenePlan[];
+      const updatedScenePlan =
+        editedContent.scenes.length > 0
+          ? existingPlan.map((s, i) => ({
+              ...s,
+              visualDescription:
+                editedContent.scenes[i]?.visualDescription ?? s.visualDescription,
+              motionNotes: editedContent.scenes[i]?.motionNotes ?? s.motionNotes,
+            }))
+          : existingPlan;
+      await videoGenerationJobRepository.update(jobId, {
+        approvedScenePlan: JSON.stringify(updatedScenePlan),
+        approvedScriptThai: editedContent.scriptThai,
+        approvedScriptEnglish: editedContent.scriptEnglish,
+        approvedHookThai: editedContent.hookThai,
+        approvedHookEnglish: editedContent.hookEnglish,
+      });
+    }
 
     // Reset to active + clear failedAtStep
     await videoGenerationJobRepository.update(jobId, {

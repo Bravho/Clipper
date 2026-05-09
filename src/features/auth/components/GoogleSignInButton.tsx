@@ -11,7 +11,7 @@ interface GoogleSignInButtonProps {
 
 export function GoogleSignInButton({
   callbackUrl = "/dashboard",
-  label = "Continue with Google",
+  label = "ดำเนินการต่อด้วย Google",
 }: GoogleSignInButtonProps) {
   const [loading, setLoading] = useState(false);
 

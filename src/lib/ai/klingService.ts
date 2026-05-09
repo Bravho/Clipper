@@ -70,13 +70,13 @@ export async function createVideo(params: {
   prompt: string;
 }): Promise<string> {
   const body = {
-    model_name: "kling-v1",
+    model_name: AI_CONFIG.kling.model,
     image: params.imageUrls[0],
     image_tail: params.imageUrls.length > 1 ? params.imageUrls[params.imageUrls.length - 1] : undefined,
     prompt: params.prompt,
     duration: String(AI_CONFIG.kling.videoDurationSeconds),
     aspect_ratio: "9:16",
-    mode: "std",
+    mode: AI_CONFIG.kling.mode,
   };
 
   const response = await klingFetch<KlingTaskCreateResponse>(

@@ -119,9 +119,79 @@ export class CreditService {
     return updated;
   }
 
+  async refundCredits(
+    userId: string,
+    amount: number,
+    description: string,
+    referenceId?: string
+  ): Promise<CreditWallet> {
+    const wallet = await creditWalletRepository.findByUserId(userId);
+    if (!wallet) throw new Error("Credit wallet not found for user.");
+
+    await creditTransactionRepository.create({
+      userId,
+      amount,
+      type: TransactionType.RequestRefund,
+      description,
+      referenceId: referenceId ?? null,
+    });
+
+    return creditWalletRepository.updateBalance(wallet.id, wallet.balance + amount);
+  }
+
   async hasEnoughCredits(userId: string, amount: number): Promise<boolean> {
     const balance = await this.getBalance(userId);
     return balance >= amount;
+  }
+
+  /**
+   * Apply signup/earned credits as a ฿ discount at checkout.
+   *
+   * Rules:
+   * - 1 credit = CREDIT_TO_BAHT_VALUE (฿10) off the price
+   * - Cannot use more credits than the user holds
+   * - Cannot bring the price below ฿0 (credits cover at most floor(priceBaht/CREDIT_TO_BAHT_VALUE))
+   * - Records a DiscountApplied transaction
+   *
+   * Returns the discount breakdown; caller is responsible for recording payment.
+   */
+  async applyDiscount(
+    userId: string,
+    creditsToUse: number,
+    priceBaht: number,
+    referenceId?: string
+  ): Promise<{ creditsDeducted: number; discountBaht: number; remainingBaht: number }> {
+    if (creditsToUse <= 0) {
+      return { creditsDeducted: 0, discountBaht: 0, remainingBaht: priceBaht };
+    }
+
+    const wallet = await creditWalletRepository.findByUserId(userId);
+    if (!wallet) throw new Error("Credit wallet not found for user.");
+
+    const maxByPrice = Math.floor(priceBaht / CREDITS_CONFIG.CREDIT_TO_BAHT_VALUE);
+    const creditsDeducted = Math.min(creditsToUse, wallet.balance, maxByPrice);
+
+    if (creditsDeducted === 0) {
+      return { creditsDeducted: 0, discountBaht: 0, remainingBaht: priceBaht };
+    }
+
+    const discountBaht = creditsDeducted * CREDITS_CONFIG.CREDIT_TO_BAHT_VALUE;
+    const remainingBaht = priceBaht - discountBaht;
+
+    await creditTransactionRepository.create({
+      userId,
+      amount: -creditsDeducted,
+      type: TransactionType.DiscountApplied,
+      description: `Applied ${creditsDeducted} credits as ฿${discountBaht} discount.`,
+      referenceId: referenceId ?? null,
+    });
+
+    await creditWalletRepository.updateBalance(
+      wallet.id,
+      wallet.balance - creditsDeducted
+    );
+
+    return { creditsDeducted, discountBaht, remainingBaht };
   }
 }
 

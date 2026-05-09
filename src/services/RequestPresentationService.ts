@@ -82,53 +82,53 @@ export interface RequesterRequestView {
 
 const STATUS_PRESENTATION: Record<RequestStatus, StatusPresentation> = {
   [RequestStatus.Draft]: {
-    label: "Draft",
-    description: "Your request is saved as a draft. Complete and submit it when you're ready.",
+    label: "แบบร่าง",
+    description: "คำขอของคุณถูกบันทึกเป็นแบบร่าง กรอกข้อมูลให้ครบแล้วส่งเมื่อพร้อม",
     badgeVariant: "slate",
   },
   [RequestStatus.Submitted]: {
-    label: "Submitted",
-    description: "Your request has been submitted and is waiting for our team to begin review.",
+    label: "ส่งแล้ว",
+    description: "คำขอของคุณถูกส่งแล้วและรอทีมงานเริ่มตรวจสอบ",
     badgeVariant: "blue",
   },
   [RequestStatus.UnderReview]: {
-    label: "In Review",
-    description: "Our team is reviewing your brief and uploaded materials.",
+    label: "กำลังตรวจสอบ",
+    description: "ทีมงานกำลังตรวจสอบ brief และไฟล์ที่อัพโหลด",
     badgeVariant: "blue",
   },
   [RequestStatus.AcceptedForProduction]: {
-    label: "Accepted",
-    description: "Your request has been accepted and is queued for production.",
+    label: "รับงานแล้ว",
+    description: "คำขอของคุณได้รับการยอมรับและอยู่ในคิวการผลิต",
     badgeVariant: "green",
   },
   [RequestStatus.Editing]: {
-    label: "In Production",
-    description: "Your clip is currently being edited by our team.",
+    label: "กำลังผลิต",
+    description: "คลิปของคุณกำลังถูกตัดต่อโดยทีมงาน",
     badgeVariant: "green",
   },
   [RequestStatus.ScheduledForPublishing]: {
-    label: "Scheduled",
-    description: "Production is complete. Your clip is being prepared for publishing.",
+    label: "กำหนดเผยแพร่แล้ว",
+    description: "การผลิตเสร็จสิ้นแล้ว คลิปของคุณกำลังเตรียมพร้อมสำหรับการเผยแพร่",
     badgeVariant: "green",
   },
   [RequestStatus.Published]: {
-    label: "Published",
-    description: "Your clip has been published to the selected platforms.",
+    label: "เผยแพร่แล้ว",
+    description: "คลิปของคุณถูกเผยแพร่ไปยังช่องทางที่เลือกแล้ว",
     badgeVariant: "green",
   },
   [RequestStatus.Delivered]: {
-    label: "Delivered",
-    description: "Your clip has been delivered. You can view and share the links below.",
+    label: "ส่งมอบแล้ว",
+    description: "คลิปของคุณถูกส่งมอบแล้ว ดูและแชร์ลิงก์ด้านล่างได้เลย",
     badgeVariant: "green",
   },
   [RequestStatus.OnHold]: {
-    label: "On Hold",
-    description: "Your request is currently on hold. Please see the reason below.",
+    label: "พักไว้ชั่วคราว",
+    description: "คำขอของคุณถูกพักไว้ชั่วคราว กรุณาดูเหตุผลด้านล่าง",
     badgeVariant: "yellow",
   },
   [RequestStatus.Rejected]: {
-    label: "Rejected",
-    description: "Your request could not be fulfilled. Please see the reason below.",
+    label: "ปฏิเสธ",
+    description: "ไม่สามารถดำเนินการตามคำขอของคุณได้ กรุณาดูเหตุผลด้านล่าง",
     badgeVariant: "red",
   },
 };
@@ -171,7 +171,7 @@ export class RequestPresentationService {
       return {
         show: false,
         formattedDate: null,
-        message: "Due date is not applicable for this request.",
+        message: "ไม่มีกำหนดส่งสำหรับคำขอนี้",
       };
     }
 
@@ -187,7 +187,7 @@ export class RequestPresentationService {
         return {
           show: true,
           formattedDate: formatted,
-          message: `Completed by ${formatted}.`,
+          message: `เสร็จสิ้นเมื่อ ${formatted}`,
         };
       }
 
@@ -195,8 +195,8 @@ export class RequestPresentationService {
         show: true,
         formattedDate: formatted,
         message: isPast
-          ? `Expected by ${formatted} — our team is finalising your clip.`
-          : `Expected completion: ${formatted}.`,
+          ? `คาดว่าเสร็จภายใน ${formatted} — ทีมงานกำลังสรุปคลิปของคุณ`
+          : `คาดว่าเสร็จภายใน: ${formatted}`,
       };
     }
 
@@ -205,7 +205,7 @@ export class RequestPresentationService {
       show: true,
       formattedDate: null,
       message:
-        "Your request is under review. An expected completion date will appear here once our team confirms production timing.",
+        "คำขอของคุณอยู่ระหว่างการตรวจสอบ วันที่คาดว่าจะเสร็จจะแสดงที่นี่เมื่อทีมงานยืนยันกำหนดการผลิต",
     };
   }
 
@@ -225,14 +225,14 @@ export class RequestPresentationService {
           show: true,
           message:
             queuePosition != null
-              ? `Your request is in the queue (approximately ${queuePosition} ahead of yours).`
-              : "Your request has been submitted and is waiting for review.",
+              ? `คำขอของคุณอยู่ในคิว (มีประมาณ ${queuePosition} คำขออยู่ก่อนหน้า)`
+              : "คำขอของคุณถูกส่งแล้วและรอการตรวจสอบ",
         };
 
       case RequestStatus.UnderReview:
         return {
           show: true,
-          message: "Our team is currently reviewing your brief and materials.",
+          message: "ทีมงานกำลังตรวจสอบ brief และไฟล์ของคุณ",
         };
 
       case RequestStatus.AcceptedForProduction:
@@ -240,20 +240,20 @@ export class RequestPresentationService {
           show: true,
           message:
             queuePosition === 1
-              ? "Your request is next in the production queue."
-              : "Your request has been accepted and is queued for production.",
+              ? "คำขอของคุณเป็นลำดับถัดไปในคิวการผลิต"
+              : "คำขอของคุณได้รับการยอมรับและอยู่ในคิวการผลิต",
         };
 
       case RequestStatus.Editing:
         return {
           show: true,
-          message: "Your clip is currently being produced by our team.",
+          message: "คลิปของคุณกำลังถูกผลิตโดยทีมงาน",
         };
 
       case RequestStatus.ScheduledForPublishing:
         return {
           show: true,
-          message: "Production is complete. Publishing is being arranged.",
+          message: "การผลิตเสร็จสิ้นแล้ว กำลังจัดเตรียมการเผยแพร่",
         };
 
       case RequestStatus.Published:
@@ -263,8 +263,7 @@ export class RequestPresentationService {
       case RequestStatus.OnHold:
         return {
           show: true,
-          message:
-            "Your request is on hold. Production will resume once the issue is resolved.",
+          message: "คำขอของคุณถูกพักไว้ชั่วคราว การผลิตจะดำเนินต่อเมื่อแก้ไขปัญหาแล้ว",
         };
 
       case RequestStatus.Rejected:
@@ -328,7 +327,7 @@ export class RequestPresentationService {
   }
 
   private formatDate(date: Date): string {
-    return date.toLocaleDateString("en-GB", {
+    return date.toLocaleDateString("th-TH", {
       day: "numeric",
       month: "long",
       year: "numeric",

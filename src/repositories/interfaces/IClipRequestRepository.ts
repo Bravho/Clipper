@@ -25,6 +25,12 @@ export interface IClipRequestRepository {
     statuses: RequestStatus[]
   ): Promise<ClipRequest[]>;
 
+  // ── Editor queries ──────────────────────────────────────────────────────────
+  /** All requests assigned to a specific editor. */
+  findByEditorId(editorId: string): Promise<ClipRequest[]>;
+  /** Requests assigned to an editor filtered by status. */
+  findByEditorIdAndStatus(editorId: string, statuses: RequestStatus[]): Promise<ClipRequest[]>;
+
   // ── Staff queries ───────────────────────────────────────────────────────────
   /**
    * Find all requests with any of the given statuses.
@@ -97,6 +103,13 @@ export interface IClipRequestRepository {
         | "creditConfirmed"
         | "rightsConfirmed"
         | "assignedStaffId"
+        | "assignedEditorId"
+        | "editorType"
+        | "priceBaht"
+        | "creditsUsed"
+        | "discountBaht"
+        | "amountPaidBaht"
+        | "revisionCount"
       >
     >
   ): Promise<ClipRequest>;

@@ -18,8 +18,15 @@ import { RequestStatusBadge } from "@/features/requests/components/RequestStatus
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DeliveryLinks } from "@/features/requests/components/DeliveryLinks";
 import { RequestTimeline } from "@/features/requests/components/RequestTimeline";
+import { ProductionPipeline } from "@/features/requests/components/ProductionPipeline";
+import { PipelineStatusPoller } from "@/features/requests/components/PipelineStatusPoller";
+import { PipelineFailurePanel } from "@/features/requests/components/PipelineFailurePanel";
+import { ContentApprovalPanel } from "@/features/requests/components/ContentApprovalPanel";
+import { AnalyzeButton } from "@/features/requests/components/AnalyzeButton";
+import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { AssetUploadStatus } from "@/domain/enums/AssetType";
+import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 export const metadata: Metadata = { title: "Request Detail — RClipper" };
 
@@ -101,11 +108,13 @@ export default async function RequestDetailPage({
       {/* Status description */}
       <Card className="mb-6">
         <p className="text-sm font-medium text-slate-700">
-          {view.statusPresentation.description}
+          {pipelineJob?.currentStep === VideoGenerationStep.AwaitingContentApproval
+            ? "AI วิเคราะห์เนื้อหาเสร็จแล้ว — ตรวจสอบและแก้ไขสคริปต์ด้านล่าง แล้วคลิกอนุมัติเพื่อเริ่มสร้างวิดีโอ"
+            : view.statusPresentation.description}
         </p>
 
-        {/* Queue info */}
-        {view.queueDisplay.show && (
+        {/* Queue info — hide while awaiting AI approval */}
+        {view.queueDisplay.show && pipelineJob?.currentStep !== VideoGenerationStep.AwaitingContentApproval && (
           <p className="mt-2 text-sm text-slate-500">{view.queueDisplay.message}</p>
         )}
 
@@ -147,6 +156,22 @@ export default async function RequestDetailPage({
         )}
       </Card>
 
+      {/* Re-analyze prompt — shown when request is submitted but no pipeline job exists yet */}
+      {request.status === RequestStatus.Submitted && !pipelineJob && (
+        <Card className="mb-6 border-blue-200 bg-blue-50">
+          <p className="text-sm font-semibold text-blue-800">
+            สร้างสคริปต์วิดีโอด้วย AI
+          </p>
+          <p className="mt-1 text-sm text-blue-700">
+            AI จะวิเคราะห์รูปภาพที่อัพโหลดและสร้างแผนฉาก บทพูด และแคปชั่นสำหรับวิดีโอ 15 วินาที
+            จากนั้นคุณสามารถแก้ไขและอนุมัติก่อนเริ่มสร้างวิดีโอได้
+          </p>
+          <div className="mt-4">
+            <AnalyzeButton requestId={id} />
+          </div>
+        </Card>
+      )}
+
       {/* Draft actions */}
       {isDraft && (
         <div className="mb-6 flex gap-3">
@@ -157,6 +182,83 @@ export default async function RequestDetailPage({
           </Link>
         </div>
       )}
+
+      {/* Production pipeline — shown when an AI pipeline job exists */}
+      {pipelineJob && (() => {
+        const isAwaitingApproval =
+          pipelineJob.currentStep === VideoGenerationStep.AwaitingContentApproval;
+        const isFailed = pipelineJob.currentStep === VideoGenerationStep.Failed;
+        const isPolling = POLLING_STEPS.includes(pipelineJob.currentStep);
+
+        // Parse scene plan — prefer approved version; fall back to raw AI output
+        let scenePlan: ScenePlan[] = [];
+        const scenePlanSrc = pipelineJob.approvedScenePlan ?? pipelineJob.scenePlan;
+        if (scenePlanSrc) {
+          try { scenePlan = JSON.parse(scenePlanSrc); } catch { /* ignore */ }
+        }
+
+        // Requester must approve before Kling starts — show editable script panel
+        if (isAwaitingApproval) {
+          return (
+            <ContentApprovalPanel
+              requestId={id}
+              initialScenes={scenePlan}
+              initialHookThai={pipelineJob.hookThai}
+              initialHookEnglish={pipelineJob.hookEnglish}
+              initialScriptThai={pipelineJob.scriptThai}
+              initialScriptEnglish={pipelineJob.scriptEnglish}
+              initialCaptionThai={pipelineJob.captionThai}
+              initialCaptionEnglish={pipelineJob.captionEnglish}
+              initialCaptionChinese={pipelineJob.captionChinese}
+            />
+          );
+        }
+
+        return (
+          <>
+            <ProductionPipeline
+              currentStep={pipelineJob.currentStep}
+              failedAtStep={pipelineJob.failedAtStep}
+            />
+
+            {/* Auto-refresh while an async AI step is running */}
+            {isPolling && (
+              <PipelineStatusPoller
+                requestId={id}
+                currentStep={pipelineJob.currentStep}
+              />
+            )}
+
+            {/* Error recovery — shown when the pipeline has failed */}
+            {isFailed && (
+              <PipelineFailurePanel
+                requestId={id}
+                jobId={pipelineJob.id}
+                failedAtStep={pipelineJob.failedAtStep}
+                scenePlan={scenePlan}
+                scriptThai={pipelineJob.approvedScriptThai}
+                scriptEnglish={pipelineJob.approvedScriptEnglish}
+                hookThai={pipelineJob.approvedHookThai}
+                hookEnglish={pipelineJob.approvedHookEnglish}
+              />
+            )}
+
+            {/* Approved script — read-only reference while production is running */}
+            {!isFailed && (pipelineJob.approvedHookThai ?? pipelineJob.hookThai) && (
+              <ApprovedScriptCard
+                scenes={scenePlan}
+                hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
+                hookEnglish={pipelineJob.approvedHookEnglish ?? pipelineJob.hookEnglish}
+                scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
+                scriptEnglish={pipelineJob.approvedScriptEnglish ?? pipelineJob.scriptEnglish}
+                captionThai={pipelineJob.approvedCaptionThai ?? pipelineJob.captionThai}
+                captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
+                captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
+              />
+            )}
+          </>
+        );
+      })()}
 
       {/* Delivery links */}
       {(isTerminal || publishingLinks.length > 0) && (
@@ -269,5 +371,113 @@ function BriefRow({ label, value }: { label: string; value: string }) {
       </dt>
       <dd className="mt-0.5 text-sm text-slate-800">{value}</dd>
     </div>
+  );
+}
+
+function ApprovedScriptCard({
+  scenes,
+  hookThai,
+  hookEnglish,
+  scriptThai,
+  scriptEnglish,
+  captionThai,
+  captionEnglish,
+  captionChinese,
+}: {
+  scenes: ScenePlan[];
+  hookThai: string | null;
+  hookEnglish: string | null;
+  scriptThai: string | null;
+  scriptEnglish: string | null;
+  captionThai: string | null;
+  captionEnglish: string | null;
+  captionChinese: string | null;
+}) {
+  return (
+    <Card className="mb-6">
+      <h2 className="mb-4 text-base font-semibold text-slate-900">สคริปต์วิดีโอที่อนุมัติ</h2>
+
+      {/* Hook */}
+      {(hookThai ?? hookEnglish) && (
+        <div className="mb-4">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
+            ฮุค (3 วินาทีแรก)
+          </p>
+          {hookThai && <p className="text-sm text-slate-800">{hookThai}</p>}
+          {hookEnglish && <p className="mt-0.5 text-sm italic text-slate-500">{hookEnglish}</p>}
+        </div>
+      )}
+
+      {/* Scene plan */}
+      {scenes.length > 0 && (
+        <div className="mb-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">แผนฉาก</p>
+          <div className="flex flex-col gap-2">
+            {scenes.map((scene) => (
+              <div
+                key={scene.sceneNumber}
+                className="rounded-lg border border-slate-100 bg-slate-50 p-3"
+              >
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-600">
+                    ฉาก {scene.sceneNumber}
+                  </span>
+                  <span className="text-xs text-slate-400">{scene.durationSeconds} วินาที</span>
+                </div>
+                {scene.visualDescriptionThai && (
+                  <p className="text-sm text-slate-700">{scene.visualDescriptionThai}</p>
+                )}
+                <p className={`text-sm ${scene.visualDescriptionThai ? "mt-0.5 text-slate-500" : "text-slate-700"}`}>
+                  {scene.visualDescription}
+                </p>
+                {(scene.motionNotesThai ?? scene.motionNotes) && (
+                  <p className="mt-1 text-xs text-slate-400">
+                    {scene.motionNotesThai ?? scene.motionNotes}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Script */}
+      {(scriptThai ?? scriptEnglish) && (
+        <div className="mb-4">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">บทพูด</p>
+          {scriptThai && <p className="text-sm text-slate-800">{scriptThai}</p>}
+          {scriptEnglish && <p className="mt-1 text-sm italic text-slate-500">{scriptEnglish}</p>}
+        </div>
+      )}
+
+      {/* Captions */}
+      {(captionThai ?? captionEnglish ?? captionChinese) && (
+        <div>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+            แคปชั่นโซเชียล
+          </p>
+          <div className="flex flex-col gap-2">
+            {captionThai && (
+              <div>
+                <p className="text-xs text-slate-400">ภาษาไทย</p>
+                <p className="text-sm text-slate-700">{captionThai}</p>
+              </div>
+            )}
+            {captionEnglish && (
+              <div>
+                <p className="text-xs text-slate-400">English</p>
+                <p className="text-sm text-slate-700">{captionEnglish}</p>
+              </div>
+            )}
+            {captionChinese && (
+              <div>
+                <p className="text-xs text-slate-400">中文</p>
+                <p className="text-sm text-slate-700">{captionChinese}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

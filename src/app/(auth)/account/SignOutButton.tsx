@@ -10,7 +10,7 @@ export function SignOutButton() {
       variant="danger"
       onClick={() => signOut({ callbackUrl: ROUTES.HOME })}
     >
-      Sign out
+      ออกจากระบบ
     </Button>
   );
 }

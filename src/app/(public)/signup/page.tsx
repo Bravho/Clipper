@@ -7,8 +7,8 @@ import { Role } from "@/domain/enums/Role";
 import { SignupForm } from "@/features/auth/components/SignupForm";
 
 export const metadata: Metadata = {
-  title: "Create account",
-  description: "Create your free Clipper account and start with 30 free credits.",
+  title: "สร้างบัญชี",
+  description: "สร้างบัญชี RClipper ฟรีและเริ่มต้นด้วย 30 เครดิต",
 };
 
 export default async function SignupPage() {
@@ -22,11 +22,11 @@ export default async function SignupPage() {
       <div className="auth-card">
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-bold text-slate-900">
-            Create your Clipper account
+            สร้างบัญชี RClipper ของคุณ
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            Sign up with Google or email. New accounts receive{" "}
-            <span className="font-semibold text-blue-700">30 free credits</span>.
+            สมัครด้วย Google หรืออีเมล บัญชีใหม่รับ{" "}
+            <span className="font-semibold text-blue-700">30 เครดิตฟรี</span>
           </p>
         </div>
 

@@ -13,6 +13,8 @@ export const AI_CONFIG = {
     apiSecret: process.env.KLING_API_SECRET ?? "",
     baseUrl: "https://api.klingai.com",
     videoDurationSeconds: 15,
+    model: process.env.KLING_MODEL,
+    mode: process.env.KLING_MODE,
   },
   elevenLabs: {
     apiKey: process.env.ELEVENLABS_API_KEY ?? "",

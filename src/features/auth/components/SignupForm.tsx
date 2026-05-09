@@ -36,14 +36,14 @@ export function SignupForm() {
       const result = await response.json();
 
       if (!response.ok) {
-        setServerError(result.error ?? "Registration failed. Please try again.");
+        setServerError(result.error ?? "การสมัครสมาชิกล้มเหลว กรุณาลองอีกครั้ง");
         return;
       }
 
       // Account created — redirect to verify-email page
       router.push(`${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}`);
     } catch {
-      setServerError("An unexpected error occurred. Please try again.");
+      setServerError("เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
     }
   };
 
@@ -59,27 +59,27 @@ export function SignupForm() {
       )}
 
       <GoogleSignInButton
-        label="Sign up with Google"
+        label="สมัครด้วย Google"
         callbackUrl={ROUTES.DASHBOARD}
       />
 
       <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-slate-200" />
-        <span className="text-xs text-slate-400">or sign up with email</span>
+        <span className="text-xs text-slate-400">หรือสมัครด้วยอีเมล</span>
         <div className="flex-1 border-t border-slate-200" />
       </div>
 
       <Input
-        label="Full name"
+        label="ชื่อ-นามสกุล"
         type="text"
         autoComplete="name"
-        placeholder="Alex Smith"
+        placeholder="สมชาย ใจดี"
         error={errors.name?.message}
         {...register("name")}
       />
 
       <Input
-        label="Email address"
+        label="อีเมล"
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
@@ -88,17 +88,17 @@ export function SignupForm() {
       />
 
       <Input
-        label="Password"
+        label="รหัสผ่าน"
         type="password"
         autoComplete="new-password"
         placeholder="••••••••"
-        hint="At least 8 characters with uppercase, lowercase, and a number."
+        hint="อย่างน้อย 8 ตัวอักษร ต้องมีตัวพิมพ์ใหญ่ พิมพ์เล็ก และตัวเลข"
         error={errors.password?.message}
         {...register("password")}
       />
 
       <Input
-        label="Confirm password"
+        label="ยืนยันรหัสผ่าน"
         type="password"
         autoComplete="new-password"
         placeholder="••••••••"
@@ -107,30 +107,29 @@ export function SignupForm() {
       />
 
       <Button type="submit" fullWidth loading={isSubmitting} size="lg">
-        Create my account
+        สร้างบัญชี
       </Button>
 
-      {/* Implicit consent notice */}
       <p className="text-center text-xs text-slate-500 leading-relaxed">
-        By clicking &ldquo;Create my account&rdquo; or &ldquo;Sign up with Google&rdquo; you agree to our{" "}
+        การคลิก &ldquo;สร้างบัญชี&rdquo; หรือ &ldquo;สมัครด้วย Google&rdquo; ถือว่าคุณยอมรับ{" "}
         <Link href={ROUTES.TERMS} className="underline hover:text-slate-700">
-          Terms of Service
+          ข้อกำหนดการใช้งาน
         </Link>{" "}
-        and{" "}
+        และ{" "}
         <Link href={ROUTES.PRIVACY} className="underline hover:text-slate-700">
-          Privacy Policy
+          นโยบายความเป็นส่วนตัว
         </Link>
-        , including our content ownership rights and storage retention terms.
+        รวมถึงสิทธิ์ความเป็นเจ้าของเนื้อหาและนโยบายการเก็บข้อมูล
       </p>
 
       <div className="border-t border-slate-100 pt-2">
         <p className="text-center text-sm text-slate-500">
-          Already have an account?{" "}
+          มีบัญชีอยู่แล้ว?{" "}
           <Link
             href={ROUTES.LOGIN}
             className="text-blue-700 font-medium hover:underline"
           >
-            Sign in
+            เข้าสู่ระบบ
           </Link>
         </p>
       </div>

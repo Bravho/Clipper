@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Platform } from "@/domain/enums/Platform";
 import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
+import { PIPELINE_STEP_COSTS } from "@/config/credits";
 
 /**
  * Zod schema for the clip request submission form.
@@ -12,12 +13,11 @@ import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
  *
  * Business rules enforced:
  * - Max 5 file attachments (validated separately via upload count)
- * - Exactly 1 target platform required (radio button — single select)
+ * - At least 1 target platform required (Tvent always pre-selected in UI)
  * - Both legal confirmations required before submission
- * - preferredLanguage is not collected on the form (removed per product decision)
+ * - preferredStyle and preferredLanguage are not collected on the form (removed per product decision)
  */
 
-// Allowed platform values from the enum
 const platformValues = Object.values(Platform) as [Platform, ...Platform[]];
 
 export const clipRequestFormSchema = z.object({
@@ -36,14 +36,21 @@ export const clipRequestFormSchema = z.object({
     .min(5, "Please describe your target audience.")
     .max(500, "Target audience must be 500 characters or fewer."),
 
-  // Checkboxes — one or more platforms. Tvent is always included (enforced in UI).
   targetPlatforms: z
     .array(z.enum(platformValues))
     .min(1, "Please select at least one platform."),
 
-  preferredStyle: z
-    .string()
-    .min(1, "Please choose a preferred style."),
+  durationSeconds: z.coerce
+    .number({ invalid_type_error: "กรุณาระบุความยาววิดีโอ" })
+    .int("ต้องเป็นจำนวนเต็มวินาที")
+    .min(
+      PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS,
+      `ความยาววิดีโอขั้นต่ำ ${PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS} วินาที`
+    )
+    .max(
+      PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS,
+      `ความยาววิดีโอสูงสุด ${PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS} วินาที`
+    ),
 });
 
 /** Schema for draft saves — legal confirmations not required yet. */
@@ -53,7 +60,7 @@ export const draftClipRequestSchema = clipRequestFormSchema.partial();
 export const submitClipRequestSchema = clipRequestFormSchema.extend({
   creditConfirmed: z.literal(true, {
     errorMap: () => ({
-      message: "You must confirm you understand this request uses 10 credits.",
+      message: "You must confirm you understand the credit cost for this request.",
     }),
   }),
   rightsConfirmed: z.literal(true, {
@@ -78,15 +85,5 @@ export function validateUploadCount(count: number): string | null {
   return null;
 }
 
-// ── Style and language options ───────────────────────────────────────────────
-
-export const STYLE_OPTIONS: { value: string; label: string }[] = [
-  { value: "Dynamic / Energetic", label: "Dynamic / Energetic" },
-  { value: "Calm / Informative", label: "Calm / Informative" },
-  { value: "Fun / Playful", label: "Fun / Playful" },
-  { value: "Professional / Corporate", label: "Professional / Corporate" },
-  { value: "Cinematic / Dramatic", label: "Cinematic / Dramatic" },
-  { value: "Minimalist / Clean", label: "Minimalist / Clean" },
-];
-
+// STYLE_OPTIONS removed — preferred style is no longer collected on the form.
 // LANGUAGE_OPTIONS removed — preferred language is no longer collected on the form.

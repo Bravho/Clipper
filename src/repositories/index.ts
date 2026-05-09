@@ -60,6 +60,11 @@ import { MockProductionReviewRepository } from "./mock/MockProductionReviewRepos
 //   PostgresProductionReviewRepository
 export const productionReviewRepository = new MockProductionReviewRepository();
 
+// ── Editor Profiles — Mock (TODO: replace with Postgres implementation) ──────
+import { MockEditorProfileRepository } from "./mock/MockEditorProfileRepository";
+
+export const editorProfileRepository = new MockEditorProfileRepository();
+
 // ── AI Video Pipeline — Mock (TODO: replace with Postgres implementations) ───
 import { MockVideoGenerationJobRepository } from "./mock/MockVideoGenerationJobRepository";
 import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordRepository";

@@ -11,17 +11,18 @@ import { Button } from "@/components/ui/Button";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DeleteDraftButton } from "@/features/requests/components/DeleteDraftButton";
+import { CancelRequestButton } from "@/features/requests/components/CancelRequestButton";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { creditService } from "@/services/CreditService";
 
-export const metadata: Metadata = { title: "My Requests — RClipper" };
+export const metadata: Metadata = { title: "คำขอของฉัน — RClipper" };
 
 const STATUS_FILTERS = [
-  { label: "All", value: "all" },
-  { label: "Active", value: "active" },
-  { label: "Delivered", value: "delivered" },
-  { label: "On Hold", value: "on_hold" },
-  { label: "Rejected", value: "rejected" },
+  { label: "ทั้งหมด", value: "all" },
+  { label: "กำลังดำเนินการ", value: "active" },
+  { label: "ส่งมอบแล้ว", value: "delivered" },
+  { label: "พักไว้", value: "on_hold" },
+  { label: "ปฏิเสธ", value: "rejected" },
 ] as const;
 
 type FilterValue = (typeof STATUS_FILTERS)[number]["value"];
@@ -75,13 +76,13 @@ export default async function RequestsPage({
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">My Requests</h1>
+          <h1 className="text-2xl font-bold text-slate-900">คำขอของฉัน</h1>
           <p className="mt-1 text-slate-500 text-sm">
-            {allRequests.length} total request{allRequests.length !== 1 ? "s" : ""}
+            {allRequests.length} คำขอทั้งหมด
           </p>
         </div>
         <Link href={ROUTES.REQUESTS_NEW}>
-          <Button disabled={!canAfford}>+ New Request</Button>
+          <Button disabled={!canAfford}>+ คำขอใหม่</Button>
         </Link>
       </div>
 
@@ -89,7 +90,7 @@ export default async function RequestsPage({
       {drafts.length > 0 && (
         <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <p className="text-sm font-medium text-slate-700">
-            You have {drafts.length} unsaved draft{drafts.length !== 1 ? "s" : ""}.
+            คุณมีแบบร่างที่ยังไม่ได้บันทึก {drafts.length} รายการ
           </p>
           <div className="mt-3 flex flex-col gap-2">
             {drafts.map((d) => (
@@ -97,11 +98,11 @@ export default async function RequestsPage({
                 key={d.id}
                 className="flex items-center justify-between rounded-lg bg-white border border-slate-200 px-4 py-2 hover:shadow-sm transition-shadow"
               >
-                <span className="text-sm text-slate-800">{d.title || "Untitled Draft"}</span>
+                <span className="text-sm text-slate-800">{d.title || "แบบร่างไม่มีชื่อ"}</span>
                 <div className="flex items-center gap-4">
                   <DeleteDraftButton requestId={d.id} />
                   <Link href={requestDetailPath(d.id)} className="text-xs text-blue-600 hover:text-blue-800">
-                    Continue editing →
+                    ดำเนินการต่อ →
                   </Link>
                 </div>
               </div>
@@ -134,23 +135,23 @@ export default async function RequestsPage({
             {allRequests.filter((r) => r.status !== RequestStatus.Draft).length === 0 ? (
               <>
                 <p className="text-slate-500 font-medium">
-                  You haven't submitted any requests yet.
+                  คุณยังไม่มีคำขอที่ส่งแล้ว
                 </p>
                 <p className="mt-2 text-sm text-slate-400">
-                  Submit your first request to get started. Each clip costs{" "}
-                  {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits.
+                  ส่งคำขอแรกเพื่อเริ่มต้น แต่ละคลิปใช้{" "}
+                  {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
                 </p>
                 {canAfford && (
                   <Link href={ROUTES.REQUESTS_NEW}>
                     <Button className="mt-5" variant="primary">
-                      Submit a Request
+                      ส่งคำขอ
                     </Button>
                   </Link>
                 )}
               </>
             ) : (
               <p className="text-slate-500">
-                No requests match the selected filter.
+                ไม่มีคำขอที่ตรงกับตัวกรองที่เลือก
               </p>
             )}
           </div>
@@ -173,12 +174,12 @@ export default async function RequestsPage({
                       </p>
                       <p className="mt-0.5 text-xs text-slate-400">
                         {req.submittedAt
-                          ? `Submitted ${req.submittedAt.toLocaleDateString("en-GB", {
+                          ? `ส่งเมื่อ ${req.submittedAt.toLocaleDateString("th-TH", {
                               day: "numeric",
                               month: "short",
                               year: "numeric",
                             })}`
-                          : `Created ${req.createdAt.toLocaleDateString("en-GB", {
+                          : `สร้างเมื่อ ${req.createdAt.toLocaleDateString("th-TH", {
                               day: "numeric",
                               month: "short",
                               year: "numeric",
@@ -201,8 +202,11 @@ export default async function RequestsPage({
                       <RequestStatusBadge status={req.status} />
                       <DueDateDisplay display={dueDateDisplay} />
                       <p className="text-xs text-slate-400">
-                        {req.creditsCost} credits
+                        {req.creditsCost} เครดิต
                       </p>
+                      {req.status === RequestStatus.Submitted && (
+                        <CancelRequestButton requestId={req.id} status={req.status} />
+                      )}
                     </div>
                   </div>
                 </Card>

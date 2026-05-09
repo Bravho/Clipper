@@ -1,19 +1,10 @@
 import Link from "next/link";
 import { ROUTES } from "@/config/routes";
 
-/**
- * Dashboard layout — provides the requester portal sidebar navigation.
- *
- * Wraps all /dashboard/* pages with a consistent layout and nav.
- * Auth is already enforced by (auth)/layout.tsx and middleware.
- *
- * TODO: Future — add notification bell, avatar dropdown, and mobile sidebar toggle.
- */
-
 const NAV_LINKS = [
-  { href: ROUTES.DASHBOARD, label: "Dashboard", icon: "⊡" },
-  { href: ROUTES.REQUESTS, label: "My Requests", icon: "◫" },
-  { href: ROUTES.CREDITS, label: "Credits", icon: "◈" },
+  { href: ROUTES.DASHBOARD, label: "แดชบอร์ด", icon: "⊡" },
+  { href: ROUTES.REQUESTS, label: "คำขอของฉัน", icon: "◫" },
+  { href: ROUTES.CREDITS, label: "เครดิต", icon: "◈" },
 ] as const;
 
 export default function DashboardLayout({
@@ -52,12 +43,12 @@ export default function DashboardLayout({
         {/* Footer help text */}
         <div className="border-t border-slate-100 p-4">
           <p className="text-xs text-slate-400">
-            Need help?{" "}
+            ต้องการความช่วยเหลือ?{" "}
             <a
               href="mailto:support@rclipper.com"
               className="text-blue-600 hover:underline"
             >
-              Contact support
+              ติดต่อฝ่ายสนับสนุน
             </a>
           </p>
         </div>
@@ -68,7 +59,6 @@ export default function DashboardLayout({
         {/* Top bar (mobile) */}
         <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 lg:hidden">
           <span className="text-sm font-bold text-slate-900">RClipper Portal</span>
-          {/* TODO: mobile nav toggle */}
         </header>
 
         {/* Page content */}

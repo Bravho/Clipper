@@ -92,6 +92,8 @@ export interface ScenePlan {
   sceneNumber: number;
   durationSeconds: number;
   visualDescription: string;
+  visualDescriptionThai?: string;
   imageIndexes: number[];
   motionNotes: string;
+  motionNotesThai?: string;
 }

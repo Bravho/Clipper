@@ -9,7 +9,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { SignOutButton } from "./SignOutButton";
 
-export const metadata: Metadata = { title: "My Account" };
+export const metadata: Metadata = { title: "บัญชีของฉัน" };
 
 const roleBadge: Record<Role, "blue" | "green" | "red"> = {
   [Role.Requester]: "blue",
@@ -17,49 +17,53 @@ const roleBadge: Record<Role, "blue" | "green" | "red"> = {
   [Role.Admin]: "red",
 };
 
+const roleLabel: Record<Role, string> = {
+  [Role.Requester]: "ผู้ใช้งาน",
+  [Role.Editor]: "Editor",
+  [Role.Admin]: "Admin",
+};
+
 export default async function AccountPage() {
   const user = await requireAuth();
   const profile = await accountService.getAccountProfile(user.id);
 
-  // Only Terms and Privacy are presented to users at signup.
-  // Privacy Policy covers ownership rights and storage retention.
   const policyTypes = [PolicyType.TermsOfService, PolicyType.PrivacyPolicy];
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-12">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">My Account</h1>
-        <p className="mt-1 text-slate-500">Your profile and account details.</p>
+        <h1 className="text-2xl font-bold text-slate-900">บัญชีของฉัน</h1>
+        <p className="mt-1 text-slate-500">ข้อมูลโปรไฟล์และบัญชีของคุณ</p>
       </div>
 
       <div className="flex flex-col gap-6">
         {/* Profile */}
         <Card>
           <CardHeader>
-            <CardTitle>Profile</CardTitle>
+            <CardTitle>โปรไฟล์</CardTitle>
           </CardHeader>
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Row label="Full name" value={profile.user.name} />
-            <Row label="Email" value={profile.user.email} />
+            <Row label="ชื่อ-นามสกุล" value={profile.user.name} />
+            <Row label="อีเมล" value={profile.user.email} />
             <Row
-              label="Role"
+              label="บทบาท"
               value={
                 <Badge variant={roleBadge[profile.user.role]}>
-                  {profile.user.role}
+                  {roleLabel[profile.user.role]}
                 </Badge>
               }
             />
             <Row
-              label="Sign-in method"
+              label="วิธีเข้าสู่ระบบ"
               value={
-                <span className="capitalize">
-                  {user.provider === AuthProvider.Google ? "Google" : "Email / Password"}
+                <span>
+                  {user.provider === AuthProvider.Google ? "Google" : "อีเมล / รหัสผ่าน"}
                 </span>
               }
             />
             <Row
-              label="Member since"
-              value={profile.user.createdAt.toLocaleDateString("en-GB", {
+              label="สมาชิกตั้งแต่"
+              value={profile.user.createdAt.toLocaleDateString("th-TH", {
                 day: "numeric",
                 month: "long",
                 year: "numeric",
@@ -72,7 +76,7 @@ export default async function AccountPage() {
         {profile.user.role === Role.Requester && (
           <Card>
             <CardHeader>
-              <CardTitle>Credits</CardTitle>
+              <CardTitle>เครดิต</CardTitle>
             </CardHeader>
             {profile.wallet ? (
               <div className="flex items-center gap-4">
@@ -81,15 +85,15 @@ export default async function AccountPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-slate-900">
-                    {profile.wallet.balance} credit{profile.wallet.balance !== 1 ? "s" : ""}
+                    {profile.wallet.balance} เครดิต
                   </p>
                   <p className="text-sm text-slate-500">
-                    Each clip request costs 10 credits.
+                    คำขอคลิปแต่ละรายการใช้ 10 เครดิต
                   </p>
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-slate-500">No wallet found.</p>
+              <p className="text-sm text-slate-500">ไม่พบกระเป๋าเครดิต</p>
             )}
           </Card>
         )}
@@ -97,10 +101,10 @@ export default async function AccountPage() {
         {/* Legal acceptances */}
         <Card>
           <CardHeader>
-            <CardTitle>Policy Acceptances</CardTitle>
+            <CardTitle>การยอมรับนโยบาย</CardTitle>
           </CardHeader>
           {profile.acceptances.length === 0 ? (
-            <p className="text-sm text-slate-500">No policy acceptances on record.</p>
+            <p className="text-sm text-slate-500">ไม่มีประวัติการยอมรับนโยบาย</p>
           ) : (
             <div className="flex flex-col divide-y divide-slate-100">
               {policyTypes.map((policyType) => {
@@ -116,24 +120,24 @@ export default async function AccountPage() {
                     <div>
                       <p className="text-sm font-medium text-slate-700">
                         {policyType === PolicyType.TermsOfService
-                          ? "Terms of Service"
-                          : "Privacy Policy (incl. Ownership & Storage)"}
+                          ? "ข้อกำหนดการใช้งาน"
+                          : "นโยบายความเป็นส่วนตัว (รวมสิทธิ์และการจัดเก็บ)"}
                       </p>
                       {acceptance && (
                         <p className="text-xs text-slate-400">
-                          Accepted v{acceptance.policyVersion} on{" "}
-                          {acceptance.acceptedAt.toLocaleDateString()}
+                          ยอมรับเวอร์ชัน {acceptance.policyVersion} เมื่อ{" "}
+                          {acceptance.acceptedAt.toLocaleDateString("th-TH")}
                         </p>
                       )}
                     </div>
                     {acceptance ? (
                       acceptance.policyVersion === currentVersion ? (
-                        <Badge variant="green">Current</Badge>
+                        <Badge variant="green">เป็นปัจจุบัน</Badge>
                       ) : (
-                        <Badge variant="yellow">Update needed</Badge>
+                        <Badge variant="yellow">ต้องอัปเดต</Badge>
                       )
                     ) : (
-                      <Badge variant="red">Not accepted</Badge>
+                      <Badge variant="red">ยังไม่ยอมรับ</Badge>
                     )}
                   </div>
                 );
@@ -145,8 +149,8 @@ export default async function AccountPage() {
         {/* Placeholder: Profile edit */}
         <Card className="border-dashed">
           <p className="text-sm font-medium text-slate-500">
-            Profile editing, password change, and connected account management
-            will be available in a future update.
+            การแก้ไขโปรไฟล์ การเปลี่ยนรหัสผ่าน และการจัดการบัญชีที่เชื่อมต่อ
+            จะพร้อมใช้งานในอัปเดตถัดไป
           </p>
         </Card>
 

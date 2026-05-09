@@ -1,6 +1,7 @@
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform } from "@/domain/enums/Platform";
 import { EffortClass } from "@/domain/enums/EffortClass";
+import { EditorType } from "@/domain/enums/EditorType";
 
 /**
  * Core clip request entity.
@@ -67,27 +68,45 @@ export interface ClipRequest {
   // Credits
   creditsCost: number;
 
+  // ── Marketplace fields ─────────────────────────────────────────────────────
+
+  /** EditorProfile.id of the selected editor (AI or human). Set at checkout. */
+  assignedEditorId: string | null;
+
+  /** Whether this request is routed to the AI pipeline or a human editor. */
+  editorType: EditorType | null;
+
+  /** Base price in ฿ shown on the editor card at the time of booking. */
+  priceBaht: number;
+
+  /** Number of credits applied as a discount at checkout (1 credit = ฿10 off). */
+  creditsUsed: number;
+
+  /** ฿ discount amount (creditsUsed × CREDIT_TO_BAHT_VALUE). */
+  discountBaht: number;
+
+  /** Actual ฿ charged after discount (priceBaht - discountBaht). */
+  amountPaidBaht: number;
+
+  /** Number of revision requests the requester has made after delivery. */
+  revisionCount: number;
+
   // Timestamps
   submittedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 
-  // ── Staff-only fields (Phase 2C) ──────────────────────────────────────────
-  // These fields are managed by staff and NEVER exposed directly to requesters.
+  // ── Staff/Editor-only fields ───────────────────────────────────────────────
 
   /**
    * Staff-assigned effort classification.
-   * Set at acceptance. Used for due date estimation and capacity planning.
    * TODO: PostgreSQL — `effort_class` TEXT NULLABLE on clip_requests table.
    */
   effortClass?: EffortClass | null;
 
   /**
-   * The staff member who accepted and owns this request.
-   * Set when staff accepts (Submitted/Rejected → Editing).
-   * Cleared when the request is rejected or resumed from hold.
-   * While set, only the assigned staff (or admin) can perform workflow actions.
-   * TODO: PostgreSQL — `assigned_staff_id` TEXT NULLABLE FK → users.id
+   * @deprecated Use assignedEditorId instead.
+   * Kept for backward compatibility with existing staff workflow services.
    */
   assignedStaffId?: string | null;
 }

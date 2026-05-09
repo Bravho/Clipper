@@ -63,7 +63,8 @@ export async function PUT(
 /**
  * DELETE /api/requests/[id]
  *
- * Delete a draft request. Only allowed while status is Draft.
+ * Cancel a request. Allowed for Draft and Submitted statuses.
+ * Credits are refunded automatically for Submitted requests.
  */
 export async function DELETE(
   _request: Request,
@@ -81,17 +82,17 @@ export async function DELETE(
   }
 
   try {
-    await clipRequestService.deleteDraft(id, session.user.id);
+    await clipRequestService.cancelRequest(id, session.user.id);
     return NextResponse.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error.";
     if (message === "Request not found." || message === "Access denied.") {
       return NextResponse.json({ error: message }, { status: 404 });
     }
-    if (message.includes("Only Draft")) {
+    if (message.startsWith("Only")) {
       return NextResponse.json({ error: message }, { status: 409 });
     }
     console.error("[DELETE /api/requests/[id]]", err);
-    return NextResponse.json({ error: "Failed to delete request." }, { status: 500 });
+    return NextResponse.json({ error: "Failed to cancel request." }, { status: 500 });
   }
 }

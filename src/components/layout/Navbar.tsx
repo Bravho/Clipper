@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useSession, signOut } from "next-auth/react";
 import { useState } from "react";
 import { clsx } from "clsx";
@@ -34,11 +35,12 @@ export function Navbar() {
         <div className="flex h-16 items-center justify-between">
           {/* Logo */}
           <Link href={ROUTES.HOME} className="flex items-center gap-2">
+            <Image src="/logo.png" alt="RClipper logo" width={36} height={36} className="rounded" />
             <span className="text-xl font-bold tracking-tight text-white">
-              Clipper
+              RClipper
             </span>
             <span className="hidden rounded bg-blue-600 px-1.5 py-0.5 text-xs font-semibold text-white sm:block">
-              Platform
+              Thailand
             </span>
           </Link>
 
@@ -50,13 +52,13 @@ export function Navbar() {
                   href={dashboardHref}
                   className="text-sm text-slate-300 hover:text-white"
                 >
-                  Dashboard
+                  แดชบอร์ด
                 </Link>
                 <Link
                   href={ROUTES.ACCOUNT}
                   className="text-sm text-slate-300 hover:text-white"
                 >
-                  Account
+                  บัญชีของฉัน
                 </Link>
                 <div className="flex items-center gap-3 pl-4 border-l border-slate-700">
                   <Badge variant={roleBadgeVariant[user.role]}>
@@ -71,7 +73,7 @@ export function Navbar() {
                     onClick={() => signOut({ callbackUrl: ROUTES.HOME })}
                     className="border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
                   >
-                    Sign out
+                    ออกจากระบบ
                   </Button>
                 </div>
               </>
@@ -81,10 +83,10 @@ export function Navbar() {
                   href={ROUTES.LOGIN}
                   className="text-sm text-slate-300 hover:text-white"
                 >
-                  Sign in
+                  เข้าสู่ระบบ
                 </Link>
                 <Link href={ROUTES.SIGNUP}>
-                  <Button size="sm">Get started</Button>
+                  <Button size="sm">เริ่มต้นใช้งาน</Button>
                 </Link>
               </>
             )}
@@ -114,25 +116,25 @@ export function Navbar() {
             <div className="flex flex-col gap-3">
               <span className="text-sm text-slate-400">{user.name}</span>
               <Link href={dashboardHref} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                Dashboard
+                แดชบอร์ด
               </Link>
               <Link href={ROUTES.ACCOUNT} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                Account
+                บัญชีของฉัน
               </Link>
               <button
                 onClick={() => signOut({ callbackUrl: ROUTES.HOME })}
                 className="text-left text-sm text-red-400 hover:text-red-300"
               >
-                Sign out
+                ออกจากระบบ
               </button>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
               <Link href={ROUTES.LOGIN} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                Sign in
+                เข้าสู่ระบบ
               </Link>
               <Link href={ROUTES.SIGNUP} className="text-sm text-blue-400" onClick={() => setMobileOpen(false)}>
-                Create account
+                เริ่มต้นใช้งาน
               </Link>
             </div>
           )}

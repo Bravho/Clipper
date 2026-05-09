@@ -7,8 +7,8 @@ import { Role } from "@/domain/enums/Role";
 import { LoginForm } from "@/features/auth/components/LoginForm";
 
 export const metadata: Metadata = {
-  title: "Sign in",
-  description: "Sign in to your Clipper account.",
+  title: "เข้าสู่ระบบ",
+  description: "เข้าสู่ระบบบัญชี RClipper ของคุณ",
 };
 
 export default async function LoginPage({
@@ -25,9 +25,9 @@ export default async function LoginPage({
     <div className="flex min-h-[calc(100vh-128px)] items-center justify-center px-4 py-12">
       <div className="auth-card">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-slate-900">Welcome back</h1>
+          <h1 className="text-2xl font-bold text-slate-900">ยินดีต้อนรับกลับ</h1>
           <p className="mt-2 text-sm text-slate-500">
-            Sign in with the same account you used to register.
+            เข้าสู่ระบบด้วยบัญชีที่คุณสมัครไว้
           </p>
         </div>
 
@@ -41,15 +41,14 @@ export default async function LoginPage({
 
         <div className="mt-6 border-t border-slate-200 pt-4">
           <p className="text-center text-xs text-slate-400">
-            By signing in, you agree to our{" "}
+            การเข้าสู่ระบบถือว่าคุณยอมรับ{" "}
             <a href={ROUTES.TERMS} className="underline hover:text-slate-600">
-              Terms of Service
+              ข้อกำหนดการใช้งาน
             </a>{" "}
-            and{" "}
+            และ{" "}
             <a href={ROUTES.PRIVACY} className="underline hover:text-slate-600">
-              Privacy Policy
+              นโยบายความเป็นส่วนตัว
             </a>
-            .
           </p>
         </div>
       </div>

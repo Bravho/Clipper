@@ -32,12 +32,15 @@ Your task is to analyse uploaded images and a brief description, then produce a 
 
 Requirements:
 - Script structure: [3s hook] + [10s main content] + [2s call-to-action]
-- The first 3 seconds (hook) MUST stop the viewer from scrolling. Use the most surprising, emotionally engaging, or curiosity-inducing element available.
+- The first 3 seconds (hook) draw attention from the viewer from scrolling to show what is the best value this content to provide to benefit the viewer. Use the most surprising, emotionally engaging, or curiosity-inducing element available.
 - Spoken language: Thai only. English is only for the subtitle overlay translation.
 - Thai script: natural spoken Thai, ~40-50 words, fits comfortably within 15 seconds.
 - English script: faithful translation of the Thai script for bilingual subtitle overlay.
 - Captions: platform post captions with hashtags in three languages (Thai, English, Simplified Chinese).
 - Scene plan: break the video into ~3 scenes whose total duration equals 15 seconds.
+- Scene descriptions: provide both a Thai version and an English version for each scene's visual description and motion notes.
+- Target audience is provided for THEME and STYLE reference only. Do NOT mention, address, or reference the target audience in the script, hook, captions, scene descriptions, or any spoken or visible content. Use it solely to inform visual tone, energy level, and creative direction.
+- CRITICAL — product accuracy: Only reference, describe, or feature products, items, and details that are visibly present in the uploaded images. Do NOT invent, assume, or include any product, feature, colour, brand, or claim that cannot be directly verified from the provided images. Scripts and scene descriptions that mention unverifiable products will be rejected.
 
 Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
 
@@ -47,9 +50,11 @@ Schema:
     {
       "sceneNumber": 1,
       "durationSeconds": 5,
-      "visualDescription": "string",
+      "visualDescription": "string (English)",
+      "visualDescriptionThai": "string (Thai)",
       "imageIndexes": [0],
-      "motionNotes": "string"
+      "motionNotes": "string (English)",
+      "motionNotesThai": "string (Thai)"
     }
   ],
   "scriptThai": "string",
@@ -65,7 +70,7 @@ Schema:
 function buildUserPrompt(params: GenerateContentParams): string {
   return [
     `Video description: ${params.description}`,
-    `Target audience: ${params.targetAudience}`,
+    `Target audience (for theme/style reference only — do not include in script or scene content): ${params.targetAudience}`,
     `Target platforms: ${params.targetPlatforms.join(", ")}`,
     `Preferred style/tone: ${params.preferredStyle}`,
     `Duration: ${params.videoDurationSeconds ?? 15} seconds`,

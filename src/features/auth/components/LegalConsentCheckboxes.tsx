@@ -18,11 +18,6 @@ interface LegalConsentCheckboxesProps {
   };
 }
 
-/**
- * Legal consent checkboxes shown on the signup form.
- * Intentionally a controlled or ref-based component — the parent
- * form (react-hook-form or state) owns the values.
- */
 export function LegalConsentCheckboxes({
   errors = {},
   onChange,
@@ -36,7 +31,7 @@ export function LegalConsentCheckboxes({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-        Required agreements
+        ข้อตกลงที่จำเป็น
       </p>
 
       <Checkbox
@@ -47,13 +42,13 @@ export function LegalConsentCheckboxes({
         error={errors.acceptTerms}
         label={
           <>
-            I agree to the{" "}
+            ฉันยอมรับ{" "}
             <Link
               href={ROUTES.TERMS}
               target="_blank"
               className="text-blue-700 underline hover:text-blue-800"
             >
-              Terms of Service
+              ข้อกำหนดการใช้งาน
             </Link>
           </>
         }
@@ -67,16 +62,16 @@ export function LegalConsentCheckboxes({
         error={errors.acceptOwnership}
         label={
           <>
-            I acknowledge the{" "}
+            ฉันรับทราบ{" "}
             <Link
               href={ROUTES.OWNERSHIP}
               target="_blank"
               className="text-blue-700 underline hover:text-blue-800"
             >
-              Ownership and Usage Rights
+              นโยบายสิทธิ์ความเป็นเจ้าของ
             </Link>{" "}
-            policy. I understand that the final edited clip belongs to the
-            platform operator, and I may reshare it on my own channels.
+            และเข้าใจว่าคลิปที่ตัดต่อแล้วเป็นของผู้ดำเนินการแพลตฟอร์ม
+            โดยฉันสามารถแชร์ต่อบนช่องทางของตนเองได้
           </>
         }
       />
@@ -89,13 +84,13 @@ export function LegalConsentCheckboxes({
         error={errors.acceptPrivacy}
         label={
           <>
-            I have read and accept the{" "}
+            ฉันได้อ่านและยอมรับ{" "}
             <Link
               href={ROUTES.PRIVACY}
               target="_blank"
               className="text-blue-700 underline hover:text-blue-800"
             >
-              Privacy Policy
+              นโยบายความเป็นส่วนตัว
             </Link>
           </>
         }
@@ -109,16 +104,15 @@ export function LegalConsentCheckboxes({
         error={errors.acceptStorage}
         label={
           <>
-            I understand that uploaded source files are retained only according
-            to the platform's{" "}
+            ฉันเข้าใจว่าไฟล์ต้นฉบับที่อัพโหลดจะถูกเก็บตาม{" "}
             <Link
               href={ROUTES.PRIVACY}
               target="_blank"
               className="text-blue-700 underline hover:text-blue-800"
             >
-              Storage and Retention policy
+              นโยบายการจัดเก็บข้อมูล
             </Link>{" "}
-            and may be deleted after 90 days.
+            และอาจถูกลบหลังจาก 90 วัน
           </>
         }
       />

@@ -7,6 +7,7 @@ import {
 } from "@/domain/models/ClipRequest";
 import { RequestStatus, ACTIVE_STATUSES } from "@/domain/enums/RequestStatus";
 import { CREDITS_CONFIG } from "@/config/credits";
+import { EditorType } from "@/domain/enums/EditorType";
 
 // TODO: PostgreSQL — replace this entire class with PostgresClipRequestRepository.
 //   The interface contract (IClipRequestRepository) stays the same.
@@ -50,6 +51,23 @@ export class MockClipRequestRepository implements IClipRequestRepository {
   ): Promise<ClipRequest[]> {
     return [...this.store.values()]
       .filter((r) => r.userId === userId && statuses.includes(r.status))
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  }
+
+  // ── Editor queries ──────────────────────────────────────────────────────────
+
+  async findByEditorId(editorId: string): Promise<ClipRequest[]> {
+    return [...this.store.values()]
+      .filter((r) => r.assignedEditorId === editorId)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  }
+
+  async findByEditorIdAndStatus(
+    editorId: string,
+    statuses: RequestStatus[]
+  ): Promise<ClipRequest[]> {
+    return [...this.store.values()]
+      .filter((r) => r.assignedEditorId === editorId && statuses.includes(r.status))
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   }
 
@@ -130,11 +148,19 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       creditConfirmed: false,
       rightsConfirmed: false,
       creditsCost: CREDITS_CONFIG.REQUEST_COST_CREDITS,
+      // Marketplace fields
+      assignedEditorId: null,
+      editorType: null,
+      priceBaht: 0,
+      creditsUsed: 0,
+      discountBaht: 0,
+      amountPaidBaht: 0,
+      revisionCount: 0,
       submittedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-      // Staff fields — initialized to null
       effortClass: null,
+      assignedStaffId: null,
     };
     this.store.set(request.id, request);
     return { ...request };

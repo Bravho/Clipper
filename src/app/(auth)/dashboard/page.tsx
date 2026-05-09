@@ -9,9 +9,11 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
+import { CancelRequestButton } from "@/features/requests/components/CancelRequestButton";
+import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { CREDITS_CONFIG } from "@/config/credits";
 
-export const metadata: Metadata = { title: "Dashboard — RClipper" };
+export const metadata: Metadata = { title: "แดชบอร์ด — RClipper" };
 
 export default async function DashboardPage() {
   const user = await requireRole(Role.Requester);
@@ -25,15 +27,15 @@ export default async function DashboardPage() {
       <div className="mb-8 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            Welcome back, {user.name.split(" ")[0]}
+            ยินดีต้อนรับกลับ, {user.name.split(" ")[0]}
           </h1>
           <p className="mt-1 text-slate-500">
-            Manage your clip requests and track their progress.
+            จัดการคำขอคลิปและติดตามความคืบหน้าของคุณ
           </p>
         </div>
         <Link href={ROUTES.REQUESTS_NEW}>
           <Button disabled={!canAfford}>
-            + New Request
+            + คำขอใหม่
           </Button>
         </Link>
       </div>
@@ -46,11 +48,11 @@ export default async function DashboardPage() {
           </div>
           <div>
             <p className="font-semibold text-blue-900">
-              {summary.creditBalance} credit{summary.creditBalance !== 1 ? "s" : ""}
+              {summary.creditBalance} เครดิต
             </p>
             <Link href={ROUTES.CREDITS}>
               <p className="text-sm text-blue-700 hover:underline cursor-pointer">
-                View credit history →
+                ดูประวัติเครดิต →
               </p>
             </Link>
           </div>
@@ -60,7 +62,7 @@ export default async function DashboardPage() {
           <p className="text-3xl font-bold text-slate-900">
             {summary.activeRequestCount}
           </p>
-          <p className="mt-1 text-sm text-slate-500">Active requests</p>
+          <p className="mt-1 text-sm text-slate-500">คำขอที่กำลังดำเนินการ</p>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5">
@@ -68,12 +70,12 @@ export default async function DashboardPage() {
             {summary.draftCount}
           </p>
           <p className="mt-1 text-sm text-slate-500">
-            Draft{summary.draftCount !== 1 ? "s" : ""} in progress
+            แบบร่างที่ยังไม่เสร็จ
           </p>
           {summary.draftCount > 0 && (
             <Link href={ROUTES.REQUESTS}>
               <p className="mt-1 text-xs text-blue-600 hover:underline cursor-pointer">
-                Continue drafts →
+                ดำเนินการต่อ →
               </p>
             </Link>
           )}
@@ -84,11 +86,11 @@ export default async function DashboardPage() {
       {!canAfford && (
         <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 p-4">
           <p className="text-sm font-medium text-yellow-800">
-            You have {summary.creditBalance} credit{summary.creditBalance !== 1 ? "s" : ""} remaining —
-            not enough to submit a new request ({CREDITS_CONFIG.REQUEST_COST_CREDITS} credits needed).
+            คุณมีเครดิตคงเหลือ {summary.creditBalance} เครดิต —
+            ไม่เพียงพอสำหรับการส่งคำขอใหม่ (ต้องการ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต)
           </p>
           <p className="mt-1 text-sm text-yellow-700">
-            Please contact support if you need additional credits.
+            กรุณาติดต่อฝ่ายสนับสนุนหากต้องการเครดิตเพิ่มเติม
           </p>
         </div>
       )}
@@ -96,20 +98,20 @@ export default async function DashboardPage() {
       {/* Active Requests */}
       <div className="mb-8">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-slate-900">Active Requests</h2>
+          <h2 className="text-base font-semibold text-slate-900">คำขอที่กำลังดำเนินการ</h2>
           <Link href={ROUTES.REQUESTS} className="text-sm text-blue-600 hover:underline">
-            View all →
+            ดูทั้งหมด →
           </Link>
         </div>
 
         {summary.activeRequests.length === 0 ? (
           <Card>
             <div className="text-center py-6">
-              <p className="text-slate-500 text-sm">No active requests right now.</p>
+              <p className="text-slate-500 text-sm">ไม่มีคำขอที่กำลังดำเนินการขณะนี้</p>
               {canAfford ? (
                 <Link href={ROUTES.REQUESTS_NEW}>
                   <Button className="mt-4" variant="outline" size="sm">
-                    Submit your first request
+                    ส่งคำขอแรกของคุณ
                   </Button>
                 </Link>
               ) : null}
@@ -117,29 +119,37 @@ export default async function DashboardPage() {
           </Card>
         ) : (
           <div className="flex flex-col gap-3">
-            {summary.activeRequests.map((req) => (
-              <Link key={req.id} href={requestDetailPath(req.id)}>
-                <Card className="cursor-pointer transition-shadow hover:shadow-md">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-slate-900 truncate">{req.title}</p>
-                      <p className="mt-0.5 text-xs text-slate-400">
-                        {req.statusPresentation.description}
-                      </p>
-                      {req.queueDisplay.show && (
-                        <p className="mt-1 text-xs text-slate-500">
-                          {req.queueDisplay.message}
+            {summary.activeRequests.map((req) => {
+              const cancellable =
+                req.status === RequestStatus.Draft ||
+                req.status === RequestStatus.Submitted;
+              return (
+                <Link key={req.id} href={requestDetailPath(req.id)}>
+                  <Card className="cursor-pointer transition-shadow hover:shadow-md">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-slate-900 truncate">{req.title}</p>
+                        <p className="mt-0.5 text-xs text-slate-400">
+                          {req.statusPresentation.description}
                         </p>
-                      )}
+                        {req.queueDisplay.show && (
+                          <p className="mt-1 text-xs text-slate-500">
+                            {req.queueDisplay.message}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                        <RequestStatusBadge status={req.status} />
+                        <DueDateDisplay display={req.dueDateDisplay} />
+                        {cancellable && (
+                          <CancelRequestButton requestId={req.id} status={req.status} />
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                      <RequestStatusBadge status={req.status} />
-                      <DueDateDisplay display={req.dueDateDisplay} />
-                    </div>
-                  </div>
-                </Card>
-              </Link>
-            ))}
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>
@@ -148,7 +158,7 @@ export default async function DashboardPage() {
       {summary.recentlyDelivered.length > 0 && (
         <div className="mb-8">
           <h2 className="mb-4 text-base font-semibold text-slate-900">
-            Recently Delivered
+            ส่งมอบล่าสุด
           </h2>
           <div className="flex flex-col gap-3">
             {summary.recentlyDelivered.map((row) => (
@@ -158,8 +168,8 @@ export default async function DashboardPage() {
                     <div>
                       <p className="font-medium text-slate-900">{row.title}</p>
                       <p className="text-xs text-slate-400">
-                        Delivered{" "}
-                        {row.deliveredAt.toLocaleDateString("en-GB", {
+                        ส่งมอบเมื่อ{" "}
+                        {row.deliveredAt.toLocaleDateString("th-TH", {
                           day: "numeric",
                           month: "short",
                           year: "numeric",
@@ -167,9 +177,9 @@ export default async function DashboardPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant="green">Delivered</Badge>
+                      <Badge variant="green">ส่งมอบแล้ว</Badge>
                       <span className="text-xs text-slate-500">
-                        {row.linkCount} link{row.linkCount !== 1 ? "s" : ""}
+                        {row.linkCount} ลิงก์
                       </span>
                     </div>
                   </div>
@@ -184,30 +194,29 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader padding="none">
-            <CardTitle className="text-sm">Pricing & Credits</CardTitle>
+            <CardTitle className="text-sm">ราคาและเครดิต</CardTitle>
             <CardDescription>
-              Each around-10-seconds clip request costs {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits.
-              You received {CREDITS_CONFIG.SIGNUP_BONUS_CREDITS} free credits when you signed up.
+              คำขอคลิปแต่ละรายการใช้ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
+              คุณได้รับ {CREDITS_CONFIG.SIGNUP_BONUS_CREDITS} เครดิตฟรีเมื่อสมัครสมาชิก
             </CardDescription>
           </CardHeader>
           <Link href={ROUTES.CREDITS}>
             <p className="mt-3 text-xs text-blue-600 hover:underline cursor-pointer">
-              View credit history →
+              ดูประวัติเครดิต →
             </p>
           </Link>
         </Card>
 
         <Card>
           <CardHeader padding="none">
-            <CardTitle className="text-sm">Ownership & Usage</CardTitle>
+            <CardTitle className="text-sm">สิทธิ์ความเป็นเจ้าของ</CardTitle>
             <CardDescription>
-              Final edited clips belong to RClipper. You are free to repost and
-              share delivered clips on your own channels.
+              คลิปที่ตัดต่อแล้วเป็นของ RClipper คุณสามารถแชร์และโพสต์คลิปที่ส่งมอบแล้วบนช่องทางของคุณเองได้
             </CardDescription>
           </CardHeader>
           <Link href={ROUTES.LEGAL}>
             <p className="mt-3 text-xs text-blue-600 hover:underline cursor-pointer">
-              Read full policy →
+              อ่านนโยบายฉบับเต็ม →
             </p>
           </Link>
         </Card>

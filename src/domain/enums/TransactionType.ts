@@ -9,6 +9,8 @@
 export enum TransactionType {
   SignupBonus = "signup_bonus",
   RequestCharge = "request_charge",
+  RequestRefund = "request_refund",
   AdminCredit = "admin_credit",
   AdminDebit = "admin_debit",
+  DiscountApplied = "discount_applied",
 }
