@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import { Button } from "@/components/ui/Button";
@@ -14,6 +14,7 @@ interface Props {
 
 export function VideoReviewPanel({ requestId, job, baseVideoAsset }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [backToStep, setBackToStep] = useState<"video" | "content">("video");
   const [loading, setLoading] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export function VideoReviewPanel({ requestId, job, baseVideoAsset }: Props) {
         body: JSON.stringify({ jobId: job.id }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -46,7 +47,7 @@ export function VideoReviewPanel({ requestId, job, baseVideoAsset }: Props) {
         body: JSON.stringify({ jobId: job.id, backToStep }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {

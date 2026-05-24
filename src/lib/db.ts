@@ -20,7 +20,7 @@ const pool = new Pool({
   // Keep connection pool small — Next.js runs many serverless-like workers
   max: 10,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
+  connectionTimeoutMillis: 15_000, // 15 s — allows cloud DBs (Neon/Supabase) time to wake from pause
 });
 
 export { pool };

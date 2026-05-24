@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import { Button } from "@/components/ui/Button";
@@ -15,6 +15,7 @@ interface Props {
 
 export function VoiceComparisonPanel({ requestId, job, voiceRecording, processedVoice }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [loading, setLoading] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,7 +32,7 @@ export function VoiceComparisonPanel({ requestId, job, voiceRecording, processed
         }
       );
       if (!res.ok) throw new Error((await res.json()).error);
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -43,8 +44,7 @@ export function VoiceComparisonPanel({ requestId, job, voiceRecording, processed
     <div className="space-y-6">
       <h2 className="text-lg font-semibold">Step 3 — Review Voice Conversion</h2>
       <p className="text-sm text-gray-500">
-        Compare the original recording with the ElevenLabs professional voice. Approve if the
-        tone and timing match the script, or re-record if the source audio needs to be redone.
+        ฟังเสียงที่แปลงผ่าน RVC แล้ว อนุมัติหากโทนและจังหวะเหมาะสม หรือบันทึกใหม่หากต้องการแก้ไข
       </p>
 
       <div className="grid grid-cols-2 gap-4">
@@ -60,7 +60,7 @@ export function VoiceComparisonPanel({ requestId, job, voiceRecording, processed
         </div>
         <div className="space-y-2">
           <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">
-            Professional Voice (ElevenLabs)
+            เสียงที่แปลงแล้ว (RVC)
           </p>
           {processedVoice ? (
             <audio src={processedVoice.storageUrl} controls className="w-full" />

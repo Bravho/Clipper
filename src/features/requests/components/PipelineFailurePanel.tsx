@@ -1,20 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 const FAILED_STEP_LABELS: Partial<Record<VideoGenerationStep, string>> = {
   [VideoGenerationStep.AnalyzingContent]:    "การวิเคราะห์เนื้อหา (AI)",
   [VideoGenerationStep.GeneratingBaseVideo]: "การสร้างวิดีโอ (Kling AI)",
-  [VideoGenerationStep.ProcessingVoice]:     "การประมวลผลเสียง (ElevenLabs)",
+  [VideoGenerationStep.ProcessingVoice]:     "การประมวลผลเสียง (RVC)",
   [VideoGenerationStep.ComposingFinalVideo]: "การตัดต่อวิดีโอ (FFmpeg)",
 };
 
 interface EditedScene {
-  visualDescription: string;
-  motionNotes: string;
+  visualDescriptionThai: string;
 }
 
 interface Props {
@@ -23,9 +22,7 @@ interface Props {
   failedAtStep: VideoGenerationStep | null;
   scenePlan: ScenePlan[];
   scriptThai: string | null;
-  scriptEnglish: string | null;
   hookThai: string | null;
-  hookEnglish: string | null;
 }
 
 export function PipelineFailurePanel({
@@ -34,23 +31,19 @@ export function PipelineFailurePanel({
   failedAtStep,
   scenePlan,
   scriptThai,
-  scriptEnglish,
   hookThai,
-  hookEnglish,
 }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isRetrying, setIsRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
 
   const [editedHookThai, setEditedHookThai] = useState(hookThai ?? "");
-  const [editedHookEnglish, setEditedHookEnglish] = useState(hookEnglish ?? "");
   const [editedScriptThai, setEditedScriptThai] = useState(scriptThai ?? "");
-  const [editedScriptEnglish, setEditedScriptEnglish] = useState(scriptEnglish ?? "");
   const [editedScenes, setEditedScenes] = useState<EditedScene[]>(
     scenePlan.map((s) => ({
-      visualDescription: s.visualDescription,
-      motionNotes: s.motionNotes ?? "",
+      visualDescriptionThai: s.visualDescriptionThai ?? s.visualDescription ?? "",
     }))
   );
 
@@ -67,13 +60,10 @@ export function PipelineFailurePanel({
 
   const handleCancelEdit = () => {
     setEditedHookThai(hookThai ?? "");
-    setEditedHookEnglish(hookEnglish ?? "");
     setEditedScriptThai(scriptThai ?? "");
-    setEditedScriptEnglish(scriptEnglish ?? "");
     setEditedScenes(
       scenePlan.map((s) => ({
-        visualDescription: s.visualDescription,
-        motionNotes: s.motionNotes ?? "",
+        visualDescriptionThai: s.visualDescriptionThai ?? s.visualDescription ?? "",
       }))
     );
     setIsEditing(false);
@@ -83,16 +73,12 @@ export function PipelineFailurePanel({
     setIsRetrying(true);
     setRetryError(null);
     try {
-      const hasContent =
-        hookThai !== null || hookEnglish !== null || scenePlan.length > 0 ||
-        scriptThai !== null || scriptEnglish !== null;
+      const hasContent = hookThai !== null || scenePlan.length > 0 || scriptThai !== null;
 
       const editedContent = hasContent
         ? {
             hookThai: hookThai !== null ? editedHookThai : null,
-            hookEnglish: hookEnglish !== null ? editedHookEnglish : null,
             scriptThai: scriptThai !== null ? editedScriptThai : null,
-            scriptEnglish: scriptEnglish !== null ? editedScriptEnglish : null,
             scenes: editedScenes,
           }
         : undefined;
@@ -106,16 +92,14 @@ export function PipelineFailurePanel({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ไม่สามารถลองอีกครั้งได้");
       }
-      router.refresh();
+      router.push(pathname);
     } catch (err) {
       setRetryError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
       setIsRetrying(false);
     }
   };
 
-  const hasContent =
-    hookThai !== null || hookEnglish !== null || scenePlan.length > 0 ||
-    scriptThai !== null || scriptEnglish !== null;
+  const hasContent = hookThai !== null || scenePlan.length > 0 || scriptThai !== null;
 
   return (
     <div className="mb-6 flex flex-col gap-4">
@@ -154,39 +138,19 @@ export function PipelineFailurePanel({
           </div>
 
           {/* Hook */}
-          {(hookThai !== null || hookEnglish !== null) && (
+          {hookThai !== null && (
             <div className="mb-4">
               <p className="mb-1 text-xs font-medium text-slate-400">ฮุค (3 วินาทีแรก)</p>
               {isEditing ? (
-                <div className="flex flex-col gap-2">
-                  {hookThai !== null && (
-                    <textarea
-                      value={editedHookThai}
-                      onChange={(e) => setEditedHookThai(e.target.value)}
-                      rows={2}
-                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none resize-none"
-                      placeholder="ฮุคภาษาไทย"
-                    />
-                  )}
-                  {hookEnglish !== null && (
-                    <textarea
-                      value={editedHookEnglish}
-                      onChange={(e) => setEditedHookEnglish(e.target.value)}
-                      rows={2}
-                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs italic text-slate-600 focus:border-blue-500 focus:outline-none resize-none"
-                      placeholder="Hook in English"
-                    />
-                  )}
-                </div>
+                <textarea
+                  value={editedHookThai}
+                  onChange={(e) => setEditedHookThai(e.target.value)}
+                  rows={2}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none resize-none"
+                  placeholder="ฮุคภาษาไทย"
+                />
               ) : (
-                <>
-                  {hookThai !== null && (
-                    <p className="text-sm text-slate-800">{editedHookThai}</p>
-                  )}
-                  {hookEnglish !== null && (
-                    <p className="mt-0.5 text-xs italic text-slate-500">{editedHookEnglish}</p>
-                  )}
-                </>
+                <p className="text-sm text-slate-800">{editedHookThai}</p>
               )}
             </div>
           )}
@@ -208,33 +172,17 @@ export function PipelineFailurePanel({
                       <span className="text-xs text-slate-400">{scene.durationSeconds} วินาที</span>
                     </div>
                     {isEditing ? (
-                      <div className="flex flex-col gap-1.5">
-                        <textarea
-                          value={editedScenes[idx]?.visualDescription ?? ""}
-                          onChange={(e) => handleSceneChange(idx, "visualDescription", e.target.value)}
-                          rows={3}
-                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none resize-none"
-                          placeholder="Visual description"
-                        />
-                        <textarea
-                          value={editedScenes[idx]?.motionNotes ?? ""}
-                          onChange={(e) => handleSceneChange(idx, "motionNotes", e.target.value)}
-                          rows={1}
-                          className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-500 focus:border-blue-500 focus:outline-none resize-none"
-                          placeholder="Motion notes (optional)"
-                        />
-                      </div>
+                      <textarea
+                        value={editedScenes[idx]?.visualDescriptionThai ?? ""}
+                        onChange={(e) => handleSceneChange(idx, "visualDescriptionThai", e.target.value)}
+                        rows={3}
+                        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none resize-none"
+                        placeholder="คำอธิบายภาพ"
+                      />
                     ) : (
-                      <>
-                        <p className="text-sm text-slate-700">
-                          {editedScenes[idx]?.visualDescription ?? scene.visualDescription}
-                        </p>
-                        {(editedScenes[idx]?.motionNotes || scene.motionNotes) && (
-                          <p className="mt-0.5 text-xs text-slate-400">
-                            {editedScenes[idx]?.motionNotes || scene.motionNotes}
-                          </p>
-                        )}
-                      </>
+                      <p className="text-sm text-slate-700">
+                        {editedScenes[idx]?.visualDescriptionThai ?? scene.visualDescriptionThai}
+                      </p>
                     )}
                   </div>
                 ))}
@@ -243,39 +191,19 @@ export function PipelineFailurePanel({
           )}
 
           {/* Script */}
-          {(scriptThai !== null || scriptEnglish !== null) && (
+          {scriptThai !== null && (
             <div>
               <p className="mb-1 text-xs font-medium text-slate-400">บทพูด</p>
               {isEditing ? (
-                <div className="flex flex-col gap-2">
-                  {scriptThai !== null && (
-                    <textarea
-                      value={editedScriptThai}
-                      onChange={(e) => setEditedScriptThai(e.target.value)}
-                      rows={3}
-                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none resize-none"
-                      placeholder="บทพูดภาษาไทย"
-                    />
-                  )}
-                  {scriptEnglish !== null && (
-                    <textarea
-                      value={editedScriptEnglish}
-                      onChange={(e) => setEditedScriptEnglish(e.target.value)}
-                      rows={3}
-                      className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs italic text-slate-600 focus:border-blue-500 focus:outline-none resize-none"
-                      placeholder="Script in English"
-                    />
-                  )}
-                </div>
+                <textarea
+                  value={editedScriptThai}
+                  onChange={(e) => setEditedScriptThai(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none resize-none"
+                  placeholder="บทพูดภาษาไทย"
+                />
               ) : (
-                <>
-                  {scriptThai !== null && (
-                    <p className="text-sm text-slate-800">{editedScriptThai}</p>
-                  )}
-                  {scriptEnglish !== null && (
-                    <p className="mt-1 text-xs italic text-slate-500">{editedScriptEnglish}</p>
-                  )}
-                </>
+                <p className="text-sm text-slate-800">{editedScriptThai}</p>
               )}
             </div>
           )}

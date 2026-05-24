@@ -6,7 +6,7 @@ import {
   UpdateStaffFieldsInput,
 } from "@/domain/models/ClipRequest";
 import { RequestStatus, ACTIVE_STATUSES } from "@/domain/enums/RequestStatus";
-import { CREDITS_CONFIG } from "@/config/credits";
+import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
 import { EditorType } from "@/domain/enums/EditorType";
 
 // TODO: PostgreSQL — replace this entire class with PostgresClipRequestRepository.
@@ -136,6 +136,7 @@ export class MockClipRequestRepository implements IClipRequestRepository {
 
   async create(input: CreateClipRequestInput): Promise<ClipRequest> {
     const request: ClipRequest = {
+      durationSeconds: PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
       ...input,
       id: crypto.randomUUID(),
       status: RequestStatus.Draft,

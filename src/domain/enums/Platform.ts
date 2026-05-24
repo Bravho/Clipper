@@ -56,3 +56,19 @@ export const OPTIONAL_FORM_PLATFORMS: Platform[] = [
   Platform.Instagram,
   Platform.YouTube,
 ];
+
+/**
+ * Maps each platform to its preferred aspect ratio for base video generation.
+ * The requester's #1 priority platform determines which ratio is sent to Kling AI.
+ * Note: aspect_ratio is a text2video parameter; for image2video Kling uses the
+ * input image's native ratio. This mapping drives future image pre-processing and
+ * FFmpeg export priority.
+ */
+export const PLATFORM_ASPECT_RATIOS: Record<Platform, string> = {
+  [Platform.TikTok]: "9:16",
+  [Platform.Facebook]: "16:9",
+  [Platform.Instagram]: "4:5",
+  [Platform.YouTube]: "16:9",
+  [Platform.TventApp]: "9:16",
+  [Platform.CDN]: "16:9",
+};

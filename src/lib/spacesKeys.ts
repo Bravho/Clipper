@@ -105,7 +105,7 @@ export function buildAiVideoKey(userId: string, requestId: string): string {
 }
 
 /**
- * Key for a staff voice recording uploaded for ElevenLabs conversion.
+ * Key for a staff voice recording (RVC-converted in browser before upload).
  * Lifecycle: retained for 8 years.
  */
 export function buildVoiceRecordingKey(
@@ -117,7 +117,7 @@ export function buildVoiceRecordingKey(
 }
 
 /**
- * Key for the ElevenLabs-processed professional voice audio.
+ * Key for the processed voice audio (kept for legacy; not written by RVC flow).
  * Lifecycle: retained for 8 years.
  */
 export function buildProcessedVoiceKey(userId: string, requestId: string): string {

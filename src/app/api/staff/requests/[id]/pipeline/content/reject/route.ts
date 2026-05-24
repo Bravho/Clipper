@@ -58,12 +58,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           currentStep: VideoGenerationStep.AwaitingContentApproval,
           scenePlan: JSON.stringify(output.scenePlan),
           scriptThai: output.scriptThai,
-          scriptEnglish: output.scriptEnglish,
           hookThai: output.hookThai,
-          hookEnglish: output.hookEnglish,
           captionThai: output.captionThai,
-          captionEnglish: output.captionEnglish,
-          captionChinese: output.captionChinese,
         });
       }).catch(async (err) => {
         console.error("ChatGPT regeneration failed:", err);

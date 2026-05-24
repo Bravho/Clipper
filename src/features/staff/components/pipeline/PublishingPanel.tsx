@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { PlatformPublishView } from "@/services/staff/VideoPipelinePresentationService";
 import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import { PublishStatus } from "@/domain/enums/PublishStatus";
@@ -16,6 +16,7 @@ interface Props {
 
 function PlatformCard({ requestId, job, view }: { requestId: string; job: VideoGenerationJob; view: PlatformPublishView }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [caption, setCaption] = useState(view.defaultCaption ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +39,7 @@ function PlatformCard({ requestId, job, view }: { requestId: string; job: VideoG
         }
       );
       if (!res.ok) throw new Error((await res.json()).error);
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Publish failed");
     } finally {

@@ -43,6 +43,7 @@ export interface ClipRequest {
   targetPlatforms: Platform[];
   preferredStyle: string;
   preferredLanguage: string;
+  durationSeconds: number;
 
   // Status
   status: RequestStatus;
@@ -120,6 +121,7 @@ export type CreateClipRequestInput = {
   targetPlatforms: Platform[];
   preferredStyle: string;
   preferredLanguage: string;
+  durationSeconds: number;
 };
 
 /** Input for updating a draft before submission. */
@@ -132,6 +134,7 @@ export type UpdateClipRequestInput = Partial<
     | "targetPlatforms"
     | "preferredStyle"
     | "preferredLanguage"
+    | "durationSeconds"
   >
 >;
 

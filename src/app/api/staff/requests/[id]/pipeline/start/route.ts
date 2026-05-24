@@ -7,7 +7,7 @@ import { clipRequestRepository, uploadedAssetRepository } from "@/repositories/i
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 
 const schema = z.object({
-  elevenLabsVoiceId: z.string().optional(),
+  rvcVoiceModel: z.string().optional(),
 });
 
 export async function POST(
@@ -38,7 +38,7 @@ export async function POST(
       targetAudience: request.targetAudience,
       targetPlatforms: request.targetPlatforms,
       preferredStyle: request.preferredStyle,
-      elevenLabsVoiceId: body.elevenLabsVoiceId,
+      rvcVoiceModel: body.rvcVoiceModel,
     });
 
     return NextResponse.json({ job }, { status: 201 });

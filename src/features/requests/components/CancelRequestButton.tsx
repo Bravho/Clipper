@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 
 interface CancelRequestButtonProps {
@@ -11,6 +11,7 @@ interface CancelRequestButtonProps {
 
 export function CancelRequestButton({ requestId, status }: CancelRequestButtonProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isPending, setIsPending] = useState(false);
 
   const handleCancel = async (e: React.MouseEvent) => {
@@ -28,7 +29,7 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
     try {
       const res = await fetch(`/api/requests/${requestId}`, { method: "DELETE" });
       if (res.ok) {
-        router.refresh();
+        router.push(pathname);
       }
     } finally {
       setIsPending(false);

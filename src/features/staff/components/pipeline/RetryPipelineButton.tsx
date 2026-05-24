@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { VideoGenerationStep, PIPELINE_STEP_LABELS } from "@/domain/enums/VideoGenerationStep";
 
 interface Props {
@@ -12,6 +12,7 @@ interface Props {
 
 export function RetryPipelineButton({ requestId, jobId, failedAtStep }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,12 +31,12 @@ export function RetryPipelineButton({ requestId, jobId, failedAtStep }: Props) {
         const d = await res.json().catch(() => ({}));
         // Job may have been lost after server restart — refresh to get current state
         if (d.error?.includes("not found")) {
-          router.refresh();
+          router.push(pathname);
           return;
         }
         throw new Error(d.error ?? "Retry failed");
       }
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Retry failed");
     } finally {

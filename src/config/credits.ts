@@ -58,7 +58,7 @@ export const PIPELINE_PHASES = [
   {
     id: 3,
     label: "เสียงและดนตรี",
-    desc: "บันทึกเสียงพากย์ + ประมวลผล ElevenLabs",
+    desc: "บันทึกเสียงพากย์ + แปลงเสียงด้วย RVC",
   },
   {
     id: 4,

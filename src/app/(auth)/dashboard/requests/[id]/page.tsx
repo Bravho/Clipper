@@ -18,14 +18,14 @@ import { RequestStatusBadge } from "@/features/requests/components/RequestStatus
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DeliveryLinks } from "@/features/requests/components/DeliveryLinks";
 import { RequestTimeline } from "@/features/requests/components/RequestTimeline";
-import { ProductionPipeline } from "@/features/requests/components/ProductionPipeline";
-import { PipelineStatusPoller } from "@/features/requests/components/PipelineStatusPoller";
+import { PipelineSection } from "@/features/requests/components/PipelineSection";
 import { PipelineFailurePanel } from "@/features/requests/components/PipelineFailurePanel";
 import { ContentApprovalPanel } from "@/features/requests/components/ContentApprovalPanel";
+import { VideoApprovalPanel } from "@/features/requests/components/VideoApprovalPanel";
 import { AnalyzeButton } from "@/features/requests/components/AnalyzeButton";
-import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
+import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { CREDITS_CONFIG } from "@/config/credits";
-import { AssetUploadStatus } from "@/domain/enums/AssetType";
+import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 export const metadata: Metadata = { title: "Request Detail — RClipper" };
@@ -53,6 +53,10 @@ export default async function RequestDetailPage({
     requestStatusHistoryRepository.findByRequestId(id),
     videoGenerationJobRepository.findByRequestId(id),
   ]);
+
+  const baseVideoAsset = pipelineJob?.baseVideoAssetId
+    ? assets.find((a) => a.id === pipelineJob.baseVideoAssetId) ?? null
+    : null;
 
   const view = requestPresentationService.buildRequestView(
     request,
@@ -188,7 +192,6 @@ export default async function RequestDetailPage({
         const isAwaitingApproval =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingContentApproval;
         const isFailed = pipelineJob.currentStep === VideoGenerationStep.Failed;
-        const isPolling = POLLING_STEPS.includes(pipelineJob.currentStep);
 
         // Parse scene plan — prefer approved version; fall back to raw AI output
         let scenePlan: ScenePlan[] = [];
@@ -216,16 +219,32 @@ export default async function RequestDetailPage({
 
         return (
           <>
-            <ProductionPipeline
+            <PipelineSection
+              requestId={id}
               currentStep={pipelineJob.currentStep}
               failedAtStep={pipelineJob.failedAtStep}
             />
 
-            {/* Auto-refresh while an async AI step is running */}
-            {isPolling && (
-              <PipelineStatusPoller
+            {/* Generated base video + script — shown once Kling completes */}
+            {!isFailed && baseVideoAsset?.storageUrl && (
+              <VideoApprovalPanel
                 requestId={id}
-                currentStep={pipelineJob.currentStep}
+                jobId={pipelineJob.id}
+                videoUrl={baseVideoAsset.storageUrl}
+                isAwaitingApproval={
+                  pipelineJob.currentStep === VideoGenerationStep.AwaitingVideoApproval
+                }
+                isAwaitingVoiceRecording={
+                  pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceRecording
+                }
+                scenes={scenePlan}
+                hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
+                hookEnglish={pipelineJob.approvedHookEnglish ?? pipelineJob.hookEnglish}
+                scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
+                scriptEnglish={pipelineJob.approvedScriptEnglish ?? pipelineJob.scriptEnglish}
+                captionThai={pipelineJob.approvedCaptionThai ?? pipelineJob.captionThai}
+                captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
+                captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
               />
             )}
 
@@ -237,23 +256,7 @@ export default async function RequestDetailPage({
                 failedAtStep={pipelineJob.failedAtStep}
                 scenePlan={scenePlan}
                 scriptThai={pipelineJob.approvedScriptThai}
-                scriptEnglish={pipelineJob.approvedScriptEnglish}
                 hookThai={pipelineJob.approvedHookThai}
-                hookEnglish={pipelineJob.approvedHookEnglish}
-              />
-            )}
-
-            {/* Approved script — read-only reference while production is running */}
-            {!isFailed && (pipelineJob.approvedHookThai ?? pipelineJob.hookThai) && (
-              <ApprovedScriptCard
-                scenes={scenePlan}
-                hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
-                hookEnglish={pipelineJob.approvedHookEnglish ?? pipelineJob.hookEnglish}
-                scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
-                scriptEnglish={pipelineJob.approvedScriptEnglish ?? pipelineJob.scriptEnglish}
-                captionThai={pipelineJob.approvedCaptionThai ?? pipelineJob.captionThai}
-                captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
-                captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
               />
             )}
           </>
@@ -305,12 +308,12 @@ export default async function RequestDetailPage({
           maintained as a reusable asset library. Raw uploads are scheduled for
           deletion after 90 days under our storage policy.
         </p>
-        {assets.filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted).length === 0 ? (
+        {assets.filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted && (a.assetType === AssetType.Image || a.assetType === AssetType.Video)).length === 0 ? (
           <p className="text-sm text-slate-400">No source files attached.</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {assets
-              .filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted)
+              .filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted && (a.assetType === AssetType.Image || a.assetType === AssetType.Video))
               .map((asset) => (
                 <li
                   key={asset.id}
@@ -374,110 +377,3 @@ function BriefRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ApprovedScriptCard({
-  scenes,
-  hookThai,
-  hookEnglish,
-  scriptThai,
-  scriptEnglish,
-  captionThai,
-  captionEnglish,
-  captionChinese,
-}: {
-  scenes: ScenePlan[];
-  hookThai: string | null;
-  hookEnglish: string | null;
-  scriptThai: string | null;
-  scriptEnglish: string | null;
-  captionThai: string | null;
-  captionEnglish: string | null;
-  captionChinese: string | null;
-}) {
-  return (
-    <Card className="mb-6">
-      <h2 className="mb-4 text-base font-semibold text-slate-900">สคริปต์วิดีโอที่อนุมัติ</h2>
-
-      {/* Hook */}
-      {(hookThai ?? hookEnglish) && (
-        <div className="mb-4">
-          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-            ฮุค (3 วินาทีแรก)
-          </p>
-          {hookThai && <p className="text-sm text-slate-800">{hookThai}</p>}
-          {hookEnglish && <p className="mt-0.5 text-sm italic text-slate-500">{hookEnglish}</p>}
-        </div>
-      )}
-
-      {/* Scene plan */}
-      {scenes.length > 0 && (
-        <div className="mb-4">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">แผนฉาก</p>
-          <div className="flex flex-col gap-2">
-            {scenes.map((scene) => (
-              <div
-                key={scene.sceneNumber}
-                className="rounded-lg border border-slate-100 bg-slate-50 p-3"
-              >
-                <div className="mb-1 flex items-center gap-2">
-                  <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-600">
-                    ฉาก {scene.sceneNumber}
-                  </span>
-                  <span className="text-xs text-slate-400">{scene.durationSeconds} วินาที</span>
-                </div>
-                {scene.visualDescriptionThai && (
-                  <p className="text-sm text-slate-700">{scene.visualDescriptionThai}</p>
-                )}
-                <p className={`text-sm ${scene.visualDescriptionThai ? "mt-0.5 text-slate-500" : "text-slate-700"}`}>
-                  {scene.visualDescription}
-                </p>
-                {(scene.motionNotesThai ?? scene.motionNotes) && (
-                  <p className="mt-1 text-xs text-slate-400">
-                    {scene.motionNotesThai ?? scene.motionNotes}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Script */}
-      {(scriptThai ?? scriptEnglish) && (
-        <div className="mb-4">
-          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">บทพูด</p>
-          {scriptThai && <p className="text-sm text-slate-800">{scriptThai}</p>}
-          {scriptEnglish && <p className="mt-1 text-sm italic text-slate-500">{scriptEnglish}</p>}
-        </div>
-      )}
-
-      {/* Captions */}
-      {(captionThai ?? captionEnglish ?? captionChinese) && (
-        <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-            แคปชั่นโซเชียล
-          </p>
-          <div className="flex flex-col gap-2">
-            {captionThai && (
-              <div>
-                <p className="text-xs text-slate-400">ภาษาไทย</p>
-                <p className="text-sm text-slate-700">{captionThai}</p>
-              </div>
-            )}
-            {captionEnglish && (
-              <div>
-                <p className="text-xs text-slate-400">English</p>
-                <p className="text-sm text-slate-700">{captionEnglish}</p>
-              </div>
-            )}
-            {captionChinese && (
-              <div>
-                <p className="text-xs text-slate-400">中文</p>
-                <p className="text-sm text-slate-700">{captionChinese}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </Card>
-  );
-}

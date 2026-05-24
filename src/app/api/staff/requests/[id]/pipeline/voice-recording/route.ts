@@ -4,7 +4,7 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { videoGenerationService } from "@/services/staff/VideoGenerationService";
 
-const ACCEPTED_AUDIO_TYPES = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/wave"];
+const ACCEPTED_AUDIO_TYPES = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/wave", "audio/webm", "audio/webm;codecs=opus"];
 const MAX_AUDIO_SIZE = 100 * 1024 * 1024; // 100 MB
 
 const schema = z.object({

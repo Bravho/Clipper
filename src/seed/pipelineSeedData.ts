@@ -46,7 +46,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
 
     klingTaskId: null,
     baseVideoAssetId: null,
-    elevenLabsVoiceId: AI_CONFIG.elevenLabs.defaultVoiceId,
+    rvcVoiceModel: AI_CONFIG.rvc.serverUrl ? "default" : "",
     voiceRecordingAssetId: null,
     processedVoiceAssetId: null,
     finalExport_9_16_assetId: null,
@@ -118,7 +118,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
 
     klingTaskId: null,
     baseVideoAssetId: null,
-    elevenLabsVoiceId: AI_CONFIG.elevenLabs.defaultVoiceId,
+    rvcVoiceModel: AI_CONFIG.rvc.serverUrl ? "default" : "",
     voiceRecordingAssetId: null,
     processedVoiceAssetId: null,
     finalExport_9_16_assetId: null,

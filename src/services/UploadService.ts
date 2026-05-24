@@ -187,13 +187,15 @@ export class UploadService {
     // Destination key in request_mat/
     const destKey = buildRequestMatKey(asset.userId, asset.requestId, asset.fileName);
 
-    // Copy from tmp/ to request_mat/
+    // Copy from tmp/ to request_mat/ — ACL must be public-read so external
+    // services (e.g. Kling AI) can fetch the file without credentials.
     await spacesClient.send(
       new CopyObjectCommand({
         Bucket: SPACES_BUCKET,
         CopySource: `${SPACES_BUCKET}/${asset.storageKey}`,
         Key: destKey,
         ContentType: asset.mimeType,
+        ACL: "public-read",
       })
     );
 

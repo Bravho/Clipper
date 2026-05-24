@@ -67,6 +67,10 @@ export class MockUploadedAssetRepository implements IUploadedAssetRepository {
     return { ...updated };
   }
 
+  async deleteById(id: string): Promise<void> {
+    this.store.delete(id);
+  }
+
   async deleteByRequestId(requestId: string): Promise<void> {
     for (const [id, asset] of this.store.entries()) {
       if (asset.requestId === requestId) {

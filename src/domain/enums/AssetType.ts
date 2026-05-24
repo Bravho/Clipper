@@ -16,9 +16,9 @@ export enum AssetType {
   // ── AI Pipeline asset types ─────────────────────────────────────────────────
   /** Raw 15s video produced by Kling AI from requester images. */
   AIGeneratedBaseVideo = "ai_generated_base_video",
-  /** Raw voice recording uploaded by staff for ElevenLabs conversion. */
+  /** RVC-converted voice audio uploaded by staff (conversion happens in browser before upload). */
   StaffVoiceRecording = "staff_voice_recording",
-  /** Professional voice audio produced by ElevenLabs Speech-to-Speech. */
+  /** Alias kept for DB compatibility — points to the same asset as StaffVoiceRecording. */
   ProcessedVoice = "processed_voice",
   /** FFmpeg-composed final clip (one record per exported ratio). */
   FinalClip = "final_clip",

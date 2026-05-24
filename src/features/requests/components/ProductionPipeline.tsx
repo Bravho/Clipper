@@ -8,6 +8,14 @@ import {
 } from "@/config/credits";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 
+// Steps where the AI work is done but staff review is pending.
+// The phase shows as "awaiting review" (amber) rather than "in progress" (blue).
+const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
+  VideoGenerationStep.AwaitingVideoApproval,
+  VideoGenerationStep.AwaitingVoiceApproval,
+  VideoGenerationStep.AwaitingFinalApproval,
+]);
+
 const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
   [VideoGenerationStep.AnalyzingContent]:        1,
   [VideoGenerationStep.AwaitingContentApproval]: 1,
@@ -52,6 +60,8 @@ interface Props {
   failedAtStep?: VideoGenerationStep | null;
   durationSeconds?: number;
   totalChannels?: number;
+  klingStatus?: "submitted" | "processing" | null;
+  klingLastPolledAt?: Date | null;
 }
 
 export function ProductionPipeline({
@@ -59,6 +69,8 @@ export function ProductionPipeline({
   failedAtStep,
   durationSeconds = PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
   totalChannels = PIPELINE_STEP_COSTS.RESIZE_FREE_CHANNELS,
+  klingStatus,
+  klingLastPolledAt,
 }: Props) {
   const costs = calcPipelineCost(durationSeconds, totalChannels);
 
@@ -84,9 +96,16 @@ export function ProductionPipeline({
           const isCompletedNormal = !isFailed && isTracking && activePhase > phase.id;
           const isCompletedBeforeFailure = isFailed && failedPhase > phase.id;
           const isCompleted = isCompletedNormal || isCompletedBeforeFailure;
-          const isActive = !isFailed && isTracking && activePhase === phase.id;
+          // "Awaiting review" = AI done, staff reviewing — amber indicator, no spinner.
+          const isAwaitingReview =
+            !isFailed &&
+            isTracking &&
+            activePhase === phase.id &&
+            currentStep != null &&
+            AWAITING_REVIEW_STEPS.has(currentStep);
+          const isActive = !isFailed && isTracking && activePhase === phase.id && !isAwaitingReview;
           const isFailedPhase = isFailed && failedPhase === phase.id;
-          const isPending = isTracking && !isCompleted && !isActive && !isFailedPhase;
+          const isPending = isTracking && !isCompleted && !isActive && !isAwaitingReview && !isFailedPhase;
 
           return (
             <li key={phase.id} className="flex gap-4">
@@ -104,6 +123,10 @@ export function ProductionPipeline({
                   <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
                     <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-200 border-t-white" />
                   </div>
+                ) : isAwaitingReview ? (
+                  <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-amber-400 text-xs font-bold text-white">
+                    ⏸
+                  </div>
                 ) : (
                   <div
                     className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${
@@ -118,7 +141,13 @@ export function ProductionPipeline({
                 {!isLast && (
                   <div
                     className={`mt-1 w-px flex-1 ${
-                      isCompleted ? "bg-green-300" : isFailedPhase ? "bg-red-200" : "bg-slate-200"
+                      isCompleted
+                        ? "bg-green-300"
+                        : isFailedPhase
+                        ? "bg-red-200"
+                        : isAwaitingReview
+                        ? "bg-amber-200"
+                        : "bg-slate-200"
                     }`}
                     style={{ minHeight: "2rem" }}
                   />
@@ -134,6 +163,8 @@ export function ProductionPipeline({
                         ? "text-red-700"
                         : isActive
                         ? "text-blue-700"
+                        : isAwaitingReview
+                        ? "text-amber-700"
                         : isCompleted
                         ? "text-green-700"
                         : isPending
@@ -144,6 +175,13 @@ export function ProductionPipeline({
                     {phase.label}
                     {isActive && (
                       <span className="ml-2 text-xs font-normal text-blue-500">กำลังดำเนินการ</span>
+                    )}
+                    {isAwaitingReview && (
+                      <span className="ml-2 text-xs font-normal text-amber-500">
+                        {currentStep === VideoGenerationStep.AwaitingVideoApproval
+                          ? "รอผู้ใช้ตรวจสอบ"
+                          : "รอทีมงานตรวจสอบ"}
+                      </span>
                     )}
                     {isCompleted && (
                       <span className="ml-2 text-xs font-normal text-green-500">เสร็จสิ้น</span>
@@ -158,6 +196,8 @@ export function ProductionPipeline({
                         ? "text-red-500"
                         : isActive
                         ? "text-blue-500"
+                        : isAwaitingReview
+                        ? "text-amber-500"
                         : isPending
                         ? "text-slate-400"
                         : "text-slate-500"
@@ -165,6 +205,24 @@ export function ProductionPipeline({
                   >
                     {phase.desc}
                   </p>
+                  {/* Kling sub-status: only shown while AI is actively rendering, not after */}
+                  {isActive && currentStep === VideoGenerationStep.GeneratingBaseVideo && phase.id === 2 && (
+                    <p className="mt-1 text-xs text-blue-400">
+                      {klingStatus === "submitted" && "รอ Kling AI รับงานในคิว..."}
+                      {klingStatus === "processing" && "Kling AI กำลังเรนเดอร์วิดีโอ"}
+                      {!klingStatus && "กำลังส่งงานไปยัง Kling AI..."}
+                      {klingLastPolledAt && (
+                        <span className="ml-2 text-slate-400">
+                          · ตรวจสอบล่าสุด{" "}
+                          {klingLastPolledAt.toLocaleTimeString("th-TH", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            second: "2-digit",
+                          })}
+                        </span>
+                      )}
+                    </p>
+                  )}
                   <p className="mt-0.5 text-xs text-slate-400 italic">
                     {stepHint(phase.id, costs, durationSeconds)}
                   </p>
@@ -177,6 +235,8 @@ export function ProductionPipeline({
                       ? "bg-red-50 text-red-600"
                       : isActive
                       ? "bg-blue-100 text-blue-700"
+                      : isAwaitingReview
+                      ? "bg-amber-50 text-amber-700"
                       : isPending
                       ? "bg-slate-100 text-slate-400"
                       : "bg-blue-50 text-blue-700"

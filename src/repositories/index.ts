@@ -30,21 +30,16 @@ export const creditTransactionRepository = new PostgresCreditTransactionReposito
 export const termsAcceptanceRepository = new PostgresTermsAcceptanceRepository();
 export const emailVerificationTokenRepository = new PostgresEmailVerificationTokenRepository();
 
-// ── Phase 2B — Mock (TODO: replace with Postgres implementations) ────────────
-import { MockClipRequestRepository } from "./mock/MockClipRequestRepository";
-import { MockRequestStatusHistoryRepository } from "./mock/MockRequestStatusHistoryRepository";
-import { MockUploadedAssetRepository } from "./mock/MockUploadedAssetRepository";
+// ── Phase 2B — PostgreSQL ────────────────────────────────────────────────────
+import { PostgresClipRequestRepository } from "./postgres/PostgresClipRequestRepository";
+import { PostgresRequestStatusHistoryRepository } from "./postgres/PostgresRequestStatusHistoryRepository";
+import { PostgresUploadedAssetRepository } from "./postgres/PostgresUploadedAssetRepository";
 import { MockPublishingLinkRepository } from "./mock/MockPublishingLinkRepository";
 
-// TODO: PostgreSQL Phase 2B — replace each Mock* below with Postgres* equivalent.
-//   PostgresClipRequestRepository
-//   PostgresRequestStatusHistoryRepository
-//   PostgresUploadedAssetRepository
-//   PostgresPublishingLinkRepository
-export const clipRequestRepository = new MockClipRequestRepository();
-export const requestStatusHistoryRepository = new MockRequestStatusHistoryRepository();
-export const uploadedAssetRepository = new MockUploadedAssetRepository();
-export const publishingLinkRepository = new MockPublishingLinkRepository();
+export const clipRequestRepository = new PostgresClipRequestRepository();
+export const requestStatusHistoryRepository = new PostgresRequestStatusHistoryRepository();
+export const uploadedAssetRepository = new PostgresUploadedAssetRepository();
+export const publishingLinkRepository = new MockPublishingLinkRepository(); // TODO: PostgresPublishingLinkRepository
 
 // ── Phase 2C — Mock (TODO: replace with Postgres implementations) ────────────
 import { MockInternalNoteRepository } from "./mock/MockInternalNoteRepository";
@@ -65,12 +60,9 @@ import { MockEditorProfileRepository } from "./mock/MockEditorProfileRepository"
 
 export const editorProfileRepository = new MockEditorProfileRepository();
 
-// ── AI Video Pipeline — Mock (TODO: replace with Postgres implementations) ───
-import { MockVideoGenerationJobRepository } from "./mock/MockVideoGenerationJobRepository";
+// ── AI Video Pipeline ────────────────────────────────────────────────────────
+import { PostgresVideoGenerationJobRepository } from "./postgres/PostgresVideoGenerationJobRepository";
 import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordRepository";
 
-// TODO: PostgreSQL (pipeline phase) — replace each Mock* below with Postgres* equivalent.
-//   PostgresVideoGenerationJobRepository
-//   PostgresVideoPublishRecordRepository
-export const videoGenerationJobRepository = new MockVideoGenerationJobRepository();
-export const videoPublishRecordRepository = new MockVideoPublishRecordRepository();
+export const videoGenerationJobRepository = new PostgresVideoGenerationJobRepository();
+export const videoPublishRecordRepository = new MockVideoPublishRecordRepository(); // TODO: PostgresVideoPublishRecordRepository

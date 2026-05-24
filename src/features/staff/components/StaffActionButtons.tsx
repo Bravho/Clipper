@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { EffortClass, EFFORT_CLASS_LABELS } from "@/domain/enums/EffortClass";
 import { Platform } from "@/domain/enums/Platform";
@@ -45,6 +45,7 @@ interface StaffActionButtonsProps {
 
 export function StaffActionButtons({ requestId, currentStatus, isLockedByOther }: StaffActionButtonsProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
   const [modal, setModal] = useState<ModalType | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +99,7 @@ export function StaffActionButtons({ requestId, currentStatus, isLockedByOther }
       try {
         await fn();
         setModal(null);
-        router.refresh();
+        router.push(pathname);
       } catch (e) {
         setError(e instanceof Error ? e.message : "An error occurred.");
       }

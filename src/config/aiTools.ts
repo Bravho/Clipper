@@ -12,14 +12,12 @@ export const AI_CONFIG = {
     apiKey: process.env.KLING_API_KEY ?? "",
     apiSecret: process.env.KLING_API_SECRET ?? "",
     baseUrl: "https://api.klingai.com",
-    videoDurationSeconds: 15,
     model: process.env.KLING_MODEL,
     mode: process.env.KLING_MODE,
   },
-  elevenLabs: {
-    apiKey: process.env.ELEVENLABS_API_KEY ?? "",
-    defaultVoiceId: process.env.ELEVENLABS_DEFAULT_VOICE_ID ?? "",
-    baseUrl: "https://api.elevenlabs.io",
+  rvc: {
+    serverUrl:         process.env.RVC_SERVER_URL ?? "",
+    defaultVoiceModel: process.env.RVC_DEFAULT_VOICE_MODEL ?? "mind_model",
   },
   ffmpeg: {
     path: process.env.FFMPEG_PATH ?? "ffmpeg",

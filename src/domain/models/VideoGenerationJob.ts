@@ -47,15 +47,19 @@ export interface VideoGenerationJob {
   // ── Step 2: Kling AI ────────────────────────────────────────────────────────
   /** Kling async task ID for polling until video is ready. */
   klingTaskId: string | null;
+  /** Kling's last reported task sub-status ("submitted" = queued, "processing" = rendering). */
+  klingStatus: "submitted" | "processing" | null;
+  /** Timestamp of the last successful Kling status poll. */
+  klingLastPolledAt: Date | null;
   /** UploadedAsset ID of the AI-generated base video. */
   baseVideoAssetId: string | null;
 
   // ── Step 3: Voice ───────────────────────────────────────────────────────────
-  /** ElevenLabs voice ID to use for the professional voice conversion. */
-  elevenLabsVoiceId: string;
+  /** RVC voice model name used for conversion on the Mac Mini server. */
+  rvcVoiceModel: string;
   /** UploadedAsset ID of the staff's raw voice recording. */
   voiceRecordingAssetId: string | null;
-  /** UploadedAsset ID of the ElevenLabs-processed audio. */
+  /** UploadedAsset ID of the RVC-converted audio (same asset as voiceRecordingAssetId — conversion happens in browser). */
   processedVoiceAssetId: string | null;
 
   // ── Step 4: Final exports (UploadedAsset IDs per ratio) ─────────────────────
@@ -91,9 +95,12 @@ export type UpdateVideoGenerationJobInput = Partial<
 export interface ScenePlan {
   sceneNumber: number;
   durationSeconds: number;
-  visualDescription: string;
-  visualDescriptionThai?: string;
+  visualDescriptionThai: string;
   imageIndexes: number[];
-  motionNotes: string;
+  /** @deprecated AI no longer generates this; kept for seed/legacy data compat. */
+  visualDescription?: string;
+  /** @deprecated AI no longer generates this; kept for seed/legacy data compat. */
+  motionNotes?: string;
+  /** @deprecated AI no longer generates this; kept for seed/legacy data compat. */
   motionNotesThai?: string;
 }

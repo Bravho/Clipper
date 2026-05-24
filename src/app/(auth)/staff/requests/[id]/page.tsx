@@ -156,7 +156,7 @@ export default async function StaffRequestDetailPage({
           <div>
             <p className="text-sm font-semibold text-blue-800">AI Video Production Pipeline</p>
             <p className="mt-0.5 text-xs text-blue-600">
-              Generate and publish a 15-second short video using ChatGPT, Kling AI, ElevenLabs and FFmpeg.
+              Generate and publish a 15-second short video using ChatGPT, Kling AI, RVC and FFmpeg.
             </p>
           </div>
           <a

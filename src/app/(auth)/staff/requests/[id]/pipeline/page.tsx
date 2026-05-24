@@ -26,7 +26,7 @@ function PollingStatus({ step }: { step: VideoGenerationStep }) {
     [VideoGenerationStep.GeneratingBaseVideo]:
       "Kling AI is generating your 15-second video. This may take 1–3 minutes...",
     [VideoGenerationStep.ProcessingVoice]:
-      "ElevenLabs is converting the voice recording. Usually under a minute...",
+      "Processing voice...",
     [VideoGenerationStep.ComposingFinalVideo]:
       "FFmpeg is composing the final video with subtitles in 4 ratios...",
   };
@@ -142,7 +142,13 @@ export default async function VideoPipelinePage({
           <VideoReviewPanel requestId={params.id} job={job} baseVideoAsset={resolvedAssets.baseVideo} />
         )}
         {step === VideoGenerationStep.AwaitingVoiceRecording && (
-          <VoiceRecordingPanel requestId={params.id} job={job} />
+          <div className="py-10 text-center space-y-2">
+            <div className="w-10 h-10 mx-auto rounded-full border-4 border-blue-200 border-t-blue-500 animate-spin" />
+            <p className="text-base font-semibold text-slate-600">รอผู้ใช้บันทึกเสียงพากย์</p>
+            <p className="text-sm text-slate-400">
+              ผู้ใช้กำลังบันทึกเสียงและแปลงผ่าน RVC โดยตรง หน้านี้จะอัพเดทอัตโนมัติเมื่อเสร็จสิ้น
+            </p>
+          </div>
         )}
         {step === VideoGenerationStep.AwaitingVoiceApproval && (
           <VoiceComparisonPanel

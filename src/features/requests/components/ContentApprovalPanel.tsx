@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
@@ -32,19 +32,18 @@ export function ContentApprovalPanel({
   initialCaptionChinese,
 }: ContentApprovalPanelProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [hookThai, setHookThai] = useState(initialHookThai ?? "");
-  const [hookEnglish, setHookEnglish] = useState(initialHookEnglish ?? "");
   const [scriptThai, setScriptThai] = useState(initialScriptThai ?? "");
-  const [scriptEnglish, setScriptEnglish] = useState(initialScriptEnglish ?? "");
   const [captionThai, setCaptionThai] = useState(initialCaptionThai ?? "");
-  const [captionEnglish, setCaptionEnglish] = useState(initialCaptionEnglish ?? "");
-  const [captionChinese, setCaptionChinese] = useState(initialCaptionChinese ?? "");
   const [scenes, setScenes] = useState<ScenePlan[]>(initialScenes);
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const updateScene = (index: number, field: string, value: string) => {
-    setScenes((prev) => prev.map((s, i) => (i === index ? { ...s, [field]: value } : s)));
+  const updateSceneDescription = (index: number, value: string) => {
+    setScenes((prev) =>
+      prev.map((s, i) => (i === index ? { ...s, visualDescriptionThai: value } : s))
+    );
   };
 
   const handleApprove = async () => {
@@ -57,19 +56,19 @@ export function ContentApprovalPanel({
         body: JSON.stringify({
           scenePlan: scenes,
           scriptThai,
-          scriptEnglish,
+          scriptEnglish: initialScriptEnglish,
           hookThai,
-          hookEnglish,
+          hookEnglish: initialHookEnglish,
           captionThai,
-          captionEnglish,
-          captionChinese,
+          captionEnglish: initialCaptionEnglish,
+          captionChinese: initialCaptionChinese,
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ไม่สามารถเริ่มสร้างวิดีโอได้");
       }
-      router.refresh();
+      router.push(pathname);
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
       setIsApproving(false);
@@ -89,34 +88,20 @@ export function ContentApprovalPanel({
 
       {/* Hook */}
       <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           ฮุค (3 วินาทีแรก)
         </h3>
-        <div className="flex flex-col gap-2">
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-400">ภาษาไทย</p>
-            <textarea
-              value={hookThai}
-              onChange={(e) => setHookThai(e.target.value)}
-              rows={2}
-              className={`${ta} text-sm text-slate-800`}
-            />
-          </div>
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-400">English</p>
-            <textarea
-              value={hookEnglish}
-              onChange={(e) => setHookEnglish(e.target.value)}
-              rows={2}
-              className={`${ta} text-sm italic text-slate-500`}
-            />
-          </div>
-        </div>
+        <textarea
+          value={hookThai}
+          onChange={(e) => setHookThai(e.target.value)}
+          rows={2}
+          className={`${ta} text-sm text-slate-800`}
+        />
       </div>
 
       {/* Scene plan */}
       <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
           แผนฉาก
         </h3>
         <div className="flex flex-col gap-3">
@@ -125,50 +110,18 @@ export function ContentApprovalPanel({
               key={scene.sceneNumber}
               className="rounded-lg border border-slate-100 bg-slate-50 p-4"
             >
-              <div className="mb-3 flex items-center gap-2">
+              <div className="mb-2 flex items-center gap-2">
                 <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-600">
                   ฉาก {scene.sceneNumber}
                 </span>
                 <span className="text-xs text-slate-400">{scene.durationSeconds} วินาที</span>
               </div>
-              <div className="flex flex-col gap-2">
-                <div>
-                  <p className="mb-1 text-xs font-medium text-slate-400">คำอธิบายภาพ (ไทย)</p>
-                  <textarea
-                    value={scene.visualDescriptionThai ?? ""}
-                    onChange={(e) => updateScene(index, "visualDescriptionThai", e.target.value)}
-                    rows={2}
-                    className={`${ta} text-sm text-slate-700`}
-                  />
-                </div>
-                <div>
-                  <p className="mb-1 text-xs font-medium text-slate-400">Visual Description (EN)</p>
-                  <textarea
-                    value={scene.visualDescription}
-                    onChange={(e) => updateScene(index, "visualDescription", e.target.value)}
-                    rows={2}
-                    className={`${ta} text-sm text-slate-700`}
-                  />
-                </div>
-                <div>
-                  <p className="mb-1 text-xs font-medium text-slate-400">หมายเหตุการเคลื่อนไหว (ไทย)</p>
-                  <textarea
-                    value={scene.motionNotesThai ?? ""}
-                    onChange={(e) => updateScene(index, "motionNotesThai", e.target.value)}
-                    rows={2}
-                    className={`${ta} text-xs text-slate-500`}
-                  />
-                </div>
-                <div>
-                  <p className="mb-1 text-xs font-medium text-slate-400">Motion Notes (EN)</p>
-                  <textarea
-                    value={scene.motionNotes}
-                    onChange={(e) => updateScene(index, "motionNotes", e.target.value)}
-                    rows={2}
-                    className={`${ta} text-xs text-slate-400`}
-                  />
-                </div>
-              </div>
+              <textarea
+                value={scene.visualDescriptionThai ?? ""}
+                onChange={(e) => updateSceneDescription(index, e.target.value)}
+                rows={3}
+                className={`${ta} text-sm text-slate-700`}
+              />
             </div>
           ))}
         </div>
@@ -176,63 +129,28 @@ export function ContentApprovalPanel({
 
       {/* Script */}
       <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">บทพูด</h3>
-        <div className="flex flex-col gap-2">
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-400">ภาษาไทย</p>
-            <textarea
-              value={scriptThai}
-              onChange={(e) => setScriptThai(e.target.value)}
-              rows={4}
-              className={`${ta} text-sm text-slate-800`}
-            />
-          </div>
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-400">English</p>
-            <textarea
-              value={scriptEnglish}
-              onChange={(e) => setScriptEnglish(e.target.value)}
-              rows={4}
-              className={`${ta} text-sm italic text-slate-500`}
-            />
-          </div>
-        </div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          บทพูด
+        </h3>
+        <textarea
+          value={scriptThai}
+          onChange={(e) => setScriptThai(e.target.value)}
+          rows={4}
+          className={`${ta} text-sm text-slate-800`}
+        />
       </div>
 
-      {/* Captions */}
+      {/* Caption */}
       <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           แคปชั่นโซเชียล
         </h3>
-        <div className="flex flex-col gap-2">
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-400">ภาษาไทย</p>
-            <textarea
-              value={captionThai}
-              onChange={(e) => setCaptionThai(e.target.value)}
-              rows={3}
-              className={`${ta} text-sm text-slate-700`}
-            />
-          </div>
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-400">English</p>
-            <textarea
-              value={captionEnglish}
-              onChange={(e) => setCaptionEnglish(e.target.value)}
-              rows={3}
-              className={`${ta} text-sm text-slate-700`}
-            />
-          </div>
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-400">中文</p>
-            <textarea
-              value={captionChinese}
-              onChange={(e) => setCaptionChinese(e.target.value)}
-              rows={3}
-              className={`${ta} text-sm text-slate-700`}
-            />
-          </div>
-        </div>
+        <textarea
+          value={captionThai}
+          onChange={(e) => setCaptionThai(e.target.value)}
+          rows={3}
+          className={`${ta} text-sm text-slate-700`}
+        />
       </div>
 
       {error && (

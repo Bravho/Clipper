@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import { Button } from "@/components/ui/Button";
@@ -26,6 +26,7 @@ const RATIO_LABELS: Record<string, string> = {
 
 export function FinalExportReviewPanel({ requestId, job, exports }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [backToStep, setBackToStep] = useState<"video" | "voice" | "composition">("composition");
   const [loading, setLoading] = useState<"approve" | "reject" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +41,7 @@ export function FinalExportReviewPanel({ requestId, job, exports }: Props) {
         body: JSON.stringify({ jobId: job.id }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -58,7 +59,7 @@ export function FinalExportReviewPanel({ requestId, job, exports }: Props) {
         body: JSON.stringify({ jobId: job.id, backToStep }),
       });
       if (!res.ok) throw new Error((await res.json()).error);
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
     } finally {

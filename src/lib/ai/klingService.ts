@@ -7,22 +7,36 @@ import * as crypto from "crypto";
 interface KlingTaskCreateResponse {
   code: number;
   message: string;
-  data: { task_id: string; task_status: string };
+  request_id: string;
+  data: {
+    task_id: string;
+    task_status: string;
+    task_info: { external_task_id: string };
+    created_at: number;
+    updated_at: number;
+  };
 }
 
 interface KlingTaskStatusResponse {
   code: number;
   message: string;
+  request_id: string;
   data: {
     task_id: string;
     task_status: "submitted" | "processing" | "succeed" | "failed";
+    task_status_msg: string;
     task_result?: {
-      videos?: Array<{ url: string; duration: string }>;
+      videos?: Array<{ id: string; url: string; watermark_url: string; duration: string }>;
     };
+    task_info: { external_task_id: string };
+    final_unit_deduction: string;
+    created_at: number;
+    updated_at: number;
   };
 }
 
 export type KlingTaskStatus =
+  | { status: "submitted" }
   | { status: "processing" }
   | { status: "succeed"; videoUrl: string }
   | { status: "failed"; reason: string };
@@ -32,7 +46,7 @@ function buildKlingJwt(): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const now = Math.floor(Date.now() / 1000);
   const payload = Buffer.from(
-    JSON.stringify({ iss: AI_CONFIG.kling.apiKey, iat: now, exp: now + 180 })
+    JSON.stringify({ iss: AI_CONFIG.kling.apiKey, iat: now, nbf: now, exp: now + 180 })
   ).toString("base64url");
   const sig = crypto
     .createHmac("sha256", AI_CONFIG.kling.apiSecret)
@@ -68,14 +82,20 @@ async function klingFetch<T>(
 export async function createVideo(params: {
   imageUrls: string[];
   prompt: string;
+  aspectRatio: string;
+  durationSeconds: number;
 }): Promise<string> {
+  // Kling image2video supports 3–15 seconds; clamp user's choice to that range.
+  // Guard against NaN/undefined from legacy records that pre-date durationSeconds.
+  const safeDuration = Number.isFinite(params.durationSeconds) ? params.durationSeconds : 15;
+  const clampedDuration = Math.min(Math.max(safeDuration, 3), 15);
   const body = {
     model_name: AI_CONFIG.kling.model,
     image: params.imageUrls[0],
     image_tail: params.imageUrls.length > 1 ? params.imageUrls[params.imageUrls.length - 1] : undefined,
     prompt: params.prompt,
-    duration: String(AI_CONFIG.kling.videoDurationSeconds),
-    aspect_ratio: "9:16",
+    duration: String(clampedDuration),
+    aspect_ratio: params.aspectRatio,
     mode: AI_CONFIG.kling.mode,
   };
 
@@ -104,8 +124,9 @@ export async function pollTaskStatus(taskId: string): Promise<KlingTaskStatus> {
     return { status: "succeed", videoUrl };
   }
   if (task_status === "failed") {
-    return { status: "failed", reason: response.message ?? "Unknown Kling error" };
+    return { status: "failed", reason: response.data.task_status_msg || response.message || "Unknown Kling error" };
   }
+  if (task_status === "submitted") return { status: "submitted" };
   return { status: "processing" };
 }
 
@@ -117,7 +138,7 @@ export async function downloadAndStore(
   videoUrl: string,
   userId: string,
   requestId: string
-): Promise<{ storageKey: string; storageUrl: string }> {
+): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
   const res = await fetch(videoUrl);
   if (!res.ok) throw new Error(`Failed to download Kling video: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
@@ -135,5 +156,5 @@ export async function downloadAndStore(
     })
   );
 
-  return { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+  return { storageKey, storageUrl: spacesPublicUrl(storageKey), fileSizeBytes: buffer.length };
 }

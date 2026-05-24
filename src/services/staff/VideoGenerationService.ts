@@ -6,18 +6,16 @@ import {
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
-import { AI_CONFIG } from "@/config/aiTools";
 import { buildVoiceRecordingKey, buildTmpKey } from "@/lib/spacesKeys";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
 import * as klingService from "@/lib/ai/klingService";
-import * as elevenLabsService from "@/lib/ai/elevenLabsService";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
 import type { VideoGenerationJob, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { Platform } from "@/domain/enums/Platform";
+import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 
 const PRESIGNED_TTL = 15 * 60; // 15 minutes
 
@@ -34,7 +32,7 @@ export class VideoGenerationService {
       targetAudience: string;
       targetPlatforms: Platform[];
       preferredStyle: string;
-      elevenLabsVoiceId?: string;
+      rvcVoiceModel?: string;
     }
   ): Promise<VideoGenerationJob> {
     const existing = await videoGenerationJobRepository.findByRequestId(requestId);
@@ -63,8 +61,10 @@ export class VideoGenerationService {
       approvedCaptionEnglish: null,
       approvedCaptionChinese: null,
       klingTaskId: null,
+      klingStatus: null,
+      klingLastPolledAt: null,
       baseVideoAssetId: null,
-      elevenLabsVoiceId: params.elevenLabsVoiceId ?? AI_CONFIG.elevenLabs.defaultVoiceId,
+      rvcVoiceModel: params.rvcVoiceModel ?? "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       finalExport_9_16_assetId: null,
@@ -105,12 +105,8 @@ export class VideoGenerationService {
       currentStep: VideoGenerationStep.AwaitingContentApproval,
       scenePlan: JSON.stringify(output.scenePlan),
       scriptThai: output.scriptThai,
-      scriptEnglish: output.scriptEnglish,
       hookThai: output.hookThai,
-      hookEnglish: output.hookEnglish,
       captionThai: output.captionThai,
-      captionEnglish: output.captionEnglish,
-      captionChinese: output.captionChinese,
     });
   }
 
@@ -155,30 +151,34 @@ export class VideoGenerationService {
       contentApprovedBy: staffId,
     });
 
-    // Trigger Kling asynchronously
-    this._runKlingGeneration(updated).catch(async (err) => {
+    try {
+      await this._runKlingGeneration(updated);
+    } catch (err) {
       console.error("Kling generation failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
+      return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
       });
-    });
+    }
 
-    return updated;
+    return this._getJob(jobId);
   }
 
   private async _runKlingGeneration(job: VideoGenerationJob): Promise<void> {
     const request = await this._getClipRequestImages(job.requestId);
     const scenePlan = JSON.parse(job.approvedScenePlan!) as ScenePlan[];
-    const scenePrompt = scenePlan.map((s) => s.visualDescription).join(" Then: ");
+    const scenePrompt = scenePlan.map((s) => s.visualDescriptionThai ?? s.visualDescription ?? "").join(" Then: ");
     const prompt =
       scenePrompt +
       " IMPORTANT: Do not fabricate or hallucinate final product visuals (e.g. finished dishes, packaged goods, retail displays) that are not present in the submitted source images. If the submitted images already show the final product, you may recreate or animate those faithfully. Only invent visuals for raw materials and ingredients. Fabricating final products that differ from the real item risks misrepresentation.";
 
+    const aspectRatio = PLATFORM_ASPECT_RATIOS[request.primaryPlatform];
     const taskId = await klingService.createVideo({
       imageUrls: request.imageUrls,
       prompt,
+      aspectRatio,
+      durationSeconds: request.durationSeconds,
     });
 
     await videoGenerationJobRepository.update(job.id, { klingTaskId: taskId });
@@ -196,23 +196,37 @@ export class VideoGenerationService {
 
     const status = await klingService.pollTaskStatus(job.klingTaskId);
 
+    console.log(`[Kling] task=${job.klingTaskId} status=${status.status} requestId=${job.requestId}`);
+
     if (status.status === "failed") {
+      console.error(`[Kling] task=${job.klingTaskId} failed: ${status.reason}`);
       return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+        klingLastPolledAt: new Date(),
       });
     }
 
-    if (status.status !== "succeed") return job;
+    if (status.status !== "succeed") {
+      return videoGenerationJobRepository.update(jobId, {
+        klingStatus: status.status,
+        klingLastPolledAt: new Date(),
+      });
+    }
 
     // Download from Kling and store in DO Spaces
     const request = await this._getClipRequestBasic(job.requestId);
-    const { storageKey, storageUrl } = await klingService.downloadAndStore(
+    const { storageKey, storageUrl, fileSizeBytes } = await klingService.downloadAndStore(
       status.videoUrl,
       request.userId,
       job.requestId
     );
+
+    // Remove the previous base video asset if one exists from a prior attempt
+    if (job.baseVideoAssetId) {
+      await uploadedAssetRepository.deleteById(job.baseVideoAssetId);
+    }
 
     // Create UploadedAsset record
     const scheduledDeletionAt = new Date();
@@ -223,7 +237,7 @@ export class VideoGenerationService {
       userId: request.userId,
       fileName: "kling_generated.mp4",
       assetType: AssetType.AIGeneratedBaseVideo,
-      fileSizeBytes: 0,
+      fileSizeBytes,
       mimeType: "video/mp4",
       storageKey,
       storageUrl,
@@ -276,16 +290,18 @@ export class VideoGenerationService {
       baseVideoAssetId: null,
     });
 
-    this._runKlingGeneration(updated).catch(async (err) => {
+    try {
+      await this._runKlingGeneration(updated);
+    } catch (err) {
       console.error("Kling regeneration failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
+      return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
       });
-    });
+    }
 
-    return updated;
+    return this._getJob(jobId);
   }
 
   /**
@@ -335,11 +351,14 @@ export class VideoGenerationService {
   }
 
   /**
-   * Confirm voice recording upload and trigger ElevenLabs conversion.
+   * Confirm voice recording upload.
+   * The requester's browser sends audio directly to the RVC Mac Mini and uploads
+   * the already-converted WAV, so no server-side conversion is needed here.
+   * Advances directly to AwaitingVoiceApproval.
    */
   async confirmVoiceRecording(
     jobId: string,
-    staffId: string,
+    userId: string,
     assetId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceRecording);
@@ -348,10 +367,9 @@ export class VideoGenerationService {
     if (!asset) throw new Error("Voice recording asset not found");
 
     const job = await this._getJob(jobId);
-    const request = await this._getClipRequestBasic(job.requestId);
 
     // Move from tmp/ to voice_recordings/
-    const voiceKey = buildVoiceRecordingKey(staffId, job.requestId, asset.fileName);
+    const voiceKey = buildVoiceRecordingKey(userId, job.requestId, asset.fileName);
     await this._moveAssetInSpaces(asset.storageKey, voiceKey);
 
     await uploadedAssetRepository.update(assetId, {
@@ -360,61 +378,16 @@ export class VideoGenerationService {
       uploadStatus: AssetUploadStatus.Uploaded,
     });
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.ProcessingVoice,
+    // RVC conversion was done in the requester's browser — the uploaded asset
+    // is already the converted audio. Both IDs point to the same asset.
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep:           VideoGenerationStep.AwaitingVoiceApproval,
       voiceRecordingAssetId: assetId,
-    });
-
-    this._runVoiceConversion(updated, staffId).catch(async (err) => {
-      console.error("ElevenLabs voice conversion failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.ProcessingVoice,
-      });
-    });
-
-    return updated;
-  }
-
-  private async _runVoiceConversion(job: VideoGenerationJob, staffId: string): Promise<void> {
-    const recordingAsset = await uploadedAssetRepository.findById(job.voiceRecordingAssetId!);
-    if (!recordingAsset) throw new Error("Voice recording asset missing");
-
-    const request = await this._getClipRequestBasic(job.requestId);
-
-    const { storageKey, storageUrl } = await elevenLabsService.convertVoice({
-      audioStorageKey: recordingAsset.storageKey,
-      targetVoiceId: job.elevenLabsVoiceId,
-      userId: request.userId,
-      requestId: job.requestId,
-    });
-
-    const scheduledDeletionAt = new Date();
-    scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
-
-    const processedAsset = await uploadedAssetRepository.create({
-      requestId: job.requestId,
-      userId: staffId,
-      fileName: "processed_voice.mp3",
-      assetType: AssetType.ProcessedVoice,
-      fileSizeBytes: 0,
-      mimeType: "audio/mpeg",
-      storageKey,
-      storageUrl,
-      thumbnailKey: "",
-      thumbnailUrl: "",
-      uploadStatus: AssetUploadStatus.Uploaded,
-      scheduledDeletionAt,
-    });
-
-    await videoGenerationJobRepository.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingVoiceApproval,
-      processedVoiceAssetId: processedAsset.id,
+      processedVoiceAssetId: assetId,
     });
   }
 
-  /** Staff approves the ElevenLabs voice conversion and triggers FFmpeg. */
+  /** Staff approves the RVC voice conversion and triggers FFmpeg. */
   async approveVoiceConversion(
     jobId: string,
     staffId: string
@@ -576,15 +549,17 @@ export class VideoGenerationService {
         approvedCaptionChinese: analysis.captionChinese,
         contentApprovedBy: requesterId,
       });
-      this._runKlingGeneration(updated).catch(async (err) => {
+      try {
+        await this._runKlingGeneration(updated);
+      } catch (err) {
         console.error("Kling generation failed:", err);
-        await videoGenerationJobRepository.update(existing.id, {
+        return videoGenerationJobRepository.update(existing.id, {
           status: VideoGenerationJobStatus.Failed,
           currentStep: VideoGenerationStep.Failed,
           failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
         });
-      });
-      return updated;
+      }
+      return this._getJob(existing.id);
     }
 
     if (existing && existing.status === VideoGenerationJobStatus.Active) {
@@ -612,8 +587,10 @@ export class VideoGenerationService {
       approvedCaptionEnglish: analysis.captionEnglish,
       approvedCaptionChinese: analysis.captionChinese,
       klingTaskId: null,
+      klingStatus: null,
+      klingLastPolledAt: null,
       baseVideoAssetId: null,
-      elevenLabsVoiceId: AI_CONFIG.elevenLabs.defaultVoiceId,
+      rvcVoiceModel: "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       finalExport_9_16_assetId: null,
@@ -627,16 +604,18 @@ export class VideoGenerationService {
       finalApprovedBy: null,
     });
 
-    this._runKlingGeneration(job).catch(async (err) => {
+    try {
+      await this._runKlingGeneration(job);
+    } catch (err) {
       console.error("Kling generation failed:", err);
-      await videoGenerationJobRepository.update(job.id, {
+      return videoGenerationJobRepository.update(job.id, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
       });
-    });
+    }
 
-    return job;
+    return this._getJob(job.id);
   }
 
   /** Get the current pipeline job for a request. */
@@ -733,32 +712,17 @@ export class VideoGenerationService {
           klingTaskId: null,
           baseVideoAssetId: null,
         });
-        this._runKlingGeneration(updated).catch(async (err) => {
+        try {
+          await this._runKlingGeneration(updated);
+        } catch (err) {
           console.error("Kling retry failed:", err);
-          await videoGenerationJobRepository.update(jobId, {
+          return videoGenerationJobRepository.update(jobId, {
             status: VideoGenerationJobStatus.Failed,
             currentStep: VideoGenerationStep.Failed,
             failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
           });
-        });
-        return updated;
-      }
-
-      case VideoGenerationStep.ProcessingVoice: {
-        const updated = await videoGenerationJobRepository.update(jobId, {
-          currentStep: VideoGenerationStep.ProcessingVoice,
-          processedVoiceAssetId: null,
-        });
-        const staffId = job.voiceApprovedBy ?? job.contentApprovedBy ?? "";
-        this._runVoiceConversion(updated, staffId).catch(async (err) => {
-          console.error("ElevenLabs retry failed:", err);
-          await videoGenerationJobRepository.update(jobId, {
-            status: VideoGenerationJobStatus.Failed,
-            currentStep: VideoGenerationStep.Failed,
-            failedAtStep: VideoGenerationStep.ProcessingVoice,
-          });
-        });
-        return updated;
+        }
+        return this._getJob(jobId);
       }
 
       case VideoGenerationStep.ComposingFinalVideo: {
@@ -783,6 +747,58 @@ export class VideoGenerationService {
       default:
         throw new Error(`No retry handler for step: ${failedAt}`);
     }
+  }
+
+  /** Requester approves the Kling video and advances to voice recording. */
+  async approveBaseVideoByRequester(
+    jobId: string,
+    requesterId: string
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.AwaitingVoiceRecording,
+      videoApprovedBy: requesterId,
+    });
+  }
+
+  /**
+   * Requester requests a video revision with an updated script.
+   * Saves edited approved fields and re-triggers Kling generation.
+   */
+  async requestVideoRevisionByRequester(
+    jobId: string,
+    requesterId: string,
+    editedContent: {
+      scenePlan: string;
+      hookThai: string;
+      scriptThai: string;
+      captionThai: string;
+    }
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingBaseVideo,
+      approvedScenePlan: editedContent.scenePlan,
+      approvedHookThai: editedContent.hookThai,
+      approvedScriptThai: editedContent.scriptThai,
+      approvedCaptionThai: editedContent.captionThai,
+      klingTaskId: null,
+      baseVideoAssetId: null,
+    });
+
+    try {
+      await this._runKlingGeneration(updated);
+    } catch (err) {
+      console.error("Kling regeneration failed:", err);
+      return videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+      });
+    }
+
+    return this._getJob(jobId);
   }
 
   /** Mark job as complete (called after all platforms published). */
@@ -822,7 +838,7 @@ export class VideoGenerationService {
     return { userId: req.userId };
   }
 
-  private async _getClipRequestImages(requestId: string): Promise<{ userId: string; imageUrls: string[] }> {
+  private async _getClipRequestImages(requestId: string): Promise<{ userId: string; imageUrls: string[]; primaryPlatform: Platform; durationSeconds: number }> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(requestId);
     if (!req) throw new Error(`ClipRequest not found: ${requestId}`);
@@ -834,7 +850,12 @@ export class VideoGenerationService {
       .map((a) => a.storageUrl)
       .filter(Boolean);
 
-    return { userId: req.userId, imageUrls };
+    const primaryPlatform = req.targetPlatforms[0] ?? Platform.TventApp;
+    // Guard against legacy in-memory records that pre-date the durationSeconds field.
+    const durationSeconds = Number.isFinite(req.durationSeconds) && req.durationSeconds > 0
+      ? req.durationSeconds
+      : 15;
+    return { userId: req.userId, imageUrls, primaryPlatform, durationSeconds };
   }
 
   private async _moveAssetInSpaces(sourceKey: string, destKey: string): Promise<void> {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 
 interface DeleteDraftButtonProps {
   requestId: string;
@@ -9,6 +9,7 @@ interface DeleteDraftButtonProps {
 
 export function DeleteDraftButton({ requestId }: DeleteDraftButtonProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isDeleting, setIsDeleting] = useState(false);
 
   const handleDelete = async (e: React.MouseEvent) => {
@@ -21,7 +22,7 @@ export function DeleteDraftButton({ requestId }: DeleteDraftButtonProps) {
     try {
       const res = await fetch(`/api/requests/${requestId}`, { method: "DELETE" });
       if (res.ok) {
-        router.refresh();
+        router.push(pathname);
       }
     } finally {
       setIsDeleting(false);

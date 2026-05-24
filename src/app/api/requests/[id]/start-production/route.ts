@@ -47,7 +47,7 @@ export async function POST(
     captionChinese,
   } = body;
 
-  if (!scenePlan || !scriptThai || !scriptEnglish || !hookThai || !hookEnglish) {
+  if (!scenePlan || !scriptThai || !hookThai) {
     return NextResponse.json({ error: "Missing required analysis fields." }, { status: 400 });
   }
 

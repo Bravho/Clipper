@@ -7,7 +7,7 @@ export enum VideoGenerationStep {
   GeneratingBaseVideo     = "generating_base_video",
   AwaitingVideoApproval   = "awaiting_video_approval",
 
-  // Step 3 — Staff voice recording + ElevenLabs conversion
+  // Step 3 — Staff voice recording + RVC conversion (conversion runs in browser, not server)
   AwaitingVoiceRecording  = "awaiting_voice_recording",
   ProcessingVoice         = "processing_voice",
   AwaitingVoiceApproval   = "awaiting_voice_approval",
@@ -27,7 +27,6 @@ export enum VideoGenerationStep {
 export const POLLING_STEPS: VideoGenerationStep[] = [
   VideoGenerationStep.AnalyzingContent,
   VideoGenerationStep.GeneratingBaseVideo,
-  VideoGenerationStep.ProcessingVoice,
   VideoGenerationStep.ComposingFinalVideo,
 ];
 

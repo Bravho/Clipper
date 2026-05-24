@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 
 interface Props {
   requestId: string;
@@ -9,6 +9,7 @@ interface Props {
 
 export function StartPipelineButton({ requestId }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,7 +26,7 @@ export function StartPipelineButton({ requestId }: Props) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error ?? "Failed to start pipeline");
       }
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start pipeline");
     } finally {

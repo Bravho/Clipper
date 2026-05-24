@@ -1,30 +1,35 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
 
 interface Props {
   requestId: string;
   currentStep: VideoGenerationStep;
+  onKlingStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
 }
 
-/**
- * Invisible client component that polls /api/requests/[id]/pipeline-status
- * every 5 seconds while the pipeline is in an async AI processing step.
- * Calls router.refresh() when the step changes so the server component
- * re-renders with the updated state (including failures).
- */
-export function PipelineStatusPoller({ requestId, currentStep }: Props) {
-  const router = useRouter();
-  const stepRef = useRef(currentStep);
+// Kling video generation takes 2–5 minutes; poll less aggressively to avoid
+// hammering the Kling API. All other async steps (GPT, FFmpeg) complete
+// within ~30s so 5s is appropriate there.
+const KLING_POLL_INTERVAL_MS = 30_000;
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
-  useEffect(() => {
-    stepRef.current = currentStep;
-  }, [currentStep]);
+export function PipelineStatusPoller({ requestId, currentStep, onKlingStatus }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const stepRef = useRef(currentStep);
+  const onKlingStatusRef = useRef(onKlingStatus);
+
+  useEffect(() => { stepRef.current = currentStep; }, [currentStep]);
+  useEffect(() => { onKlingStatusRef.current = onKlingStatus; }, [onKlingStatus]);
 
   useEffect(() => {
     if (!POLLING_STEPS.includes(currentStep)) return;
+
+    const isKlingStep = currentStep === VideoGenerationStep.GeneratingBaseVideo;
+    const intervalMs = isKlingStep ? KLING_POLL_INTERVAL_MS : DEFAULT_POLL_INTERVAL_MS;
 
     const interval = setInterval(async () => {
       try {
@@ -32,17 +37,33 @@ export function PipelineStatusPoller({ requestId, currentStep }: Props) {
           cache: "no-store",
         });
         if (!res.ok) return;
-        const { currentStep: newStep } = await res.json();
+        const data = await res.json();
+        const { currentStep: newStep, klingStatus, klingLastPolledAt } = data;
+
+        // Update klingStatus directly in client state — do not rely on RSC
+        // refresh for intra-step sub-status changes.
+        if (isKlingStep && klingStatus && onKlingStatusRef.current) {
+          onKlingStatusRef.current(
+            klingStatus,
+            klingLastPolledAt ? new Date(klingLastPolledAt) : new Date()
+          );
+        }
+
+        // When the pipeline step advances, navigate to the same URL rather than
+        // calling router.refresh(). refresh() reconciles RSC in-place and does not
+        // reliably propagate updated props to already-mounted client components.
+        // push(pathname) triggers a full soft-navigation that remounts all client
+        // components with fresh server data.
         if (newStep && newStep !== stepRef.current) {
-          router.refresh();
+          router.push(pathname);
         }
       } catch {
         // network error — try again next interval
       }
-    }, 5000);
+    }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [requestId, currentStep, router]);
+  }, [requestId, currentStep, router, pathname]);
 
   return null;
 }

@@ -39,9 +39,9 @@ export class ClipRequestService {
       description: data.description,
       targetAudience: data.targetAudience,
       targetPlatforms: data.targetPlatforms,
-      // preferredStyle and preferredLanguage removed from the form — stored as empty string
       preferredStyle: "",
       preferredLanguage: "",
+      durationSeconds: data.durationSeconds,
     };
 
     const request = await clipRequestRepository.create(input);

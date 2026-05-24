@@ -154,9 +154,12 @@ async function composeSingleRatio(
     "-y",
     "-i", videoPath,
     "-i", audioPath,
+    "-map", "0:v:0",   // video stream from Kling AI clip (input 0)
+    "-map", "1:a:0",   // audio stream from RVC WAV (input 1) — explicit, never picks video's own audio
     "-vf", `${scaleFilter},${subtitleFilter}`,
     "-c:v", "libx264",
     "-c:a", "aac",
+    "-ar", "48000",    // pin output to 48 kHz to match RVC WAV — no surprise resampling
     "-shortest",
     "-t", "15",
     outputPath,
@@ -175,7 +178,7 @@ export async function composeAndExport(
 
   try {
     const videoPath = path.join(tmpDir, "base.mp4");
-    const audioPath = path.join(tmpDir, "voice.mp3");
+    const audioPath = path.join(tmpDir, "voice.wav"); // RVC outputs 48 kHz WAV — keep correct extension
     const srtPath = path.join(tmpDir, "subs.srt");
 
     await Promise.all([

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Platform, PLATFORM_LABELS } from "@/domain/enums/Platform";
 
 /**
@@ -111,6 +111,7 @@ export function EditedClipUploadPanel({
   targetPlatforms,
 }: EditedClipUploadPanelProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -231,7 +232,7 @@ export function EditedClipUploadPanel({
         setDimensionWarnings(warnings);
       }
 
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setUploadState("error");
       setUploadError(e instanceof Error ? e.message : "Upload failed.");

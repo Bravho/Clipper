@@ -9,7 +9,7 @@ import {
   submitClipRequestSchema,
   SubmitClipRequestValues,
 } from "@/features/requests/validation/clipRequestSchema";
-import { FORM_PLATFORMS, OPTIONAL_FORM_PLATFORMS, PLATFORM_LABELS, Platform } from "@/domain/enums/Platform";
+import { OPTIONAL_FORM_PLATFORMS, PLATFORM_LABELS, PLATFORM_ASPECT_RATIOS, Platform } from "@/domain/enums/Platform";
 import {
   MAX_UPLOAD_COUNT,
   MAX_IMAGE_SIZE_BYTES,
@@ -113,6 +113,14 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
       next as SubmitClipRequestValues["targetPlatforms"],
       { shouldValidate: true }
     );
+  };
+
+  const movePlatform = (index: number, direction: -1 | 1) => {
+    const current = [...(watchedPlatforms as Platform[])];
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= current.length) return;
+    [current[index], current[newIndex]] = [current[newIndex], current[index]];
+    setValue("targetPlatforms", current as SubmitClipRequestValues["targetPlatforms"], { shouldValidate: true });
   };
 
   const handleFileDrop = useCallback(
@@ -368,15 +376,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
                 className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
               />
             </div>
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">English</p>
-              <textarea
-                value={editedResult.hookEnglish}
-                onChange={(e) => updateResultField("hookEnglish", e.target.value)}
-                rows={2}
-                className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 italic focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-            </div>
           </div>
         </div>
 
@@ -407,33 +406,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
                       className="w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
                     />
                   </div>
-                  <div>
-                    <p className="mb-1 text-xs font-medium text-slate-400">Visual Description (EN)</p>
-                    <textarea
-                      value={scene.visualDescription}
-                      onChange={(e) => updateScene(index, "visualDescription", e.target.value)}
-                      rows={2}
-                      className="w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs font-medium text-slate-400">หมายเหตุการเคลื่อนไหว (ไทย)</p>
-                    <textarea
-                      value={scene.motionNotesThai ?? ""}
-                      onChange={(e) => updateScene(index, "motionNotesThai", e.target.value)}
-                      rows={2}
-                      className="w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                    />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs font-medium text-slate-400">Motion Notes (EN)</p>
-                    <textarea
-                      value={scene.motionNotes}
-                      onChange={(e) => updateScene(index, "motionNotes", e.target.value)}
-                      rows={2}
-                      className="w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                    />
-                  </div>
                 </div>
               </div>
             ))}
@@ -455,15 +427,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
                 className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
               />
             </div>
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">English</p>
-              <textarea
-                value={editedResult.scriptEnglish}
-                onChange={(e) => updateResultField("scriptEnglish", e.target.value)}
-                rows={4}
-                className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 italic focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-            </div>
           </div>
         </div>
 
@@ -478,24 +441,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
               <textarea
                 value={editedResult.captionThai}
                 onChange={(e) => updateResultField("captionThai", e.target.value)}
-                rows={3}
-                className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-            </div>
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">English</p>
-              <textarea
-                value={editedResult.captionEnglish}
-                onChange={(e) => updateResultField("captionEnglish", e.target.value)}
-                rows={3}
-                className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-            </div>
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">中文</p>
-              <textarea
-                value={editedResult.captionChinese}
-                onChange={(e) => updateResultField("captionChinese", e.target.value)}
                 rows={3}
                 className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
               />
@@ -671,6 +616,64 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
               </p>
             )}
           </div>
+
+          {/* Priority order */}
+          {(watchedPlatforms as Platform[]).length > 0 && (
+            <div>
+              <p className="mb-2 text-sm font-medium text-slate-700">
+                ลำดับความสำคัญ
+              </p>
+              <p className="mb-3 text-xs text-slate-500">
+                ช่องทางที่ 1 กำหนดอัตราส่วนวิดีโอที่ใช้สร้าง — ลากหรือใช้ลูกศรเพื่อเรียงลำดับ
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {(watchedPlatforms as Platform[]).map((platform, index) => (
+                  <div
+                    key={platform}
+                    className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5"
+                  >
+                    <span
+                      className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                        index === 0
+                          ? "bg-blue-600 text-white"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {index + 1}
+                    </span>
+                    <span className="flex-1 text-sm text-slate-700">
+                      {PLATFORM_LABELS[platform]}
+                    </span>
+                    {index === 0 && (
+                      <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
+                        {PLATFORM_ASPECT_RATIOS[platform]}
+                      </span>
+                    )}
+                    <div className="flex gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => movePlatform(index, -1)}
+                        disabled={index === 0}
+                        className="rounded p-1 text-slate-400 hover:text-slate-700 disabled:opacity-25"
+                        aria-label="เลื่อนขึ้น"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => movePlatform(index, 1)}
+                        disabled={index === (watchedPlatforms as Platform[]).length - 1}
+                        className="rounded p-1 text-slate-400 hover:text-slate-700 disabled:opacity-25"
+                        aria-label="เลื่อนลง"
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
         </div>
       </fieldset>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 
 interface AnalyzeButtonProps {
   requestId: string;
@@ -9,6 +9,7 @@ interface AnalyzeButtonProps {
 
 export function AnalyzeButton({ requestId }: AnalyzeButtonProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,7 +24,7 @@ export function AnalyzeButton({ requestId }: AnalyzeButtonProps) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "การวิเคราะห์ AI ล้มเหลว กรุณาลองอีกครั้ง");
       }
-      router.refresh();
+      router.push(pathname);
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
       setIsAnalyzing(false);

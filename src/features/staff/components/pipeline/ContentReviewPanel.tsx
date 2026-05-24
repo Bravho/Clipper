@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import type { VideoGenerationJob, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
@@ -14,6 +14,7 @@ interface Props {
 
 export function ContentReviewPanel({ requestId, job, scenePlan }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const [scriptThai, setScriptThai] = useState(job.scriptThai ?? "");
   const [scriptEnglish, setScriptEnglish] = useState(job.scriptEnglish ?? "");
   const [hookThai, setHookThai] = useState(job.hookThai ?? "");
@@ -54,7 +55,7 @@ export function ContentReviewPanel({ requestId, job, scenePlan }: Props) {
         const d = await res.json();
         throw new Error(d.error);
       }
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to approve");
     } finally {
@@ -78,7 +79,7 @@ export function ContentReviewPanel({ requestId, job, scenePlan }: Props) {
         const d = await res.json();
         throw new Error(d.error);
       }
-      router.refresh();
+      router.push(pathname);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to reject");
     } finally {

@@ -19,6 +19,7 @@ export interface IUploadedAssetRepository {
   findById(id: string): Promise<UploadedAsset | null>;
   create(input: CreateUploadedAssetInput): Promise<UploadedAsset>;
   update(id: string, input: UpdateUploadedAssetInput): Promise<UploadedAsset>;
+  deleteById(id: string): Promise<void>;
   deleteByRequestId(requestId: string): Promise<void>;
   countByRequestId(requestId: string): Promise<number>;
 }
