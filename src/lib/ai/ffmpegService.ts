@@ -27,6 +27,8 @@ export interface ComposeVideoParams {
   hookThai: string;
   userId: string;
   requestId: string;
+  /** Background music track ID (matches public/music/<id>.mp3). When provided, music ducks under the voice. */
+  musicTrackId?: string;
 }
 
 export interface ComposeVideoResult {
@@ -136,13 +138,14 @@ async function buildBilingualSrt(
   await fs.writeFile(outputPath, lines.join("\n"), "utf-8");
 }
 
-/** Run FFmpeg to compose video + audio + subtitles and export to one ratio. */
+/** Run FFmpeg to compose video + audio (+ optional background music with ducking) and export to one ratio. */
 async function composeSingleRatio(
   videoPath: string,
   audioPath: string,
   srtPath: string,
   ratio: VideoRatio,
-  outputPath: string
+  outputPath: string,
+  musicPath?: string
 ): Promise<void> {
   const { width, height } = RATIO_DIMENSIONS[ratio];
   const ffmpeg = AI_CONFIG.ffmpeg.path;
@@ -150,16 +153,52 @@ async function composeSingleRatio(
   const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
   const subtitleFilter = `subtitles=${srtPath.replace(/\\/g, "/")}:force_style='Fontsize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'`;
 
+  if (!musicPath) {
+    await execFileAsync(ffmpeg, [
+      "-y",
+      "-i", videoPath,
+      "-i", audioPath,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-vf", `${scaleFilter},${subtitleFilter}`,
+      "-c:v", "libx264",
+      "-c:a", "aac",
+      "-ar", "48000",
+      "-shortest",
+      "-t", "15",
+      outputPath,
+    ]);
+    return;
+  }
+
+  // With background music:
+  // 1. Normalize voice loudness to -16 LUFS (EBU R128 broadcast standard), then split for sidechain + mix.
+  // 2. Loop music to 15s at 30% base volume.
+  // 3. Sidechain-compress the music using the voice signal:
+  //    - ratio 8:1 (strong duck — industry standard for podcast/broadcast is 6:1–10:1)
+  //    - attack 80ms (music ducks quickly once speech starts)
+  //    - release 1500ms (music fades back in slowly after speech ends — sounds natural)
+  // 4. Mix with normalize=0 so each stream contributes its full level (voice was already normalized).
+  // 5. Apply a true peak limiter at -0.5 dBTP to prevent inter-sample clipping on lossy re-encode.
+  const audioFilterComplex = [
+    "[1:a]loudnorm=I=-16:LRA=11:TP=-1.5,asplit=2[sc][voice]",
+    "[2:a]aloop=-1:size=2147483647,atrim=0:15,asetpts=PTS-STARTPTS,volume=0.3[music]",
+    "[music][sc]sidechaincompress=threshold=0.02:ratio=8:attack=80:release=1500[music_ducked]",
+    "[voice][music_ducked]amix=inputs=2:normalize=0,alimiter=limit=0.95:level=false[out]",
+  ].join(";");
+
   await execFileAsync(ffmpeg, [
     "-y",
     "-i", videoPath,
     "-i", audioPath,
-    "-map", "0:v:0",   // video stream from Kling AI clip (input 0)
-    "-map", "1:a:0",   // audio stream from RVC WAV (input 1) — explicit, never picks video's own audio
+    "-i", musicPath,
+    "-filter_complex", audioFilterComplex,
+    "-map", "0:v:0",
+    "-map", "[out]",
     "-vf", `${scaleFilter},${subtitleFilter}`,
     "-c:v", "libx264",
     "-c:a", "aac",
-    "-ar", "48000",    // pin output to 48 kHz to match RVC WAV — no surprise resampling
+    "-ar", "48000",
     "-shortest",
     "-t", "15",
     outputPath,
@@ -181,6 +220,11 @@ export async function composeAndExport(
     const audioPath = path.join(tmpDir, "voice.wav"); // RVC outputs 48 kHz WAV — keep correct extension
     const srtPath = path.join(tmpDir, "subs.srt");
 
+    // Music file lives in the project's public/ directory — resolve from CWD
+    const musicPath = params.musicTrackId
+      ? path.join(process.cwd(), "public", "music", `${params.musicTrackId}.mp3`)
+      : undefined;
+
     await Promise.all([
       downloadFromSpaces(params.videoStorageKey, videoPath),
       downloadFromSpaces(params.audioStorageKey, audioPath),
@@ -199,7 +243,7 @@ export async function composeAndExport(
     await Promise.all(
       ratios.map(async (ratio) => {
         const outPath = path.join(tmpDir, `out-${ratio.replace(":", "-")}.mp4`);
-        await composeSingleRatio(videoPath, audioPath, srtPath, ratio, outPath);
+        await composeSingleRatio(videoPath, audioPath, srtPath, ratio, outPath, musicPath);
 
         const storageKey = buildFinalClipKey(params.userId, params.requestId, ratio);
         await uploadToSpaces(outPath, storageKey);

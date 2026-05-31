@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
@@ -118,6 +119,22 @@ export function VideoApprovalPanel({
   const [voiceUploading, setVoiceUploading] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
+  // Music picker state
+  const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(null);
+  const [playingMusicTrack, setPlayingMusicTrack] = useState<string | null>(null);
+  const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Combined preview modal
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const previewVoiceRef = useRef<HTMLAudioElement | null>(null);
+  const previewMusicRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioCtxRef = useRef<AudioContext | null>(null);
+  const previewMusicGainRef = useRef<GainNode | null>(null);
+  const previewAnalyserRef = useRef<AnalyserNode | null>(null);
+  const duckingRafRef = useRef<number | null>(null);
+
   const audioCtxRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const samplesRef = useRef<Float32Array[]>([]);
@@ -211,6 +228,56 @@ export function VideoApprovalPanel({
     };
   }, [playbackUrl]);
 
+  // Build Web Audio graph when preview modal opens; tear it down when it closes.
+  // Voice → AnalyserNode → destination (for speech detection)
+  // Music → GainNode → destination (for real-time ducking)
+  useEffect(() => {
+    if (!showPreviewModal) {
+      if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
+      previewAudioCtxRef.current?.close();
+      previewAudioCtxRef.current = null;
+      previewMusicGainRef.current = null;
+      previewAnalyserRef.current = null;
+      return;
+    }
+
+    // Delay so the <audio> elements finish mounting before we attach them
+    const timer = setTimeout(() => {
+      const voice = previewVoiceRef.current;
+      const music = previewMusicRef.current;
+      if (!voice) return;
+
+      const ctx = new AudioContext();
+      previewAudioCtxRef.current = ctx;
+
+      const voiceSource = ctx.createMediaElementSource(voice);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      voiceSource.connect(analyser);
+      analyser.connect(ctx.destination);
+      previewAnalyserRef.current = analyser;
+
+      if (music) {
+        const musicSource = ctx.createMediaElementSource(music);
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 0.25;
+        musicSource.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        previewMusicGainRef.current = gainNode;
+      }
+    }, 80);
+
+    return () => {
+      clearTimeout(timer);
+      if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
+      previewAudioCtxRef.current?.close();
+      previewAudioCtxRef.current = null;
+      previewMusicGainRef.current = null;
+      previewAnalyserRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPreviewModal]);
+
   function formatTime(seconds: number) {
     const m = Math.floor(seconds / 60).toString().padStart(2, "0");
     const s = (seconds % 60).toString().padStart(2, "0");
@@ -266,6 +333,115 @@ export function VideoApprovalPanel({
     setPlaybackUrl(URL.createObjectURL(wavBlob));
     setRecorderState("recorded");
   }, []);
+
+  function handleMusicTrackClick(trackId: string) {
+    // Stop any currently playing preview regardless of which track was clicked
+    if (musicAudioRef.current) { musicAudioRef.current.pause(); musicAudioRef.current.src = ""; }
+    setPlayingMusicTrack(null);
+
+    if (trackId === "none") {
+      setSelectedMusicTrack("none");
+      return;
+    }
+
+    const track = BACKGROUND_MUSIC_TRACKS.find((t) => t.id === trackId)!;
+    if (playingMusicTrack !== trackId) {
+      const audio = new Audio(track.url);
+      audio.onended = () => setPlayingMusicTrack(null);
+      audio.play();
+      musicAudioRef.current = audio;
+      setPlayingMusicTrack(trackId);
+    }
+    setSelectedMusicTrack(trackId);
+  }
+
+  function openPreview() {
+    if (musicAudioRef.current) { musicAudioRef.current.pause(); musicAudioRef.current.src = ""; }
+    setPlayingMusicTrack(null);
+    setShowPreviewModal(true);
+    setIsPreviewPlaying(false);
+  }
+
+  function closePreview() {
+    if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
+    setShowPreviewModal(false);
+    setIsPreviewPlaying(false);
+    if (previewVideoRef.current) { previewVideoRef.current.pause(); previewVideoRef.current.currentTime = 0; }
+    if (previewVoiceRef.current) { previewVoiceRef.current.pause(); previewVoiceRef.current.currentTime = 0; }
+    if (previewMusicRef.current) { previewMusicRef.current.pause(); previewMusicRef.current.currentTime = 0; }
+  }
+
+  async function togglePreview() {
+    const video = previewVideoRef.current;
+    const voice = previewVoiceRef.current;
+    const ctx = previewAudioCtxRef.current;
+    if (!video || !voice) return;
+
+    if (isPreviewPlaying) {
+      video.pause();
+      voice.pause();
+      previewMusicRef.current?.pause();
+      if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
+      setIsPreviewPlaying(false);
+    } else {
+      // Browser suspends AudioContext until a user gesture — resume it here
+      if (ctx?.state === "suspended") await ctx.resume();
+
+      video.currentTime = 0;
+      voice.currentTime = 0;
+      const music = previewMusicRef.current;
+      if (music) music.currentTime = 0;
+
+      try {
+        await Promise.all([video.play(), voice.play(), music ? music.play() : Promise.resolve()]);
+        setIsPreviewPlaying(true);
+
+        // Real-time ducking: read voice amplitude via AnalyserNode and adjust music GainNode
+        const analyser = previewAnalyserRef.current;
+        const gainNode = previewMusicGainRef.current;
+        if (analyser && gainNode && ctx) {
+          // Capture as consts so the tick closure sees non-nullable types
+          const _analyser: AnalyserNode = analyser;
+          const _gainNode: GainNode = gainNode;
+          const _ctx: AudioContext = ctx;
+          const bufferLength = _analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLength);
+
+          function tick() {
+            _analyser.getByteTimeDomainData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+              const v = (dataArray[i] - 128) / 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / bufferLength);
+
+            // Speaking: duck music to 4%; silent: restore to 25%
+            // Fast attack (0.05s) so music drops quickly when speech starts;
+            // slow release (0.5s) so it fades back up naturally between sentences.
+            const isSpeaking = rms > 0.02;
+            _gainNode.gain.setTargetAtTime(
+              isSpeaking ? 0.04 : 0.25,
+              _ctx.currentTime,
+              isSpeaking ? 0.05 : 0.5,
+            );
+
+            duckingRafRef.current = requestAnimationFrame(tick);
+          }
+          duckingRafRef.current = requestAnimationFrame(tick);
+        }
+
+        video.onended = () => {
+          voice.pause();
+          previewMusicRef.current?.pause();
+          if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
+          setIsPreviewPlaying(false);
+        };
+      } catch {
+        // Autoplay blocked — user needs to interact again
+      }
+    }
+  }
 
   const reRecord = useCallback(() => {
     sessionStorage.removeItem(REC_KEY);
@@ -374,7 +550,7 @@ export function VideoApprovalPanel({
       const confirmRes = await fetch(`/api/requests/${requestId}/voice-recording/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, assetId }),
+        body: JSON.stringify({ jobId, assetId, selectedMusicTrack: selectedMusicTrack === "none" ? null : selectedMusicTrack }),
       });
       if (!confirmRes.ok) throw new Error((await confirmRes.json()).error);
 
@@ -608,9 +784,103 @@ export function VideoApprovalPanel({
             </div>
           )}
 
+          {/* Background music picker — shown once RVC conversion is done */}
+          {recorderState === "converted" && (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">เพลงพื้นหลัง</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  คลิกเพื่อฟังตัวอย่าง เสียงพูดจะดังขึ้นอัตโนมัติเมื่อไม่มีการพูด
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {/* No-music option */}
+                <button
+                  onClick={() => handleMusicTrackClick("none")}
+                  className={[
+                    "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
+                    selectedMusicTrack === "none"
+                      ? "border-slate-500 bg-slate-100 text-slate-800 font-medium"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                    {selectedMusicTrack === "none" ? (
+                      <svg className="w-4 h-4 text-slate-700" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                        <path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" />
+                        <path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 20v4M8 20h8" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="truncate">ไม่ใส่เพลง</span>
+                </button>
+
+                {BACKGROUND_MUSIC_TRACKS.map((track) => {
+                  const isSelected = selectedMusicTrack === track.id;
+                  const isPlaying = playingMusicTrack === track.id;
+                  return (
+                    <button
+                      key={track.id}
+                      onClick={() => handleMusicTrackClick(track.id)}
+                      className={[
+                        "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
+                        isSelected
+                          ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+                      ].join(" ")}
+                    >
+                      <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                        {isPlaying ? (
+                          <span className="flex gap-0.5 items-end h-4">
+                            <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "60%", animationDelay: "0ms" }} />
+                            <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "100%", animationDelay: "100ms" }} />
+                            <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "40%", animationDelay: "200ms" }} />
+                          </span>
+                        ) : isSelected ? (
+                          <svg className="w-4 h-4 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="truncate">{track.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedMusicTrack === null && (
+                <p className="text-xs text-amber-600">กรุณาเลือกเพลง หรือเลือก &ldquo;ไม่ใส่เพลง&rdquo; ก่อนส่งเสียงพากย์</p>
+              )}
+            </div>
+          )}
+
+          {/* Preview combined button — only enabled once converted + music chosen */}
+          {recorderState === "converted" && selectedMusicTrack !== null && (
+            <div className="mb-4">
+              <button
+                onClick={openPreview}
+                className="flex items-center gap-2 rounded-full border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 px-5 py-2.5 text-sm font-medium transition-colors"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
+                </svg>
+                ดูตัวอย่างรวม (วิดีโอ + เสียง + เพลง)
+              </button>
+              <p className="mt-1.5 text-xs text-slate-400">ฟังก่อนส่ง — เพลงพื้นหลังจะเล่นที่ระดับเสียง 25%</p>
+            </div>
+          )}
+
           <Button
             onClick={handleVoiceUpload}
-            disabled={!convertedBlob || voiceUploading}
+            disabled={!convertedBlob || voiceUploading || selectedMusicTrack === null}
             loading={voiceUploading}
           >
             {voiceUploading ? "กำลังอัพโหลด..." : "ส่งเสียงพากย์"}
@@ -814,6 +1084,78 @@ export function VideoApprovalPanel({
         </Card>
       )}
 
+      {/* Combined preview modal */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="relative w-full max-w-2xl rounded-xl bg-white shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">ตัวอย่างรวม</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {selectedMusicTrack === "none"
+                    ? "วิดีโอ + เสียงพากย์ (ไม่มีเพลงพื้นหลัง)"
+                    : `วิดีโอ + เสียงพากย์ + ${BACKGROUND_MUSIC_TRACKS.find((t) => t.id === selectedMusicTrack)?.label ?? ""}`}
+                </p>
+              </div>
+              <button
+                onClick={closePreview}
+                className="rounded-full p-1.5 hover:bg-slate-100 text-slate-500 transition-colors"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Video — muted because its own audio track is empty */}
+            <div className="bg-black">
+              <video
+                ref={previewVideoRef}
+                src={videoUrl}
+                muted
+                playsInline
+                className="w-full"
+                style={{ maxHeight: 400 }}
+              />
+            </div>
+
+            {/* Hidden audio elements */}
+            {convertedUrl && <audio ref={previewVoiceRef} src={convertedUrl} />}
+            {selectedMusicTrack && selectedMusicTrack !== "none" && (() => {
+              const track = BACKGROUND_MUSIC_TRACKS.find((t) => t.id === selectedMusicTrack);
+              return track ? <audio ref={previewMusicRef} src={track.url} loop /> : null;
+            })()}
+
+            {/* Play controls */}
+            <div className="px-5 py-4 space-y-3">
+              <button
+                onClick={togglePreview}
+                className="flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 text-sm font-medium transition-colors"
+              >
+                {isPreviewPlaying ? (
+                  <>
+                    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    หยุดชั่วคราว
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                    </svg>
+                    เล่นตัวอย่าง
+                  </>
+                )}
+              </button>
+              <p className="text-xs text-slate-400">
+                * เพลงพื้นหลังจะดังอัตโนมัติขึ้นระหว่างช่วงที่ไม่มีการพูด (ระบบ FFmpeg จัดการในขั้นตอนถัดไป)
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

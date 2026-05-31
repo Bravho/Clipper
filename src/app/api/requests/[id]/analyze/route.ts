@@ -88,6 +88,7 @@ export async function POST(
         rvcVoiceModel: "",
         voiceRecordingAssetId: null,
         processedVoiceAssetId: null,
+        selectedMusicTrack: null,
         finalExport_9_16_assetId: null,
         finalExport_16_9_assetId: null,
         finalExport_1_1_assetId: null,

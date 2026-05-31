@@ -67,6 +67,7 @@ export class VideoGenerationService {
       rvcVoiceModel: params.rvcVoiceModel ?? "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
+      selectedMusicTrack: null,
       finalExport_9_16_assetId: null,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
@@ -359,7 +360,8 @@ export class VideoGenerationService {
   async confirmVoiceRecording(
     jobId: string,
     userId: string,
-    assetId: string
+    assetId: string,
+    selectedMusicTrack: string | null = null
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceRecording);
 
@@ -384,19 +386,22 @@ export class VideoGenerationService {
       currentStep:           VideoGenerationStep.AwaitingVoiceApproval,
       voiceRecordingAssetId: assetId,
       processedVoiceAssetId: assetId,
+      selectedMusicTrack,
     });
   }
 
   /** Staff approves the RVC voice conversion and triggers FFmpeg. */
   async approveVoiceConversion(
     jobId: string,
-    staffId: string
+    staffId: string,
+    selectedMusicTrack: string | null = null
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.ComposingFinalVideo,
       voiceApprovedBy: staffId,
+      selectedMusicTrack,
     });
 
     this._runFFmpegComposition(updated).catch(async (err) => {
@@ -440,6 +445,7 @@ export class VideoGenerationService {
       hookThai: job.approvedHookThai!,
       userId: request.userId,
       requestId: job.requestId,
+      musicTrackId: job.selectedMusicTrack ?? undefined,
     });
 
     const scheduledDeletionAt = new Date();
@@ -593,6 +599,7 @@ export class VideoGenerationService {
       rvcVoiceModel: "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
+      selectedMusicTrack: null,
       finalExport_9_16_assetId: null,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,

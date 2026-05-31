@@ -7,17 +7,19 @@ import { videoGenerationService } from "@/services/staff/VideoGenerationService"
 const schema = z.object({
   jobId: z.string().min(1),
   assetId: z.string().min(1),
+  selectedMusicTrack: z.string().nullable().optional(),
 });
 
 export async function POST(req: NextRequest) {
   try {
     const requester = await requireRole(Role.Requester);
-    const body = schema.parse(await req.json());
+    const { jobId, assetId, selectedMusicTrack } = schema.parse(await req.json());
 
     const job = await videoGenerationService.confirmVoiceRecording(
-      body.jobId,
+      jobId,
       requester.id,
-      body.assetId
+      assetId,
+      selectedMusicTrack ?? null
     );
 
     return NextResponse.json({ job }, { status: 200 });

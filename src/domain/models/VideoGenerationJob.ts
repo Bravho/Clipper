@@ -61,6 +61,8 @@ export interface VideoGenerationJob {
   voiceRecordingAssetId: string | null;
   /** UploadedAsset ID of the RVC-converted audio (same asset as voiceRecordingAssetId — conversion happens in browser). */
   processedVoiceAssetId: string | null;
+  /** ID of the chosen background music track (matches BACKGROUND_MUSIC_TRACKS[].id). Null = no music. */
+  selectedMusicTrack: string | null;
 
   // ── Step 4: Final exports (UploadedAsset IDs per ratio) ─────────────────────
   finalExport_9_16_assetId: string | null;

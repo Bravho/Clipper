@@ -4,13 +4,20 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { videoGenerationService } from "@/services/staff/VideoGenerationService";
 
-const schema = z.object({ jobId: z.string().min(1) });
+const schema = z.object({
+  jobId: z.string().min(1),
+  selectedMusicTrack: z.string().nullable().optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
     const staff = await requireRole(Role.Editor, Role.Admin);
-    const { jobId } = schema.parse(await req.json());
-    const job = await videoGenerationService.approveVoiceConversion(jobId, staff.id);
+    const { jobId, selectedMusicTrack } = schema.parse(await req.json());
+    const job = await videoGenerationService.approveVoiceConversion(
+      jobId,
+      staff.id,
+      selectedMusicTrack ?? null
+    );
     return NextResponse.json({ job }, { status: 200 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Internal server error";
