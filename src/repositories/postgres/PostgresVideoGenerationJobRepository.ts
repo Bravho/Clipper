@@ -32,6 +32,8 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     approvedCaptionEnglish: (row.approved_caption_english as string) ?? null,
     approvedCaptionChinese: (row.approved_caption_chinese as string) ?? null,
     klingTaskId: (row.kling_task_id as string) ?? null,
+    klingStatus: null,
+    klingLastPolledAt: null,
     baseVideoAssetId: (row.base_video_asset_id as string) ?? null,
     rvcVoiceModel: row.eleven_labs_voice_id as string,
     voiceRecordingAssetId: (row.voice_recording_asset_id as string) ?? null,
@@ -41,9 +43,13 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     finalExport_16_9_assetId: (row.final_export_16_9_asset_id as string) ?? null,
     finalExport_1_1_assetId: (row.final_export_1_1_asset_id as string) ?? null,
     finalExport_4_5_assetId: (row.final_export_4_5_asset_id as string) ?? null,
+    subtitleTimeline: (row.subtitle_timeline as string) ?? null,
+    animationSpec: (row.animation_spec as string) ?? null,
+    animatedVideoAssetId: (row.animated_video_asset_id as string) ?? null,
     contentApprovedBy: (row.content_approved_by as string) ?? null,
     videoApprovedBy: (row.video_approved_by as string) ?? null,
     voiceApprovedBy: (row.voice_approved_by as string) ?? null,
+    animationApprovedBy: null,
     finalApprovedBy: (row.final_approved_by as string) ?? null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
@@ -80,6 +86,9 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   "finalExport_16_9_assetId": "final_export_16_9_asset_id",
   "finalExport_1_1_assetId": "final_export_1_1_asset_id",
   "finalExport_4_5_assetId": "final_export_4_5_asset_id",
+  subtitleTimeline: "subtitle_timeline",
+  animationSpec: "animation_spec",
+  animatedVideoAssetId: "animated_video_asset_id",
   contentApprovedBy: "content_approved_by",
   videoApprovedBy: "video_approved_by",
   voiceApprovedBy: "voice_approved_by",
@@ -122,11 +131,12 @@ export class PostgresVideoGenerationJobRepository
          voice_recording_asset_id, processed_voice_asset_id,
          final_export_9_16_asset_id, final_export_16_9_asset_id,
          final_export_1_1_asset_id, final_export_4_5_asset_id,
-         content_approved_by, video_approved_by, voice_approved_by, final_approved_by
+         content_approved_by, video_approved_by, voice_approved_by, final_approved_by,
+         subtitle_timeline, animation_spec, animated_video_asset_id
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
          $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-         $31,$32,$33
+         $31,$32,$33,$34,$35,$36
        ) RETURNING *`,
       [
         input.requestId,
@@ -162,6 +172,9 @@ export class PostgresVideoGenerationJobRepository
         input.videoApprovedBy ?? null,
         input.voiceApprovedBy ?? null,
         input.finalApprovedBy ?? null,
+        input.subtitleTimeline ?? null,
+        input.animationSpec ?? null,
+        input.animatedVideoAssetId ?? null,
       ]
     );
     return rowToJob(rows[0]);

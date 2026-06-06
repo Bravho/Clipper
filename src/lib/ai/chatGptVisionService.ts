@@ -11,6 +11,13 @@ export interface ChatGptContentOutput {
   hookThai: string;
   captionThai: string;
   theme: string;
+  businessProfile?: {
+    businessName: string;
+    category: string;
+    location: string | null;
+    description: string | null;
+    menuDetails: string | null;
+  };
 }
 
 export interface GenerateContentParams {
@@ -20,6 +27,13 @@ export interface GenerateContentParams {
   targetPlatforms: Platform[];
   preferredStyle: string;
   videoDurationSeconds?: number;
+  businessProfileContext?: {
+    businessName: string;
+    category: string;
+    location: string | null;
+    description: string | null;
+    menuDetails: string | null;
+  } | null;
 }
 
 const SYSTEM_PROMPT = `You are an expert social media video producer specialising in short-form viral content for Thai audiences.
@@ -36,6 +50,7 @@ Requirements:
 - Scene descriptions: detailed Thai description of the visuals — include all necessary direction within the description itself.
 - Target audience is provided for THEME and STYLE reference only. Do NOT mention, address, or reference the target audience in the script, hook, caption, scene descriptions, or any spoken or visible content. Use it solely to inform visual tone, energy level, and creative direction.
 - CRITICAL — product accuracy: Only reference, describe, or feature products, items, and details that are visibly present in the uploaded images. Do NOT invent, assume, or include any product, feature, colour, brand, or claim that cannot be directly verified from the provided images. Scripts and scene descriptions that mention unverifiable products will be rejected.
+- Business profile extraction: Extract the business details from the description and images to populate the "businessProfile" field (name of the shop/restaurant, category like "ร้านอาหาร" or "คาเฟ่" or "สปา" or "โรงแรม", location if mentioned, brief shop summary, and menu/highlight items).
 
 Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
 
@@ -52,19 +67,43 @@ Schema:
   "scriptThai": "string",
   "hookThai": "string",
   "captionThai": "string",
-  "theme": "string"
+  "theme": "string",
+  "businessProfile": {
+    "businessName": "string",
+    "category": "string",
+    "location": "string or null",
+    "description": "string or null",
+    "menuDetails": "string or null"
+  }
 }`;
 
 function buildUserPrompt(params: GenerateContentParams): string {
-  return [
+  const promptParts = [
     `Video description: ${params.description}`,
     `Target audience (for theme/style reference only — do not include in script or scene content): ${params.targetAudience}`,
     `Target platforms: ${params.targetPlatforms.join(", ")}`,
     `Preferred style/tone: ${params.preferredStyle}`,
     `Duration: ${params.videoDurationSeconds ?? 15} seconds`,
     `Number of uploaded images: ${params.imageUrls.length}`,
-    "Analyse the images above and produce the complete production plan as JSON.",
-  ].join("\n");
+  ];
+
+  if (params.businessProfileContext) {
+    const bp = params.businessProfileContext;
+    promptParts.push(
+      `Business Profile Context (stored profile details of this shop for your creative reference):`,
+      `- Business Name: ${bp.businessName}`,
+      `- Category: ${bp.category}`,
+      `- Location: ${bp.location ?? "N/A"}`,
+      `- Shop Description: ${bp.description ?? "N/A"}`,
+      `- Key Menu/Products: ${bp.menuDetails ?? "N/A"}`
+    );
+  }
+
+  promptParts.push(
+    "Analyse the images above and produce the complete production plan as JSON."
+  );
+
+  return promptParts.join("\n");
 }
 
 /**

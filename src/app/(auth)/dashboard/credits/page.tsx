@@ -8,6 +8,8 @@ import { TransactionType } from "@/domain/enums/TransactionType";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { ManualBuyForm } from "@/features/credits/components/ManualBuyForm";
+
 
 export const metadata: Metadata = { title: "Credits — RClipper" };
 
@@ -105,8 +107,12 @@ export default async function CreditsPage() {
             If you need more credits, please contact our support team.
           </li>
         </ul>
-        {/* TODO: Future — add paid top-up section here when billing is implemented. */}
       </Card>
+
+      <div className="mb-8">
+        <ManualBuyForm />
+      </div>
+
 
       {/* Transaction history */}
       <div>

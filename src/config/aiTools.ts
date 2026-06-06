@@ -16,8 +16,18 @@ export const AI_CONFIG = {
     mode: process.env.KLING_MODE,
   },
   rvc: {
-    serverUrl:         process.env.RVC_SERVER_URL ?? "",
-    defaultVoiceModel: process.env.RVC_DEFAULT_VOICE_MODEL ?? "mind_model",
+    // Prefer the Cloudflare tunnel URL — reachable from both the browser and the Next.js server
+    // even when the RVC Mac Mini binds only to localhost. Fall back to the LAN IP when the
+    // server is bound to 0.0.0.0 and Next.js is on the same subnet.
+    serverUrl: (
+      (process.env.NEXT_PUBLIC_RVC_SERVER_URL ?? "").trim() ||
+      (process.env.RVC_SERVER_URL ?? "").trim()
+    ),
+    defaultVoiceModel: (process.env.RVC_DEFAULT_VOICE_MODEL ?? "mind_model").trim(),
+  },
+  claude: {
+    apiKey: process.env.ANTHROPIC_API_KEY ?? "",
+    model: "claude-sonnet-4-6",
   },
   ffmpeg: {
     path: process.env.FFMPEG_PATH ?? "ffmpeg",

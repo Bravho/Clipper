@@ -45,6 +45,8 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     approvedCaptionChinese: null,
 
     klingTaskId: null,
+    klingStatus: null,
+    klingLastPolledAt: null,
     baseVideoAssetId: null,
     rvcVoiceModel: AI_CONFIG.rvc.serverUrl ? "default" : "",
     voiceRecordingAssetId: null,
@@ -55,9 +57,13 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     finalExport_1_1_assetId: null,
     finalExport_4_5_assetId: null,
 
+    subtitleTimeline: null,
+    animationSpec: null,
+    animatedVideoAssetId: null,
     contentApprovedBy: null,
     videoApprovedBy: null,
     voiceApprovedBy: null,
+    animationApprovedBy: null,
     finalApprovedBy: null,
 
     createdAt: d("2026-05-03T10:00:00Z"),
@@ -118,6 +124,8 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     approvedCaptionChinese: null,
 
     klingTaskId: null,
+    klingStatus: null,
+    klingLastPolledAt: null,
     baseVideoAssetId: null,
     rvcVoiceModel: AI_CONFIG.rvc.serverUrl ? "default" : "",
     voiceRecordingAssetId: null,
@@ -128,9 +136,13 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     finalExport_1_1_assetId: null,
     finalExport_4_5_assetId: null,
 
+    subtitleTimeline: null,
+    animationSpec: null,
+    animatedVideoAssetId: null,
     contentApprovedBy: null,
     videoApprovedBy: null,
     voiceApprovedBy: null,
+    animationApprovedBy: null,
     finalApprovedBy: null,
 
     createdAt: d("2026-05-03T11:00:00Z"),

@@ -30,6 +30,13 @@ export const creditTransactionRepository = new PostgresCreditTransactionReposito
 export const termsAcceptanceRepository = new PostgresTermsAcceptanceRepository();
 export const emailVerificationTokenRepository = new PostgresEmailVerificationTokenRepository();
 
+// ── New Repositories — PostgreSQL ────────────────────────────────────────────
+import { PostgresBusinessProfileRepository } from "./postgres/PostgresBusinessProfileRepository";
+import { PostgresCreditPurchaseLogRepository } from "./postgres/PostgresCreditPurchaseLogRepository";
+
+export const businessProfileRepository = new PostgresBusinessProfileRepository();
+export const creditPurchaseLogRepository = new PostgresCreditPurchaseLogRepository();
+
 // ── Phase 2B — PostgreSQL ────────────────────────────────────────────────────
 import { PostgresClipRequestRepository } from "./postgres/PostgresClipRequestRepository";
 import { PostgresRequestStatusHistoryRepository } from "./postgres/PostgresRequestStatusHistoryRepository";
@@ -66,3 +73,4 @@ import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordR
 
 export const videoGenerationJobRepository = new PostgresVideoGenerationJobRepository();
 export const videoPublishRecordRepository = new MockVideoPublishRecordRepository(); // TODO: PostgresVideoPublishRecordRepository
+

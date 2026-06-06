@@ -125,6 +125,14 @@ export function buildProcessedVoiceKey(userId: string, requestId: string): strin
 }
 
 /**
+ * Key for an FFmpeg-animated video (base video + graphic overlays, before final composition).
+ * Lifecycle: retained for 8 years.
+ */
+export function buildAnimatedVideoKey(userId: string, requestId: string): string {
+  return `animated_videos/${userId}/${utcDateSegment()}/${requestId}/${uuid()}.mp4`;
+}
+
+/**
  * Key for a final FFmpeg-exported clip in a specific aspect ratio.
  * Lifecycle: retained for 8 years.
  *

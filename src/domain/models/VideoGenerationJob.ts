@@ -64,6 +64,14 @@ export interface VideoGenerationJob {
   /** ID of the chosen background music track (matches BACKGROUND_MUSIC_TRACKS[].id). Null = no music. */
   selectedMusicTrack: string | null;
 
+  // ── Step 3.5: Animation generation ─────────────────────────────────────────
+  /** JSON string of TimedSegment[] — per-sentence voice timestamps from Gemini alignment. */
+  subtitleTimeline: string | null;
+  /** JSON string of AnimationSpec[] — Claude-generated animation overlay instructions. */
+  animationSpec: string | null;
+  /** UploadedAsset ID of the FFmpeg-animated video (base video with graphic overlays). */
+  animatedVideoAssetId: string | null;
+
   // ── Step 4: Final exports (UploadedAsset IDs per ratio) ─────────────────────
   finalExport_9_16_assetId: string | null;
   finalExport_16_9_assetId: string | null;
@@ -78,6 +86,7 @@ export interface VideoGenerationJob {
   contentApprovedBy: string | null;
   videoApprovedBy: string | null;
   voiceApprovedBy: string | null;
+  animationApprovedBy: string | null;
   finalApprovedBy: string | null;
 
   createdAt: Date;

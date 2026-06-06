@@ -103,6 +103,8 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
     onCreditParamsChange?.(duration, platformCount);
   }, [watchedDuration, watchedPlatforms]); // eslint-disable-line react-hooks/exhaustive-deps
 
+
+
   const handlePlatformToggle = (platform: Platform) => {
     const current = watchedPlatforms as Platform[];
     const next = current.includes(platform)

@@ -58,6 +58,18 @@ export default async function RequestDetailPage({
     ? assets.find((a) => a.id === pipelineJob.baseVideoAssetId) ?? null
     : null;
 
+  const voiceRecordingAsset = pipelineJob?.processedVoiceAssetId
+    ? assets.find((a) => a.id === pipelineJob.processedVoiceAssetId) ?? null
+    : null;
+
+  const animatedVideoAsset = pipelineJob?.animatedVideoAssetId
+    ? assets.find((a) => a.id === pipelineJob.animatedVideoAssetId) ?? null
+    : null;
+
+  const finalClips = assets.filter(
+    (a) => a.assetType === AssetType.FinalClip && a.uploadStatus === AssetUploadStatus.Uploaded
+  );
+
   const view = requestPresentationService.buildRequestView(
     request,
     assets,
@@ -237,6 +249,19 @@ export default async function RequestDetailPage({
                 isAwaitingVoiceRecording={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceRecording
                 }
+                isAwaitingVoiceApproval={
+                  pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceApproval
+                }
+                isAwaitingAnimationApproval={
+                  pipelineJob.currentStep === VideoGenerationStep.AwaitingAnimationApproval
+                }
+                animatedVideoUrl={animatedVideoAsset?.storageUrl ?? null}
+                savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
+                isAwaitingFinalApproval={
+                  pipelineJob.currentStep === VideoGenerationStep.AwaitingFinalApproval
+                }
+                voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
+                finalClips={finalClips}
                 scenes={scenePlan}
                 hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
                 hookEnglish={pipelineJob.approvedHookEnglish ?? pipelineJob.hookEnglish}

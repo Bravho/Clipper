@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
+import { Platform, PLATFORM_LABELS, FORM_PLATFORMS } from "@/domain/enums/Platform";
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
@@ -69,6 +70,13 @@ interface Props {
   videoUrl: string;
   isAwaitingApproval: boolean;
   isAwaitingVoiceRecording?: boolean;
+  isAwaitingVoiceApproval?: boolean;
+  isAwaitingAnimationApproval?: boolean;
+  isAwaitingFinalApproval?: boolean;
+  voiceRecordingUrl?: string | null;
+  animatedVideoUrl?: string | null;
+  savedMusicTrack?: string | null;
+  finalClips?: any[];
   scenes: ScenePlan[];
   hookThai: string | null;
   hookEnglish: string | null;
@@ -87,6 +95,13 @@ export function VideoApprovalPanel({
   videoUrl,
   isAwaitingApproval,
   isAwaitingVoiceRecording = false,
+  isAwaitingVoiceApproval = false,
+  isAwaitingAnimationApproval = false,
+  isAwaitingFinalApproval = false,
+  voiceRecordingUrl = null,
+  animatedVideoUrl = null,
+  savedMusicTrack = null,
+  finalClips = [],
   scenes,
   hookThai,
   hookEnglish,
@@ -117,12 +132,22 @@ export function VideoApprovalPanel({
   const [convertedUrl, setConvertedUrl] = useState<string | null>(null);
   const [conversionCount, setConversionCount] = useState(0);
   const [voiceUploading, setVoiceUploading] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);   // conversion errors
+  const [uploadError, setUploadError] = useState<string | null>(null); // submit-button errors
 
-  // Music picker state
-  const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(null);
+  // Music picker state — initialise from job's saved track so approval steps show the current selection
+  const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(savedMusicTrack ?? null);
   const [playingMusicTrack, setPlayingMusicTrack] = useState<string | null>(null);
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Requester approval states
+  const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>([Platform.TventApp]);
+  const [voiceApproving, setVoiceApproving] = useState(false);
+  const [voiceRecreating, setVoiceRecreating] = useState(false);
+  const [animationApproving, setAnimationApproving] = useState(false);
+  const [animationRegenerating, setAnimationRegenerating] = useState(false);
+  const [finalApproving, setFinalApproving] = useState(false);
+  const [selectedExportRatio, setSelectedExportRatio] = useState<string>("9:16");
 
   // Combined preview modal
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -131,6 +156,118 @@ export function VideoApprovalPanel({
   const previewVoiceRef = useRef<HTMLAudioElement | null>(null);
   const previewMusicRef = useRef<HTMLAudioElement | null>(null);
   const previewAudioCtxRef = useRef<AudioContext | null>(null);
+
+  const togglePlatform = (p: Platform) => {
+    if (p === Platform.TventApp) return; // TventApp is mandatory
+    setSelectedPlatforms((prev) =>
+      prev.includes(p) ? prev.filter((item) => item !== p) : [...prev, p]
+    );
+  };
+
+  const handleApproveVoice = async () => {
+    setVoiceApproving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/approve-voice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, targetPlatforms: selectedPlatforms, selectedMusicTrack }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถอนุมัติเสียงพากย์ได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setVoiceApproving(false);
+    }
+  };
+
+  const handleRejectVoice = async () => {
+    setVoiceRecreating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/reject-voice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถส่งกลับไปบันทึกเสียงพากย์ใหม่ได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setVoiceRecreating(false);
+    }
+  };
+
+  const handleApproveAnimation = async () => {
+    setAnimationApproving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/approve-animation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, targetPlatforms: selectedPlatforms, selectedMusicTrack }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถอนุมัติ Animation ได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setAnimationApproving(false);
+    }
+  };
+
+  const handleRegenerateAnimation = async () => {
+    setAnimationRegenerating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/regenerate-animation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถสร้าง Animation ใหม่ได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setAnimationRegenerating(false);
+    }
+  };
+
+  const handleApproveFinal = async () => {
+    setFinalApproving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/approve-final`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถส่งมอบวิดีโอสุดท้ายได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setFinalApproving(false);
+    }
+  };
   const previewMusicGainRef = useRef<GainNode | null>(null);
   const previewAnalyserRef = useRef<AnalyserNode | null>(null);
   const duckingRafRef = useRef<number | null>(null);
@@ -459,6 +596,7 @@ export function VideoApprovalPanel({
     setElapsed(0);
     setRecorderState("idle");
     setVoiceError(null);
+    setUploadError(null);
   }, [REC_KEY, CONV_KEY, playbackUrl]);
 
   async function handleConvert() {
@@ -467,52 +605,26 @@ export function VideoApprovalPanel({
     setVoiceError(null);
 
     try {
-      const rvcBase = process.env.NEXT_PUBLIC_RVC_SERVER_URL;
-      if (!rvcBase) throw new Error("RVC server URL not configured (NEXT_PUBLIC_RVC_SERVER_URL)");
-
-      // Step 1 — submit job directly to RVC server (CORS enabled on the server)
       const form = new FormData();
       form.append("audio", recordedBlob, "recording.wav");
-      form.append("voice_id", process.env.NEXT_PUBLIC_RVC_DEFAULT_VOICE_MODEL ?? "mind_model");
 
-      const submitRes = await fetch(`${rvcBase}/api/rvc/convert`, { method: "POST", body: form });
-      if (!submitRes.ok) {
-        const body = await submitRes.json().catch(() => ({}));
-        throw new Error(body.error ?? `RVC submit error: ${submitRes.status}`);
-      }
-      const { job_id } = await submitRes.json();
-
-      // Step 2 — poll until completed or failed (max 15 minutes)
-      const deadline = Date.now() + 15 * 60 * 1000;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const statusRes = await fetch(`${rvcBase}/api/rvc/jobs/${job_id}`);
-        if (!statusRes.ok) throw new Error(`RVC status error: ${statusRes.status}`);
-        const job = await statusRes.json();
-
-        if (job.status === "failed") throw new Error(`RVC conversion failed: ${job.error ?? "unknown"}`);
-        if (job.status !== "completed") continue;
-
-        // Step 3 — download converted audio (no-store to prevent browser caching)
-        const dlRes = await fetch(`${rvcBase}/api/rvc/jobs/${job_id}/download`, { cache: "no-store" });
-        if (!dlRes.ok) throw new Error(`RVC download error: ${dlRes.status}`);
-
-        const buf = await dlRes.arrayBuffer();
-        const blob = new Blob([buf], { type: "audio/wav" });
-        const newUrl = URL.createObjectURL(blob);
-
-        // Use ref so we always revoke the live URL, not a stale closure value
-        if (convertedUrlRef.current) URL.revokeObjectURL(convertedUrlRef.current);
-        convertedUrlRef.current = newUrl;
-
-        setConvertedBlob(blob);
-        setConvertedUrl(newUrl);
-        setConversionCount((c) => c + 1);
-        setRecorderState("converted");
-        return;
+      const res = await fetch("/api/rvc/convert", { method: "POST", body: form });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? `RVC error: ${res.status}`);
       }
 
-      throw new Error("RVC conversion timed out (>15 minutes)");
+      const buf = await res.arrayBuffer();
+      const blob = new Blob([buf], { type: "audio/wav" });
+      const newUrl = URL.createObjectURL(blob);
+
+      if (convertedUrlRef.current) URL.revokeObjectURL(convertedUrlRef.current);
+      convertedUrlRef.current = newUrl;
+
+      setConvertedBlob(blob);
+      setConvertedUrl(newUrl);
+      setConversionCount((c) => c + 1);
+      setRecorderState("converted");
     } catch (e) {
       setVoiceError(e instanceof Error ? e.message : "การแปลงเสียงล้มเหลว กรุณาลองอีกครั้ง");
       setRecorderState("recorded");
@@ -522,7 +634,7 @@ export function VideoApprovalPanel({
   async function handleVoiceUpload() {
     if (!convertedBlob) return;
     setVoiceUploading(true);
-    setVoiceError(null);
+    setUploadError(null);
 
     const file = new File([convertedBlob], `voice-converted.wav`, { type: "audio/wav" });
 
@@ -560,7 +672,7 @@ export function VideoApprovalPanel({
       sessionStorage.removeItem(CONV_KEY);
       router.push(pathname);
     } catch (e) {
-      setVoiceError(e instanceof Error ? e.message : "อัพโหลดล้มเหลว");
+      setUploadError(e instanceof Error ? e.message : "อัพโหลดล้มเหลว");
     } finally {
       setVoiceUploading(false);
     }
@@ -670,10 +782,365 @@ export function VideoApprovalPanel({
           </div>
         )}
 
-        {!isAwaitingApproval && !isAwaitingVoiceRecording && (
-          <p className="mt-2 text-xs text-slate-400">
-            วิดีโอฐานที่อนุมัติแล้ว — ทีมงานกำลังดำเนินการในขั้นตอนถัดไป
-          </p>
+        {/* Voice Approval Phase */}
+        {isAwaitingVoiceApproval && (
+          <div className="mt-6 space-y-6">
+            <Card className="border-blue-100 bg-blue-50/50">
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3: ตรวจสอบเสียงพากย์ RVC</h3>
+              <p className="text-sm text-slate-500 mb-4">
+                ตรวจสอบความถูกต้องของเสียงพากย์ที่แปลงผ่านโปรแกรมของคุณ และเลือกช่องทางที่ต้องการเผยแพร่ด้านล่าง
+              </p>
+              {voiceRecordingUrl ? (
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-blue-600 mb-1">เสียงที่แปลงแล้ว (WAV)</p>
+                  <audio src={voiceRecordingUrl} controls className="w-full" />
+                </div>
+              ) : (
+                <p className="text-sm text-amber-600 mb-4">ไม่พบไฟล์เสียงพากย์ กรุณาบันทึกใหม่อีกครั้ง</p>
+              )}
+
+              {/* Background music picker */}
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">เพลงพื้นหลัง</p>
+                  <p className="text-xs text-slate-400 mt-0.5">คลิกเพื่อฟังตัวอย่าง เสียงพูดจะดังขึ้นอัตโนมัติเมื่อไม่มีการพูด</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleMusicTrackClick("none")}
+                    className={[
+                      "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
+                      selectedMusicTrack === "none"
+                        ? "border-slate-500 bg-slate-100 text-slate-800 font-medium"
+                        : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
+                    ].join(" ")}
+                  >
+                    <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                      {selectedMusicTrack === "none" ? (
+                        <svg className="w-4 h-4 text-slate-700" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                      ) : (
+                        <svg className="w-4 h-4 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" /><path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 20v4M8 20h8" /></svg>
+                      )}
+                    </span>
+                    <span className="truncate">ไม่ใส่เพลง</span>
+                  </button>
+                  {BACKGROUND_MUSIC_TRACKS.map((track) => {
+                    const isSelected = selectedMusicTrack === track.id;
+                    const isPlaying = playingMusicTrack === track.id;
+                    return (
+                      <button
+                        key={track.id}
+                        onClick={() => handleMusicTrackClick(track.id)}
+                        className={[
+                          "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
+                          isSelected
+                            ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+                        ].join(" ")}
+                      >
+                        <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                          {isPlaying ? (
+                            <span className="flex gap-0.5 items-end h-4">
+                              <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "60%", animationDelay: "0ms" }} />
+                              <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "100%", animationDelay: "100ms" }} />
+                              <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "40%", animationDelay: "200ms" }} />
+                            </span>
+                          ) : isSelected ? (
+                            <svg className="w-4 h-4 text-blue-600" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                          ) : (
+                            <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+                          )}
+                        </span>
+                        <span className="truncate">{track.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedMusicTrack === null && (
+                  <p className="text-xs text-amber-600">กรุณาเลือกเพลง หรือเลือก &ldquo;ไม่ใส่เพลง&rdquo; ก่อนอนุมัติ</p>
+                )}
+              </div>
+
+              {/* Distribution platforms checkbox list */}
+              <div className="border-t border-slate-200/80 pt-4 mb-4">
+                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">เลือกช่องทางการเผยแพร่</p>
+                <p className="text-xs text-slate-400 mb-3">ระบบจะคำนวณซับไตเติ้ลและปรับขนาดวิดีโอ (FFmpeg) ตามช่องทางที่คุณเลือก</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {FORM_PLATFORMS.map((p) => {
+                    const isMandatory = p === Platform.TventApp;
+                    const isChecked = selectedPlatforms.includes(p) || isMandatory;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => togglePlatform(p)}
+                        className={[
+                          "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-all",
+                          isChecked
+                            ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
+                            : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
+                          isMandatory ? "opacity-80 cursor-not-allowed" : ""
+                        ].join(" ")}
+                      >
+                        <span className="flex-shrink-0 w-4.5 h-4.5 flex items-center justify-center rounded border border-slate-300 bg-white text-blue-600">
+                          {isChecked && "✓"}
+                        </span>
+                        <span className="truncate">{PLATFORM_LABELS[p]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex gap-3 justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleRejectVoice}
+                  disabled={voiceRecreating || voiceApproving}
+                  className="rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {voiceRecreating ? "กำลังยกเลิก..." : "บันทึกเสียงใหม่"}
+                </button>
+                <Button
+                  onClick={handleApproveVoice}
+                  loading={voiceApproving}
+                  disabled={voiceRecreating || voiceApproving || selectedMusicTrack === null}
+                >
+                  อนุมัติเสียงและสร้างวิดีโอสุดท้าย →
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Animation Approval Phase */}
+        {isAwaitingAnimationApproval && (
+          <div className="mt-6 space-y-6">
+            <Card className="border-purple-100 bg-purple-50/40">
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3.5: ตรวจสอบ Animation และ Graphic</h3>
+              <p className="text-sm text-slate-500 mb-4">
+                AI สร้าง animation และ graphic overlays ลงบนวิดีโอแล้ว — ตรวจสอบผลลัพธ์ด้านล่างและเลือกช่องทางเผยแพร่ก่อนอนุมัติ
+              </p>
+
+              {animatedVideoUrl ? (
+                <div className="mb-5 flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[480px]">
+                  <video
+                    src={animatedVideoUrl}
+                    controls
+                    className="max-h-[460px] w-auto object-contain rounded"
+                  />
+                </div>
+              ) : (
+                <p className="text-sm text-amber-600 mb-4">ไม่พบวิดีโอ Animation กรุณาลองสร้างใหม่อีกครั้ง</p>
+              )}
+
+              {/* Voice audio playback */}
+              {voiceRecordingUrl && (
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-purple-700 mb-1">เสียงพากย์ที่แปลงแล้ว (RVC)</p>
+                  <audio src={voiceRecordingUrl} controls className="w-full" />
+                </div>
+              )}
+
+              {/* Background music picker */}
+              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
+                <div>
+                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">เพลงพื้นหลัง</p>
+                  <p className="text-xs text-slate-400 mt-0.5">คลิกเพื่อฟังตัวอย่าง เสียงพูดจะดังขึ้นอัตโนมัติเมื่อไม่มีการพูด</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleMusicTrackClick("none")}
+                    className={[
+                      "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
+                      selectedMusicTrack === "none"
+                        ? "border-slate-500 bg-slate-100 text-slate-800 font-medium"
+                        : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
+                    ].join(" ")}
+                  >
+                    <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                      {selectedMusicTrack === "none" ? (
+                        <svg className="w-4 h-4 text-slate-700" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                      ) : (
+                        <svg className="w-4 h-4 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" /><path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 20v4M8 20h8" /></svg>
+                      )}
+                    </span>
+                    <span className="truncate">ไม่ใส่เพลง</span>
+                  </button>
+                  {BACKGROUND_MUSIC_TRACKS.map((track) => {
+                    const isSelected = selectedMusicTrack === track.id;
+                    const isPlaying = playingMusicTrack === track.id;
+                    return (
+                      <button
+                        key={track.id}
+                        onClick={() => handleMusicTrackClick(track.id)}
+                        className={[
+                          "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
+                          isSelected
+                            ? "border-purple-500 bg-purple-50 text-purple-800 font-medium"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+                        ].join(" ")}
+                      >
+                        <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                          {isPlaying ? (
+                            <span className="flex gap-0.5 items-end h-4">
+                              <span className="w-0.5 bg-purple-500 rounded-full animate-bounce" style={{ height: "60%", animationDelay: "0ms" }} />
+                              <span className="w-0.5 bg-purple-500 rounded-full animate-bounce" style={{ height: "100%", animationDelay: "100ms" }} />
+                              <span className="w-0.5 bg-purple-500 rounded-full animate-bounce" style={{ height: "40%", animationDelay: "200ms" }} />
+                            </span>
+                          ) : isSelected ? (
+                            <svg className="w-4 h-4 text-purple-600" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                          ) : (
+                            <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
+                          )}
+                        </span>
+                        <span className="truncate">{track.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedMusicTrack === null && (
+                  <p className="text-xs text-amber-600">กรุณาเลือกเพลง หรือเลือก &ldquo;ไม่ใส่เพลง&rdquo; ก่อนอนุมัติ</p>
+                )}
+              </div>
+
+              {/* Distribution platforms */}
+              <div className="border-t border-slate-200/80 pt-4 mb-4">
+                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">เลือกช่องทางการเผยแพร่</p>
+                <p className="text-xs text-slate-400 mb-3">ระบบจะปรับขนาดวิดีโอ (FFmpeg) ตามช่องทางที่คุณเลือก</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {FORM_PLATFORMS.map((p) => {
+                    const isMandatory = p === Platform.TventApp;
+                    const isChecked = selectedPlatforms.includes(p) || isMandatory;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => togglePlatform(p)}
+                        className={[
+                          "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-all",
+                          isChecked
+                            ? "border-purple-500 bg-purple-50 text-purple-800 font-medium"
+                            : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
+                          isMandatory ? "opacity-80 cursor-not-allowed" : ""
+                        ].join(" ")}
+                      >
+                        <span className="flex-shrink-0 w-4.5 h-4.5 flex items-center justify-center rounded border border-slate-300 bg-white text-purple-600">
+                          {isChecked && "✓"}
+                        </span>
+                        <span className="truncate">{PLATFORM_LABELS[p]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex gap-3 justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleRegenerateAnimation}
+                  disabled={animationRegenerating || animationApproving}
+                  className="rounded-md border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                >
+                  {animationRegenerating ? "กำลังสร้างใหม่..." : "ขอสร้าง Animation ใหม่"}
+                </button>
+                <Button
+                  onClick={handleApproveAnimation}
+                  loading={animationApproving}
+                  disabled={animationRegenerating || animationApproving || selectedMusicTrack === null}
+                >
+                  อนุมัติและสร้างวิดีโอสุดท้าย →
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Final Video Approval Phase */}
+        {isAwaitingFinalApproval && (
+          <div className="mt-6 space-y-6">
+            <Card className="border-green-100 bg-green-50/30">
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนสุดท้าย: ตรวจสอบวิดีโอที่ตัดต่อเสร็จแล้ว</h3>
+              <p className="text-sm text-slate-500 mb-4">
+                วิดีโอของคุณได้รับการฝังซับไตเติ้ลสองภาษา (ไทย/อังกฤษ) และจัดวางตำแหน่งสินค้าแบบกึ่งกลางเรียบร้อยแล้ว ตรวจสอบแต่ละขนาดได้ด้านล่าง:
+              </p>
+
+              {finalClips.length > 0 ? (() => {
+                const activeClip = finalClips.find(c => c.videoRatio === selectedExportRatio) || finalClips[0];
+                return (
+                  <div className="space-y-4">
+                    {/* Ratio tabs */}
+                    <div className="flex flex-wrap gap-1.5 border-b border-slate-100 pb-3">
+                      {finalClips.map((clip) => {
+                        const ratio = clip.videoRatio;
+                        const isActive = selectedExportRatio === ratio;
+                        return (
+                          <button
+                            key={clip.id}
+                            type="button"
+                            onClick={() => setSelectedExportRatio(ratio)}
+                            className={[
+                              "px-3 py-1.5 rounded-full text-xs font-semibold transition-all border",
+                              isActive
+                                ? "bg-blue-600 text-white border-blue-600"
+                                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                            ].join(" ")}
+                          >
+                            ขนาด {ratio === "9:16" ? "แนวตั้ง (9:16)" : ratio === "16:9" ? "แนวนอน (16:9)" : ratio === "1:1" ? "จัตุรัส (1:1)" : `แนวตั้งแคบ (${ratio})`}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Preview video */}
+                    <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[500px]">
+                      <video
+                        key={activeClip.id}
+                        src={activeClip.storageUrl}
+                        controls
+                        className="max-h-[480px] w-auto object-contain rounded"
+                      />
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                      <div className="flex gap-2">
+                        {finalClips.map(clip => (
+                          <a
+                            key={clip.id}
+                            href={clip.storageUrl}
+                            download={`final_video_${clip.videoRatio.replace(":", "_")}.mp4`}
+                            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                          >
+                            ดาวน์โหลด ({clip.videoRatio})
+                          </a>
+                        ))}
+                      </div>
+                      <Button
+                        onClick={handleApproveFinal}
+                        loading={finalApproving}
+                        disabled={finalApproving}
+                      >
+                        อนุมัติและรับมอบวิดีโอ ✓
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <p className="text-sm text-slate-400">ไม่พบวิดีโอที่สร้างเสร็จแล้ว กรุณาติดต่อแอดมิน</p>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {/* Processing Indicator */}
+        {!isAwaitingApproval && !isAwaitingVoiceRecording && !isAwaitingVoiceApproval && !isAwaitingAnimationApproval && !isAwaitingFinalApproval && (
+          <Card className="mt-6 border-slate-100 bg-slate-50 p-5 flex flex-col items-center justify-center text-center">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600 mb-4" />
+            <h4 className="text-sm font-semibold text-slate-800">กำลังประมวลผลวิดีโอของคุณ...</h4>
+            <p className="mt-1 text-xs text-slate-400 max-w-[280px]">
+              AI กำลังถอดเสียงและจับคู่ซับไตเติ้ลสองภาษา (ไทยและอังกฤษ) พร้อมจัดตําแหน่งภาพสินค้าให้อัตโนมัติด้วย FFmpeg ขั้นตอนนี้ใช้เวลา 10-30 วินาที
+            </p>
+          </Card>
         )}
 
         {isAwaitingVoiceRecording && (
@@ -778,7 +1245,7 @@ export function VideoApprovalPanel({
 
           {voiceError && (
             <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3">
-              <p className="text-sm font-semibold text-red-700">เกิดข้อผิดพลาด</p>
+              <p className="text-sm font-semibold text-red-700">การแปลงเสียงล้มเหลว</p>
               <p className="text-sm text-red-600">{voiceError}</p>
               <p className="text-xs text-red-500 mt-1">เสียงที่บันทึกยังคงอยู่ — ลองแปลงอีกครั้งหรือบันทึกใหม่</p>
             </div>
@@ -883,8 +1350,15 @@ export function VideoApprovalPanel({
             disabled={!convertedBlob || voiceUploading || selectedMusicTrack === null}
             loading={voiceUploading}
           >
-            {voiceUploading ? "กำลังอัพโหลด..." : "ส่งเสียงพากย์"}
+            {voiceUploading ? "กำลังสร้าง Animation..." : "เพิ่ม animation และ graphic"}
           </Button>
+
+          {uploadError && (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-sm font-semibold text-red-700">ส่งเสียงพากย์ไม่สำเร็จ</p>
+              <p className="text-sm text-red-600">{uploadError}</p>
+            </div>
+          )}
         </Card>
       )}
 

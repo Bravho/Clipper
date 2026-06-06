@@ -5,7 +5,10 @@ import { CreditTransaction } from "@/domain/models/CreditTransaction";
 import {
   creditWalletRepository,
   creditTransactionRepository,
+  creditPurchaseLogRepository,
 } from "@/repositories";
+import { pool } from "@/lib/db";
+import { CreditPurchaseLog } from "@/domain/models/CreditPurchaseLog";
 
 /**
  * CreditService — manages all credit wallet operations.
@@ -83,6 +86,63 @@ export class CreditService {
     });
 
     return { ...updated, initialCreditsGranted: true };
+  }
+
+  /**
+   * Record a manual credit purchase.
+   * Wraps the purchase log, wallet balance increment, and ledger transaction in a single database transaction.
+   */
+  async buyCreditsManual(
+    userId: string,
+    creditsAmount: number,
+    pricePaidBaht: number,
+    reference: string
+  ): Promise<CreditWallet> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Record the financial log
+      await creditPurchaseLogRepository.create({
+        userId,
+        creditsAdded: creditsAmount,
+        amountBaht: pricePaidBaht,
+        transactionRef: reference,
+      });
+
+      // 2. Fetch/create wallet
+      let wallet = await creditWalletRepository.findByUserId(userId);
+      if (!wallet) {
+        wallet = await creditWalletRepository.create({
+          userId,
+          balance: 0,
+          initialCreditsGranted: false,
+        });
+      }
+
+      // 3. Increment balance
+      const updatedWallet = await creditWalletRepository.updateBalance(
+        wallet.id,
+        wallet.balance + creditsAmount
+      );
+
+      // 4. Record to ledger
+      await creditTransactionRepository.create({
+        userId,
+        amount: creditsAmount,
+        type: TransactionType.AdminCredit,
+        description: `Manual package top-up: ${creditsAmount} credits. Ref: ${reference}`,
+        referenceId: null,
+      });
+
+      await client.query("COMMIT");
+      return updatedWallet;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   /**

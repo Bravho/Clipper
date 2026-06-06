@@ -7,10 +7,11 @@ import { AI_CONFIG } from "@/config/aiTools";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import { buildFinalClipKey } from "@/lib/spacesKeys";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { ImageCoordinates } from "./geminiSubtitlesService";
 
 const execFileAsync = promisify(execFile);
 
-type VideoRatio = "9:16" | "16:9" | "1:1" | "4:5";
+export type VideoRatio = "9:16" | "16:9" | "1:1" | "4:5";
 
 const RATIO_DIMENSIONS: Record<VideoRatio, { width: number; height: number }> = {
   "9:16":  { width: 1080, height: 1920 },
@@ -18,6 +19,25 @@ const RATIO_DIMENSIONS: Record<VideoRatio, { width: number; height: number }> = 
   "1:1":   { width: 1080, height: 1080 },
   "4:5":   { width: 1080, height: 1350 },
 };
+
+export function getRequiredRatiosForPlatforms(platforms: string[]): VideoRatio[] {
+  const ratios = new Set<VideoRatio>();
+  for (const p of platforms) {
+    if (p === "tiktok" || p === "tvent_app") {
+      ratios.add("9:16");
+    } else if (p === "youtube" || p === "facebook" || p === "cdn") {
+      ratios.add("16:9");
+    } else if (p === "instagram") {
+      ratios.add("4:5");
+      ratios.add("1:1");
+    }
+  }
+  if (ratios.size === 0) {
+    ratios.add("9:16");
+  }
+  return Array.from(ratios);
+}
+
 
 export interface ComposeVideoParams {
   videoStorageKey: string;
@@ -27,12 +47,14 @@ export interface ComposeVideoParams {
   hookThai: string;
   userId: string;
   requestId: string;
-  /** Background music track ID (matches public/music/<id>.mp3). When provided, music ducks under the voice. */
   musicTrackId?: string;
+  coordinates?: ImageCoordinates;
+  targetRatios?: VideoRatio[];
+  assSubtitlesContent?: string;
 }
 
 export interface ComposeVideoResult {
-  exports: Record<VideoRatio, { storageKey: string; storageUrl: string }>;
+  exports: Record<string, { storageKey: string; storageUrl: string }>;
 }
 
 async function downloadFromSpaces(storageKey: string, destPath: string): Promise<void> {
@@ -61,30 +83,8 @@ async function uploadToSpaces(
   );
 }
 
-/** Estimate timing for an SRT segment based on word count. */
-function estimateTiming(
-  wordCount: number,
-  totalWords: number,
-  totalDurationMs: number,
-  startMs: number
-): { start: number; end: number } {
-  const fraction = wordCount / totalWords;
-  const duration = totalDurationMs * fraction;
-  return { start: startMs, end: startMs + duration };
-}
-
-function msToSrtTime(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  const ms2 = Math.floor(ms % 1000);
-  return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")},${String(ms2).padStart(3, "0")}`;
-}
-
 /**
- * Build bilingual SRT subtitle file.
- * Thai on one line, English below it — combined as one subtitle entry.
- * The hook occupies the first 3 seconds with emphasis markers.
+ * Builds standard SRT file if ASS content is not provided (fallback).
  */
 async function buildBilingualSrt(
   scriptThai: string,
@@ -98,6 +98,14 @@ async function buildBilingualSrt(
   const lines: string[] = [];
   let index = 1;
 
+  function msToSrtTime(ms: number): string {
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    const ms2 = Math.floor(ms % 1000);
+    return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")},${String(ms2).padStart(3, "0")}`;
+  }
+
   // Hook subtitle (0–3s)
   lines.push(
     `${index++}`,
@@ -107,7 +115,6 @@ async function buildBilingualSrt(
     ``
   );
 
-  // Main body (3–15s) — split into ~3 segments
   const thaiWords = scriptThai.trim().split(/\s+/);
   const engWords = scriptEnglish.trim().split(/\s+/);
   const SEGMENTS = 3;
@@ -138,20 +145,70 @@ async function buildBilingualSrt(
   await fs.writeFile(outputPath, lines.join("\n"), "utf-8");
 }
 
+/**
+ * Calculates smart crop parameters for cropping a widescreen 1920x1080 video.
+ */
+function getSmartCropFilter(ratio: VideoRatio, coords?: ImageCoordinates): string {
+  const W_base = 1920;
+  const H_base = 1080;
+
+  // Compute product center coordinate in pixels
+  let xCenter = W_base / 2; // 960
+  if (coords && coords.xmin != null && coords.xmax != null) {
+    const normCenter = (coords.xmin + coords.xmax) / 2; // 0 to 1000
+    xCenter = (normCenter / 1000) * W_base;
+  }
+
+  if (ratio === "9:16") {
+    const W_crop = Math.round(H_base * (9 / 16)); // 607.5 -> 608
+    const H_crop = H_base; // 1080
+    let xStart = Math.round(xCenter - W_crop / 2);
+    xStart = Math.max(0, Math.min(W_base - W_crop, xStart)); // Clamp between 0 and 1312
+    return `crop=${W_crop}:${H_crop}:${xStart}:0,scale=1080:1920`;
+  }
+
+  if (ratio === "1:1") {
+    const W_crop = H_base; // 1080
+    const H_crop = H_base; // 1080
+    let xStart = Math.round(xCenter - W_crop / 2);
+    xStart = Math.max(0, Math.min(W_base - W_crop, xStart)); // Clamp between 0 and 840
+    return `crop=${W_crop}:${H_crop}:${xStart}:0`;
+  }
+
+  if (ratio === "4:5") {
+    const W_crop = Math.round(H_base * (4 / 5)); // 864
+    const H_crop = H_base; // 1080
+    let xStart = Math.round(xCenter - W_crop / 2);
+    xStart = Math.max(0, Math.min(W_base - W_crop, xStart)); // Clamp between 0 and 1056
+    return `crop=${W_crop}:${H_crop}:${xStart}:0,scale=1080:1350`;
+  }
+
+  // 16:9 - No cropping needed
+  return "scale=1920:1080";
+}
+
 /** Run FFmpeg to compose video + audio (+ optional background music with ducking) and export to one ratio. */
-async function composeSingleRatio(
-  videoPath: string,
-  audioPath: string,
-  srtPath: string,
-  ratio: VideoRatio,
-  outputPath: string,
-  musicPath?: string
-): Promise<void> {
-  const { width, height } = RATIO_DIMENSIONS[ratio];
+async function composeSingleRatio(params: {
+  videoPath: string;
+  audioPath: string;
+  subsPath: string;
+  isAss: boolean;
+  ratio: VideoRatio;
+  outputPath: string;
+  musicPath?: string;
+  coordinates?: ImageCoordinates;
+}): Promise<void> {
+  const { videoPath, audioPath, subsPath, isAss, ratio, outputPath, musicPath, coordinates } = params;
   const ffmpeg = AI_CONFIG.ffmpeg.path;
 
-  const scaleFilter = `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
-  const subtitleFilter = `subtitles=${srtPath.replace(/\\/g, "/")}:force_style='Fontsize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'`;
+  const cropAndScaleFilter = getSmartCropFilter(ratio, coordinates);
+  
+  // Format subtitle filter parameter (ASS formatting uses font style defined inside the .ass file)
+  const subtitleFilter = isAss
+    ? `subtitles=${subsPath.replace(/\\/g, "/")}`
+    : `subtitles=${subsPath.replace(/\\/g, "/")}:force_style='Fontsize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'`;
+
+  const videoFilter = `${cropAndScaleFilter},${subtitleFilter}`;
 
   if (!musicPath) {
     await execFileAsync(ffmpeg, [
@@ -160,7 +217,7 @@ async function composeSingleRatio(
       "-i", audioPath,
       "-map", "0:v:0",
       "-map", "1:a:0",
-      "-vf", `${scaleFilter},${subtitleFilter}`,
+      "-vf", videoFilter,
       "-c:v", "libx264",
       "-c:a", "aac",
       "-ar", "48000",
@@ -171,15 +228,7 @@ async function composeSingleRatio(
     return;
   }
 
-  // With background music:
-  // 1. Normalize voice loudness to -16 LUFS (EBU R128 broadcast standard), then split for sidechain + mix.
-  // 2. Loop music to 15s at 30% base volume.
-  // 3. Sidechain-compress the music using the voice signal:
-  //    - ratio 8:1 (strong duck — industry standard for podcast/broadcast is 6:1–10:1)
-  //    - attack 80ms (music ducks quickly once speech starts)
-  //    - release 1500ms (music fades back in slowly after speech ends — sounds natural)
-  // 4. Mix with normalize=0 so each stream contributes its full level (voice was already normalized).
-  // 5. Apply a true peak limiter at -0.5 dBTP to prevent inter-sample clipping on lossy re-encode.
+  // With background music ducking (autoduck sidechain):
   const audioFilterComplex = [
     "[1:a]loudnorm=I=-16:LRA=11:TP=-1.5,asplit=2[sc][voice]",
     "[2:a]aloop=-1:size=2147483647,atrim=0:15,asetpts=PTS-STARTPTS,volume=0.3[music]",
@@ -195,7 +244,7 @@ async function composeSingleRatio(
     "-filter_complex", audioFilterComplex,
     "-map", "0:v:0",
     "-map", "[out]",
-    "-vf", `${scaleFilter},${subtitleFilter}`,
+    "-vf", videoFilter,
     "-c:v", "libx264",
     "-c:a", "aac",
     "-ar", "48000",
@@ -207,7 +256,7 @@ async function composeSingleRatio(
 
 /**
  * Compose final video with audio and bilingual subtitles, then export
- * in all 4 platform ratios. Returns DO Spaces keys per ratio.
+ * in selected platform ratios. Returns DO Spaces keys per ratio.
  */
 export async function composeAndExport(
   params: ComposeVideoParams
@@ -217,10 +266,9 @@ export async function composeAndExport(
 
   try {
     const videoPath = path.join(tmpDir, "base.mp4");
-    const audioPath = path.join(tmpDir, "voice.wav"); // RVC outputs 48 kHz WAV — keep correct extension
-    const srtPath = path.join(tmpDir, "subs.srt");
+    const audioPath = path.join(tmpDir, "voice.wav");
+    const subsPath = params.assSubtitlesContent ? path.join(tmpDir, "subs.ass") : path.join(tmpDir, "subs.srt");
 
-    // Music file lives in the project's public/ directory — resolve from CWD
     const musicPath = params.musicTrackId
       ? path.join(process.cwd(), "public", "music", `${params.musicTrackId}.mp3`)
       : undefined;
@@ -230,20 +278,34 @@ export async function composeAndExport(
       downloadFromSpaces(params.audioStorageKey, audioPath),
     ]);
 
-    await buildBilingualSrt(
-      params.scriptThai,
-      params.scriptEnglish,
-      params.hookThai,
-      srtPath
-    );
+    // Build subtitle file (ASS or SRT)
+    if (params.assSubtitlesContent) {
+      await fs.writeFile(subsPath, params.assSubtitlesContent, "utf-8");
+    } else {
+      await buildBilingualSrt(
+        params.scriptThai,
+        params.scriptEnglish,
+        params.hookThai,
+        subsPath
+      );
+    }
 
-    const ratios: VideoRatio[] = ["9:16", "16:9", "1:1", "4:5"];
-    const results: ComposeVideoResult["exports"] = {} as ComposeVideoResult["exports"];
+    const targetRatios = params.targetRatios ?? ["9:16", "16:9", "1:1", "4:5"];
+    const results: ComposeVideoResult["exports"] = {};
 
     await Promise.all(
-      ratios.map(async (ratio) => {
+      targetRatios.map(async (ratio) => {
         const outPath = path.join(tmpDir, `out-${ratio.replace(":", "-")}.mp4`);
-        await composeSingleRatio(videoPath, audioPath, srtPath, ratio, outPath, musicPath);
+        await composeSingleRatio({
+          videoPath,
+          audioPath,
+          subsPath,
+          isAss: !!params.assSubtitlesContent,
+          ratio,
+          outputPath: outPath,
+          musicPath,
+          coordinates: params.coordinates,
+        });
 
         const storageKey = buildFinalClipKey(params.userId, params.requestId, ratio);
         await uploadToSpaces(outPath, storageKey);

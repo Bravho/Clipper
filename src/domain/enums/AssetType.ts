@@ -22,6 +22,8 @@ export enum AssetType {
   ProcessedVoice = "processed_voice",
   /** FFmpeg-composed final clip (one record per exported ratio). */
   FinalClip = "final_clip",
+  /** Base video with Claude-generated animation/graphic overlays applied by FFmpeg. */
+  AnimatedVideo = "animated_video",
 }
 
 /** Upload status of a single asset record. */

@@ -6,11 +6,12 @@ import {
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
-import { buildVoiceRecordingKey, buildTmpKey } from "@/lib/spacesKeys";
+import { buildVoiceRecordingKey, buildTmpKey, buildAnimatedVideoKey } from "@/lib/spacesKeys";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
 import * as klingService from "@/lib/ai/klingService";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
+import * as animationService from "@/lib/ai/animationService";
 import type { VideoGenerationJob, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -68,6 +69,10 @@ export class VideoGenerationService {
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       selectedMusicTrack: null,
+      subtitleTimeline: null,
+      animationSpec: null,
+      animatedVideoAssetId: null,
+      animationApprovedBy: null,
       finalExport_9_16_assetId: null,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
@@ -97,9 +102,33 @@ export class VideoGenerationService {
     requestId: string,
     params: Omit<GenerateContentParams, "videoDurationSeconds">
   ): Promise<void> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const { businessProfileService } = await import("@/services/BusinessProfileService");
+
+    const req = await clipRequestRepository.findById(requestId);
+    let businessProfileContext = null;
+
+    if (req) {
+      try {
+        const profile = await businessProfileService.getProfile(req.userId);
+        if (profile) {
+          businessProfileContext = {
+            businessName: profile.businessName,
+            category: profile.category,
+            location: profile.location,
+            description: profile.description,
+            menuDetails: profile.menuDetails,
+          };
+        }
+      } catch (err) {
+        console.error("Failed to load business profile context:", err);
+      }
+    }
+
     const output = await chatGptVisionService.generateScenePlanAndScript({
       ...params,
       videoDurationSeconds: 15,
+      businessProfileContext,
     });
 
     await videoGenerationJobRepository.update(jobId, {
@@ -109,6 +138,24 @@ export class VideoGenerationService {
       hookThai: output.hookThai,
       captionThai: output.captionThai,
     });
+
+    // Auto-save/enrich business profile from AI extraction
+    if (output.businessProfile) {
+      try {
+        if (req) {
+          await businessProfileService.saveProfile(req.userId, {
+            businessName: output.businessProfile.businessName,
+            category: output.businessProfile.category,
+            location: output.businessProfile.location ?? null,
+            description: output.businessProfile.description ?? null,
+            menuDetails: output.businessProfile.menuDetails ?? null,
+          });
+          console.log(`[AI Profile] Auto-saved business profile for user ${req.userId}`);
+        }
+      } catch (profileErr) {
+        console.error("Failed to auto-save business profile from AI output:", profileErr);
+      }
+    }
   }
 
   /**
@@ -353,7 +400,7 @@ export class VideoGenerationService {
 
   /**
    * Confirm voice recording upload.
-   * The requester's browser sends audio directly to the RVC Mac Mini and uploads
+   * The requester's browser converts via /api/rvc/* proxy routes and uploads
    * the already-converted WAV, so no server-side conversion is needed here.
    * Advances directly to AwaitingVoiceApproval.
    */
@@ -382,12 +429,167 @@ export class VideoGenerationService {
 
     // RVC conversion was done in the requester's browser — the uploaded asset
     // is already the converted audio. Both IDs point to the same asset.
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep:           VideoGenerationStep.AwaitingVoiceApproval,
+    const updatedJob = await videoGenerationJobRepository.update(jobId, {
+      currentStep:           VideoGenerationStep.GeneratingAnimations,
       voiceRecordingAssetId: assetId,
       processedVoiceAssetId: assetId,
       selectedMusicTrack,
     });
+
+    // Kick off animation generation asynchronously
+    this._runAnimationGeneration(updatedJob).catch(async (err) => {
+      console.error("[AnimationGeneration] Failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingAnimations,
+      });
+    });
+
+    return updatedJob;
+  }
+
+  private async _runAnimationGeneration(job: VideoGenerationJob): Promise<void> {
+    const audioAsset = await uploadedAssetRepository.findById(job.processedVoiceAssetId!);
+    if (!audioAsset) throw new Error("Voice asset not found for animation generation");
+
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
+    let scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
+    const durationSeconds = request.durationSeconds || 15;
+
+    // Translate script to English if missing (needed for subtitle timeline)
+    if (!scriptEnglish) {
+      const { GoogleGenAI } = await import("@google/genai");
+      const { AI_CONFIG } = await import("@/config/aiTools");
+      const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+      const res = await ai.models.generateContent({
+        model: AI_CONFIG.gemini.textModel,
+        contents: `Translate this Thai script to natural, spoken English for social media subtitles: "${scriptThai}"`,
+      });
+      scriptEnglish = res.text ?? "";
+      await videoGenerationJobRepository.update(job.id, { scriptEnglish, approvedScriptEnglish: scriptEnglish });
+    }
+
+    // Step 1: Gemini audio alignment — extract per-sentence timestamps
+    const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
+    const segments = await geminiSubtitlesService.alignAudioWithScript({
+      audioUrl: audioAsset.storageUrl,
+      scriptThai,
+      scriptEnglish,
+      durationSeconds,
+    });
+    const subtitleTimeline = JSON.stringify(segments);
+
+    // Step 2: Claude generates animation specs using timestamps
+    let scenePlan: any[] = [];
+    try { scenePlan = JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]"); } catch { /* ignore */ }
+
+    const specs = await animationService.generateAnimationSpec({
+      scriptThai,
+      timedSegments: segments,
+      scenePlan,
+      hookThai: job.approvedHookThai ?? job.hookThai ?? "",
+      durationSeconds,
+    });
+
+    // Step 3: FFmpeg renders animation overlays on the base video
+    const videoAsset = await uploadedAssetRepository.findById(job.baseVideoAssetId!);
+    if (!videoAsset) throw new Error("Base video asset not found");
+
+    const animatedKey = buildAnimatedVideoKey(request.userId, job.requestId);
+    await animationService.renderAnimationsOnVideo({
+      videoStorageKey: videoAsset.storageKey,
+      animationSpecs: specs,
+      outputStorageKey: animatedKey,
+    });
+
+    // Create asset record for the animated video
+    const { spacesPublicUrl } = await import("@/lib/spaces");
+    const { AssetType, AssetUploadStatus } = await import("@/domain/enums/AssetType");
+    const scheduledDeletionAt = new Date();
+    scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
+
+    const animAsset = await uploadedAssetRepository.create({
+      requestId: job.requestId,
+      userId: request.userId,
+      fileName: "animated_video.mp4",
+      assetType: AssetType.AnimatedVideo,
+      fileSizeBytes: 0,
+      mimeType: "video/mp4",
+      storageKey: animatedKey,
+      storageUrl: spacesPublicUrl(animatedKey),
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Uploaded,
+      scheduledDeletionAt,
+      videoRatio: null,
+    });
+
+    await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.AwaitingAnimationApproval,
+      subtitleTimeline,
+      animationSpec: JSON.stringify(specs),
+      animatedVideoAssetId: animAsset.id,
+    });
+  }
+
+  /** Requester approves the animated video, selects target platforms, and triggers FFmpeg final composition. */
+  async approveAnimationByRequester(
+    jobId: string,
+    userId: string,
+    targetPlatforms: Platform[],
+    selectedMusicTrack: string | null = null
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
+
+    const job = await this._getJob(jobId);
+    const { clipRequestRepository } = await import("@/repositories/index");
+    await clipRequestRepository.update(job.requestId, { targetPlatforms });
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.ComposingFinalVideo,
+      animationApprovedBy: userId,
+      ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
+    });
+
+    this._runFFmpegComposition(updated).catch(async (err) => {
+      console.error("FFmpeg composition failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.ComposingFinalVideo,
+      });
+    });
+
+    return updated;
+  }
+
+  /** Requester rejects the animation result and re-triggers animation generation. */
+  async regenerateAnimationByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingAnimations,
+      animatedVideoAssetId: null,
+    });
+
+    this._runAnimationGeneration(updated).catch(async (err) => {
+      console.error("[AnimationGeneration] Regeneration failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingAnimations,
+      });
+    });
+
+    return updated;
   }
 
   /** Staff approves the RVC voice conversion and triggers FFmpeg. */
@@ -416,6 +618,39 @@ export class VideoGenerationService {
     return updated;
   }
 
+  /** Requester approves RVC voice, selects target platforms, and triggers background subtitle/coord-cropping FFmpeg composition. */
+  async approveVoiceConversionByRequester(
+    jobId: string,
+    userId: string,
+    targetPlatforms: Platform[],
+    selectedMusicTrack: string | null = null
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
+
+    const job = await this._getJob(jobId);
+    
+    // Save platform selection to request
+    const { clipRequestRepository } = await import("@/repositories/index");
+    await clipRequestRepository.update(job.requestId, { targetPlatforms });
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.ComposingFinalVideo,
+      voiceApprovedBy: userId,
+      selectedMusicTrack,
+    });
+
+    this._runFFmpegComposition(updated).catch(async (err) => {
+      console.error("FFmpeg composition failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.ComposingFinalVideo,
+      });
+    });
+
+    return updated;
+  }
+
   /** Staff rejects the voice conversion and goes back to re-recording. */
   async rejectVoiceConversion(
     jobId: string,
@@ -428,34 +663,133 @@ export class VideoGenerationService {
     });
   }
 
+  /** Requester rejects the voice conversion and goes back to re-recording. */
+  async rejectVoiceConversionByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.AwaitingVoiceRecording,
+      processedVoiceAssetId: null,
+    });
+  }
+
+  /** Requester reviews and approves the final composed videos, delivering the request. */
+  async approveFinalVideoByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
+
+    const job = await this._getJob(jobId);
+    const { clipRequestRepository } = await import("@/repositories/index");
+    
+    // Mark request as Delivered
+    const { RequestStatus } = await import("@/domain/enums/RequestStatus");
+    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
+
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.Complete,
+      finalApprovedBy: userId,
+    });
+  }
+
   private async _runFFmpegComposition(job: VideoGenerationJob): Promise<void> {
+    // Prefer the animated video (with graphic overlays) over the raw base video
+    const videoAssetId = job.animatedVideoAssetId ?? job.baseVideoAssetId;
     const [videoAsset, audioAsset] = await Promise.all([
-      uploadedAssetRepository.findById(job.baseVideoAssetId!),
+      uploadedAssetRepository.findById(videoAssetId!),
       uploadedAssetRepository.findById(job.processedVoiceAssetId!),
     ]);
     if (!videoAsset || !audioAsset) throw new Error("Required assets missing for composition");
 
-    const request = await this._getClipRequestBasic(job.requestId);
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const platforms = request.targetPlatforms ?? [];
+    const targetRatios = ffmpegService.getRequiredRatiosForPlatforms(platforms);
+
+    // Use pre-computed subtitle timeline from animation step if available; otherwise re-run alignment
+    let assSubtitlesContent: string | undefined = undefined;
+    try {
+      const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
+
+      if (job.subtitleTimeline) {
+        const segments = JSON.parse(job.subtitleTimeline);
+        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments);
+      } else {
+        const { AI_CONFIG } = await import("@/config/aiTools");
+        const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
+        let scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
+
+        if (!scriptEnglish) {
+          const { GoogleGenAI } = await import("@google/genai");
+          const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+          const res = await ai.models.generateContent({
+            model: AI_CONFIG.gemini.textModel,
+            contents: `Translate this Thai script to natural, spoken English for social media subtitles: "${scriptThai}"`,
+          });
+          scriptEnglish = res.text ?? "";
+          await videoGenerationJobRepository.update(job.id, { scriptEnglish, approvedScriptEnglish: scriptEnglish });
+        }
+
+        const duration = request.durationSeconds || 15;
+        const segments = await geminiSubtitlesService.alignAudioWithScript({
+          audioUrl: audioAsset.storageUrl,
+          scriptThai,
+          scriptEnglish,
+          durationSeconds: duration,
+        });
+        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments);
+      }
+    } catch (err) {
+      console.error("[FFmpeg] Subtitle preparation failed, falling back to word count:", err);
+    }
+
+    // Call Gemini coordinates detection for smart crop focus
+    let coords: any = undefined;
+    try {
+      const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
+      const assets = await uploadedAssetRepository.findByRequestId(job.requestId);
+      const imageUrls = assets
+        .filter((a) => (a.assetType === AssetType.Image || a.assetType === AssetType.Video) && a.uploadStatus === AssetUploadStatus.Uploaded)
+        .map((a) => a.storageUrl).filter(Boolean);
+      
+      if (imageUrls.length > 0) {
+        const coordsList = await geminiSubtitlesService.detectProductCoordinates(imageUrls);
+        if (coordsList && coordsList[0]) {
+          coords = coordsList[0];
+        }
+      }
+    } catch (err) {
+      console.error("[FFmpeg] Coordinate focus detection failed, using default center:", err);
+    }
 
     const result = await ffmpegService.composeAndExport({
       videoStorageKey: videoAsset.storageKey,
       audioStorageKey: audioAsset.storageKey,
       scriptThai: job.approvedScriptThai!,
-      scriptEnglish: job.approvedScriptEnglish!,
+      scriptEnglish: job.approvedScriptEnglish ?? job.scriptEnglish ?? "",
       hookThai: job.approvedHookThai!,
       userId: request.userId,
       requestId: job.requestId,
       musicTrackId: job.selectedMusicTrack ?? undefined,
+      coordinates: coords,
+      targetRatios,
+      assSubtitlesContent,
     });
 
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
 
-    const ratios = ["9:16", "16:9", "1:1", "4:5"] as const;
     const assetIds: Record<string, string> = {};
 
-    for (const ratio of ratios) {
-      const { storageKey, storageUrl } = result.exports[ratio];
+    for (const ratio of targetRatios) {
+      const exportInfo = result.exports[ratio];
+      if (!exportInfo) continue;
+
       const asset = await uploadedAssetRepository.create({
         requestId: job.requestId,
         userId: request.userId,
@@ -463,8 +797,8 @@ export class VideoGenerationService {
         assetType: AssetType.FinalClip,
         fileSizeBytes: 0,
         mimeType: "video/mp4",
-        storageKey,
-        storageUrl,
+        storageKey: exportInfo.storageKey,
+        storageUrl: exportInfo.storageUrl,
         thumbnailKey: "",
         thumbnailUrl: "",
         uploadStatus: AssetUploadStatus.Uploaded,
@@ -476,10 +810,10 @@ export class VideoGenerationService {
 
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingFinalApproval,
-      finalExport_9_16_assetId: assetIds["9:16"],
-      finalExport_16_9_assetId: assetIds["16:9"],
-      finalExport_1_1_assetId: assetIds["1:1"],
-      finalExport_4_5_assetId: assetIds["4:5"],
+      finalExport_9_16_assetId: assetIds["9:16"] ?? null,
+      finalExport_16_9_assetId: assetIds["16:9"] ?? null,
+      finalExport_1_1_assetId: assetIds["1:1"] ?? null,
+      finalExport_4_5_assetId: assetIds["4:5"] ?? null,
     });
   }
 
@@ -600,6 +934,10 @@ export class VideoGenerationService {
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       selectedMusicTrack: null,
+      subtitleTimeline: null,
+      animationSpec: null,
+      animatedVideoAssetId: null,
+      animationApprovedBy: null,
       finalExport_9_16_assetId: null,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
