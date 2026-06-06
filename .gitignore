@@ -2,6 +2,7 @@
 /node_modules
 /.pnp
 .pnp.js
+/.antigravitycli
 
 # next.js
 /.next/
@@ -11,11 +12,11 @@
 /build
 
 # environment variables
-#.env
-#.env.local
-#.env.development
-#.env.production
-#.env*.local
+.env
+.env.local
+.env.development
+.env.production
+.env*.local
 
 # logs
 npm-debug.log*
