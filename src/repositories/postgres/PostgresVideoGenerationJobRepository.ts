@@ -35,6 +35,7 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     klingStatus: null,
     klingLastPolledAt: null,
     baseVideoAssetId: (row.base_video_asset_id as string) ?? null,
+    ttsTaskId: (row.tts_task_id as string) ?? null,
     rvcVoiceModel: row.eleven_labs_voice_id as string,
     voiceRecordingAssetId: (row.voice_recording_asset_id as string) ?? null,
     processedVoiceAssetId: (row.processed_voice_asset_id as string) ?? null,
@@ -77,6 +78,7 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   approvedCaptionEnglish: "approved_caption_english",
   approvedCaptionChinese: "approved_caption_chinese",
   klingTaskId: "kling_task_id",
+  ttsTaskId: "tts_task_id",
   baseVideoAssetId: "base_video_asset_id",
   rvcVoiceModel: "eleven_labs_voice_id",
   voiceRecordingAssetId: "voice_recording_asset_id",
@@ -127,7 +129,7 @@ export class PostgresVideoGenerationJobRepository
          approved_scene_plan, approved_script_thai, approved_script_english,
          approved_hook_thai, approved_hook_english,
          approved_caption_thai, approved_caption_english, approved_caption_chinese,
-         kling_task_id, base_video_asset_id, eleven_labs_voice_id,
+         kling_task_id, tts_task_id, base_video_asset_id, eleven_labs_voice_id,
          voice_recording_asset_id, processed_voice_asset_id,
          final_export_9_16_asset_id, final_export_16_9_asset_id,
          final_export_1_1_asset_id, final_export_4_5_asset_id,
@@ -136,7 +138,7 @@ export class PostgresVideoGenerationJobRepository
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
          $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-         $31,$32,$33,$34,$35,$36
+         $31,$32,$33,$34,$35,$36,$37
        ) RETURNING *`,
       [
         input.requestId,
@@ -160,6 +162,7 @@ export class PostgresVideoGenerationJobRepository
         input.approvedCaptionEnglish ?? null,
         input.approvedCaptionChinese ?? null,
         input.klingTaskId ?? null,
+        input.ttsTaskId ?? null,
         input.baseVideoAssetId ?? null,
         input.rvcVoiceModel,
         input.voiceRecordingAssetId ?? null,

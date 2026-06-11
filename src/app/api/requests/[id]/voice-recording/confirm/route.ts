@@ -1,30 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { requireRole } from "@/lib/auth/helpers";
-import { Role } from "@/domain/enums/Role";
-import { videoGenerationService } from "@/services/staff/VideoGenerationService";
-
-const schema = z.object({
-  jobId: z.string().min(1),
-  assetId: z.string().min(1),
-  selectedMusicTrack: z.string().nullable().optional(),
-});
-
-export async function POST(req: NextRequest) {
-  try {
-    const requester = await requireRole(Role.Requester);
-    const { jobId, assetId, selectedMusicTrack } = schema.parse(await req.json());
-
-    const job = await videoGenerationService.confirmVoiceRecording(
-      jobId,
-      requester.id,
-      assetId,
-      selectedMusicTrack ?? null
-    );
-
-    return NextResponse.json({ job }, { status: 200 });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 400 });
-  }
+import { NextResponse } from "next/server";
+// DEPRECATED: Voice recording is replaced by iAppTTS AI voice generation.
+// The pipeline now goes: AwaitingVideoApproval -> GeneratingVoice -> AwaitingVoiceApproval
+export async function POST() {
+  return NextResponse.json(
+    { error: "Deprecated. Voice is now generated automatically by iAppTTS." },
+    { status: 410 }
+  );
 }

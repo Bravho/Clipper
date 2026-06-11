@@ -1,3 +1,6 @@
+// NOTE: This route is kept for compatibility with the AwaitingVoiceApproval step.
+// The handler now calls approveVoiceConversionByRequester which triggers animation
+// generation (GeneratingAnimations) instead of FFmpeg composition directly.
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
@@ -12,36 +15,24 @@ export async function POST(
 ) {
   const { id } = await params;
   const session = await getServerSession(authOptions);
-
-  if (!session?.user) {
+  if (!session?.user || session.user.role !== Role.Requester) {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
   }
-  if (session.user.role !== Role.Requester) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
-
   const clipRequest = await clipRequestRepository.findById(id);
   if (!clipRequest || clipRequest.userId !== session.user.id) {
     return NextResponse.json({ error: "Request not found." }, { status: 404 });
   }
-
   const body = await request.json().catch(() => null);
   const jobId = body?.jobId;
   const targetPlatforms = body?.targetPlatforms as Platform[];
   const selectedMusicTrack = body?.selectedMusicTrack ?? null;
-
-  if (!jobId) {
-    return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
+  if (!jobId || !targetPlatforms?.length) {
+    return NextResponse.json({ error: "Missing jobId or targetPlatforms." }, { status: 400 });
   }
-  if (!targetPlatforms || !Array.isArray(targetPlatforms) || targetPlatforms.length === 0) {
-    return NextResponse.json({ error: "Please select at least one distribution channel." }, { status: 400 });
-  }
-
   const job = await videoGenerationJobRepository.findById(jobId);
   if (!job || job.requestId !== id) {
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
-
   try {
     const updated = await videoGenerationService.approveVoiceConversionByRequester(
       jobId,
@@ -51,7 +42,7 @@ export async function POST(
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to approve voice conversion.";
+    const message = err instanceof Error ? err.message : "Failed to approve voice.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

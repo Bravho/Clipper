@@ -1,9 +1,9 @@
 export const AI_CONFIG = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY ?? "",
-    /** Vision model — used for image analysis + scene/script generation */
+    /** Vision model - used for image analysis + scene/script generation */
     visionModel: process.env.GEMINI_IMAGE_MODEL ?? "gemini-2.0-flash",
-    /** Text model — used for lightweight text tasks */
+    /** Text model - used for lightweight text tasks */
     textModel: process.env.GEMINI_TEXT_MODEL ?? "gemini-2.0-flash",
     scriptWordTarget: 45,
     scenesTarget: 3,
@@ -15,15 +15,16 @@ export const AI_CONFIG = {
     model: process.env.KLING_MODEL,
     mode: process.env.KLING_MODE,
   },
-  rvc: {
-    // Prefer the Cloudflare tunnel URL — reachable from both the browser and the Next.js server
-    // even when the RVC Mac Mini binds only to localhost. Fall back to the LAN IP when the
-    // server is bound to 0.0.0.0 and Next.js is on the same subnet.
-    serverUrl: (
-      (process.env.NEXT_PUBLIC_RVC_SERVER_URL ?? "").trim() ||
-      (process.env.RVC_SERVER_URL ?? "").trim()
-    ),
-    defaultVoiceModel: (process.env.RVC_DEFAULT_VOICE_MODEL ?? "mind_model").trim(),
+  elevenLabs: {
+    // ElevenLabs cloud TTS — current pipeline voice engine. No local server.
+    apiKey: (process.env.ELEVENLABS_API_KEY ?? "").trim(),
+    // "Sarah" premade voice (free-tier API usable)
+    voiceId: (process.env.ELEVENLABS_VOICE_ID ?? "EXAVITQu4vr4xnSDxMaL").trim(),
+    // eleven_v3 is the only ElevenLabs model that supports Thai
+    model: (process.env.ELEVENLABS_TTS_MODEL ?? "eleven_v3").trim(),
+    // v3 stability presets: 0.0 = Creative, 0.5 = Natural, 1.0 = Robust
+    stability: Number(process.env.ELEVENLABS_STABILITY ?? "0.0"),
+    languageCode: "th",
   },
   claude: {
     apiKey: process.env.ANTHROPIC_API_KEY ?? "",

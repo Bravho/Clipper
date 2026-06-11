@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
-import { ROUTES } from "@/config/routes";
+import { ROUTES, requestDetailPath } from "@/config/routes";
 import { creditService } from "@/services/CreditService";
 import { TransactionType } from "@/domain/enums/TransactionType";
 import { CREDITS_CONFIG } from "@/config/credits";
@@ -139,7 +139,15 @@ export default async function CreditsPage() {
                       {TRANSACTION_LABELS[txn.type]}
                     </Badge>
                   </div>
-                  <p className="text-sm text-slate-700">{txn.description}</p>
+                  {txn.referenceId ? (
+                    <Link href={requestDetailPath(txn.referenceId)}>
+                      <p className="text-sm text-blue-600 hover:underline cursor-pointer">
+                        {txn.description}
+                      </p>
+                    </Link>
+                  ) : (
+                    <p className="text-sm text-slate-700">{txn.description}</p>
+                  )}
                   <p className="text-xs text-slate-400">
                     {txn.createdAt.toLocaleDateString("en-GB", {
                       day: "numeric",

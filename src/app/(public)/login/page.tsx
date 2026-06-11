@@ -11,15 +11,29 @@ export const metadata: Metadata = {
   description: "เข้าสู่ระบบบัญชี RClipper ของคุณ",
 };
 
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  OAuthSignin: "ไม่สามารถเชื่อมต่อกับ Google ได้ กรุณาลองอีกครั้ง",
+  OAuthCallback: "การยืนยันตัวตนกับ Google ล้มเหลว กรุณาลองอีกครั้ง",
+  OAuthAccountNotLinked:
+    "อีเมลนี้ถูกใช้สมัครด้วยวิธีอื่นแล้ว กรุณาเข้าสู่ระบบด้วยอีเมลและรหัสผ่าน",
+  AccessDenied: "ไม่สามารถเข้าสู่ระบบด้วยบัญชี Google นี้ได้",
+  Configuration: "ระบบเข้าสู่ระบบด้วย Google ยังไม่ได้ตั้งค่า กรุณาติดต่อผู้ดูแลระบบ",
+};
+
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams?: { message?: string };
+  searchParams?: { message?: string; error?: string };
 }) {
   const session = await getServerSession(authOptions);
   if (session?.user) {
     redirect(getRoleHomePath(session.user.role as Role));
   }
+
+  const authError = searchParams?.error
+    ? AUTH_ERROR_MESSAGES[searchParams.error] ??
+      "เกิดข้อผิดพลาดในการเข้าสู่ระบบ กรุณาลองอีกครั้ง"
+    : null;
 
   return (
     <div className="flex min-h-[calc(100vh-128px)] items-center justify-center px-4 py-12">
@@ -30,6 +44,15 @@ export default async function LoginPage({
             เข้าสู่ระบบด้วยบัญชีที่คุณสมัครไว้
           </p>
         </div>
+
+        {authError && (
+          <div
+            className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+            role="alert"
+          >
+            {authError}
+          </div>
+        )}
 
         {searchParams?.message && (
           <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">

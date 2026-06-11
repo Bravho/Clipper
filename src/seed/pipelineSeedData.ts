@@ -12,7 +12,6 @@
 import { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-import { AI_CONFIG } from "@/config/aiTools";
 
 function d(iso: string): Date {
   return new Date(iso);
@@ -47,8 +46,9 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     klingTaskId: null,
     klingStatus: null,
     klingLastPolledAt: null,
-    baseVideoAssetId: null,
-    rvcVoiceModel: AI_CONFIG.rvc.serverUrl ? "default" : "",
+    baseVideoAssetId: null,    ttsTaskId: null,
+
+    rvcVoiceModel: "",
     voiceRecordingAssetId: null,
     processedVoiceAssetId: null,
     selectedMusicTrack: null,
@@ -126,8 +126,9 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     klingTaskId: null,
     klingStatus: null,
     klingLastPolledAt: null,
-    baseVideoAssetId: null,
-    rvcVoiceModel: AI_CONFIG.rvc.serverUrl ? "default" : "",
+    baseVideoAssetId: null,    ttsTaskId: null,
+
+    rvcVoiceModel: "",
     voiceRecordingAssetId: null,
     processedVoiceAssetId: null,
     selectedMusicTrack: null,

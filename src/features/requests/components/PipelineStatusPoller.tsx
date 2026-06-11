@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
 
 interface Props {
@@ -18,11 +18,8 @@ const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 export function PipelineStatusPoller({ requestId, currentStep, onKlingStatus }: Props) {
   const router = useRouter();
-  const pathname = usePathname();
-  const stepRef = useRef(currentStep);
   const onKlingStatusRef = useRef(onKlingStatus);
 
-  useEffect(() => { stepRef.current = currentStep; }, [currentStep]);
   useEffect(() => { onKlingStatusRef.current = onKlingStatus; }, [onKlingStatus]);
 
   useEffect(() => {
@@ -49,13 +46,11 @@ export function PipelineStatusPoller({ requestId, currentStep, onKlingStatus }: 
           );
         }
 
-        // When the pipeline step advances, navigate to the same URL rather than
-        // calling router.refresh(). refresh() reconciles RSC in-place and does not
-        // reliably propagate updated props to already-mounted client components.
-        // push(pathname) triggers a full soft-navigation that remounts all client
-        // components with fresh server data.
-        if (newStep && newStep !== stepRef.current) {
-          router.push(pathname);
+        // Keep refreshing until the server-rendered currentStep prop actually
+        // changes. This avoids a one-refresh race leaving the old voice asset
+        // mounted after iAppTTS completes.
+        if (newStep && newStep !== currentStep) {
+          router.refresh();
         }
       } catch {
         // network error — try again next interval
@@ -63,7 +58,7 @@ export function PipelineStatusPoller({ requestId, currentStep, onKlingStatus }: 
     }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [requestId, currentStep, router, pathname]);
+  }, [requestId, currentStep, router]);
 
   return null;
 }

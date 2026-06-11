@@ -10,6 +10,7 @@ import { buildVoiceRecordingKey, buildTmpKey, buildAnimatedVideoKey } from "@/li
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
 import * as klingService from "@/lib/ai/klingService";
+import * as elevenLabsTtsService from "@/lib/ai/elevenLabsTtsService";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
 import * as animationService from "@/lib/ai/animationService";
 import type { VideoGenerationJob, ScenePlan } from "@/domain/models/VideoGenerationJob";
@@ -65,6 +66,7 @@ export class VideoGenerationService {
       klingStatus: null,
       klingLastPolledAt: null,
       baseVideoAssetId: null,
+      ttsTaskId: null,
       rvcVoiceModel: params.rvcVoiceModel ?? "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
@@ -301,16 +303,28 @@ export class VideoGenerationService {
     });
   }
 
-  /** Staff approves the Kling video and advances to voice recording. */
+  /** Staff approves the Kling video and triggers iAppTTS voice generation automatically. */
   async approveBaseVideo(
     jobId: string,
     staffId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingVoiceRecording,
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingVoice,
       videoApprovedBy: staffId,
     });
+
+    this._runIAppTtsGeneration(updated).catch(async (err) => {
+      console.error("[iAppTTS] Voice generation failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingVoice,
+      });
+    });
+
+    return this._getJob(jobId);
   }
 
   /**
@@ -352,101 +366,98 @@ export class VideoGenerationService {
     return this._getJob(jobId);
   }
 
+  // ── TTS voice generation (ElevenLabs) ────────────────────────────────────────
+
   /**
-   * Create a presigned URL for staff to upload their voice recording.
-   * Returns the asset ID and presigned PUT URL.
+   * Generate the voice-over with ElevenLabs (Sarah voice, eleven_v3, Thai
+   * language override) and store it in DO Spaces. Runs the full flow inline —
+   * ElevenLabs is a synchronous cloud API (~5-15 s), so no task ID or polling
+   * is needed. On success the job advances to AwaitingVoiceApproval.
+   *
+   * Uses job.approvedScriptThai (the staff/requester-approved speaking script).
    */
-  async createVoiceRecordingUpload(
-    jobId: string,
-    staffId: string,
-    fileName: string,
-    fileSizeBytes: number,
-    mimeType: string
-  ): Promise<{ assetId: string; presignedUrl: string; storageKey: string }> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceRecording);
+  private async _runIAppTtsGeneration(job: VideoGenerationJob): Promise<void> {
+    const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
+    if (!scriptThai) throw new Error("No approved Thai script available for TTS");
 
-    const job = await this._getJob(jobId);
+    console.log(`[ElevenLabs] Synthesizing voice for request ${job.requestId}...`);
     const request = await this._getClipRequestBasic(job.requestId);
-
-    const storageKey = buildTmpKey(staffId, job.requestId, fileName);
-    const bucket = process.env.DO_SPACES_BUCKET!;
-
-    const presignedUrl = await getSignedUrl(
-      spacesClient,
-      new PutObjectCommand({ Bucket: bucket, Key: storageKey, ContentType: mimeType }),
-      { expiresIn: PRESIGNED_TTL }
-    );
+    const stored = await elevenLabsTtsService.synthesizeAndStore({
+      text: scriptThai,
+      userId: request.userId,
+      requestId: job.requestId,
+    });
 
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
 
     const asset = await uploadedAssetRepository.create({
       requestId: job.requestId,
-      userId: staffId,
-      fileName,
+      userId: request.userId,
+      fileName: stored.fileName,
       assetType: AssetType.StaffVoiceRecording,
-      fileSizeBytes,
-      mimeType,
-      storageKey,
-      storageUrl: "",
+      fileSizeBytes: stored.fileSizeBytes,
+      mimeType: stored.mimeType,
+      storageKey: stored.storageKey,
+      storageUrl: stored.storageUrl,
       thumbnailKey: "",
       thumbnailUrl: "",
-      uploadStatus: AssetUploadStatus.Pending,
+      uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt,
     });
 
-    return { assetId: asset.id, presignedUrl, storageKey };
+    await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.AwaitingVoiceApproval,
+      voiceRecordingAssetId: asset.id,
+      processedVoiceAssetId: asset.id,
+    });
+    console.log(`[ElevenLabs] Voice stored for request ${job.requestId}: ${stored.storageKey}`);
   }
 
   /**
-   * Confirm voice recording upload.
-   * The requester's browser converts via /api/rvc/* proxy routes and uploads
-   * the already-converted WAV, so no server-side conversion is needed here.
-   * Advances directly to AwaitingVoiceApproval.
+   * Re-submit the approved script to ElevenLabs for a fresh voice synthesis.
+   *
+   * Accepted starting states:
+   *   - AwaitingVoiceApproval (normal regeneration), or
+   *   - Failed with failedAtStep = GeneratingVoice (self-healing retry — a
+   *     previous voice generation failed, e.g. the TTS server was down,
+   *     and the job would otherwise be stuck rejecting every retry with 400).
    */
-  async confirmVoiceRecording(
+  async regenerateVoice(
     jobId: string,
-    userId: string,
-    assetId: string,
-    selectedMusicTrack: string | null = null
+    _userId: string
   ): Promise<VideoGenerationJob> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceRecording);
-
-    const asset = await uploadedAssetRepository.findById(assetId);
-    if (!asset) throw new Error("Voice recording asset not found");
-
     const job = await this._getJob(jobId);
+    const isVoiceFailure =
+      job.currentStep === VideoGenerationStep.Failed &&
+      job.failedAtStep === VideoGenerationStep.GeneratingVoice;
 
-    // Move from tmp/ to voice_recordings/
-    const voiceKey = buildVoiceRecordingKey(userId, job.requestId, asset.fileName);
-    await this._moveAssetInSpaces(asset.storageKey, voiceKey);
+    if (job.currentStep !== VideoGenerationStep.AwaitingVoiceApproval && !isVoiceFailure) {
+      throw new Error(
+        `Expected pipeline step ${VideoGenerationStep.AwaitingVoiceApproval} but job is at ${job.currentStep}`
+      );
+    }
 
-    await uploadedAssetRepository.update(assetId, {
-      storageKey: voiceKey,
-      storageUrl: spacesPublicUrl(voiceKey),
-      uploadStatus: AssetUploadStatus.Uploaded,
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      status: VideoGenerationJobStatus.Active,
+      currentStep: VideoGenerationStep.GeneratingVoice,
+      failedAtStep: null,
+      voiceRecordingAssetId: null,
+      processedVoiceAssetId: null,
+      ttsTaskId: null,
+      rvcVoiceModel: "",
     });
 
-    // RVC conversion was done in the requester's browser — the uploaded asset
-    // is already the converted audio. Both IDs point to the same asset.
-    const updatedJob = await videoGenerationJobRepository.update(jobId, {
-      currentStep:           VideoGenerationStep.GeneratingAnimations,
-      voiceRecordingAssetId: assetId,
-      processedVoiceAssetId: assetId,
-      selectedMusicTrack,
-    });
-
-    // Kick off animation generation asynchronously
-    this._runAnimationGeneration(updatedJob).catch(async (err) => {
-      console.error("[AnimationGeneration] Failed:", err);
+    this._runIAppTtsGeneration(updated).catch(async (err) => {
+      console.error("[iAppTTS] Regeneration failed:", err);
       await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingAnimations,
+        failedAtStep: VideoGenerationStep.GeneratingVoice,
       });
     });
 
-    return updatedJob;
+    return updated;
   }
 
   private async _runAnimationGeneration(job: VideoGenerationJob): Promise<void> {
@@ -592,7 +603,7 @@ export class VideoGenerationService {
     return updated;
   }
 
-  /** Staff approves the RVC voice conversion and triggers FFmpeg. */
+  /** Staff approves the iAppTTS voice and triggers animation generation. */
   async approveVoiceConversion(
     jobId: string,
     staffId: string,
@@ -601,24 +612,24 @@ export class VideoGenerationService {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.ComposingFinalVideo,
+      currentStep: VideoGenerationStep.GeneratingAnimations,
       voiceApprovedBy: staffId,
       selectedMusicTrack,
     });
 
-    this._runFFmpegComposition(updated).catch(async (err) => {
-      console.error("FFmpeg composition failed:", err);
+    this._runAnimationGeneration(updated).catch(async (err) => {
+      console.error("[AnimationGeneration] Failed:", err);
       await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.ComposingFinalVideo,
+        failedAtStep: VideoGenerationStep.GeneratingAnimations,
       });
     });
 
     return updated;
   }
 
-  /** Requester approves RVC voice, selects target platforms, and triggers background subtitle/coord-cropping FFmpeg composition. */
+  /** Requester approves iAppTTS voice, selects music + platforms, triggers animation generation. */
   async approveVoiceConversionByRequester(
     jobId: string,
     userId: string,
@@ -628,51 +639,45 @@ export class VideoGenerationService {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
 
     const job = await this._getJob(jobId);
-    
+
     // Save platform selection to request
     const { clipRequestRepository } = await import("@/repositories/index");
     await clipRequestRepository.update(job.requestId, { targetPlatforms });
 
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.ComposingFinalVideo,
+      currentStep: VideoGenerationStep.GeneratingAnimations,
       voiceApprovedBy: userId,
       selectedMusicTrack,
     });
 
-    this._runFFmpegComposition(updated).catch(async (err) => {
-      console.error("FFmpeg composition failed:", err);
+    this._runAnimationGeneration(updated).catch(async (err) => {
+      console.error("[AnimationGeneration] Failed:", err);
       await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.ComposingFinalVideo,
+        failedAtStep: VideoGenerationStep.GeneratingAnimations,
       });
     });
 
     return updated;
   }
 
-  /** Staff rejects the voice conversion and goes back to re-recording. */
+  /** Staff rejects the voice and triggers re-generation with iAppTTS. */
   async rejectVoiceConversion(
     jobId: string,
     staffId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingVoiceRecording,
-      processedVoiceAssetId: null,
-    });
+    return this.regenerateVoice(jobId, staffId);
   }
 
-  /** Requester rejects the voice conversion and goes back to re-recording. */
+  /** Requester rejects the voice and triggers re-generation with iAppTTS. */
   async rejectVoiceConversionByRequester(
     jobId: string,
     userId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingVoiceRecording,
-      processedVoiceAssetId: null,
-    });
+    return this.regenerateVoice(jobId, userId);
   }
 
   /** Requester reviews and approves the final composed videos, delivering the request. */
@@ -930,6 +935,7 @@ export class VideoGenerationService {
       klingStatus: null,
       klingLastPolledAt: null,
       baseVideoAssetId: null,
+      ttsTaskId: null,
       rvcVoiceModel: "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
@@ -1070,6 +1076,24 @@ export class VideoGenerationService {
         return this._getJob(jobId);
       }
 
+      case VideoGenerationStep.GeneratingVoice: {
+        const updated = await videoGenerationJobRepository.update(jobId, {
+          currentStep: VideoGenerationStep.GeneratingVoice,
+          ttsTaskId: null,
+          voiceRecordingAssetId: null,
+          processedVoiceAssetId: null,
+        });
+        this._runIAppTtsGeneration(updated).catch(async (err) => {
+          console.error("[iAppTTS] Retry failed:", err);
+          await videoGenerationJobRepository.update(jobId, {
+            status: VideoGenerationJobStatus.Failed,
+            currentStep: VideoGenerationStep.Failed,
+            failedAtStep: VideoGenerationStep.GeneratingVoice,
+          });
+        });
+        return updated;
+      }
+
       case VideoGenerationStep.ComposingFinalVideo: {
         const updated = await videoGenerationJobRepository.update(jobId, {
           currentStep: VideoGenerationStep.ComposingFinalVideo,
@@ -1094,16 +1118,28 @@ export class VideoGenerationService {
     }
   }
 
-  /** Requester approves the Kling video and advances to voice recording. */
+  /** Requester approves the Kling video and triggers iAppTTS voice generation automatically. */
   async approveBaseVideoByRequester(
     jobId: string,
     requesterId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingVoiceRecording,
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingVoice,
       videoApprovedBy: requesterId,
     });
+
+    this._runIAppTtsGeneration(updated).catch(async (err) => {
+      console.error("[iAppTTS] Voice generation failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingVoice,
+      });
+    });
+
+    return this._getJob(jobId);
   }
 
   /**
@@ -1176,7 +1212,6 @@ export class VideoGenerationService {
   }
 
   private async _getClipRequestBasic(requestId: string): Promise<{ userId: string }> {
-    // Import lazily to avoid circular dependencies
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(requestId);
     if (!req) throw new Error(`ClipRequest not found: ${requestId}`);
@@ -1196,7 +1231,6 @@ export class VideoGenerationService {
       .filter(Boolean);
 
     const primaryPlatform = req.targetPlatforms[0] ?? Platform.TventApp;
-    // Guard against legacy in-memory records that pre-date the durationSeconds field.
     const durationSeconds = Number.isFinite(req.durationSeconds) && req.durationSeconds > 0
       ? req.durationSeconds
       : 15;

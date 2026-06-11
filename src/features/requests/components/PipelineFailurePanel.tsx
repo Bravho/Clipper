@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 const FAILED_STEP_LABELS: Partial<Record<VideoGenerationStep, string>> = {
   [VideoGenerationStep.AnalyzingContent]:    "การวิเคราะห์เนื้อหา (AI)",
   [VideoGenerationStep.GeneratingBaseVideo]: "การสร้างวิดีโอ (Kling AI)",
-  [VideoGenerationStep.ProcessingVoice]:     "การประมวลผลเสียง (RVC)",
+  [VideoGenerationStep.GeneratingVoice]:     "การสร้างเสียงพากย์ (AI)",
+  [VideoGenerationStep.ProcessingVoice]:     "การประมวลผลเสียง",
   [VideoGenerationStep.ComposingFinalVideo]: "การตัดต่อวิดีโอ (FFmpeg)",
 };
 
@@ -34,7 +35,6 @@ export function PipelineFailurePanel({
   hookThai,
 }: Props) {
   const router = useRouter();
-  const pathname = usePathname();
   const [isRetrying, setIsRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -49,6 +49,11 @@ export function PipelineFailurePanel({
 
   const failedStepLabel =
     failedAtStep ? (FAILED_STEP_LABELS[failedAtStep] ?? failedAtStep) : "ไม่ทราบขั้นตอน";
+
+  // Voice generation failure: the base video already exists and is fine —
+  // only the AI voiceover needs to be (re)generated. Show a focused panel
+  // with just the speaking script and a "generate voice" action.
+  const isVoiceFailure = failedAtStep === VideoGenerationStep.GeneratingVoice;
 
   const handleSceneChange = (index: number, field: keyof EditedScene, value: string) => {
     setEditedScenes((prev) => {
@@ -92,7 +97,35 @@ export function PipelineFailurePanel({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ไม่สามารถลองอีกครั้งได้");
       }
-      router.push(pathname);
+
+      if (isVoiceFailure) {
+        // Voice generation is quick (5-15 s) — stay on this panel with an
+        // inline loading indicator and poll until the step advances, instead
+        // of refreshing into the generic processing card.
+        const maxAttempts = 90;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          const statusRes = await fetch(`/api/requests/${requestId}/pipeline-status`, {
+            cache: "no-store",
+          });
+          if (!statusRes.ok) continue;
+          const status = await statusRes.json();
+          if (status.currentStep === VideoGenerationStep.Failed) {
+            throw new Error(
+              "การสร้างเสียงพากย์ล้มเหลว กรุณาลองอีกครั้ง (ตรวจสอบ console ของเซิร์ฟเวอร์)"
+            );
+          }
+          if (status.currentStep === VideoGenerationStep.AwaitingVoiceApproval) {
+            router.refresh();
+            return;
+          }
+        }
+        throw new Error("หมดเวลารอการสร้างเสียงพากย์ กรุณาลองอีกครั้ง");
+      }
+
+      // Soft refresh — re-render the server component with the new pipeline
+      // step without pushing a history entry.
+      router.refresh();
     } catch (err) {
       setRetryError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
       setIsRetrying(false);
@@ -100,6 +133,86 @@ export function PipelineFailurePanel({
   };
 
   const hasContent = hookThai !== null || scenePlan.length > 0 || scriptThai !== null;
+
+  // Focused panel for voice failures — video is already done, only the
+  // voiceover needs generating.
+  if (isVoiceFailure) {
+    return (
+      <div className="mb-6 flex flex-col gap-4">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-800">
+            ขั้นตอนถัดไป: การสร้างเสียงพากย์ (AI)
+          </p>
+          <p className="mt-1 text-sm text-amber-700">
+            วิดีโอของคุณพร้อมแล้ว — ตรวจสอบบทพูดด้านล่างแล้วกด
+            &quot;สร้างเสียงพากย์&quot; เพื่อสร้างเสียงด้วย AI
+          </p>
+        </div>
+
+        {scriptThai !== null && (
+          <div className="rounded-xl border border-slate-200 bg-white p-5">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                บทพูด
+              </p>
+              {!isEditing ? (
+                <button
+                  onClick={() => setIsEditing(true)}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-800"
+                >
+                  แก้ไขบทพูด
+                </button>
+              ) : (
+                <button
+                  onClick={handleCancelEdit}
+                  className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                >
+                  ยกเลิก
+                </button>
+              )}
+            </div>
+            {isEditing ? (
+              <textarea
+                value={editedScriptThai}
+                onChange={(e) => setEditedScriptThai(e.target.value)}
+                rows={3}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none resize-none"
+                placeholder="บทพูดภาษาไทย"
+              />
+            ) : (
+              <p className="text-sm text-slate-800">{editedScriptThai}</p>
+            )}
+          </div>
+        )}
+
+        {retryError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+            <p className="text-sm text-red-700">{retryError}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button
+            onClick={handleRetry}
+            disabled={isRetrying}
+            className="rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isRetrying ? "กำลังสร้างเสียงพากย์..." : "สร้างเสียงพากย์ →"}
+          </button>
+        </div>
+
+        {/* Inline loading status — shown right below the button while generating */}
+        {isRetrying && (
+          <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+            <div className="h-4 w-4 flex-shrink-0 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+            <p className="text-sm text-blue-700">
+              AI กำลังสร้างเสียงพากย์จากบทพูดด้านบน ใช้เวลาประมาณ 5-15 วินาที...
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mb-6 flex flex-col gap-4">

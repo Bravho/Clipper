@@ -86,7 +86,8 @@ export async function POST(
         klingTaskId: null,
         klingStatus: null,
         klingLastPolledAt: null,
-        baseVideoAssetId: null,
+        baseVideoAssetId: null,    ttsTaskId: null,
+
         rvcVoiceModel: "",
         voiceRecordingAssetId: null,
         processedVoiceAssetId: null,

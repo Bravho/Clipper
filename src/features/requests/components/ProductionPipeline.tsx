@@ -13,21 +13,26 @@ import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
   VideoGenerationStep.AwaitingVideoApproval,
   VideoGenerationStep.AwaitingVoiceApproval,
+  VideoGenerationStep.AwaitingAnimationApproval,
   VideoGenerationStep.AwaitingFinalApproval,
 ]);
 
 const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
-  [VideoGenerationStep.AnalyzingContent]:        1,
-  [VideoGenerationStep.AwaitingContentApproval]: 1,
-  [VideoGenerationStep.GeneratingBaseVideo]:     2,
-  [VideoGenerationStep.AwaitingVideoApproval]:   2,
-  [VideoGenerationStep.AwaitingVoiceRecording]:  3,
-  [VideoGenerationStep.ProcessingVoice]:         3,
-  [VideoGenerationStep.AwaitingVoiceApproval]:   3,
-  [VideoGenerationStep.ComposingFinalVideo]:     4,
-  [VideoGenerationStep.AwaitingFinalApproval]:   4,
-  [VideoGenerationStep.Publishing]:              5,
-  [VideoGenerationStep.Complete]:                5,
+  [VideoGenerationStep.AnalyzingContent]:          1,
+  [VideoGenerationStep.AwaitingContentApproval]:   1,
+  [VideoGenerationStep.GeneratingBaseVideo]:        2,
+  [VideoGenerationStep.AwaitingVideoApproval]:      2,
+  [VideoGenerationStep.GeneratingVoice]:            3,
+  [VideoGenerationStep.AwaitingVoiceApproval]:      3,
+  [VideoGenerationStep.GeneratingAnimations]:       3,
+  [VideoGenerationStep.AwaitingAnimationApproval]:  3,
+  [VideoGenerationStep.ComposingFinalVideo]:        4,
+  [VideoGenerationStep.AwaitingFinalApproval]:      4,
+  [VideoGenerationStep.Publishing]:                 5,
+  [VideoGenerationStep.Complete]:                   5,
+  // Legacy steps
+  [VideoGenerationStep.AwaitingVoiceRecording]:     3,
+  [VideoGenerationStep.ProcessingVoice]:            3,
 };
 
 function stepCredit(phaseId: number, costs: PipelineCostBreakdown): string {

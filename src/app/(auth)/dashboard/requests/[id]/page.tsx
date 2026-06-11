@@ -29,6 +29,8 @@ import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 export const metadata: Metadata = { title: "Request Detail — RClipper" };
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function RequestDetailPage({
   params,
@@ -204,6 +206,10 @@ export default async function RequestDetailPage({
         const isAwaitingApproval =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingContentApproval;
         const isFailed = pipelineJob.currentStep === VideoGenerationStep.Failed;
+        // Voice generation failed — the base video is already approved, so keep
+        // showing it and present only the voice regeneration action.
+        const isVoiceFailure =
+          isFailed && pipelineJob.failedAtStep === VideoGenerationStep.GeneratingVoice;
 
         // Parse scene plan — prefer approved version; fall back to raw AI output
         let scenePlan: ScenePlan[] = [];
@@ -238,7 +244,7 @@ export default async function RequestDetailPage({
             />
 
             {/* Generated base video + script — shown once Kling completes */}
-            {!isFailed && baseVideoAsset?.storageUrl && (
+            {(!isFailed || isVoiceFailure) && baseVideoAsset?.storageUrl && (
               <VideoApprovalPanel
                 requestId={id}
                 jobId={pipelineJob.id}
@@ -255,12 +261,17 @@ export default async function RequestDetailPage({
                 isAwaitingAnimationApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingAnimationApproval
                 }
+                isPipelineFailed={isFailed}
+                isGeneratingVoice={
+                  pipelineJob.currentStep === VideoGenerationStep.GeneratingVoice
+                }
                 animatedVideoUrl={animatedVideoAsset?.storageUrl ?? null}
                 savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
                 isAwaitingFinalApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingFinalApproval
                 }
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
+                voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 finalClips={finalClips}
                 scenes={scenePlan}
                 hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
@@ -401,4 +412,3 @@ function BriefRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-

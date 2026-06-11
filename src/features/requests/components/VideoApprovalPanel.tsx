@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import { Platform, PLATFORM_LABELS, FORM_PLATFORMS } from "@/domain/enums/Platform";
 
@@ -73,7 +74,12 @@ interface Props {
   isAwaitingVoiceApproval?: boolean;
   isAwaitingAnimationApproval?: boolean;
   isAwaitingFinalApproval?: boolean;
+  /** Pipeline is in Failed state — recovery UI is rendered elsewhere, so hide the processing spinner. */
+  isPipelineFailed?: boolean;
+  /** Pipeline is generating the AI voiceover — show voice-specific processing text. */
+  isGeneratingVoice?: boolean;
   voiceRecordingUrl?: string | null;
+  voiceRecordingAssetId?: string | null;
   animatedVideoUrl?: string | null;
   savedMusicTrack?: string | null;
   finalClips?: any[];
@@ -98,7 +104,10 @@ export function VideoApprovalPanel({
   isAwaitingVoiceApproval = false,
   isAwaitingAnimationApproval = false,
   isAwaitingFinalApproval = false,
+  isPipelineFailed = false,
+  isGeneratingVoice = false,
   voiceRecordingUrl = null,
+  voiceRecordingAssetId = null,
   animatedVideoUrl = null,
   savedMusicTrack = null,
   finalClips = [],
@@ -144,10 +153,24 @@ export function VideoApprovalPanel({
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>([Platform.TventApp]);
   const [voiceApproving, setVoiceApproving] = useState(false);
   const [voiceRecreating, setVoiceRecreating] = useState(false);
+  const [displayedVoiceUrl, setDisplayedVoiceUrl] = useState<string | null>(voiceRecordingUrl);
+  const [displayedVoiceAssetId, setDisplayedVoiceAssetId] = useState<string | null>(voiceRecordingAssetId);
   const [animationApproving, setAnimationApproving] = useState(false);
   const [animationRegenerating, setAnimationRegenerating] = useState(false);
   const [finalApproving, setFinalApproving] = useState(false);
   const [selectedExportRatio, setSelectedExportRatio] = useState<string>("9:16");
+
+  const voiceRecreatingRef = useRef(false);
+  useEffect(() => { voiceRecreatingRef.current = voiceRecreating; }, [voiceRecreating]);
+
+  useEffect(() => {
+    // While a regeneration is in flight the server briefly has no voice asset
+    // (processedVoiceAssetId is nulled). A background router.refresh() during
+    // that window must not clobber the currently displayed audio with null.
+    if (voiceRecreatingRef.current && !voiceRecordingUrl) return;
+    setDisplayedVoiceUrl(voiceRecordingUrl);
+    setDisplayedVoiceAssetId(voiceRecordingAssetId);
+  }, [voiceRecordingUrl, voiceRecordingAssetId]);
 
   // Combined preview modal
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -185,20 +208,72 @@ export function VideoApprovalPanel({
     }
   };
 
-  const handleRejectVoice = async () => {
+  const handleRegenerateVoice = async () => {
+    // Compare against what is actually displayed right now — not the
+    // server-rendered prop, which can be stale if a previous regeneration
+    // finished without a completed router.refresh().
+    const previousAssetId = displayedVoiceAssetId;
+
     setVoiceRecreating(true);
     setError(null);
     try {
-      const res = await fetch(`/api/requests/${requestId}/reject-voice`, {
+      // Persist any script edits first — the server reads approvedScriptThai
+      // when synthesizing, so the regenerated voice speaks the edited text.
+      if (editScriptThai.trim() && editScriptThai !== (scriptThai ?? "")) {
+        const patchRes = await fetch(`/api/requests/${requestId}/script`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId, scriptThai: editScriptThai }),
+        });
+        if (!patchRes.ok) {
+          const body = await patchRes.json().catch(() => ({}));
+          throw new Error(body.error ?? "ไม่สามารถบันทึกบทพูดที่แก้ไขได้");
+        }
+      }
+
+      const res = await fetch(`/api/requests/${requestId}/voice/regenerate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถส่งกลับไปบันทึกเสียงพากย์ใหม่ได้");
+        throw new Error(body.error ?? "ไม่สามารถสร้างเสียงพากย์ใหม่ได้");
       }
-      router.refresh();
+
+      const maxAttempts = 90;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+        const statusRes = await fetch(`/api/requests/${requestId}/pipeline-status`, {
+          cache: "no-store",
+        });
+        if (!statusRes.ok) continue;
+
+        const status = await statusRes.json();
+        if (status.currentStep === VideoGenerationStep.Failed) {
+          throw new Error(
+            status.voiceError
+              ? `ไม่สามารถสร้างเสียงพากย์ใหม่ได้: ${status.voiceError}`
+              : "ไม่สามารถสร้างเสียงพากย์ใหม่ได้ กรุณาลองอีกครั้งหรือติดต่อแอดมิน"
+          );
+        }
+
+        if (
+          status.currentStep === VideoGenerationStep.AwaitingVoiceApproval &&
+          status.processedVoiceAssetId &&
+          status.processedVoiceUrl &&
+          status.processedVoiceAssetId !== previousAssetId
+        ) {
+          setDisplayedVoiceAssetId(status.processedVoiceAssetId);
+          setDisplayedVoiceUrl(status.processedVoiceUrl);
+          router.refresh();
+          return;
+        }
+      }
+
+      throw new Error("หมดเวลารอการสร้างเสียงพากย์ใหม่ กรุณาลองอีกครั้ง");
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {
@@ -782,21 +857,74 @@ export function VideoApprovalPanel({
           </div>
         )}
 
-        {/* Voice Approval Phase */}
+        {/* Voice Approval Phase - iAppTTS AI-generated voice */}
         {isAwaitingVoiceApproval && (
           <div className="mt-6 space-y-6">
             <Card className="border-blue-100 bg-blue-50/50">
-              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3: ตรวจสอบเสียงพากย์ RVC</h3>
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3: ตรวจสอบเสียงพากย์ AI</h3>
               <p className="text-sm text-slate-500 mb-4">
-                ตรวจสอบความถูกต้องของเสียงพากย์ที่แปลงผ่านโปรแกรมของคุณ และเลือกช่องทางที่ต้องการเผยแพร่ด้านล่าง
+                AI สร้างเสียงพากย์ภาษาไทยจากบทพูดที่คุณอนุมัติ ฟังเสียงด้านล่างแล้วอนุมัติหรือสร้างเสียงใหม่ได้
               </p>
-              {voiceRecordingUrl ? (
+
+              {error && (
+                <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3">
+                  <p className="text-sm font-semibold text-red-700">การสร้างเสียงพากย์ล้มเหลว</p>
+                  <p className="mt-0.5 text-sm text-red-600 break-words">{error}</p>
+                </div>
+              )}
+
+              <div className="mb-3 rounded-lg border border-slate-200 bg-white p-4">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  บทพูด
+                </p>
+                <textarea
+                  value={editScriptThai}
+                  onChange={(e) => setEditScriptThai(e.target.value)}
+                  disabled={voiceRecreating || voiceApproving}
+                  rows={4}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm leading-relaxed text-slate-800 focus:border-blue-500 focus:outline-none resize-none disabled:bg-slate-50 disabled:text-slate-400"
+                  placeholder="บทพูดภาษาไทย"
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  แก้ไขบทพูดได้ตามต้องการ แล้วกด &quot;สร้างเสียงพากย์ใหม่&quot; เพื่อให้ AI อ่านบทที่แก้ไข
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <button
+                  type="button"
+                  onClick={handleRegenerateVoice}
+                  disabled={voiceRecreating || voiceApproving || !editScriptThai.trim()}
+                  className="rounded-md border border-blue-300 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {voiceRecreating ? "กำลังสร้างเสียงพากย์ใหม่..." : "สร้างเสียงพากย์ใหม่"}
+                </button>
+                <p className="mt-1.5 text-xs text-slate-400">
+                  ระบบ AI จะสร้างเสียงใหม่จากบทพูดด้านบน
+                </p>
+              </div>
+
+              {voiceRecreating ? (
+                /* Unmount the old <audio> while regenerating — this immediately
+                   stops any playback of the obsolete voice and guarantees the
+                   element is recreated with the new src once iAppTTS finishes. */
+                <div className="mb-4 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-300 border-t-blue-600" />
+                  <p className="text-sm text-blue-700">AI กำลังสร้างเสียงพากย์ใหม่จากบทพูดด้านบน...</p>
+                </div>
+              ) : displayedVoiceUrl ? (
                 <div className="mb-4">
-                  <p className="text-xs font-semibold text-blue-600 mb-1">เสียงที่แปลงแล้ว (WAV)</p>
-                  <audio src={voiceRecordingUrl} controls className="w-full" />
+                  <p className="text-xs font-semibold text-blue-600 mb-1">เสียงพากย์ AI</p>
+                  <audio
+                    key={displayedVoiceAssetId ?? displayedVoiceUrl}
+                    src={`${displayedVoiceUrl}${displayedVoiceUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(displayedVoiceAssetId ?? displayedVoiceUrl)}`}
+                    controls
+                    preload="metadata"
+                    className="w-full"
+                  />
                 </div>
               ) : (
-                <p className="text-sm text-amber-600 mb-4">ไม่พบไฟล์เสียงพากย์ กรุณาบันทึกใหม่อีกครั้ง</p>
+                <p className="text-sm text-amber-600 mb-4">ไม่พบไฟล์เสียงพากย์ กรุณาสร้างเสียงใหม่</p>
               )}
 
               {/* Background music picker */}
@@ -893,20 +1021,12 @@ export function VideoApprovalPanel({
               </div>
 
               <div className="flex gap-3 justify-end pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={handleRejectVoice}
-                  disabled={voiceRecreating || voiceApproving}
-                  className="rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
-                >
-                  {voiceRecreating ? "กำลังยกเลิก..." : "บันทึกเสียงใหม่"}
-                </button>
                 <Button
                   onClick={handleApproveVoice}
                   loading={voiceApproving}
                   disabled={voiceRecreating || voiceApproving || selectedMusicTrack === null}
                 >
-                  อนุมัติเสียงและสร้างวิดีโอสุดท้าย →
+                  อนุมัติเสียงพากย์
                 </Button>
               </div>
             </Card>
@@ -935,10 +1055,16 @@ export function VideoApprovalPanel({
               )}
 
               {/* Voice audio playback */}
-              {voiceRecordingUrl && (
+              {displayedVoiceUrl && (
                 <div className="mb-4">
-                  <p className="text-xs font-semibold text-purple-700 mb-1">เสียงพากย์ที่แปลงแล้ว (RVC)</p>
-                  <audio src={voiceRecordingUrl} controls className="w-full" />
+                  <p className="text-xs font-semibold text-purple-700 mb-1">เสียงพากย์ AI</p>
+                  <audio
+                    key={displayedVoiceAssetId ?? displayedVoiceUrl}
+                    src={`${displayedVoiceUrl}${displayedVoiceUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(displayedVoiceAssetId ?? displayedVoiceUrl)}`}
+                    controls
+                    preload="metadata"
+                    className="w-full"
+                  />
                 </div>
               )}
 
@@ -1132,235 +1258,32 @@ export function VideoApprovalPanel({
           </div>
         )}
 
-        {/* Processing Indicator */}
-        {!isAwaitingApproval && !isAwaitingVoiceRecording && !isAwaitingVoiceApproval && !isAwaitingAnimationApproval && !isAwaitingFinalApproval && (
+        {/* Processing Indicator — hidden when the pipeline is failed (recovery UI is shown instead) */}
+        {!isPipelineFailed && !isAwaitingApproval && !isAwaitingVoiceRecording && !isAwaitingVoiceApproval && !isAwaitingAnimationApproval && !isAwaitingFinalApproval && (
           <Card className="mt-6 border-slate-100 bg-slate-50 p-5 flex flex-col items-center justify-center text-center">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600 mb-4" />
-            <h4 className="text-sm font-semibold text-slate-800">กำลังประมวลผลวิดีโอของคุณ...</h4>
-            <p className="mt-1 text-xs text-slate-400 max-w-[280px]">
-              AI กำลังถอดเสียงและจับคู่ซับไตเติ้ลสองภาษา (ไทยและอังกฤษ) พร้อมจัดตําแหน่งภาพสินค้าให้อัตโนมัติด้วย FFmpeg ขั้นตอนนี้ใช้เวลา 10-30 วินาที
-            </p>
+            {isGeneratingVoice ? (
+              <>
+                <h4 className="text-sm font-semibold text-slate-800">กำลังสร้างเสียงพากย์ AI...</h4>
+                <p className="mt-1 text-xs text-slate-400 max-w-[280px]">
+                  AI กำลังสร้างเสียงพากย์ภาษาไทยจากบทพูดที่อนุมัติ ขั้นตอนนี้ใช้เวลา 5-15 วินาที
+                </p>
+              </>
+            ) : (
+              <>
+                <h4 className="text-sm font-semibold text-slate-800">กำลังประมวลผลวิดีโอของคุณ...</h4>
+                <p className="mt-1 text-xs text-slate-400 max-w-[280px]">
+                  AI กำลังถอดเสียงและจับคู่ซับไตเติ้ลสองภาษา (ไทยและอังกฤษ) พร้อมจัดตําแหน่งภาพสินค้าให้อัตโนมัติด้วย FFmpeg ขั้นตอนนี้ใช้เวลา 10-30 วินาที
+                </p>
+              </>
+            )}
           </Card>
         )}
 
-        {isAwaitingVoiceRecording && (
-          <p className="mt-2 text-xs text-slate-400">
-            วิดีโอฐานที่อนุมัติแล้ว — บันทึกเสียงพากย์ของคุณด้านล่าง
-          </p>
-        )}
       </Card>
 
-      {/* Voice recorder bar — shown first so user records before reading the script */}
-      {isAwaitingVoiceRecording && (
-        <Card className="mb-6">
-          <h2 className="mb-3 text-base font-semibold text-slate-900">บันทึกเสียงพากย์</h2>
-          <p className="mb-4 text-sm text-slate-500">
-            บันทึกเสียงของคุณ ระบบจะแปลงเสียงอัตโนมัติด้วย RVC ก่อนส่ง
-          </p>
-
-          {micError && (
-            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3">
-              <p className="text-sm text-red-700">{micError}</p>
-            </div>
-          )}
-
-          <div className="flex items-center gap-4 mb-4">
-            {recorderState === "idle" && (
-              <button
-                onClick={startRecording}
-                className="flex items-center gap-2 rounded-full bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 text-sm font-medium transition-colors"
-              >
-                <span className="w-3 h-3 rounded-full bg-white inline-block" />
-                เริ่มบันทึกเสียง
-              </button>
-            )}
-            {recorderState === "recording" && (
-              <>
-                <button
-                  onClick={stopRecording}
-                  className="flex items-center gap-2 rounded-full bg-gray-700 hover:bg-gray-800 text-white px-5 py-2.5 text-sm font-medium transition-colors"
-                >
-                  <span className="w-3 h-3 rounded bg-white inline-block" />
-                  หยุดบันทึก
-                </button>
-                <div className="flex items-center gap-2 text-red-500">
-                  <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse inline-block" />
-                  <span className="font-mono text-sm font-semibold">{formatTime(elapsed)}</span>
-                </div>
-              </>
-            )}
-            {(recorderState === "recorded" || recorderState === "converting" || recorderState === "converted") && (
-              <button
-                onClick={reRecord}
-                disabled={recorderState === "converting"}
-                className="flex items-center gap-2 rounded-full border border-slate-300 hover:bg-slate-50 text-slate-700 px-5 py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
-              >
-                บันทึกใหม่
-              </button>
-            )}
-          </div>
-
-          {/* Original recording + convert button */}
-          {playbackUrl && (recorderState === "recorded" || recorderState === "converting" || recorderState === "converted") && (
-            <div className="mb-4 space-y-2">
-              <p className="text-xs text-slate-500">เสียงต้นฉบับ ({formatTime(elapsed)})</p>
-              <audio src={playbackUrl} controls className="w-full" />
-              {recorderState === "recorded" && (
-                <button
-                  onClick={handleConvert}
-                  className="flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 text-sm font-medium transition-colors"
-                >
-                  แปลงเสียงด้วย RVC
-                </button>
-              )}
-              {recorderState === "converting" && (
-                <p className="text-sm text-blue-600 flex items-center gap-2">
-                  <span className="w-4 h-4 rounded-full border-2 border-blue-400 border-t-transparent animate-spin inline-block" />
-                  กำลังแปลงเสียงผ่าน RVC...
-                </p>
-              )}
-              {recorderState === "converted" && (
-                <button
-                  onClick={handleConvert}
-                  className="flex items-center gap-2 rounded-full border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2 text-sm font-medium transition-colors"
-                >
-                  ส่งไปยัง RVC อีกครั้ง
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Converted audio preview */}
-          {convertedUrl && recorderState === "converted" && (
-            <div className="mb-4 space-y-1">
-              <p className="text-xs font-semibold text-blue-600">
-                เสียงที่แปลงแล้ว (RVC)
-                {conversionCount > 1 && (
-                  <span className="ml-2 font-normal text-blue-400">· แปลงครั้งที่ {conversionCount}</span>
-                )}
-              </p>
-              <audio key={convertedUrl} src={convertedUrl} controls className="w-full" />
-            </div>
-          )}
-
-          {voiceError && (
-            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3">
-              <p className="text-sm font-semibold text-red-700">การแปลงเสียงล้มเหลว</p>
-              <p className="text-sm text-red-600">{voiceError}</p>
-              <p className="text-xs text-red-500 mt-1">เสียงที่บันทึกยังคงอยู่ — ลองแปลงอีกครั้งหรือบันทึกใหม่</p>
-            </div>
-          )}
-
-          {/* Background music picker — shown once RVC conversion is done */}
-          {recorderState === "converted" && (
-            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <div>
-                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">เพลงพื้นหลัง</p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  คลิกเพื่อฟังตัวอย่าง เสียงพูดจะดังขึ้นอัตโนมัติเมื่อไม่มีการพูด
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {/* No-music option */}
-                <button
-                  onClick={() => handleMusicTrackClick("none")}
-                  className={[
-                    "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
-                    selectedMusicTrack === "none"
-                      ? "border-slate-500 bg-slate-100 text-slate-800 font-medium"
-                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
-                  ].join(" ")}
-                >
-                  <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-                    {selectedMusicTrack === "none" ? (
-                      <svg className="w-4 h-4 text-slate-700" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                        <path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" />
-                        <path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 20v4M8 20h8" />
-                      </svg>
-                    )}
-                  </span>
-                  <span className="truncate">ไม่ใส่เพลง</span>
-                </button>
-
-                {BACKGROUND_MUSIC_TRACKS.map((track) => {
-                  const isSelected = selectedMusicTrack === track.id;
-                  const isPlaying = playingMusicTrack === track.id;
-                  return (
-                    <button
-                      key={track.id}
-                      onClick={() => handleMusicTrackClick(track.id)}
-                      className={[
-                        "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
-                        isSelected
-                          ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
-                      ].join(" ")}
-                    >
-                      <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-                        {isPlaying ? (
-                          <span className="flex gap-0.5 items-end h-4">
-                            <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "60%", animationDelay: "0ms" }} />
-                            <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "100%", animationDelay: "100ms" }} />
-                            <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "40%", animationDelay: "200ms" }} />
-                          </span>
-                        ) : isSelected ? (
-                          <svg className="w-4 h-4 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        ) : (
-                          <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </span>
-                      <span className="truncate">{track.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {selectedMusicTrack === null && (
-                <p className="text-xs text-amber-600">กรุณาเลือกเพลง หรือเลือก &ldquo;ไม่ใส่เพลง&rdquo; ก่อนส่งเสียงพากย์</p>
-              )}
-            </div>
-          )}
-
-          {/* Preview combined button — only enabled once converted + music chosen */}
-          {recorderState === "converted" && selectedMusicTrack !== null && (
-            <div className="mb-4">
-              <button
-                onClick={openPreview}
-                className="flex items-center gap-2 rounded-full border border-blue-300 bg-blue-50 hover:bg-blue-100 text-blue-700 px-5 py-2.5 text-sm font-medium transition-colors"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
-                </svg>
-                ดูตัวอย่างรวม (วิดีโอ + เสียง + เพลง)
-              </button>
-              <p className="mt-1.5 text-xs text-slate-400">ฟังก่อนส่ง — เพลงพื้นหลังจะเล่นที่ระดับเสียง 25%</p>
-            </div>
-          )}
-
-          <Button
-            onClick={handleVoiceUpload}
-            disabled={!convertedBlob || voiceUploading || selectedMusicTrack === null}
-            loading={voiceUploading}
-          >
-            {voiceUploading ? "กำลังสร้าง Animation..." : "เพิ่ม animation และ graphic"}
-          </Button>
-
-          {uploadError && (
-            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-              <p className="text-sm font-semibold text-red-700">ส่งเสียงพากย์ไม่สำเร็จ</p>
-              <p className="text-sm text-red-600">{uploadError}</p>
-            </div>
-          )}
-        </Card>
-      )}
+      {/* iAppTTS voice generation notice - shown while AI is generating */}
+      {/* (The pipeline poller handles the GeneratingVoice step automatically) */}
 
       {/* บทพูด + แคปชั่น editable — shown after recorder */}
       {isAwaitingVoiceRecording && (
@@ -1518,7 +1441,7 @@ export function VideoApprovalPanel({
             </div>
           )}
 
-          {(scriptThai ?? scriptEnglish) && (
+          {!isAwaitingVoiceApproval && (scriptThai ?? scriptEnglish) && (
             <div className="mb-4">
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
                 บทพูด
