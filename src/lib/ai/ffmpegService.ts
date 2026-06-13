@@ -51,6 +51,13 @@ export interface ComposeVideoParams {
   coordinates?: ImageCoordinates;
   targetRatios?: VideoRatio[];
   assSubtitlesContent?: string;
+  /**
+   * When set, also render a dedicated 9:16 export for the Tvent App using
+   * this (always English + Chinese) subtitle content, separate from the
+   * general 9:16 export's `assSubtitlesContent`. Result is returned under
+   * the "tvent" key in `exports`.
+   */
+  assSubtitlesContentTvent?: string;
 }
 
 export interface ComposeVideoResult {
@@ -312,6 +319,34 @@ export async function composeAndExport(
         results[ratio] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
       })
     );
+
+    // Dedicated Tvent App 9:16 export with its own (EN+ZH) subtitles, only
+    // rendered when its subtitle content actually differs from the general
+    // 9:16 export — avoids a redundant FFmpeg pass when the requester also
+    // chose English + Chinese.
+    if (
+      params.assSubtitlesContentTvent &&
+      params.assSubtitlesContentTvent !== params.assSubtitlesContent
+    ) {
+      const tventSubsPath = path.join(tmpDir, "subs-tvent.ass");
+      await fs.writeFile(tventSubsPath, params.assSubtitlesContentTvent, "utf-8");
+
+      const outPath = path.join(tmpDir, "out-tvent.mp4");
+      await composeSingleRatio({
+        videoPath,
+        audioPath,
+        subsPath: tventSubsPath,
+        isAss: true,
+        ratio: "9:16",
+        outputPath: outPath,
+        musicPath,
+        coordinates: params.coordinates,
+      });
+
+      const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");
+      await uploadToSpaces(outPath, storageKey);
+      results["tvent"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+    }
 
     return { exports: results };
   } finally {

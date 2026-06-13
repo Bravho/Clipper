@@ -22,6 +22,11 @@ export interface VideoGenerationJob {
   captionThai: string | null;
   captionEnglish: string | null;
   captionChinese: string | null;
+  /**
+   * Simplified Chinese script used for subtitles. Optional: generated lazily
+   * (Gemini translation) at the animation step; absent on legacy jobs.
+   */
+  scriptChinese?: string | null;
 
   approvedScenePlan: string | null;
   approvedScriptThai: string | null;
@@ -31,6 +36,8 @@ export interface VideoGenerationJob {
   approvedCaptionThai: string | null;
   approvedCaptionEnglish: string | null;
   approvedCaptionChinese: string | null;
+  /** See scriptChinese. */
+  approvedScriptChinese?: string | null;
 
   // Step 2: Kling AI
   klingTaskId: string | null;
@@ -52,11 +59,24 @@ export interface VideoGenerationJob {
   animationSpec: string | null;
   animatedVideoAssetId: string | null;
 
+  /**
+   * Subtitle languages the requester chose to burn into their general
+   * distribution exports (any combination of "th"/"en"/"zh"). Selected when
+   * approving the animation step. Defaults to ["en", "zh"].
+   *
+   * Independent of this, the Tvent App export (finalExport_tvent_assetId)
+   * always carries English + Chinese subtitles regardless of this choice —
+   * that's a Tvent platform requirement, not a requester preference.
+   */
+  subtitleLanguages: ("th" | "en" | "zh")[];
+
   // Step 4: Final exports
   finalExport_9_16_assetId: string | null;
   finalExport_16_9_assetId: string | null;
   finalExport_1_1_assetId: string | null;
   finalExport_4_5_assetId: string | null;
+  /** Tvent-specific 9:16 export, always with English + Chinese subtitles. */
+  finalExport_tvent_assetId: string | null;
 
   failedAtStep: VideoGenerationStep | null;
 

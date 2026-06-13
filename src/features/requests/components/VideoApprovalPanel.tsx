@@ -82,6 +82,7 @@ interface Props {
   voiceRecordingAssetId?: string | null;
   animatedVideoUrl?: string | null;
   savedMusicTrack?: string | null;
+  savedSubtitleLanguages?: ("th" | "en" | "zh")[] | null;
   finalClips?: any[];
   scenes: ScenePlan[];
   hookThai: string | null;
@@ -110,6 +111,7 @@ export function VideoApprovalPanel({
   voiceRecordingAssetId = null,
   animatedVideoUrl = null,
   savedMusicTrack = null,
+  savedSubtitleLanguages = null,
   finalClips = [],
   scenes,
   hookThai,
@@ -151,6 +153,9 @@ export function VideoApprovalPanel({
 
   // Requester approval states
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>([Platform.TventApp]);
+  const [selectedSubtitleLanguages, setSelectedSubtitleLanguages] = useState<("th" | "en" | "zh")[]>(
+    savedSubtitleLanguages && savedSubtitleLanguages.length > 0 ? savedSubtitleLanguages : ["en", "zh"]
+  );
   const [voiceApproving, setVoiceApproving] = useState(false);
   const [voiceRecreating, setVoiceRecreating] = useState(false);
   const [displayedVoiceUrl, setDisplayedVoiceUrl] = useState<string | null>(voiceRecordingUrl);
@@ -185,6 +190,17 @@ export function VideoApprovalPanel({
     setSelectedPlatforms((prev) =>
       prev.includes(p) ? prev.filter((item) => item !== p) : [...prev, p]
     );
+  };
+
+  const toggleSubtitleLanguage = (lang: "th" | "en" | "zh") => {
+    setSelectedSubtitleLanguages((prev) => {
+      if (prev.includes(lang)) {
+        // Keep at least one language selected
+        if (prev.length === 1) return prev;
+        return prev.filter((item) => item !== lang);
+      }
+      return [...prev, lang];
+    });
   };
 
   const handleApproveVoice = async () => {
@@ -288,7 +304,12 @@ export function VideoApprovalPanel({
       const res = await fetch(`/api/requests/${requestId}/approve-animation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, targetPlatforms: selectedPlatforms, selectedMusicTrack }),
+        body: JSON.stringify({
+          jobId,
+          targetPlatforms: selectedPlatforms,
+          selectedMusicTrack,
+          subtitleLanguages: selectedSubtitleLanguages,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -1155,6 +1176,41 @@ export function VideoApprovalPanel({
                           {isChecked && "✓"}
                         </span>
                         <span className="truncate">{PLATFORM_LABELS[p]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="border-t border-slate-200/80 pt-4 mb-4">
+                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">เลือกภาษาซับไตเติ้ล</p>
+                <p className="text-xs text-slate-400 mb-3">
+                  เลือกภาษาซับไตเติ้ลที่จะฝังในวิดีโอสำหรับการเผยแพร่ทั่วไป (เลือกได้มากกว่า 1 ภาษา)
+                  ส่วนวิดีโอสำหรับ Tvent App จะฝังซับไตเติ้ลภาษาอังกฤษและจีนเสมอ ไม่ว่าคุณจะเลือกอะไรไว้ที่นี่
+                </p>
+                <div className="grid grid-cols-3 gap-2 max-w-sm">
+                  {([
+                    { code: "th" as const, label: "ไทย" },
+                    { code: "en" as const, label: "English" },
+                    { code: "zh" as const, label: "中文" },
+                  ]).map(({ code, label }) => {
+                    const isChecked = selectedSubtitleLanguages.includes(code);
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => toggleSubtitleLanguage(code)}
+                        className={[
+                          "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-all",
+                          isChecked
+                            ? "border-purple-500 bg-purple-50 text-purple-800 font-medium"
+                            : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
+                        ].join(" ")}
+                      >
+                        <span className="flex-shrink-0 w-4.5 h-4.5 flex items-center justify-center rounded border border-slate-300 bg-white text-purple-600">
+                          {isChecked && "✓"}
+                        </span>
+                        <span className="truncate">{label}</span>
                       </button>
                     );
                   })}

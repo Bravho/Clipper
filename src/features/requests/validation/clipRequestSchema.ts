@@ -33,8 +33,9 @@ export const clipRequestFormSchema = z.object({
 
   targetAudience: z
     .string()
-    .min(5, "Please describe your target audience.")
-    .max(500, "Target audience must be 500 characters or fewer."),
+    .max(500, "Target audience must be 500 characters or fewer.")
+    .optional()
+    .default(""),
 
   targetPlatforms: z
     .array(z.enum(platformValues))

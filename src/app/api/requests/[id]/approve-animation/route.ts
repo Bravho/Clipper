@@ -29,12 +29,21 @@ export async function POST(
   const jobId = body?.jobId;
   const targetPlatforms = body?.targetPlatforms as Platform[];
   const selectedMusicTrack = body?.selectedMusicTrack ?? null;
+  const subtitleLanguages = body?.subtitleLanguages as ("th" | "en" | "zh")[] | undefined;
 
   if (!jobId) {
     return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
   }
   if (!targetPlatforms || !Array.isArray(targetPlatforms) || targetPlatforms.length === 0) {
     return NextResponse.json({ error: "Please select at least one distribution channel." }, { status: 400 });
+  }
+  if (
+    subtitleLanguages !== undefined &&
+    (!Array.isArray(subtitleLanguages) ||
+      subtitleLanguages.length === 0 ||
+      !subtitleLanguages.every((l) => l === "th" || l === "en" || l === "zh"))
+  ) {
+    return NextResponse.json({ error: "Please select at least one subtitle language." }, { status: 400 });
   }
 
   const job = await videoGenerationJobRepository.findById(jobId);
@@ -47,7 +56,8 @@ export async function POST(
       jobId,
       session.user.id,
       targetPlatforms,
-      selectedMusicTrack
+      selectedMusicTrack,
+      subtitleLanguages
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

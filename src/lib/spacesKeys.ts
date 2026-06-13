@@ -136,12 +136,13 @@ export function buildAnimatedVideoKey(userId: string, requestId: string): string
  * Key for a final FFmpeg-exported clip in a specific aspect ratio.
  * Lifecycle: retained for 8 years.
  *
- * @param ratio  e.g. "9-16", "16-9", "1-1", "4-5" (slashes replaced with dashes for path safety)
+ * @param ratio  e.g. "9-16", "16-9", "1-1", "4-5" (slashes replaced with dashes for path safety),
+ *               or "tvent" for the dedicated Tvent App export.
  */
 export function buildFinalClipKey(
   userId: string,
   requestId: string,
-  ratio: "9:16" | "16:9" | "1:1" | "4:5"
+  ratio: "9:16" | "16:9" | "1:1" | "4:5" | "tvent"
 ): string {
   const safeRatio = ratio.replace(":", "-");
   return `final_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;

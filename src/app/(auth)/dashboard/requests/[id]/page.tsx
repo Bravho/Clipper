@@ -267,6 +267,7 @@ export default async function RequestDetailPage({
                 }
                 animatedVideoUrl={animatedVideoAsset?.storageUrl ?? null}
                 savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
+                savedSubtitleLanguages={pipelineJob.subtitleLanguages ?? null}
                 isAwaitingFinalApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingFinalApproval
                 }
@@ -350,29 +351,54 @@ export default async function RequestDetailPage({
           <ul className="flex flex-col gap-2">
             {assets
               .filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted && (a.assetType === AssetType.Image || a.assetType === AssetType.Video))
-              .map((asset) => (
-                <li
-                  key={asset.id}
-                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
-                >
-                  <div>
-                    <p className="text-sm text-slate-800">{asset.fileName}</p>
-                    <p className="text-xs text-slate-400">
-                      {asset.assetType} ·{" "}
-                      {(asset.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB · Deletion
-                      scheduled{" "}
-                      {asset.scheduledDeletionAt.toLocaleDateString("en-GB", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
-                  <span className="text-xs capitalize text-slate-500">
-                    {asset.uploadStatus}
-                  </span>
-                </li>
-              ))}
+              .map((asset) => {
+                const thumbSrc = asset.thumbnailUrl || (asset.assetType === AssetType.Image ? asset.storageUrl : "");
+                return (
+                  <li
+                    key={asset.id}
+                    className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-3">
+                      {thumbSrc ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={thumbSrc}
+                          alt={asset.fileName}
+                          className="h-12 w-12 flex-shrink-0 rounded-md border border-slate-200 object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-400">
+                          {asset.assetType === AssetType.Video ? (
+                            <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                              <path d="M4 5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3.5l4 3v-9l-4 3V7a2 2 0 0 0-2-2H4z" />
+                            </svg>
+                          ) : (
+                            <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                              <path d="M4 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H4zm0 2h16v8.59l-3.3-3.3a1 1 0 0 0-1.4 0L11 17.59l-2.3-2.3a1 1 0 0 0-1.4 0L4 18.59V6z" />
+                            </svg>
+                          )}
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm text-slate-800">{asset.fileName}</p>
+                        <p className="text-xs text-slate-400">
+                          {asset.assetType} ·{" "}
+                          {(asset.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB · Deletion
+                          scheduled{" "}
+                          {asset.scheduledDeletionAt.toLocaleDateString("en-GB", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs capitalize text-slate-500">
+                      {asset.uploadStatus}
+                    </span>
+                  </li>
+                );
+              })}
           </ul>
         )}
       </Card>

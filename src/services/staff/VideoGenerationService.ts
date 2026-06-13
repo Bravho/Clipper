@@ -49,6 +49,7 @@ export class VideoGenerationService {
       scenePlan: null,
       scriptThai: null,
       scriptEnglish: null,
+      scriptChinese: null,
       hookThai: null,
       hookEnglish: null,
       captionThai: null,
@@ -57,6 +58,7 @@ export class VideoGenerationService {
       approvedScenePlan: null,
       approvedScriptThai: null,
       approvedScriptEnglish: null,
+      approvedScriptChinese: null,
       approvedHookThai: null,
       approvedHookEnglish: null,
       approvedCaptionThai: null,
@@ -470,19 +472,37 @@ export class VideoGenerationService {
 
     const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
     let scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
+    let scriptChinese = job.approvedScriptChinese ?? job.scriptChinese ?? "";
     const durationSeconds = request.durationSeconds || 15;
 
-    // Translate script to English if missing (needed for subtitle timeline)
-    if (!scriptEnglish) {
+    // Fail fast with a clear setup error before doing any work
+    const { requireGeminiApiKey, AI_CONFIG } = await import("@/config/aiTools");
+    requireGeminiApiKey();
+
+    // Translate script to English + Simplified Chinese if missing (needed for
+    // the subtitle timeline). Single Gemini call covers both languages.
+    if (!scriptEnglish || !scriptChinese) {
       const { GoogleGenAI } = await import("@google/genai");
-      const { AI_CONFIG } = await import("@/config/aiTools");
-      const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+      const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
       const res = await ai.models.generateContent({
         model: AI_CONFIG.gemini.textModel,
-        contents: `Translate this Thai script to natural, spoken English for social media subtitles: "${scriptThai}"`,
+        contents: `Translate this Thai script into natural, spoken English and Simplified Chinese for social media subtitles: "${scriptThai}"
+Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
+        config: { responseMimeType: "application/json", temperature: 0.2 },
       });
-      scriptEnglish = res.text ?? "";
-      await videoGenerationJobRepository.update(job.id, { scriptEnglish, approvedScriptEnglish: scriptEnglish });
+      try {
+        const parsed = JSON.parse(res.text ?? "{}");
+        scriptEnglish = scriptEnglish || (parsed.english ?? "");
+        scriptChinese = scriptChinese || (parsed.chinese ?? "");
+      } catch {
+        /* keep whatever we already had */
+      }
+      await videoGenerationJobRepository.update(job.id, {
+        scriptEnglish,
+        approvedScriptEnglish: scriptEnglish,
+        scriptChinese,
+        approvedScriptChinese: scriptChinese,
+      });
     }
 
     // Step 1: Gemini audio alignment — extract per-sentence timestamps
@@ -491,6 +511,7 @@ export class VideoGenerationService {
       audioUrl: audioAsset.storageUrl,
       scriptThai,
       scriptEnglish,
+      scriptChinese,
       durationSeconds,
     });
     const subtitleTimeline = JSON.stringify(segments);
@@ -553,7 +574,8 @@ export class VideoGenerationService {
     jobId: string,
     userId: string,
     targetPlatforms: Platform[],
-    selectedMusicTrack: string | null = null
+    selectedMusicTrack: string | null = null,
+    subtitleLanguages?: ("th" | "en" | "zh")[]
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
 
@@ -565,6 +587,7 @@ export class VideoGenerationService {
       currentStep: VideoGenerationStep.ComposingFinalVideo,
       animationApprovedBy: userId,
       ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
+      ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
     });
 
     this._runFFmpegComposition(updated).catch(async (err) => {
@@ -718,26 +741,48 @@ export class VideoGenerationService {
 
     // Use pre-computed subtitle timeline from animation step if available; otherwise re-run alignment
     let assSubtitlesContent: string | undefined = undefined;
+    let assSubtitlesContentTvent: string | undefined = undefined;
+    const subtitleLanguages = job.subtitleLanguages && job.subtitleLanguages.length > 0
+      ? job.subtitleLanguages
+      : (["en", "zh"] as ("th" | "en" | "zh")[]);
+    const needsTventExport = platforms.includes(Platform.TventApp);
     try {
       const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
 
       if (job.subtitleTimeline) {
         const segments = JSON.parse(job.subtitleTimeline);
-        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments);
+        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments, subtitleLanguages);
+        if (needsTventExport) {
+          assSubtitlesContentTvent = geminiSubtitlesService.generateAssSubtitles(segments, ["en", "zh"]);
+        }
       } else {
-        const { AI_CONFIG } = await import("@/config/aiTools");
+        const { AI_CONFIG, requireGeminiApiKey } = await import("@/config/aiTools");
         const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
         let scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
+        let scriptChinese = job.approvedScriptChinese ?? job.scriptChinese ?? "";
 
-        if (!scriptEnglish) {
+        if (!scriptEnglish || !scriptChinese) {
           const { GoogleGenAI } = await import("@google/genai");
-          const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+          const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
           const res = await ai.models.generateContent({
             model: AI_CONFIG.gemini.textModel,
-            contents: `Translate this Thai script to natural, spoken English for social media subtitles: "${scriptThai}"`,
+            contents: `Translate this Thai script into natural, spoken English and Simplified Chinese for social media subtitles: "${scriptThai}"
+Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
+            config: { responseMimeType: "application/json", temperature: 0.2 },
           });
-          scriptEnglish = res.text ?? "";
-          await videoGenerationJobRepository.update(job.id, { scriptEnglish, approvedScriptEnglish: scriptEnglish });
+          try {
+            const parsed = JSON.parse(res.text ?? "{}");
+            scriptEnglish = scriptEnglish || (parsed.english ?? "");
+            scriptChinese = scriptChinese || (parsed.chinese ?? "");
+          } catch {
+            /* keep whatever we already had */
+          }
+          await videoGenerationJobRepository.update(job.id, {
+            scriptEnglish,
+            approvedScriptEnglish: scriptEnglish,
+            scriptChinese,
+            approvedScriptChinese: scriptChinese,
+          });
         }
 
         const duration = request.durationSeconds || 15;
@@ -745,9 +790,13 @@ export class VideoGenerationService {
           audioUrl: audioAsset.storageUrl,
           scriptThai,
           scriptEnglish,
+          scriptChinese,
           durationSeconds: duration,
         });
-        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments);
+        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments, subtitleLanguages);
+        if (needsTventExport) {
+          assSubtitlesContentTvent = geminiSubtitlesService.generateAssSubtitles(segments, ["en", "zh"]);
+        }
       }
     } catch (err) {
       console.error("[FFmpeg] Subtitle preparation failed, falling back to word count:", err);
@@ -784,6 +833,7 @@ export class VideoGenerationService {
       coordinates: coords,
       targetRatios,
       assSubtitlesContent,
+      assSubtitlesContentTvent,
     });
 
     const scheduledDeletionAt = new Date();
@@ -813,12 +863,41 @@ export class VideoGenerationService {
       assetIds[ratio] = asset.id;
     }
 
+    // Dedicated Tvent App export: a separate asset if its EN+ZH subtitles
+    // differ from the general 9:16 export, otherwise the same 9:16 asset
+    // (it already carries EN+ZH subtitles).
+    let tventAssetId: string | null = null;
+    if (needsTventExport) {
+      const tventExportInfo = result.exports["tvent"];
+      if (tventExportInfo) {
+        const tventAsset = await uploadedAssetRepository.create({
+          requestId: job.requestId,
+          userId: request.userId,
+          fileName: "final_tvent.mp4",
+          assetType: AssetType.FinalClip,
+          fileSizeBytes: 0,
+          mimeType: "video/mp4",
+          storageKey: tventExportInfo.storageKey,
+          storageUrl: tventExportInfo.storageUrl,
+          thumbnailKey: "",
+          thumbnailUrl: "",
+          uploadStatus: AssetUploadStatus.Uploaded,
+          scheduledDeletionAt,
+          videoRatio: "9:16",
+        });
+        tventAssetId = tventAsset.id;
+      } else {
+        tventAssetId = assetIds["9:16"] ?? null;
+      }
+    }
+
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingFinalApproval,
       finalExport_9_16_assetId: assetIds["9:16"] ?? null,
       finalExport_16_9_assetId: assetIds["16:9"] ?? null,
       finalExport_1_1_assetId: assetIds["1:1"] ?? null,
       finalExport_4_5_assetId: assetIds["4:5"] ?? null,
+      finalExport_tvent_assetId: tventAssetId,
     });
   }
 
@@ -918,6 +997,7 @@ export class VideoGenerationService {
       scenePlan: analysis.scenePlan,
       scriptThai: analysis.scriptThai,
       scriptEnglish: analysis.scriptEnglish,
+      scriptChinese: null,
       hookThai: analysis.hookThai,
       hookEnglish: analysis.hookEnglish,
       captionThai: analysis.captionThai,
@@ -926,6 +1006,7 @@ export class VideoGenerationService {
       approvedScenePlan: analysis.scenePlan,
       approvedScriptThai: analysis.scriptThai,
       approvedScriptEnglish: analysis.scriptEnglish,
+      approvedScriptChinese: null,
       approvedHookThai: analysis.hookThai,
       approvedHookEnglish: analysis.hookEnglish,
       approvedCaptionThai: analysis.captionThai,
@@ -944,10 +1025,12 @@ export class VideoGenerationService {
       animationSpec: null,
       animatedVideoAssetId: null,
       animationApprovedBy: null,
+      subtitleLanguages: ["en", "zh"],
       finalExport_9_16_assetId: null,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
       finalExport_4_5_assetId: null,
+      finalExport_tvent_assetId: null,
       failedAtStep: null,
       contentApprovedBy: requesterId,
       videoApprovedBy: null,
@@ -1089,6 +1172,22 @@ export class VideoGenerationService {
             status: VideoGenerationJobStatus.Failed,
             currentStep: VideoGenerationStep.Failed,
             failedAtStep: VideoGenerationStep.GeneratingVoice,
+          });
+        });
+        return updated;
+      }
+
+      case VideoGenerationStep.GeneratingAnimations: {
+        const updated = await videoGenerationJobRepository.update(jobId, {
+          currentStep: VideoGenerationStep.GeneratingAnimations,
+          animatedVideoAssetId: null,
+        });
+        this._runAnimationGeneration(updated).catch(async (err) => {
+          console.error("[AnimationGeneration] Retry failed:", err);
+          await videoGenerationJobRepository.update(jobId, {
+            status: VideoGenerationJobStatus.Failed,
+            currentStep: VideoGenerationStep.Failed,
+            failedAtStep: VideoGenerationStep.GeneratingAnimations,
           });
         });
         return updated;

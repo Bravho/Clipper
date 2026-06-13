@@ -41,11 +41,6 @@ export function PackageSelector({ creditBalance }: Props) {
           </div>
         </div>
 
-        <ProductionPipeline
-          durationSeconds={durationSeconds}
-          totalChannels={platformCount}
-        />
-
         <NewRequestForm
           creditBalance={creditBalance}
           imageOnly
@@ -54,6 +49,11 @@ export function PackageSelector({ creditBalance }: Props) {
             setDurationSeconds(d);
             setPlatformCount(p);
           }}
+        />
+
+        <ProductionPipeline
+          durationSeconds={durationSeconds}
+          totalChannels={platformCount}
         />
       </div>
     );

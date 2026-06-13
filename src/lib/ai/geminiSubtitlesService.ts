@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { AI_CONFIG } from "@/config/aiTools";
+import { AI_CONFIG, requireGeminiApiKey } from "@/config/aiTools";
 import { spacesClient } from "@/lib/spaces";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import * as fs from "fs/promises";
@@ -9,6 +9,8 @@ export interface TimedSegment {
   sentenceNumber: number;
   textThai: string;
   textEnglish: string;
+  /** Optional for legacy subtitle timelines created before Chinese support. */
+  textChinese?: string;
   startSecond: number;
   endSecond: number;
 }
@@ -55,19 +57,21 @@ export async function alignAudioWithScript(params: {
   audioUrl: string;
   scriptThai: string;
   scriptEnglish: string;
+  scriptChinese?: string;
   durationSeconds: number;
 }): Promise<TimedSegment[]> {
-  const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+  const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
 
   // Download vocal file and encode as base64
   const { data, mimeType } = await downloadAsBase64(params.audioUrl);
 
   const prompt = `Listen carefully to this spoken vocal track and align it word-for-word/sentence-for-sentence with the script segments provided below.
-  Determine the exact starting and ending times (in seconds, e.g. 1.25) for each sentence segment. 
+  Determine the exact starting and ending times (in seconds, e.g. 1.25) for each sentence segment.
   The audio file is exactly ${params.durationSeconds} seconds long.
-  
+
   Thai Script: "${params.scriptThai}"
   English Translation: "${params.scriptEnglish}"
+  ${params.scriptChinese ? `Chinese (Simplified) Translation: "${params.scriptChinese}"` : "Also translate each sentence into Simplified Chinese yourself."}
 
   Return ONLY a valid JSON object matching the schema below:
   {
@@ -76,6 +80,7 @@ export async function alignAudioWithScript(params: {
         "sentenceNumber": 1,
         "textThai": "Thai sentence string",
         "textEnglish": "English sentence string",
+        "textChinese": "Simplified Chinese sentence string",
         "startSecond": number,
         "endSecond": number
       }
@@ -109,7 +114,7 @@ export async function alignAudioWithScript(params: {
 export async function detectProductCoordinates(
   imageUrls: string[]
 ): Promise<ImageCoordinates[]> {
-  const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+  const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
 
   const imageParts = await Promise.all(
     imageUrls.map(async (url) => {
@@ -164,10 +169,45 @@ function formatAssTime(seconds: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
+export type SubtitleLanguage = "th" | "en" | "zh";
+
+/** Per-language style definitions, stacked top-to-bottom by MarginV. */
+const SUBTITLE_STYLES: Record<
+  SubtitleLanguage,
+  { name: string; field: keyof TimedSegment; styleLine: string }
+> = {
+  th: {
+    name: "ThaiStyle",
+    field: "textThai",
+    styleLine: "Style: ThaiStyle,Prompt,52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,4,0,2,50,50,300,1",
+  },
+  en: {
+    name: "EngStyle",
+    field: "textEnglish",
+    styleLine: "Style: EngStyle,Prompt,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,4,0,2,50,50,200,1",
+  },
+  zh: {
+    name: "ChiStyle",
+    field: "textChinese",
+    styleLine: "Style: ChiStyle,Microsoft YaHei,42,&H0000FFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,2,50,50,100,1",
+  },
+};
+
 /**
- * Generate a bilingual .ass subtitle file content.
+ * Generate a .ass subtitle file content containing only the requested
+ * subtitle languages, stacked top-to-bottom (Thai above English above
+ * Chinese). Segments missing a requested language's text (e.g. legacy
+ * timelines without textChinese) simply omit that line.
+ *
+ * Defaults to English + Simplified Chinese, matching the Tvent App
+ * requirement.
  */
-export function generateAssSubtitles(segments: TimedSegment[]): string {
+export function generateAssSubtitles(
+  segments: TimedSegment[],
+  languages: SubtitleLanguage[] = ["en", "zh"]
+): string {
+  const activeLanguages = languages.length > 0 ? languages : (["en", "zh"] as SubtitleLanguage[]);
+
   const lines: string[] = [
     "[Script Info]",
     "ScriptType: v4.00+",
@@ -176,8 +216,7 @@ export function generateAssSubtitles(segments: TimedSegment[]): string {
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    "Style: ThaiStyle,Prompt,56,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,4,0,2,50,50,220,1",
-    "Style: EngStyle,Prompt,38,&H0000FFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,2,50,50,140,1",
+    ...activeLanguages.map((lang) => SUBTITLE_STYLES[lang].styleLine),
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
@@ -187,12 +226,13 @@ export function generateAssSubtitles(segments: TimedSegment[]): string {
     const start = formatAssTime(seg.startSecond);
     const end = formatAssTime(seg.endSecond);
 
-    // Escape any backslashes or formatting characters
-    const cleanThai = seg.textThai.replace(/\\/g, "\\\\");
-    const cleanEng = seg.textEnglish.replace(/\\/g, "\\\\");
-
-    lines.push(`Dialogue: 0,${start},${end},ThaiStyle,,0,0,0,,${cleanThai}`);
-    lines.push(`Dialogue: 0,${start},${end},EngStyle,,0,0,0,,${cleanEng}`);
+    for (const lang of activeLanguages) {
+      const style = SUBTITLE_STYLES[lang];
+      const text = (seg[style.field] as string | undefined) ?? "";
+      if (!text) continue;
+      const cleanText = text.replace(/\\/g, "\\\\");
+      lines.push(`Dialogue: 0,${start},${end},${style.name},,0,0,0,,${cleanText}`);
+    }
   }
 
   return lines.join("\n");

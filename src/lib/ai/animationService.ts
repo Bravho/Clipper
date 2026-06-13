@@ -171,7 +171,9 @@ function buildFilterChain(specs: AnimationSpec[], videoWidth = 1080, videoHeight
         y = `(h-text_h)/2`;
     }
 
-    return `drawtext=text='${text}':fontsize=${fontsize}:fontcolor=${color}:borderw=3:bordercolor=black@0.8:shadowx=2:shadowy=2:x=${x}:y=${y}:enable='${enable}':alpha='${alpha}'`;
+    const fontFile = AI_CONFIG.ffmpeg.fontFile.replace(/\\/g, "/").replace(/:/g, "\\:");
+
+    return `drawtext=fontfile='${fontFile}':text='${text}':fontsize=${fontsize}:fontcolor=${color}:borderw=3:bordercolor=black@0.8:shadowx=2:shadowy=2:x='${x}':y='${y}':enable='${enable}':alpha='${alpha}'`;
   });
 
   return filters.join(",");

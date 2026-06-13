@@ -9,7 +9,7 @@ import {
   submitClipRequestSchema,
   SubmitClipRequestValues,
 } from "@/features/requests/validation/clipRequestSchema";
-import { OPTIONAL_FORM_PLATFORMS, PLATFORM_LABELS, PLATFORM_ASPECT_RATIOS, Platform } from "@/domain/enums/Platform";
+import { Platform } from "@/domain/enums/Platform";
 import {
   MAX_UPLOAD_COUNT,
   MAX_IMAGE_SIZE_BYTES,
@@ -54,6 +54,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
 
   const router = useRouter();
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [previews, setPreviews] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isDraftSaving, setIsDraftSaving] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
@@ -105,26 +106,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
 
 
 
-  const handlePlatformToggle = (platform: Platform) => {
-    const current = watchedPlatforms as Platform[];
-    const next = current.includes(platform)
-      ? current.filter((p) => p !== platform)
-      : [...current, platform];
-    setValue(
-      "targetPlatforms",
-      next as SubmitClipRequestValues["targetPlatforms"],
-      { shouldValidate: true }
-    );
-  };
-
-  const movePlatform = (index: number, direction: -1 | 1) => {
-    const current = [...(watchedPlatforms as Platform[])];
-    const newIndex = index + direction;
-    if (newIndex < 0 || newIndex >= current.length) return;
-    [current[index], current[newIndex]] = [current[newIndex], current[index]];
-    setValue("targetPlatforms", current as SubmitClipRequestValues["targetPlatforms"], { shouldValidate: true });
-  };
-
   const handleFileDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -165,6 +146,28 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
   const removeFile = (id: string) => {
     setPendingFiles((prev) => prev.filter((f) => f.id !== id));
   };
+
+  // Generate/revoke thumbnail object URLs as the pending file list changes.
+  useEffect(() => {
+    setPreviews((prev) => {
+      const next: Record<string, string> = {};
+      for (const item of pendingFiles) {
+        if (item.file.type.startsWith("image/")) {
+          next[item.id] = prev[item.id] ?? URL.createObjectURL(item.file);
+        }
+      }
+      for (const [id, url] of Object.entries(prev)) {
+        if (!(id in next)) URL.revokeObjectURL(url);
+      }
+      return next;
+    });
+  }, [pendingFiles]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveDraft = async (data: Partial<SubmitClipRequestValues>) => {
     setIsDraftSaving(true);
@@ -511,14 +514,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
             error={errors.description?.message}
           />
 
-          <Input
-            label="กลุ่มเป้าหมาย"
-            placeholder="เช่น นักท่องเที่ยวชาวจีนอายุ 25–40 ปีที่ชอบประสบการณ์ท้องถิ่น"
-            hint="คลิปนี้ต้องการสื่อถึงใคร?"
-            {...register("targetAudience")}
-            error={errors.targetAudience?.message}
-          />
-
           {/* Duration slider */}
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -547,136 +542,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
               </p>
             )}
           </div>
-        </div>
-      </fieldset>
-
-      {/* Section 2 — ช่องทางการเผยแพร่ */}
-      <fieldset className="rounded-xl border border-slate-200 bg-white p-6">
-        <legend className="mb-5 text-base font-semibold text-slate-900 px-1">
-          ช่องทางการเผยแพร่
-        </legend>
-        <div className="flex flex-col gap-5">
-
-          {/* Target platforms */}
-          <div>
-            <p className="mb-2 text-sm font-medium text-slate-700">
-              ช่องทางเผยแพร่ <span className="text-red-500">*</span>
-            </p>
-            <p className="mb-3 text-xs text-slate-500">
-              เลือกช่องทางที่ต้องการเผยแพร่คลิป Tvent รวมอยู่เสมอ
-            </p>
-            <div className="flex flex-col gap-2">
-              {/* Tvent — mandatory */}
-              <label className="flex cursor-not-allowed items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm">
-                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border-2 border-blue-600 bg-blue-600">
-                  <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none">
-                    <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </span>
-                <span className="font-medium text-blue-800">{PLATFORM_LABELS[Platform.TventApp]}</span>
-                <span className="ml-auto text-xs text-blue-500 font-medium">จำเป็น</span>
-              </label>
-
-              {/* Optional platforms */}
-              {OPTIONAL_FORM_PLATFORMS.map((platform) => {
-                const isChecked = (watchedPlatforms as Platform[]).includes(platform);
-                return (
-                  <label
-                    key={platform}
-                    className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
-                      isChecked
-                        ? "border-blue-300 bg-blue-50 text-blue-800"
-                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span
-                      className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border-2 ${
-                        isChecked ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"
-                      }`}
-                      onClick={() => handlePlatformToggle(platform)}
-                    >
-                      {isChecked && (
-                        <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none">
-                          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </span>
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={isChecked}
-                      onChange={() => handlePlatformToggle(platform)}
-                    />
-                    {PLATFORM_LABELS[platform]}
-                  </label>
-                );
-              })}
-            </div>
-            {errors.targetPlatforms && (
-              <p className="mt-1.5 text-xs text-red-600" role="alert">
-                {errors.targetPlatforms.message}
-              </p>
-            )}
-          </div>
-
-          {/* Priority order */}
-          {(watchedPlatforms as Platform[]).length > 0 && (
-            <div>
-              <p className="mb-2 text-sm font-medium text-slate-700">
-                ลำดับความสำคัญ
-              </p>
-              <p className="mb-3 text-xs text-slate-500">
-                ช่องทางที่ 1 กำหนดอัตราส่วนวิดีโอที่ใช้สร้าง — ลากหรือใช้ลูกศรเพื่อเรียงลำดับ
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {(watchedPlatforms as Platform[]).map((platform, index) => (
-                  <div
-                    key={platform}
-                    className="flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5"
-                  >
-                    <span
-                      className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                        index === 0
-                          ? "bg-blue-600 text-white"
-                          : "bg-slate-200 text-slate-600"
-                      }`}
-                    >
-                      {index + 1}
-                    </span>
-                    <span className="flex-1 text-sm text-slate-700">
-                      {PLATFORM_LABELS[platform]}
-                    </span>
-                    {index === 0 && (
-                      <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                        {PLATFORM_ASPECT_RATIOS[platform]}
-                      </span>
-                    )}
-                    <div className="flex gap-0.5">
-                      <button
-                        type="button"
-                        onClick={() => movePlatform(index, -1)}
-                        disabled={index === 0}
-                        className="rounded p-1 text-slate-400 hover:text-slate-700 disabled:opacity-25"
-                        aria-label="เลื่อนขึ้น"
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => movePlatform(index, 1)}
-                        disabled={index === (watchedPlatforms as Platform[]).length - 1}
-                        className="rounded p-1 text-slate-400 hover:text-slate-700 disabled:opacity-25"
-                        aria-label="เลื่อนลง"
-                      >
-                        ↓
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
         </div>
       </fieldset>
 
@@ -725,18 +590,39 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
 
         {/* File list */}
         {pendingFiles.length > 0 && (
-          <ul className="mt-4 flex flex-col gap-2">
+          <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {pendingFiles.map((item) => (
               <li
                 key={item.id}
-                className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
+                className={`relative overflow-hidden rounded-lg border ${
                   item.error
-                    ? "border border-red-200 bg-red-50"
-                    : "border border-slate-200 bg-white"
+                    ? "border-red-200 bg-red-50"
+                    : "border-slate-200 bg-white"
                 }`}
               >
-                <div className="min-w-0">
-                  <p className="truncate text-slate-800">{item.file.name}</p>
+                <div className="flex aspect-square items-center justify-center bg-slate-50">
+                  {previews[item.id] ? (
+                    <img
+                      src={previews[item.id]}
+                      alt={item.file.name}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <svg className="h-10 w-10 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.25 9.75L16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" />
+                    </svg>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeFile(item.id)}
+                  className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-xs text-slate-500 shadow hover:text-red-600"
+                  aria-label="ลบ"
+                >
+                  ✕
+                </button>
+                <div className="px-2 py-1.5">
+                  <p className="truncate text-xs text-slate-700">{item.file.name}</p>
                   {item.error ? (
                     <p className="text-xs text-red-600">{item.error}</p>
                   ) : (
@@ -745,13 +631,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
                     </p>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeFile(item.id)}
-                  className="ml-3 text-xs text-slate-400 hover:text-red-600 flex-shrink-0"
-                >
-                  ลบ
-                </button>
               </li>
             ))}
           </ul>

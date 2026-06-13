@@ -28,8 +28,13 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
     setIsPending(true);
     try {
       const res = await fetch(`/api/requests/${requestId}`, { method: "DELETE" });
-      if (res.ok) {
-        router.push(pathname);
+      if (res.ok || res.status === 404) {
+        // 404 means the request is already gone server-side (e.g. stale data
+        // after a dev server restart) — refresh either way to clear it from the UI.
+        router.refresh();
+      } else {
+        const data = await res.json().catch(() => null);
+        alert(data?.error ?? "ไม่สามารถยกเลิกคำขอได้ กรุณาลองใหม่อีกครั้ง");
       }
     } finally {
       setIsPending(false);

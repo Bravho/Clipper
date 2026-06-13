@@ -45,6 +45,7 @@ Requirements:
 - The first 3 seconds (hook) draw attention from the viewer from scrolling to show what is the best value this content to provide to benefit the viewer. Use the most surprising, emotionally engaging, or curiosity-inducing element available.
 - All output (script, hook, scene descriptions, caption) must be in Thai only.
 - Thai script: natural spoken Thai, ~40-50 words, fits comfortably within 15 seconds.
+- TTS-safe text only: the script must use clear, standard Thai words and spelling suitable for AI text-to-speech (voice generation). Avoid English loanwords, abbreviations, slang, ambiguous spellings, numerals/symbols, and uncommon words that an AI voice could mispronounce — write numbers and units out as Thai words and prefer common vocabulary with unambiguous pronunciation.
 - Caption: platform post caption with hashtags in Thai.
 - Scene plan: break the video into ~3 scenes whose total duration equals 15 seconds.
 - Scene descriptions: detailed Thai description of the visuals — include all necessary direction within the description itself.
