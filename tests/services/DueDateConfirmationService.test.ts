@@ -9,7 +9,7 @@
  * - getDueDateStatus returns correct overdue flags
  */
 
-import { DueDateConfirmationService } from "@/services/staff/DueDateConfirmationService";
+import { DueDateConfirmationService } from "@/services/DueDateConfirmationService";
 import { EffortClass } from "@/domain/enums/EffortClass";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { ClipRequest } from "@/domain/models/ClipRequest";
@@ -34,6 +34,14 @@ function makeRequest(overrides: Partial<ClipRequest> = {}): ClipRequest {
     queuePosition: null,
     creditConfirmed: true,
     rightsConfirmed: true,
+    durationSeconds: 15,
+    assignedEditorId: null,
+    editorType: null,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     creditsCost: 10,
     submittedAt: new Date(),
     createdAt: new Date(),

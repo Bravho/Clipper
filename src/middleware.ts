@@ -14,7 +14,6 @@ import { ROUTES } from "@/config/routes";
  *
  * Route mapping:
  *   /dashboard  → Requester only
- *   /staff      → Staff or Admin
  *   /admin      → Admin only
  *   /account    → Any authenticated user
  */
@@ -31,18 +30,6 @@ export default withAuth(
     // /admin — Admin only
     if (pathname.startsWith(ROUTES.ADMIN)) {
       if (role !== Role.Admin) {
-        return NextResponse.redirect(
-          new URL(
-            role === Role.Editor ? ROUTES.STAFF : ROUTES.DASHBOARD,
-            req.url
-          )
-        );
-      }
-    }
-
-    // /staff — Staff or Admin
-    if (pathname.startsWith(ROUTES.STAFF)) {
-      if (role !== Role.Editor && role !== Role.Admin) {
         return NextResponse.redirect(new URL(ROUTES.DASHBOARD, req.url));
       }
     }
@@ -50,12 +37,7 @@ export default withAuth(
     // /dashboard — Requester only
     if (pathname.startsWith(ROUTES.DASHBOARD)) {
       if (role !== Role.Requester) {
-        return NextResponse.redirect(
-          new URL(
-            role === Role.Admin ? ROUTES.ADMIN : ROUTES.STAFF,
-            req.url
-          )
-        );
+        return NextResponse.redirect(new URL(ROUTES.ADMIN, req.url));
       }
     }
 
@@ -72,7 +54,6 @@ export default withAuth(
 export const config = {
   matcher: [
     "/dashboard/:path*",
-    "/staff/:path*",
     "/admin/:path*",
     "/account/:path*",
   ],

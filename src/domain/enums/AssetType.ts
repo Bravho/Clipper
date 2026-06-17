@@ -64,3 +64,6 @@ export const MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024;
 
 /** Maximum file size for video uploads: 80 MB */
 export const MAX_VIDEO_SIZE_BYTES = 80 * 1024 * 1024;
+
+/** Maximum overall upload size accepted by the upload service: 500 MB */
+export const MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024;

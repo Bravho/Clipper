@@ -31,9 +31,17 @@ export const clipRequestFormSchema = z.object({
     .min(20, "Please provide a description of at least 20 characters.")
     .max(2000, "Description must be 2000 characters or fewer."),
 
+  // Not collected on the form (removed per product decision) — must accept
+  // the empty/undefined value that react-hook-form will actually submit.
+  // .min(10) only applies if a non-empty value is somehow provided (e.g. by
+  // a future UI or direct API call), so an absent field never fails
+  // validation with a "must be at least 10 characters" error.
   targetAudience: z
     .string()
     .max(500, "Target audience must be 500 characters or fewer.")
+    .refine((val) => val.length === 0 || val.length >= 10, {
+      message: "Target audience must be at least 10 characters.",
+    })
     .optional()
     .default(""),
 

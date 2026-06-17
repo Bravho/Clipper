@@ -67,6 +67,7 @@ export class AccountService {
       email: input.email.toLowerCase().trim(),
       name: input.name.trim(),
       role: Role.Requester, // Public signup always creates Requester
+      emailVerified: false,
     });
 
     // 3. Create auth identity

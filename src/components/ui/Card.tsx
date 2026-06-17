@@ -27,9 +27,11 @@ export function Card({ children, className, padding = "md", ...props }: CardProp
   );
 }
 
-interface CardHeaderProps extends HTMLAttributes<HTMLDivElement> {}
+interface CardHeaderProps extends HTMLAttributes<HTMLDivElement> {
+  padding?: "none" | "sm" | "md" | "lg";
+}
 
-export function CardHeader({ children, className, ...props }: CardHeaderProps) {
+export function CardHeader({ children, className, padding, ...props }: CardHeaderProps) {
   return (
     <div
       className={clsx("mb-4 flex flex-col gap-1", className)}

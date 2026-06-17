@@ -1,15 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
-import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 interface ContentApprovalPanelProps {
   requestId: string;
-  initialScenes: ScenePlan[];
-  initialHookThai: string | null;
-  initialHookEnglish: string | null;
   initialScriptThai: string | null;
   initialScriptEnglish: string | null;
   initialCaptionThai: string | null;
@@ -22,9 +18,6 @@ const ta =
 
 export function ContentApprovalPanel({
   requestId,
-  initialScenes,
-  initialHookThai,
-  initialHookEnglish,
   initialScriptThai,
   initialScriptEnglish,
   initialCaptionThai,
@@ -32,19 +25,10 @@ export function ContentApprovalPanel({
   initialCaptionChinese,
 }: ContentApprovalPanelProps) {
   const router = useRouter();
-  const pathname = usePathname();
-  const [hookThai, setHookThai] = useState(initialHookThai ?? "");
   const [scriptThai, setScriptThai] = useState(initialScriptThai ?? "");
   const [captionThai, setCaptionThai] = useState(initialCaptionThai ?? "");
-  const [scenes, setScenes] = useState<ScenePlan[]>(initialScenes);
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const updateSceneDescription = (index: number, value: string) => {
-    setScenes((prev) =>
-      prev.map((s, i) => (i === index ? { ...s, visualDescriptionThai: value } : s))
-    );
-  };
 
   const handleApprove = async () => {
     setIsApproving(true);
@@ -54,11 +38,9 @@ export function ContentApprovalPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          scenePlan: scenes,
           scriptThai,
           scriptEnglish: initialScriptEnglish,
-          hookThai,
-          hookEnglish: initialHookEnglish,
+          hookEnglish: null,
           captionThai,
           captionEnglish: initialCaptionEnglish,
           captionChinese: initialCaptionChinese,
@@ -66,9 +48,9 @@ export function ContentApprovalPanel({
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถเริ่มสร้างวิดีโอได้");
+        throw new Error(body.error ?? "ไม่สามารถเริ่มสร้างเสียงพากย์ได้");
       }
-      router.push(pathname);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
       setIsApproving(false);
@@ -77,57 +59,15 @@ export function ContentApprovalPanel({
 
   return (
     <div className="mb-6 flex flex-col gap-4">
-      {/* Banner */}
       <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-        <p className="text-sm font-semibold text-blue-800">สคริปต์พร้อมให้ตรวจสอบ</p>
+        <p className="text-sm font-semibold text-blue-800">บทพูดพร้อมให้ตรวจสอบ</p>
         <p className="mt-0.5 text-sm text-blue-700">
-          AI สร้างแผนฉากและบทพูดด้านล่างแล้ว แก้ไขได้ตามต้องการ จากนั้นคลิก{" "}
-          <strong>อนุมัติและสร้างวิดีโอ</strong> เพื่อเริ่มให้ Kling AI สร้างวิดีโอ
+          AI สร้างบทพูดจากข้อมูลคำขอแล้ว ตรวจสอบหรือแก้ไขบทพูดก่อนกด{" "}
+          <strong>สร้างเสียงพากย์</strong> ระบบจะสร้างเสียงด้วย iAppTTS
+          ก่อน แล้วค่อยออกแบบฉากและฮุกในขั้นตอนถัดไป
         </p>
       </div>
 
-      {/* Hook */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          ฮุค (3 วินาทีแรก)
-        </h3>
-        <textarea
-          value={hookThai}
-          onChange={(e) => setHookThai(e.target.value)}
-          rows={2}
-          className={`${ta} text-sm text-slate-800`}
-        />
-      </div>
-
-      {/* Scene plan */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          แผนฉาก
-        </h3>
-        <div className="flex flex-col gap-3">
-          {scenes.map((scene, index) => (
-            <div
-              key={scene.sceneNumber}
-              className="rounded-lg border border-slate-100 bg-slate-50 p-4"
-            >
-              <div className="mb-2 flex items-center gap-2">
-                <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-600">
-                  ฉาก {scene.sceneNumber}
-                </span>
-                <span className="text-xs text-slate-400">{scene.durationSeconds} วินาที</span>
-              </div>
-              <textarea
-                value={scene.visualDescriptionThai ?? ""}
-                onChange={(e) => updateSceneDescription(index, e.target.value)}
-                rows={3}
-                className={`${ta} text-sm text-slate-700`}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Script */}
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           บทพูด
@@ -135,15 +75,14 @@ export function ContentApprovalPanel({
         <textarea
           value={scriptThai}
           onChange={(e) => setScriptThai(e.target.value)}
-          rows={4}
+          rows={5}
           className={`${ta} text-sm text-slate-800`}
         />
       </div>
 
-      {/* Caption */}
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          แคปชั่นโซเชียล
+          แคปชั่นเบื้องต้น
         </h3>
         <textarea
           value={captionThai}
@@ -160,8 +99,8 @@ export function ContentApprovalPanel({
       )}
 
       <div className="flex justify-end pb-2">
-        <Button onClick={handleApprove} loading={isApproving} disabled={isApproving}>
-          อนุมัติและสร้างวิดีโอ →
+        <Button onClick={handleApprove} loading={isApproving} disabled={isApproving || !scriptThai.trim()}>
+          สร้างเสียงพากย์ →
         </Button>
       </div>
     </div>

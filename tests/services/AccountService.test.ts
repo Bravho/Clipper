@@ -42,6 +42,7 @@ describe("MockUserRepository — account creation", () => {
       email: "test@example.com",
       name: "Test User",
       role: Role.Requester,
+      emailVerified: false,
     });
     expect(user.role).toBe(Role.Requester);
     expect(user.email).toBe("test@example.com");
@@ -54,6 +55,7 @@ describe("MockUserRepository — account creation", () => {
       email: "Test@Example.COM",
       name: "Test",
       role: Role.Requester,
+      emailVerified: false,
     });
     const found = await userRepo.findByEmail("test@example.com");
     expect(found).not.toBeNull();
@@ -72,6 +74,7 @@ describe("MockUserRepository — account creation", () => {
       email: "dup@example.com",
       name: "First",
       role: Role.Requester,
+      emailVerified: false,
     });
     // Duplicate email check (as AccountService does it)
     const existing = await userRepo.findByEmail("dup@example.com");
@@ -182,14 +185,14 @@ describe("Role assignment", () => {
       email: "r@example.com",
       name: "Req",
       role: Role.Requester,
+      emailVerified: false,
     });
     expect(user.role).toBe("requester");
   });
 
-  it("staff and admin are only created via seed (not public signup)", () => {
+  it("admin is only created via seed (not public signup)", () => {
     // Verify seed data has correct roles
     // This guards against accidentally changing seed role values
-    expect(Role.Staff).toBe("staff");
     expect(Role.Admin).toBe("admin");
     expect(Role.Requester).toBe("requester");
   });

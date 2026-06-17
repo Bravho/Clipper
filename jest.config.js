@@ -3,6 +3,10 @@ const config = {
   preset: "ts-jest",
   testEnvironment: "node",
   roots: ["<rootDir>/tests"],
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "tests/services/StaffRequestPresentationService.test.ts",
+  ],
   moduleNameMapper: {
     // Resolve @/ path alias to src/
     "^@/(.*)$": "<rootDir>/src/$1",

@@ -68,7 +68,8 @@ function encodePcmToWav(chunks: Float32Array[], sampleRate: number): Blob {
 interface Props {
   requestId: string;
   jobId: string;
-  videoUrl: string;
+  /** Null when shown before the base video exists (audio-first voice approval step). */
+  videoUrl: string | null;
   isAwaitingApproval: boolean;
   isAwaitingVoiceRecording?: boolean;
   isAwaitingVoiceApproval?: boolean;
@@ -210,7 +211,7 @@ export function VideoApprovalPanel({
       const res = await fetch(`/api/requests/${requestId}/approve-voice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, targetPlatforms: selectedPlatforms, selectedMusicTrack }),
+        body: JSON.stringify({ jobId }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -828,18 +829,23 @@ export function VideoApprovalPanel({
 
   return (
     <>
-      {/* Video card */}
+      {/* Video card — hidden when shown before the base video exists
+          (audio-first voice approval step) */}
       <Card className="mb-6">
-        <h2 className="mb-3 text-base font-semibold text-slate-900">
-          วิดีโอที่สร้างโดย Kling AI
-        </h2>
-        <video
-          src={videoUrl}
-          controls
-          playsInline
-          className="w-full rounded-lg bg-black"
-          style={{ maxHeight: 480 }}
-        />
+        {videoUrl && (
+          <>
+            <h2 className="mb-3 text-base font-semibold text-slate-900">
+              วิดีโอที่สร้างโดย Kling AI
+            </h2>
+            <video
+              src={videoUrl}
+              controls
+              playsInline
+              className="w-full rounded-lg bg-black"
+              style={{ maxHeight: 480 }}
+            />
+          </>
+        )}
 
         {isAwaitingApproval && (
           <div className="mt-4">
@@ -882,7 +888,7 @@ export function VideoApprovalPanel({
         {isAwaitingVoiceApproval && (
           <div className="mt-6 space-y-6">
             <Card className="border-blue-100 bg-blue-50/50">
-              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3: ตรวจสอบเสียงพากย์ AI</h3>
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 2: ตรวจสอบเสียงพากย์ AI</h3>
               <p className="text-sm text-slate-500 mb-4">
                 AI สร้างเสียงพากย์ภาษาไทยจากบทพูดที่คุณอนุมัติ ฟังเสียงด้านล่างแล้วอนุมัติหรือสร้างเสียงใหม่ได้
               </p>
@@ -948,104 +954,11 @@ export function VideoApprovalPanel({
                 <p className="text-sm text-amber-600 mb-4">ไม่พบไฟล์เสียงพากย์ กรุณาสร้างเสียงใหม่</p>
               )}
 
-              {/* Background music picker */}
-              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">เพลงพื้นหลัง</p>
-                  <p className="text-xs text-slate-400 mt-0.5">คลิกเพื่อฟังตัวอย่าง เสียงพูดจะดังขึ้นอัตโนมัติเมื่อไม่มีการพูด</p>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => handleMusicTrackClick("none")}
-                    className={[
-                      "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
-                      selectedMusicTrack === "none"
-                        ? "border-slate-500 bg-slate-100 text-slate-800 font-medium"
-                        : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
-                    ].join(" ")}
-                  >
-                    <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-                      {selectedMusicTrack === "none" ? (
-                        <svg className="w-4 h-4 text-slate-700" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                      ) : (
-                        <svg className="w-4 h-4 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" /><path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 20v4M8 20h8" /></svg>
-                      )}
-                    </span>
-                    <span className="truncate">ไม่ใส่เพลง</span>
-                  </button>
-                  {BACKGROUND_MUSIC_TRACKS.map((track) => {
-                    const isSelected = selectedMusicTrack === track.id;
-                    const isPlaying = playingMusicTrack === track.id;
-                    return (
-                      <button
-                        key={track.id}
-                        onClick={() => handleMusicTrackClick(track.id)}
-                        className={[
-                          "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
-                          isSelected
-                            ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
-                        ].join(" ")}
-                      >
-                        <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-                          {isPlaying ? (
-                            <span className="flex gap-0.5 items-end h-4">
-                              <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "60%", animationDelay: "0ms" }} />
-                              <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "100%", animationDelay: "100ms" }} />
-                              <span className="w-0.5 bg-blue-500 rounded-full animate-bounce" style={{ height: "40%", animationDelay: "200ms" }} />
-                            </span>
-                          ) : isSelected ? (
-                            <svg className="w-4 h-4 text-blue-600" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                          ) : (
-                            <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
-                          )}
-                        </span>
-                        <span className="truncate">{track.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedMusicTrack === null && (
-                  <p className="text-xs text-amber-600">กรุณาเลือกเพลง หรือเลือก &ldquo;ไม่ใส่เพลง&rdquo; ก่อนอนุมัติ</p>
-                )}
-              </div>
-
-              {/* Distribution platforms checkbox list */}
-              <div className="border-t border-slate-200/80 pt-4 mb-4">
-                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">เลือกช่องทางการเผยแพร่</p>
-                <p className="text-xs text-slate-400 mb-3">ระบบจะคำนวณซับไตเติ้ลและปรับขนาดวิดีโอ (FFmpeg) ตามช่องทางที่คุณเลือก</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {FORM_PLATFORMS.map((p) => {
-                    const isMandatory = p === Platform.TventApp;
-                    const isChecked = selectedPlatforms.includes(p) || isMandatory;
-                    return (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => togglePlatform(p)}
-                        className={[
-                          "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-all",
-                          isChecked
-                            ? "border-blue-500 bg-blue-50 text-blue-800 font-medium"
-                            : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
-                          isMandatory ? "opacity-80 cursor-not-allowed" : ""
-                        ].join(" ")}
-                      >
-                        <span className="flex-shrink-0 w-4.5 h-4.5 flex items-center justify-center rounded border border-slate-300 bg-white text-blue-600">
-                          {isChecked && "✓"}
-                        </span>
-                        <span className="truncate">{PLATFORM_LABELS[p]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
               <div className="flex gap-3 justify-end pt-2 border-t border-slate-100">
                 <Button
                   onClick={handleApproveVoice}
                   loading={voiceApproving}
-                  disabled={voiceRecreating || voiceApproving || selectedMusicTrack === null}
+                  disabled={voiceRecreating || voiceApproving}
                 >
                   อนุมัติเสียงพากย์
                 </Button>
@@ -1565,7 +1478,7 @@ export function VideoApprovalPanel({
             <div className="bg-black">
               <video
                 ref={previewVideoRef}
-                src={videoUrl}
+                src={videoUrl ?? undefined}
                 muted
                 playsInline
                 className="w-full"

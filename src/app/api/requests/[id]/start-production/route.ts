@@ -3,14 +3,14 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository } from "@/repositories/index";
-import { videoGenerationService } from "@/services/staff/VideoGenerationService";
+import { videoGenerationService } from "@/services/VideoGenerationService";
 
 /**
  * POST /api/requests/[id]/start-production
  *
  * Requester-only. Called after the requester reviews and approves the AI-generated
- * scene plan. Creates a VideoGenerationJob and immediately triggers Kling AI video
- * generation, bypassing the staff content-review gate.
+ * speaking script. Starts iAppTTS voice generation; scene design happens after
+ * the voice is approved.
  */
 export async function POST(
   request: Request,
@@ -37,18 +37,16 @@ export async function POST(
   }
 
   const {
-    scenePlan,
     scriptThai,
     scriptEnglish,
-    hookThai,
     hookEnglish,
     captionThai,
     captionEnglish,
     captionChinese,
   } = body;
 
-  if (!scenePlan || !scriptThai || !hookThai) {
-    return NextResponse.json({ error: "Missing required analysis fields." }, { status: 400 });
+  if (!scriptThai) {
+    return NextResponse.json({ error: "Missing required speaking script." }, { status: 400 });
   }
 
   try {
@@ -56,10 +54,10 @@ export async function POST(
       id,
       session.user.id,
       {
-        scenePlan: JSON.stringify(scenePlan),
+        scenePlan: null,
         scriptThai,
         scriptEnglish,
-        hookThai,
+        hookThai: null,
         hookEnglish,
         captionThai: captionThai ?? "",
         captionEnglish: captionEnglish ?? "",

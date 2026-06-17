@@ -21,6 +21,10 @@ import { RequestTimeline } from "@/features/requests/components/RequestTimeline"
 import { PipelineSection } from "@/features/requests/components/PipelineSection";
 import { PipelineFailurePanel } from "@/features/requests/components/PipelineFailurePanel";
 import { ContentApprovalPanel } from "@/features/requests/components/ContentApprovalPanel";
+import {
+  SceneDesignApprovalPanel,
+  SceneDesignGeneratingPanel,
+} from "@/features/requests/components/SceneDesignApprovalPanel";
 import { VideoApprovalPanel } from "@/features/requests/components/VideoApprovalPanel";
 import { AnalyzeButton } from "@/features/requests/components/AnalyzeButton";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -70,6 +74,11 @@ export default async function RequestDetailPage({
 
   const finalClips = assets.filter(
     (a) => a.assetType === AssetType.FinalClip && a.uploadStatus === AssetUploadStatus.Uploaded
+  );
+  const sourceAssets = assets.filter(
+    (a) =>
+      a.uploadStatus === AssetUploadStatus.Uploaded &&
+      (a.assetType === AssetType.Image || a.assetType === AssetType.Video)
   );
 
   const view = requestPresentationService.buildRequestView(
@@ -127,7 +136,7 @@ export default async function RequestDetailPage({
       <Card className="mb-6">
         <p className="text-sm font-medium text-slate-700">
           {pipelineJob?.currentStep === VideoGenerationStep.AwaitingContentApproval
-            ? "AI วิเคราะห์เนื้อหาเสร็จแล้ว — ตรวจสอบและแก้ไขสคริปต์ด้านล่าง แล้วคลิกอนุมัติเพื่อเริ่มสร้างวิดีโอ"
+            ? "AI วิเคราะห์เนื้อหาเสร็จแล้ว — ตรวจสอบและแก้ไขสคริปต์ด้านล่าง แล้วคลิกอนุมัติเพื่อเริ่มสร้างเสียงพากย์"
             : view.statusPresentation.description}
         </p>
 
@@ -182,7 +191,7 @@ export default async function RequestDetailPage({
           </p>
           <p className="mt-1 text-sm text-blue-700">
             AI จะวิเคราะห์รูปภาพที่อัพโหลดและสร้างแผนฉาก บทพูด และแคปชั่นสำหรับวิดีโอ 15 วินาที
-            จากนั้นคุณสามารถแก้ไขและอนุมัติก่อนเริ่มสร้างวิดีโอได้
+            จากนั้นคุณสามารถแก้ไขและอนุมัติก่อนเริ่มสร้างเสียงพากย์ได้
           </p>
           <div className="mt-4">
             <AnalyzeButton requestId={id} />
@@ -206,10 +215,15 @@ export default async function RequestDetailPage({
         const isAwaitingApproval =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingContentApproval;
         const isFailed = pipelineJob.currentStep === VideoGenerationStep.Failed;
-        // Voice generation failed — the base video is already approved, so keep
-        // showing it and present only the voice regeneration action.
-        const isVoiceFailure =
-          isFailed && pipelineJob.failedAtStep === VideoGenerationStep.GeneratingVoice;
+        // Audio-first reorder: voice generation now runs before Kling, so a
+        // GeneratingVoice failure happens before any base video exists.
+        // Handled by the generic PipelineFailurePanel retry flow below.
+        const isAwaitingVoiceApproval =
+          pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceApproval;
+        const isGeneratingSceneDesign =
+          pipelineJob.currentStep === VideoGenerationStep.GeneratingSceneDesign;
+        const isAwaitingSceneDesignApproval =
+          pipelineJob.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval;
 
         // Parse scene plan — prefer approved version; fall back to raw AI output
         let scenePlan: ScenePlan[] = [];
@@ -223,9 +237,6 @@ export default async function RequestDetailPage({
           return (
             <ContentApprovalPanel
               requestId={id}
-              initialScenes={scenePlan}
-              initialHookThai={pipelineJob.hookThai}
-              initialHookEnglish={pipelineJob.hookEnglish}
               initialScriptThai={pipelineJob.scriptThai}
               initialScriptEnglish={pipelineJob.scriptEnglish}
               initialCaptionThai={pipelineJob.captionThai}
@@ -235,16 +246,79 @@ export default async function RequestDetailPage({
           );
         }
 
+        if (isAwaitingSceneDesignApproval) {
+          return (
+            <>
+              <PipelineSection
+                requestId={id}
+                currentStep={pipelineJob.currentStep}
+                failedAtStep={pipelineJob.failedAtStep}
+                durationSeconds={request.durationSeconds}
+                totalChannels={request.targetPlatforms.length}
+              />
+              <SceneDesignApprovalPanel
+                requestId={id}
+                jobId={pipelineJob.id}
+                initialScenes={scenePlan}
+                scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
+                initialDurationSeconds={request.durationSeconds}
+                voiceDurationSeconds={pipelineJob.voiceDurationSeconds}
+                voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
+                voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
+                totalChannels={request.targetPlatforms.length}
+                sourceAssets={sourceAssets}
+              />
+            </>
+          );
+        }
+
         return (
           <>
             <PipelineSection
               requestId={id}
               currentStep={pipelineJob.currentStep}
               failedAtStep={pipelineJob.failedAtStep}
+              durationSeconds={request.durationSeconds}
+              totalChannels={request.targetPlatforms.length}
             />
 
+            {!isFailed && isGeneratingSceneDesign && (
+              <SceneDesignGeneratingPanel voiceDurationSeconds={pipelineJob.voiceDurationSeconds} />
+            )}
+
+            {/* Voice approval + script — shown once voice generation completes,
+                before the base video exists (audio-first reorder) */}
+            {!isFailed && isAwaitingVoiceApproval && (
+              <VideoApprovalPanel
+                requestId={id}
+                jobId={pipelineJob.id}
+                videoUrl={baseVideoAsset?.storageUrl ?? null}
+                isAwaitingApproval={false}
+                isAwaitingVoiceRecording={false}
+                isAwaitingVoiceApproval
+                isAwaitingAnimationApproval={false}
+                isPipelineFailed={isFailed}
+                isGeneratingVoice={false}
+                animatedVideoUrl={animatedVideoAsset?.storageUrl ?? null}
+                savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
+                savedSubtitleLanguages={pipelineJob.subtitleLanguages ?? null}
+                isAwaitingFinalApproval={false}
+                voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
+                voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
+                finalClips={finalClips}
+                scenes={scenePlan}
+                hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
+                hookEnglish={pipelineJob.approvedHookEnglish ?? pipelineJob.hookEnglish}
+                scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
+                scriptEnglish={pipelineJob.approvedScriptEnglish ?? pipelineJob.scriptEnglish}
+                captionThai={pipelineJob.approvedCaptionThai ?? pipelineJob.captionThai}
+                captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
+                captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
+              />
+            )}
+
             {/* Generated base video + script — shown once Kling completes */}
-            {(!isFailed || isVoiceFailure) && baseVideoAsset?.storageUrl && (
+            {!isFailed && !isAwaitingVoiceApproval && baseVideoAsset?.storageUrl && (
               <VideoApprovalPanel
                 requestId={id}
                 jobId={pipelineJob.id}
@@ -255,16 +329,12 @@ export default async function RequestDetailPage({
                 isAwaitingVoiceRecording={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceRecording
                 }
-                isAwaitingVoiceApproval={
-                  pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceApproval
-                }
+                isAwaitingVoiceApproval={false}
                 isAwaitingAnimationApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingAnimationApproval
                 }
                 isPipelineFailed={isFailed}
-                isGeneratingVoice={
-                  pipelineJob.currentStep === VideoGenerationStep.GeneratingVoice
-                }
+                isGeneratingVoice={false}
                 animatedVideoUrl={animatedVideoAsset?.storageUrl ?? null}
                 savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
                 savedSubtitleLanguages={pipelineJob.subtitleLanguages ?? null}

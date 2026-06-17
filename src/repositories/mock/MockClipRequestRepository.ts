@@ -6,8 +6,10 @@ import {
   UpdateStaffFieldsInput,
 } from "@/domain/models/ClipRequest";
 import { RequestStatus, ACTIVE_STATUSES } from "@/domain/enums/RequestStatus";
-import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
+import { CREDITS_CONFIG } from "@/config/credits";
 import { EditorType } from "@/domain/enums/EditorType";
+import { SEED_CLIP_REQUESTS } from "@/seed/requestSeedData";
+import { ADMIN_SEED_CLIP_REQUESTS } from "@/seed/adminSeedData";
 
 // TODO: PostgreSQL — replace this entire class with PostgresClipRequestRepository.
 //   The interface contract (IClipRequestRepository) stays the same.
@@ -21,6 +23,12 @@ declare global {
 function getStore(): Map<string, ClipRequest> {
   if (!global.__mockClipRequestStore) {
     global.__mockClipRequestStore = new Map();
+    SEED_CLIP_REQUESTS.forEach((r) =>
+      global.__mockClipRequestStore!.set(r.id, { ...r })
+    );
+    ADMIN_SEED_CLIP_REQUESTS.forEach((r) =>
+      global.__mockClipRequestStore!.set(r.id, { ...r })
+    );
   }
   return global.__mockClipRequestStore;
 }
@@ -136,7 +144,6 @@ export class MockClipRequestRepository implements IClipRequestRepository {
 
   async create(input: CreateClipRequestInput): Promise<ClipRequest> {
     const request: ClipRequest = {
-      durationSeconds: PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
       ...input,
       id: crypto.randomUUID(),
       status: RequestStatus.Draft,
@@ -210,6 +217,12 @@ export class MockClipRequestRepository implements IClipRequestRepository {
         | "creditConfirmed"
         | "rightsConfirmed"
         | "assignedStaffId"
+        | "assignedEditorId"
+        | "editorType"
+        | "priceBaht"
+        | "creditsUsed"
+        | "discountBaht"
+        | "amountPaidBaht"
       >
     >
   ): Promise<ClipRequest> {

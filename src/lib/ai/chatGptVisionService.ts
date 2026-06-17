@@ -20,6 +20,20 @@ export interface ChatGptContentOutput {
   };
 }
 
+export interface SpeakingScriptOutput {
+  scriptThai: string;
+  captionThai: string;
+  theme: string;
+  businessProfile?: ChatGptContentOutput["businessProfile"];
+}
+
+export interface SceneDesignOutput {
+  scenePlan: ScenePlan[];
+  hookThai: string;
+  captionThai: string;
+  theme: string;
+}
+
 export interface GenerateContentParams {
   imageUrls: string[];
   description: string;
@@ -78,6 +92,67 @@ Schema:
   }
 }`;
 
+const SCRIPT_ONLY_SYSTEM_PROMPT = `You are an expert Thai short-form video script writer.
+
+Your task is to review the requester brief, uploaded images, target platforms, preferred style, and business profile context, then write ONLY the spoken Thai script for AI voice generation.
+
+Requirements:
+- Script structure: [3s hook] + [10s main content] + [2s call-to-action].
+- Thai script: natural spoken Thai, about 40-50 words, fits comfortably within 15 seconds.
+- TTS-safe text only: use clear standard Thai words and spelling suitable for AI text-to-speech. Avoid English loanwords, abbreviations, slang, ambiguous spellings, numerals/symbols, and uncommon words that an AI voice could mispronounce. Write numbers and units as Thai words.
+- Target audience is for theme/style reference only. Do NOT mention, address, or reference the target audience in the spoken script.
+- Product accuracy: only reference products, items, and details that are visibly present in the uploaded images or clearly provided by the requester.
+- Do NOT create a scene plan, hook field, or visual design in this step.
+- Extract business details into businessProfile when possible.
+
+Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
+
+Schema:
+{
+  "scriptThai": "string",
+  "captionThai": "string",
+  "theme": "string",
+  "businessProfile": {
+    "businessName": "string",
+    "category": "string",
+    "location": "string or null",
+    "description": "string or null",
+    "menuDetails": "string or null"
+  }
+}`;
+
+const SCENE_DESIGN_SYSTEM_PROMPT = `You are an expert social media video director for Thai short-form ads.
+
+Your task is to design the scenes, hook, and caption AFTER the speaking script has already been approved and converted into an AI voice. Use the approved speaking script as the creative source of truth, together with the requester brief, uploaded images, target platforms, preferred style, business profile context, and voice duration.
+
+Requirements:
+- All output must be in Thai only.
+- Do NOT rewrite the speaking script.
+- Create a strong hookThai that matches the approved script and captures attention in the first three seconds.
+- Scene plan: about three scenes whose total duration equals the provided duration.
+- Scene descriptions: detailed Thai visual direction. Include motion, framing, product focus, and on-screen emphasis where helpful.
+- Use imageIndexes to point to relevant uploaded images by zero-based index.
+- Target audience is provided for theme/style reference only. Do NOT mention, address, or reference the target audience in visible or spoken content.
+- Product accuracy: Only feature products, items, and details that are visibly present in uploaded images or clearly provided by the requester. Do NOT invent final product visuals, colours, offers, brands, or claims.
+- Caption: platform post caption with Thai hashtags.
+
+Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
+
+Schema:
+{
+  "scenePlan": [
+    {
+      "sceneNumber": 1,
+      "durationSeconds": 5,
+      "visualDescriptionThai": "string (Thai)",
+      "imageIndexes": [0]
+    }
+  ],
+  "hookThai": "string",
+  "captionThai": "string",
+  "theme": "string"
+}`;
+
 function buildUserPrompt(params: GenerateContentParams): string {
   const promptParts = [
     `Video description: ${params.description}`,
@@ -101,10 +176,22 @@ function buildUserPrompt(params: GenerateContentParams): string {
   }
 
   promptParts.push(
-    "Analyse the images above and produce the complete production plan as JSON."
+    "Use the information above and the uploaded images as source material. Follow the JSON schema from the system instructions."
   );
 
   return promptParts.join("\n");
+}
+
+function buildSceneDesignPrompt(
+  params: GenerateContentParams & { scriptThai: string; voiceDurationSeconds?: number | null }
+): string {
+  return [
+    buildUserPrompt(params),
+    "",
+    `Approved speaking script: ${params.scriptThai}`,
+    `Generated voice duration: ${params.voiceDurationSeconds ?? params.videoDurationSeconds ?? 15} seconds`,
+    "Design scenes, hook, and caption from the approved speaking script and requester-provided information.",
+  ].join("\n");
 }
 
 /**
@@ -148,6 +235,13 @@ async function downloadImageAsBase64(
 export async function generateScenePlanAndScript(
   params: GenerateContentParams
 ): Promise<ChatGptContentOutput> {
+  return generateWithImages<ChatGptContentOutput>(
+    params,
+    `${SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}`
+  );
+}
+
+async function generateWithImages<T>(params: GenerateContentParams, prompt: string): Promise<T> {
   const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
 
   // Download all images and encode as base64 inline parts
@@ -160,7 +254,7 @@ export async function generateScenePlanAndScript(
 
   const contents = [
     ...imageParts,
-    { text: `${SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}` },
+    { text: prompt },
   ];
 
   const response = await ai.models.generateContent({
@@ -175,5 +269,23 @@ export async function generateScenePlanAndScript(
   const raw = response.text ?? "";
   if (!raw) throw new Error("Gemini returned an empty response");
 
-  return JSON.parse(raw) as ChatGptContentOutput;
+  return JSON.parse(raw) as T;
+}
+
+export async function generateSpeakingScript(
+  params: GenerateContentParams
+): Promise<SpeakingScriptOutput> {
+  return generateWithImages<SpeakingScriptOutput>(
+    params,
+    `${SCRIPT_ONLY_SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}`
+  );
+}
+
+export async function generateSceneDesignFromScript(
+  params: GenerateContentParams & { scriptThai: string; voiceDurationSeconds?: number | null }
+): Promise<SceneDesignOutput> {
+  return generateWithImages<SceneDesignOutput>(
+    params,
+    `${SCENE_DESIGN_SYSTEM_PROMPT}\n\n${buildSceneDesignPrompt(params)}`
+  );
 }

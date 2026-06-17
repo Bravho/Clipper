@@ -44,8 +44,11 @@ export interface EditorProfile {
 
 export type CreateEditorProfileInput = Omit<
   EditorProfile,
-  "id" | "avgRating" | "totalReviews" | "totalCompleted" | "createdAt" | "updatedAt"
->;
+  "id" | "totalCompleted" | "createdAt" | "updatedAt" | "avgRating" | "totalReviews"
+> & {
+  avgRating?: number;
+  totalReviews?: number;
+};
 
 export type UpdateEditorProfileInput = Partial<
   Pick<

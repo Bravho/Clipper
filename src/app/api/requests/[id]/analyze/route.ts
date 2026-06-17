@@ -11,14 +11,14 @@ import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AI_CONFIG } from "@/config/aiTools";
-import { generateScenePlanAndScript } from "@/lib/ai/chatGptVisionService";
+import { generateSpeakingScript } from "@/lib/ai/chatGptVisionService";
 
 /**
  * POST /api/requests/[id]/analyze
  *
  * Runs Gemini Vision on the request's uploaded images and returns a
- * scene plan, scripts, hooks, and captions. Called immediately after
- * submission so the requester sees the AI output right away.
+ * speaking script and initial caption. Scene/hook design is generated later,
+ * after the approved script has been converted into voice.
  */
 export async function POST(
   _request: Request,
@@ -51,13 +51,21 @@ export async function POST(
     .filter((url): url is string => Boolean(url));
 
   try {
-    const analysis = await generateScenePlanAndScript({
+    const scriptOutput = await generateSpeakingScript({
       imageUrls,
       description: clipRequest.description,
       targetAudience: clipRequest.targetAudience,
       targetPlatforms: clipRequest.targetPlatforms,
       preferredStyle: clipRequest.preferredStyle ?? "",
     });
+    const analysis = {
+      scenePlan: [],
+      scriptThai: scriptOutput.scriptThai,
+      hookThai: "",
+      captionThai: scriptOutput.captionThai,
+      theme: scriptOutput.theme,
+      businessProfile: scriptOutput.businessProfile,
+    };
 
     // Persist the analysis in a VideoGenerationJob so it survives navigation.
     // Only create if no job exists yet (idempotent on retry).
@@ -67,11 +75,11 @@ export async function POST(
         requestId: id,
         status: VideoGenerationJobStatus.Active,
         currentStep: VideoGenerationStep.AwaitingContentApproval,
-        scenePlan: JSON.stringify(analysis.scenePlan),
+        scenePlan: null,
         scriptThai: analysis.scriptThai,
         scriptEnglish: null,
         scriptChinese: null,
-        hookThai: analysis.hookThai,
+        hookThai: null,
         hookEnglish: null,
         captionThai: analysis.captionThai,
         captionEnglish: null,
@@ -94,9 +102,14 @@ export async function POST(
         voiceRecordingAssetId: null,
         processedVoiceAssetId: null,
         selectedMusicTrack: null,
+        voiceDurationSeconds: null,
+        voiceTimestamps: null,
+        klingTaskIds: null,
+        sceneVideoAssetIds: null,
         subtitleTimeline: null,
         animationSpec: null,
         animatedVideoAssetId: null,
+        animatedOverlayAssetIds: null,
         subtitleLanguages: ["en", "zh"],
         finalExport_9_16_assetId: null,
         finalExport_16_9_assetId: null,

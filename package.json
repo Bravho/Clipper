@@ -16,6 +16,8 @@
     "@aws-sdk/s3-request-presigner": "^3.1004.0",
     "@google/genai": "^1.51.0",
     "@hookform/resolvers": "^3.3.4",
+    "@remotion/bundler": "^4.0.300",
+    "@remotion/renderer": "^4.0.300",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",
     "next": "^14.2.0",
@@ -26,11 +28,13 @@
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-hook-form": "^7.51.0",
+    "remotion": "^4.0.300",
     "sharp": "^0.34.5",
     "tailwind-merge": "^2.3.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@remotion/cli": "^4.0.300",
     "@types/bcryptjs": "^2.4.6",
     "@types/jest": "^29.5.12",
     "@types/node": "^20",

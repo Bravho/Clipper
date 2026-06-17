@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/Button";
 
 const roleBadgeVariant: Record<Role, "blue" | "green" | "red"> = {
   [Role.Requester]: "blue",
-  [Role.Editor]: "green",
   [Role.Admin]: "red",
 };
 
@@ -25,9 +24,7 @@ export function Navbar() {
   const dashboardHref =
     user?.role === Role.Admin
       ? ROUTES.ADMIN
-      : user?.role === Role.Editor
-        ? ROUTES.STAFF
-        : ROUTES.DASHBOARD;
+      : ROUTES.DASHBOARD;
 
   return (
     <nav className="border-b border-slate-200 bg-slate-900">

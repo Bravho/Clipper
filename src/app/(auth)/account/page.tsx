@@ -13,13 +13,11 @@ export const metadata: Metadata = { title: "บัญชีของฉัน" }
 
 const roleBadge: Record<Role, "blue" | "green" | "red"> = {
   [Role.Requester]: "blue",
-  [Role.Editor]: "green",
   [Role.Admin]: "red",
 };
 
 const roleLabel: Record<Role, string> = {
   [Role.Requester]: "ผู้ใช้งาน",
-  [Role.Editor]: "Editor",
   [Role.Admin]: "Admin",
 };
 

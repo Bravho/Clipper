@@ -15,23 +15,29 @@ import { EffortClass } from "@/domain/enums/EffortClass";
 import { Platform } from "@/domain/enums/Platform";
 
 // Manually wire fresh instances (bypasses globalThis singleton for isolation)
-const clipRepo = new MockClipRequestRepository(new Map());
-const historyRepo = new MockRequestStatusHistoryRepository(new Map());
-const reviewRepo = new MockProductionReviewRepository(new Map());
-
 // Override the singleton imports used by the service
 jest.mock("@/repositories", () => ({
-  clipRequestRepository: clipRepo,
-  requestStatusHistoryRepository: historyRepo,
-  productionReviewRepository: reviewRepo,
+  clipRequestRepository: new (require("@/repositories/mock/MockClipRequestRepository").MockClipRequestRepository)(new Map()),
+  requestStatusHistoryRepository: new (require("@/repositories/mock/MockRequestStatusHistoryRepository").MockRequestStatusHistoryRepository)(new Map()),
+  productionReviewRepository: new (require("@/repositories/mock/MockProductionReviewRepository").MockProductionReviewRepository)(new Map()),
 }));
+
+const {
+  clipRequestRepository: mockClipRepo,
+  requestStatusHistoryRepository: mockHistoryRepo,
+  productionReviewRepository: mockReviewRepo,
+} = jest.requireMock("@/repositories") as {
+  clipRequestRepository: MockClipRequestRepository;
+  requestStatusHistoryRepository: MockRequestStatusHistoryRepository;
+  productionReviewRepository: MockProductionReviewRepository;
+};
 
 const adminService = new AdminWorkflowService();
 
 const ADMIN_ID = "user-admin-001";
 
 async function createScheduledRequest(id = "req-test") {
-  const request = await clipRepo.create({
+  const request = await mockClipRepo.create({
     userId: "user-001",
     title: "Test Clip",
     description: "Test",
@@ -39,29 +45,30 @@ async function createScheduledRequest(id = "req-test") {
     targetPlatforms: [Platform.TikTok],
     preferredStyle: "Dynamic",
     preferredLanguage: "English",
+    durationSeconds: 15,
   });
 
-  await clipRepo.updateStatus(request.id, RequestStatus.Submitted, {
+  await mockClipRepo.updateStatus(request.id, RequestStatus.Submitted, {
     submittedAt: new Date(),
     creditConfirmed: true,
     rightsConfirmed: true,
   });
 
-  await clipRepo.updateStaffFields(request.id, { effortClass: EffortClass.Standard });
+  await mockClipRepo.updateStaffFields(request.id, { effortClass: EffortClass.Standard });
 
-  await clipRepo.updateStatus(request.id, RequestStatus.Editing, {
+  await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {
     confirmedDueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
     dueDateConfirmed: true,
     assignedStaffId: "user-staff-001",
   });
 
-  const scheduled = await clipRepo.updateStatus(
+  const scheduled = await mockClipRepo.updateStatus(
     request.id,
     RequestStatus.ScheduledForPublishing
   );
 
   // Create a production review for it
-  await reviewRepo.create({ requestId: request.id, submittedAt: new Date() });
+  await mockReviewRepo.create({ requestId: request.id, submittedAt: new Date() });
 
   return scheduled;
 }
@@ -69,9 +76,9 @@ async function createScheduledRequest(id = "req-test") {
 describe("AdminWorkflowService", () => {
   beforeEach(async () => {
     // Clear stores between tests
-    (clipRepo as any).store.clear();
-    (historyRepo as any).store.clear();
-    (reviewRepo as any).store.clear();
+    (mockClipRepo as any).store.clear();
+    (mockHistoryRepo as any).store.clear();
+    (mockReviewRepo as any).store.clear();
   });
 
   describe("approveForPublishing", () => {
@@ -93,13 +100,13 @@ describe("AdminWorkflowService", () => {
     it("creates a history entry", async () => {
       const request = await createScheduledRequest();
       await adminService.approveForPublishing(request.id, ADMIN_ID);
-      const history = await historyRepo.findByRequestId(request.id);
+      const history = await mockHistoryRepo.findByRequestId(request.id);
       const lastEntry = history.sort((a, b) => b.changedAt.getTime() - a.changedAt.getTime())[0];
       expect(lastEntry.status).toBe(RequestStatus.Published);
     });
 
     it("throws if request is not in ScheduledForPublishing status", async () => {
-      const request = await clipRepo.create({
+      const request = await mockClipRepo.create({
         userId: "u",
         title: "T",
         description: "D",
@@ -107,17 +114,18 @@ describe("AdminWorkflowService", () => {
         targetPlatforms: [Platform.TikTok],
         preferredStyle: "S",
         preferredLanguage: "EN",
+        durationSeconds: 15,
       });
       // request is in Draft
       await expect(
         adminService.approveForPublishing(request.id, ADMIN_ID)
-      ).rejects.toThrow(/ScheduledForPublishing/);
+      ).rejects.toThrow(/scheduled_for_publishing/);
     });
 
     it("creates a production review lazily if none exists", async () => {
       const request = await createScheduledRequest();
       // Clear the review so there is none
-      (reviewRepo as any).store.clear();
+      (mockReviewRepo as any).store.clear();
 
       const { review } = await adminService.approveForPublishing(request.id, ADMIN_ID);
       expect(review.status).toBe(ProductionReviewStatus.Approved);

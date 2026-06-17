@@ -9,6 +9,8 @@ interface Props {
   requestId: string;
   currentStep: VideoGenerationStep;
   failedAtStep: VideoGenerationStep | null;
+  durationSeconds?: number;
+  totalChannels?: number;
 }
 
 /**
@@ -17,7 +19,13 @@ interface Props {
  * sub-status text reflects every poll response without waiting for an RSC
  * refresh (which is unreliable for intra-step state changes).
  */
-export function PipelineSection({ requestId, currentStep, failedAtStep }: Props) {
+export function PipelineSection({
+  requestId,
+  currentStep,
+  failedAtStep,
+  durationSeconds,
+  totalChannels,
+}: Props) {
   const [klingStatus, setKlingStatus] = useState<"submitted" | "processing" | null>(null);
   const [klingLastPolledAt, setKlingLastPolledAt] = useState<Date | null>(null);
 
@@ -28,6 +36,8 @@ export function PipelineSection({ requestId, currentStep, failedAtStep }: Props)
       <ProductionPipeline
         currentStep={currentStep}
         failedAtStep={failedAtStep}
+        durationSeconds={durationSeconds}
+        totalChannels={totalChannels}
         klingStatus={klingStatus}
         klingLastPolledAt={klingLastPolledAt}
       />

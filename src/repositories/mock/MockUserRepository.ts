@@ -74,6 +74,12 @@ export class MockUserRepository implements IUserRepository {
     this.store.delete(id);
   }
 
+  async markEmailVerified(id: string): Promise<void> {
+    const existing = this.store.get(id);
+    if (!existing) throw new Error(`User not found: ${id}`);
+    this.store.set(id, { ...existing, emailVerified: true, updatedAt: new Date() });
+  }
+
   async listAll(): Promise<User[]> {
     return [...this.store.values()].map((u) => ({ ...u }));
   }

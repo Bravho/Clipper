@@ -6,7 +6,7 @@ import {
   requestStatusHistoryRepository,
 } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
-import { staffWorkflowService } from "./StaffWorkflowService";
+import { requestWorkflowService } from "./RequestWorkflowService";
 import { z } from "zod";
 
 /**
@@ -109,7 +109,7 @@ export class PublishingService {
         "At least one publishing link must be recorded before marking as Published."
       );
     }
-    await staffWorkflowService.markPublished(requestId, note);
+    await requestWorkflowService.approveForPublishing(requestId, note);
   }
 
   /**
@@ -117,7 +117,7 @@ export class PublishingService {
    * Confirms full delivery to the requester.
    */
   async markDelivered(requestId: string, note?: string): Promise<void> {
-    await staffWorkflowService.markDelivered(requestId, note);
+    await requestWorkflowService.markDelivered(requestId, note);
   }
 
   /**

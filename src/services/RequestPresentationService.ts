@@ -131,6 +131,11 @@ const STATUS_PRESENTATION: Record<RequestStatus, StatusPresentation> = {
     description: "ไม่สามารถดำเนินการตามคำขอของคุณได้ กรุณาดูเหตุผลด้านล่าง",
     badgeVariant: "red",
   },
+  [RequestStatus.RevisionRequested]: {
+    label: "ขอแก้ไข",
+    description: "มีการขอให้แก้ไขเนื้อหาก่อนดำเนินการต่อ",
+    badgeVariant: "yellow",
+  },
 };
 
 // ─── Service ─────────────────────────────────────────────────────────────────

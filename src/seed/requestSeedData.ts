@@ -24,6 +24,7 @@
  */
 
 import { RequestStatus } from "@/domain/enums/RequestStatus";
+import { EditorType } from "@/domain/enums/EditorType";
 import { Platform } from "@/domain/enums/Platform";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { TransactionType } from "@/domain/enums/TransactionType";
@@ -141,6 +142,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-001: Draft (not yet submitted) ────────────────────────────────────
   {
     id: "req-001",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Product Launch Teaser",
     description:
@@ -167,6 +176,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-002: Under Review (no confirmed due date yet) ─────────────────────
   {
     id: "req-002",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Brand Awareness Clip",
     description:
@@ -195,6 +212,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-003: Accepted for Production (confirmed due date) ─────────────────
   {
     id: "req-003",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Summer Sale Promo",
     description:
@@ -223,6 +248,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-004: Editing (in production, confirmed date) ──────────────────────
   {
     id: "req-004",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Monthly Newsletter Highlight",
     description:
@@ -252,6 +285,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-005: Published (posted to channels) ───────────────────────────────
   {
     id: "req-005",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Q1 Campaign Teaser",
     description:
@@ -280,6 +321,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-006: Delivered (all links available) ──────────────────────────────
   {
     id: "req-006",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Holiday Special Recap",
     description:
@@ -308,6 +357,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-007: On Hold (with reason) ────────────────────────────────────────
   {
     id: "req-007",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Special Project Intro",
     description:
@@ -337,6 +394,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-008: Rejected (with reason) ──────────────────────────────────────
   {
     id: "req-008",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Quick Ad Spot",
     description: "A quick ad requesting use of third-party copyrighted music.",
@@ -365,6 +430,14 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-009: Submitted (awaiting review, no confirmed date) ───────────────
   {
     id: "req-009",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "New Product Demo",
     description:

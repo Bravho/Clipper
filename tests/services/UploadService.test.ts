@@ -98,6 +98,8 @@ describe("MockUploadedAssetRepository", () => {
       mimeType: "video/mp4",
       storageKey: "mock/test.mp4",
       storageUrl: "/mock-assets/test.mp4",
+      thumbnailKey: "",
+      thumbnailUrl: "",
       uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt: new Date("2026-06-01"),
     });
@@ -118,6 +120,8 @@ describe("MockUploadedAssetRepository", () => {
       mimeType: "video/mp4",
       storageKey: "mock/test.mp4",
       storageUrl: "/mock-assets/test.mp4",
+      thumbnailKey: "",
+      thumbnailUrl: "",
       uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt: new Date("2026-06-01"),
     });
@@ -143,6 +147,8 @@ describe("MockUploadedAssetRepository", () => {
         mimeType: "video/mp4",
         storageKey: `mock/file-${i}.mp4`,
         storageUrl: `/mock-assets/file-${i}.mp4`,
+        thumbnailKey: "",
+        thumbnailUrl: "",
         uploadStatus: AssetUploadStatus.Uploaded,
         scheduledDeletionAt: new Date("2026-06-01"),
       });
@@ -163,6 +169,8 @@ describe("MockUploadedAssetRepository", () => {
       mimeType: "video/mp4",
       storageKey: "mock/file.mp4",
       storageUrl: "/mock-assets/file.mp4",
+      thumbnailKey: "",
+      thumbnailUrl: "",
       uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt: new Date("2026-06-01"),
     });

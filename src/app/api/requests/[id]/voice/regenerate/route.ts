@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
-import { videoGenerationService } from "@/services/staff/VideoGenerationService";
+import { videoGenerationService } from "@/services/VideoGenerationService";
 
 const schema = z.object({
   jobId: z.string().min(1),

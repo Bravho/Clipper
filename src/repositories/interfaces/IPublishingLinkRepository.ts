@@ -17,4 +17,5 @@ export interface IPublishingLinkRepository {
   findByRequestId(requestId: string): Promise<PublishingLink[]>;
   create(input: CreatePublishingLinkInput): Promise<PublishingLink>;
   deleteByRequestId(requestId: string): Promise<void>;
+  delete(id: string): Promise<void>;
 }

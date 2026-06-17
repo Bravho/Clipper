@@ -34,6 +34,13 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     approvedCaptionEnglish: (row.approved_caption_english as string) ?? null,
     approvedCaptionChinese: (row.approved_caption_chinese as string) ?? null,
     klingTaskId: (row.kling_task_id as string) ?? null,
+    // NOTE: no DB columns yet for these Phase 3 per-scene fields (out of
+    // scope — requires a migration). Falls back to null until added; updates
+    // to these fields are intentionally excluded from JOB_UPDATE_COLS below
+    // so they don't error against a missing column. Same pattern as
+    // voiceDurationSeconds/voiceTimestamps above.
+    klingTaskIds: row.kling_task_ids ? (JSON.parse(row.kling_task_ids as string) as string[]) : null,
+    sceneVideoAssetIds: row.scene_video_asset_ids ? (JSON.parse(row.scene_video_asset_ids as string) as (string | null)[]) : null,
     klingStatus: null,
     klingLastPolledAt: null,
     baseVideoAssetId: (row.base_video_asset_id as string) ?? null,
@@ -42,6 +49,12 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     voiceRecordingAssetId: (row.voice_recording_asset_id as string) ?? null,
     processedVoiceAssetId: (row.processed_voice_asset_id as string) ?? null,
     selectedMusicTrack: (row.selected_music_track as string) ?? null,
+    // NOTE: no DB columns yet for these Phase 1 fields (out of scope —
+    // requires a migration). Falls back to null until added; updates to
+    // these fields are intentionally excluded from JOB_UPDATE_COLS below
+    // so they don't error against a missing column.
+    voiceDurationSeconds: (row.voice_duration_seconds as number) ?? null,
+    voiceTimestamps: (row.voice_timestamps as string) ?? null,
     finalExport_9_16_assetId: (row.final_export_9_16_asset_id as string) ?? null,
     finalExport_16_9_assetId: (row.final_export_16_9_asset_id as string) ?? null,
     finalExport_1_1_assetId: (row.final_export_1_1_asset_id as string) ?? null,
@@ -51,6 +64,13 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     subtitleTimeline: (row.subtitle_timeline as string) ?? null,
     animationSpec: (row.animation_spec as string) ?? null,
     animatedVideoAssetId: (row.animated_video_asset_id as string) ?? null,
+    // NOTE: no DB column yet for this Phase 4 field (out of scope — requires
+    // a migration). Falls back to null until added; updates to this field
+    // are intentionally excluded from JOB_UPDATE_COLS below so they don't
+    // error against a missing column. Same pattern as klingTaskIds/sceneVideoAssetIds.
+    animatedOverlayAssetIds: row.animated_overlay_asset_ids
+      ? (JSON.parse(row.animated_overlay_asset_ids as string) as Record<string, string>)
+      : null,
     contentApprovedBy: (row.content_approved_by as string) ?? null,
     videoApprovedBy: (row.video_approved_by as string) ?? null,
     voiceApprovedBy: (row.voice_approved_by as string) ?? null,

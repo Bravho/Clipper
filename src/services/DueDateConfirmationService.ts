@@ -55,12 +55,12 @@ export class DueDateConfirmationService {
 
     const newEstimate = this.estimateDueDate(effortClass);
 
-    const updated = await clipRequestRepository.updateStaffFields(requestId, {
+    await clipRequestRepository.updateStaffFields(requestId, {
       effortClass,
     });
 
     // Update the internal system estimate (never shown directly to requester)
-    await clipRequestRepository.updateStatus(requestId, request.status, {
+    const updated = await clipRequestRepository.updateStatus(requestId, request.status, {
       estimatedDueDate: newEstimate,
       // Reset confirmed state if effort changes significantly
       dueDateConfirmed: false,

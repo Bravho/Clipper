@@ -1,5 +1,5 @@
 /**
- * Tests for StaffWorkflowService — status transition logic.
+ * Tests for RequestWorkflowService — status transition logic.
  *
  * These tests verify:
  * - Valid transitions succeed and persist status change
@@ -10,7 +10,7 @@
  * - Resume from hold returns to Under Review
  */
 
-import { StaffWorkflowService } from "@/services/staff/StaffWorkflowService";
+import { RequestWorkflowService } from "@/services/RequestWorkflowService";
 import { MockClipRequestRepository } from "@/repositories/mock/MockClipRequestRepository";
 import { MockRequestStatusHistoryRepository } from "@/repositories/mock/MockRequestStatusHistoryRepository";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
@@ -37,6 +37,7 @@ function makeRequest(overrides: Partial<ClipRequest> = {}): ClipRequest {
     targetPlatforms: [Platform.TikTok],
     preferredStyle: "Simple",
     preferredLanguage: "English",
+    durationSeconds: 15,
     status: RequestStatus.Submitted,
     estimatedDueDate: null,
     confirmedDueDate: null,
@@ -46,15 +47,18 @@ function makeRequest(overrides: Partial<ClipRequest> = {}): ClipRequest {
     queuePosition: 2,
     creditConfirmed: true,
     rightsConfirmed: true,
+    assignedEditorId: null,
+    editorType: null,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     creditsCost: 10,
     submittedAt: new Date(),
     createdAt: new Date(),
     updatedAt: new Date(),
     effortClass: null,
-    capCutProjectRef: null,
-    editingProgressNote: null,
-    exportReady: false,
-    latestExportNote: null,
     ...overrides,
   };
 }
@@ -68,14 +72,14 @@ function buildService(
   // (In unit tests, we build isolated repos and pass them; the service uses
   // module singletons — we verify via the repo directly.)
   // This test uses the service's public interface with the real mock stores.
-  const service = new StaffWorkflowService();
+  const service = new RequestWorkflowService();
   return service;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("StaffWorkflowService — isValidTransition", () => {
-  const svc = new StaffWorkflowService();
+describe("RequestWorkflowService — isValidTransition", () => {
+  const svc = new RequestWorkflowService();
 
   const validTransitions: [RequestStatus, RequestStatus][] = [
     [RequestStatus.Submitted, RequestStatus.UnderReview],
@@ -125,8 +129,8 @@ describe("StaffWorkflowService — isValidTransition", () => {
   );
 });
 
-describe("StaffWorkflowService — getAllowedTransitions", () => {
-  const svc = new StaffWorkflowService();
+describe("RequestWorkflowService — getAllowedTransitions", () => {
+  const svc = new RequestWorkflowService();
 
   it("returns correct transitions for Submitted", () => {
     const allowed = svc.getAllowedTransitions(RequestStatus.Submitted);
@@ -146,9 +150,9 @@ describe("StaffWorkflowService — getAllowedTransitions", () => {
   });
 });
 
-describe("StaffWorkflowService — putOnHold", () => {
+describe("RequestWorkflowService — putOnHold", () => {
   it("requires a non-empty hold reason", async () => {
-    const svc = new StaffWorkflowService();
+    const svc = new RequestWorkflowService();
     await expect(svc.putOnHold("req-001", "")).rejects.toThrow(
       /hold reason is required/i
     );
@@ -158,19 +162,19 @@ describe("StaffWorkflowService — putOnHold", () => {
   });
 });
 
-describe("StaffWorkflowService — rejectRequest", () => {
+describe("RequestWorkflowService — rejectRequest", () => {
   it("requires a non-empty rejection reason", async () => {
-    const svc = new StaffWorkflowService();
+    const svc = new RequestWorkflowService();
     await expect(svc.rejectRequest("req-001", "")).rejects.toThrow(
       /rejection reason is required/i
     );
   });
 });
 
-describe("StaffWorkflowService — transition validation with seed data", () => {
+describe("RequestWorkflowService — transition validation with seed data", () => {
   it("throws when trying to transition from Delivered", async () => {
     // req-006 in seed data is Delivered — resume or any action should fail
-    const svc = new StaffWorkflowService();
+    const svc = new RequestWorkflowService();
     await expect(
       svc.markUnderReview("req-006")
     ).rejects.toThrow(/Cannot transition from/);
@@ -178,7 +182,7 @@ describe("StaffWorkflowService — transition validation with seed data", () => 
 
   it("throws when trying to reject a Draft", async () => {
     // req-001 is Draft — cannot reject
-    const svc = new StaffWorkflowService();
+    const svc = new RequestWorkflowService();
     await expect(
       svc.rejectRequest("req-001", "Some reason here")
     ).rejects.toThrow(/Cannot transition from/);
@@ -186,7 +190,7 @@ describe("StaffWorkflowService — transition validation with seed data", () => 
 
   it("accepts a submitted request for review", async () => {
     // req-009 is Submitted in seed data
-    const svc = new StaffWorkflowService();
+    const svc = new RequestWorkflowService();
     const result = await svc.markUnderReview("req-009", "Starting review.");
     expect(result.status).toBe(RequestStatus.UnderReview);
   });

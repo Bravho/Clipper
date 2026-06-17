@@ -3,6 +3,7 @@ import {
   PublishingLink,
   CreatePublishingLinkInput,
 } from "@/domain/models/PublishingLink";
+import { SEED_PUBLISHING_LINKS } from "@/seed/requestSeedData";
 
 // TODO: PostgreSQL — replace with PostgresPublishingLinkRepository.
 // TODO: Future — when publishing automation is implemented, this repository
@@ -16,6 +17,9 @@ declare global {
 function getStore(): Map<string, PublishingLink> {
   if (!global.__mockPublishingLinkStore) {
     global.__mockPublishingLinkStore = new Map();
+    SEED_PUBLISHING_LINKS.forEach((l) =>
+      global.__mockPublishingLinkStore!.set(l.id, { ...l })
+    );
   }
   return global.__mockPublishingLinkStore;
 }
@@ -49,5 +53,9 @@ export class MockPublishingLinkRepository implements IPublishingLinkRepository {
         this.store.delete(id);
       }
     }
+  }
+
+  async delete(id: string): Promise<void> {
+    this.store.delete(id);
   }
 }

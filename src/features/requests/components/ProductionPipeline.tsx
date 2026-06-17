@@ -13,6 +13,7 @@ import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
   VideoGenerationStep.AwaitingVideoApproval,
   VideoGenerationStep.AwaitingVoiceApproval,
+  VideoGenerationStep.AwaitingSceneDesignApproval,
   VideoGenerationStep.AwaitingAnimationApproval,
   VideoGenerationStep.AwaitingFinalApproval,
 ]);
@@ -20,10 +21,13 @@ const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
 const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
   [VideoGenerationStep.AnalyzingContent]:          1,
   [VideoGenerationStep.AwaitingContentApproval]:   1,
-  [VideoGenerationStep.GeneratingBaseVideo]:        2,
-  [VideoGenerationStep.AwaitingVideoApproval]:      2,
-  [VideoGenerationStep.GeneratingVoice]:            3,
-  [VideoGenerationStep.AwaitingVoiceApproval]:      3,
+  // Audio-first reorder: voice generation now runs before Kling.
+  [VideoGenerationStep.GeneratingVoice]:            2,
+  [VideoGenerationStep.AwaitingVoiceApproval]:      2,
+  [VideoGenerationStep.GeneratingSceneDesign]:      3,
+  [VideoGenerationStep.AwaitingSceneDesignApproval]: 3,
+  [VideoGenerationStep.GeneratingBaseVideo]:        3,
+  [VideoGenerationStep.AwaitingVideoApproval]:      3,
   [VideoGenerationStep.GeneratingAnimations]:       3,
   [VideoGenerationStep.AwaitingAnimationApproval]:  3,
   [VideoGenerationStep.ComposingFinalVideo]:        4,
@@ -31,15 +35,19 @@ const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
   [VideoGenerationStep.Publishing]:                 5,
   [VideoGenerationStep.Complete]:                   5,
   // Legacy steps
-  [VideoGenerationStep.AwaitingVoiceRecording]:     3,
-  [VideoGenerationStep.ProcessingVoice]:            3,
+  [VideoGenerationStep.AwaitingVoiceRecording]:     2,
+  [VideoGenerationStep.ProcessingVoice]:            2,
 };
 
+// NOTE: cost breakdown field names (step2/step3) retain their original
+// internal meaning (step2 = video gen, step3 = voice/music) from
+// calcPipelineCost, but the displayed phase order is now audio-first
+// (phase 2 = voice, phase 3 = video) — so the mapping is swapped here.
 function stepCredit(phaseId: number, costs: PipelineCostBreakdown): string {
   switch (phaseId) {
     case 1: return `${costs.step1} เครดิต`;
-    case 2: return `${costs.step2} เครดิต`;
-    case 3: return `${costs.step3} เครดิต`;
+    case 2: return `${costs.step3} เครดิต`;
+    case 3: return `${costs.step2} เครดิต`;
     case 4: return `${costs.step4} เครดิต`;
     case 5: return costs.extraChannels > 0 ? `${costs.step5} เครดิต` : "ไม่มีค่าเพิ่ม";
     default: return "";
@@ -49,8 +57,8 @@ function stepCredit(phaseId: number, costs: PipelineCostBreakdown): string {
 function stepHint(phaseId: number, costs: PipelineCostBreakdown, duration: number): string {
   switch (phaseId) {
     case 1: return "10 เครดิต คงที่";
-    case 2: return `10/วิ × ${duration}วิ`;
-    case 3: return `7/วิ × ${duration}วิ`;
+    case 2: return `7/วิ × ${duration}วิ`;
+    case 3: return `10/วิ × ${duration}วิ`;
     case 4: return `3/วิ × ${duration}วิ`;
     case 5:
       return costs.extraChannels > 0
@@ -211,7 +219,7 @@ export function ProductionPipeline({
                     {phase.desc}
                   </p>
                   {/* Kling sub-status: only shown while AI is actively rendering, not after */}
-                  {isActive && currentStep === VideoGenerationStep.GeneratingBaseVideo && phase.id === 2 && (
+                  {isActive && currentStep === VideoGenerationStep.GeneratingBaseVideo && phase.id === 3 && (
                     <p className="mt-1 text-xs text-blue-400">
                       {klingStatus === "submitted" && "รอ Kling AI รับงานในคิว..."}
                       {klingStatus === "processing" && "Kling AI กำลังเรนเดอร์วิดีโอ"}

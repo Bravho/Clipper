@@ -1,5 +1,3 @@
-import bcrypt from "bcryptjs";
-import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { Role } from "@/domain/enums/Role";
 import { User } from "@/domain/models/User";
 import { userRepository, authIdentityRepository, creditWalletRepository } from "@/repositories";
@@ -52,38 +50,6 @@ export class AdminUserService {
     return { user, creditBalance };
   }
 
-  /**
-   * Provision a new editor account.
-   * Editors are internal team members — no credit wallet or consent records.
-   *
-   * Only callable by admins (enforced at the API route level).
-   */
-  async createEditorAccount(input: {
-    name: string;
-    email: string;
-    password: string;
-  }): Promise<User> {
-    const existing = await userRepository.findByEmail(input.email);
-    if (existing) {
-      throw new Error("An account with this email address already exists.");
-    }
-
-    const user = await userRepository.create({
-      email: input.email.toLowerCase().trim(),
-      name: input.name.trim(),
-      role: Role.Editor,
-    });
-
-    const passwordHash = await bcrypt.hash(input.password, 12);
-    await authIdentityRepository.create({
-      userId: user.id,
-      provider: AuthProvider.Credentials,
-      providerAccountId: null,
-      passwordHash,
-    });
-
-    return user;
-  }
 
   /**
    * List all requesters with their credit balances.

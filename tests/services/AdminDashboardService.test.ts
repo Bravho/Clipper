@@ -9,13 +9,18 @@ import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { ProductionReviewStatus } from "@/domain/enums/ProductionReviewStatus";
 import { Platform } from "@/domain/enums/Platform";
 
-const clipRepo = new MockClipRequestRepository(new Map());
-const reviewRepo = new MockProductionReviewRepository(new Map());
-
 jest.mock("@/repositories", () => ({
-  clipRequestRepository: clipRepo,
-  productionReviewRepository: reviewRepo,
+  clipRequestRepository: new (require("@/repositories/mock/MockClipRequestRepository").MockClipRequestRepository)(new Map()),
+  productionReviewRepository: new (require("@/repositories/mock/MockProductionReviewRepository").MockProductionReviewRepository)(new Map()),
 }));
+
+const {
+  clipRequestRepository: mockClipRepo,
+  productionReviewRepository: mockReviewRepo,
+} = jest.requireMock("@/repositories") as {
+  clipRequestRepository: MockClipRequestRepository;
+  productionReviewRepository: MockProductionReviewRepository;
+};
 
 const service = new AdminDashboardService();
 
@@ -25,7 +30,7 @@ async function createRequest(overrides: Partial<{
   dueDateConfirmed: boolean;
   assignedStaffId: string | null;
 }> = {}) {
-  const request = await clipRepo.create({
+  const request = await mockClipRepo.create({
     userId: "user-001",
     title: "Test",
     description: "Desc",
@@ -33,6 +38,7 @@ async function createRequest(overrides: Partial<{
     targetPlatforms: [Platform.TikTok],
     preferredStyle: "Dynamic",
     preferredLanguage: "English",
+    durationSeconds: 15,
   });
 
   const {
@@ -42,7 +48,7 @@ async function createRequest(overrides: Partial<{
     assignedStaffId = null,
   } = overrides;
 
-  return clipRepo.updateStatus(request.id, status, {
+  return mockClipRepo.updateStatus(request.id, status, {
     submittedAt: new Date(),
     confirmedDueDate,
     dueDateConfirmed,
@@ -54,8 +60,8 @@ async function createRequest(overrides: Partial<{
 
 describe("AdminDashboardService", () => {
   beforeEach(() => {
-    (clipRepo as any).store.clear();
-    (reviewRepo as any).store.clear();
+    (mockClipRepo as any).store.clear();
+    (mockReviewRepo as any).store.clear();
   });
 
   describe("getSummary", () => {
@@ -83,7 +89,7 @@ describe("AdminDashboardService", () => {
       const req1 = await createRequest({ status: RequestStatus.ScheduledForPublishing });
       const req2 = await createRequest({ status: RequestStatus.ScheduledForPublishing });
 
-      await reviewRepo.create({ requestId: req1.id, submittedAt: new Date() });
+      await mockReviewRepo.create({ requestId: req1.id, submittedAt: new Date() });
       // req2 has no review record — should not affect pendingAdminReviewCount
 
       const summary = await service.getSummary();

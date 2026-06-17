@@ -109,6 +109,12 @@ export interface IClipRequestRepository {
         | "creditsUsed"
         | "discountBaht"
         | "amountPaidBaht"
+        | "assignedEditorId"
+        | "editorType"
+        | "priceBaht"
+        | "creditsUsed"
+        | "discountBaht"
+        | "amountPaidBaht"
         | "revisionCount"
       >
     >

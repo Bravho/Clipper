@@ -16,6 +16,7 @@
  */
 
 import { RequestStatus } from "@/domain/enums/RequestStatus";
+import { EditorType } from "@/domain/enums/EditorType";
 import { Platform } from "@/domain/enums/Platform";
 import { EffortClass } from "@/domain/enums/EffortClass";
 import { ProductionReviewStatus } from "@/domain/enums/ProductionReviewStatus";
@@ -37,6 +38,14 @@ export const ADMIN_SEED_CLIP_REQUESTS: ClipRequest[] = [
   // This is the primary demo request for the admin production review workflow.
   {
     id: "req-010",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Fitness Tracker Launch Clip",
     description:
@@ -65,6 +74,14 @@ export const ADMIN_SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-011: Editing — second active editing request (different staff) ─────
   {
     id: "req-011",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Team Culture Highlight Reel",
     description:
@@ -94,6 +111,14 @@ export const ADMIN_SEED_CLIP_REQUESTS: ClipRequest[] = [
   // ── req-012: Submitted — fresh, awaiting staff review ────────────────────
   {
     id: "req-012",
+    durationSeconds: 15,
+    assignedEditorId: "editor-ai-001",
+    editorType: EditorType.AI,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     userId: REQUESTER_ID,
     title: "Customer Success Story",
     description:

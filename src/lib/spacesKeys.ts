@@ -133,6 +133,22 @@ export function buildAnimatedVideoKey(userId: string, requestId: string): string
 }
 
 /**
+ * Key for a Remotion-rendered transparent overlay clip (captions +
+ * lower-thirds) for one aspect ratio (Phase 4 — animation/Remotion step).
+ * Stored as `.webm` (VP9 + alpha) so FFmpeg can overlay it onto the base
+ * video with `overlay=format=auto`.
+ * Lifecycle: retained for 8 years (same as final clips).
+ */
+export function buildAnimatedOverlayKey(
+  userId: string,
+  requestId: string,
+  ratio: "9:16" | "16:9" | "1:1" | "4:5"
+): string {
+  const safeRatio = ratio.replace(":", "-");
+  return `animated_overlays/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.webm`;
+}
+
+/**
  * Key for a final FFmpeg-exported clip in a specific aspect ratio.
  * Lifecycle: retained for 8 years.
  *

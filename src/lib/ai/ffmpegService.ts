@@ -58,6 +58,22 @@ export interface ComposeVideoParams {
    * the "tvent" key in `exports`.
    */
   assSubtitlesContentTvent?: string;
+  /**
+   * Phase 4 — Remotion-rendered transparent overlay clip (captions +
+   * motion graphics) per ratio, keyed by `VideoRatio`. When present for a
+   * given ratio, that ratio's export composites this overlay on top of the
+   * cropped/scaled base video via FFmpeg's `overlay` filter, and the
+   * ASS/SRT subtitle burn-in is SKIPPED for that ratio (the overlay's
+   * `CaptionOverlay` already covers `subtitleLanguages`).
+   */
+  overlayStorageKeys?: Partial<Record<VideoRatio, string>>;
+  /**
+   * Set when `overlayStorageKeys["9:16"]`'s captions were rendered with
+   * exactly English + Chinese (matching the Tvent App's fixed subtitle
+   * requirement). If true, the Tvent export reuses that 9:16 overlay
+   * instead of burning `assSubtitlesContentTvent` via ASS.
+   */
+  overlayCoversTventSubtitles?: boolean;
 }
 
 export interface ComposeVideoResult {
@@ -194,71 +210,215 @@ function getSmartCropFilter(ratio: VideoRatio, coords?: ImageCoordinates): strin
   return "scale=1920:1080";
 }
 
-/** Run FFmpeg to compose video + audio (+ optional background music with ducking) and export to one ratio. */
+/**
+ * Run FFmpeg to compose video + audio (+ optional background music with
+ * ducking, + optional Phase 4 Remotion overlay clip) and export to one
+ * ratio.
+ *
+ * When `overlayPath` is provided, the ASS/SRT subtitle burn-in (`subsPath`)
+ * is skipped — the Remotion overlay's `CaptionOverlay` already covers
+ * `subtitleLanguages` for that ratio (see `ComposeVideoParams.overlayStorageKeys`).
+ */
 async function composeSingleRatio(params: {
   videoPath: string;
   audioPath: string;
-  subsPath: string;
-  isAss: boolean;
+  subsPath?: string;
+  isAss?: boolean;
   ratio: VideoRatio;
   outputPath: string;
   musicPath?: string;
   coordinates?: ImageCoordinates;
+  overlayPath?: string;
 }): Promise<void> {
-  const { videoPath, audioPath, subsPath, isAss, ratio, outputPath, musicPath, coordinates } = params;
+  const { videoPath, audioPath, subsPath, isAss, ratio, outputPath, musicPath, coordinates, overlayPath } = params;
   const ffmpeg = AI_CONFIG.ffmpeg.path;
 
   const cropAndScaleFilter = getSmartCropFilter(ratio, coordinates);
-  
-  // Format subtitle filter parameter (ASS formatting uses font style defined inside the .ass file)
-  const subtitleFilter = isAss
-    ? `subtitles=${subsPath.replace(/\\/g, "/")}`
-    : `subtitles=${subsPath.replace(/\\/g, "/")}:force_style='Fontsize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'`;
 
-  const videoFilter = `${cropAndScaleFilter},${subtitleFilter}`;
+  // Format subtitle filter parameter (ASS formatting uses font style defined
+  // inside the .ass file). Skipped entirely when a Remotion overlay (which
+  // already burns captions) is supplied.
+  const subtitleFilter =
+    !overlayPath && subsPath
+      ? "," +
+        (isAss
+          ? `subtitles=${subsPath.replace(/\\/g, "/")}`
+          : `subtitles=${subsPath.replace(/\\/g, "/")}:force_style='Fontsize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2'`)
+      : "";
 
-  if (!musicPath) {
-    await execFileAsync(ffmpeg, [
-      "-y",
-      "-i", videoPath,
-      "-i", audioPath,
-      "-map", "0:v:0",
-      "-map", "1:a:0",
-      "-vf", videoFilter,
-      "-c:v", "libx264",
-      "-c:a", "aac",
-      "-ar", "48000",
-      "-shortest",
-      "-t", "15",
-      outputPath,
-    ]);
-    return;
+  const args: string[] = ["-y", "-i", videoPath, "-i", audioPath];
+  let nextInput = 2;
+  let overlayInputIdx = -1;
+  let musicInputIdx = -1;
+
+  if (overlayPath) {
+    args.push("-i", overlayPath);
+    overlayInputIdx = nextInput++;
+  }
+  if (musicPath) {
+    args.push("-i", musicPath);
+    musicInputIdx = nextInput++;
   }
 
-  // With background music ducking (autoduck sidechain):
-  const audioFilterComplex = [
-    "[1:a]loudnorm=I=-16:LRA=11:TP=-1.5,asplit=2[sc][voice]",
-    "[2:a]aloop=-1:size=2147483647,atrim=0:15,asetpts=PTS-STARTPTS,volume=0.3[music]",
-    "[music][sc]sidechaincompress=threshold=0.02:ratio=8:attack=80:release=1500[music_ducked]",
-    "[voice][music_ducked]amix=inputs=2:normalize=0,alimiter=limit=0.95:level=false[out]",
-  ].join(";");
+  const filters: string[] = [];
+  filters.push(`[0:v]${cropAndScaleFilter}${subtitleFilter}[base]`);
+  let videoOut = "[base]";
 
-  await execFileAsync(ffmpeg, [
-    "-y",
-    "-i", videoPath,
-    "-i", audioPath,
-    "-i", musicPath,
-    "-filter_complex", audioFilterComplex,
-    "-map", "0:v:0",
-    "-map", "[out]",
-    "-vf", videoFilter,
+  if (overlayInputIdx >= 0) {
+    filters.push(`[${overlayInputIdx}:v]format=yuva420p[ovl]`);
+    filters.push(`[base][ovl]overlay=0:0:format=auto,format=yuv420p[vout]`);
+    videoOut = "[vout]";
+  }
+
+  let audioOut = "1:a";
+  if (musicInputIdx >= 0) {
+    filters.push("[1:a]loudnorm=I=-16:LRA=11:TP=-1.5,asplit=2[sc][voice]");
+    filters.push(`[${musicInputIdx}:a]aloop=-1:size=2147483647,atrim=0:15,asetpts=PTS-STARTPTS,volume=0.3[music]`);
+    filters.push("[music][sc]sidechaincompress=threshold=0.02:ratio=8:attack=80:release=1500[music_ducked]");
+    filters.push("[voice][music_ducked]amix=inputs=2:normalize=0,alimiter=limit=0.95:level=false[aout]");
+    audioOut = "[aout]";
+  }
+
+  args.push("-filter_complex", filters.join(";"));
+  args.push("-map", videoOut);
+  args.push("-map", audioOut);
+  args.push(
     "-c:v", "libx264",
     "-c:a", "aac",
     "-ar", "48000",
     "-shortest",
     "-t", "15",
-    outputPath,
-  ]);
+    outputPath
+  );
+
+  await execFileAsync(ffmpeg, args);
+}
+
+/**
+ * Composites a Remotion alpha-channel overlay clip onto a base video,
+ * cropped/scaled to `ratio`, with no audio re-encoding concerns — used to
+ * build the single-ratio "representative preview" shown at
+ * `AwaitingAnimationApproval` (`animatedVideoAssetId`). The full per-ratio
+ * final exports go through `composeSingleRatio` (with `overlayPath`)
+ * instead, which also handles audio/music.
+ */
+export async function renderOverlayPreview(params: {
+  videoStorageKey: string;
+  overlayStorageKey: string;
+  ratio: VideoRatio;
+  outputStorageKey: string;
+  coordinates?: ImageCoordinates;
+}): Promise<void> {
+  const { videoStorageKey, overlayStorageKey, ratio, outputStorageKey, coordinates } = params;
+  const ffmpeg = AI_CONFIG.ffmpeg.path;
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-overlay-preview-"));
+  try {
+    const videoPath = path.join(tmpDir, "base.mp4");
+    const overlayPath = path.join(tmpDir, "overlay.webm");
+    await Promise.all([
+      downloadFromSpaces(videoStorageKey, videoPath),
+      downloadFromSpaces(overlayStorageKey, overlayPath),
+    ]);
+
+    const outPath = path.join(tmpDir, "preview.mp4");
+    const cropAndScaleFilter = getSmartCropFilter(ratio, coordinates);
+
+    await execFileAsync(ffmpeg, [
+      "-y",
+      "-i", videoPath,
+      "-i", overlayPath,
+      "-filter_complex",
+      `[0:v]${cropAndScaleFilter}[base];[1:v]format=yuva420p[ovl];[base][ovl]overlay=0:0:format=auto,format=yuv420p[vout]`,
+      "-map", "[vout]",
+      "-map", "0:a?",
+      "-c:v", "libx264",
+      "-c:a", "aac",
+      "-t", "15",
+      outPath,
+    ]);
+
+    await uploadToSpaces(outPath, outputStorageKey);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Concatenate multiple video clips (in order) into a single video file using
+ * ffmpeg's concat demuxer. Downloads each input from DO Spaces, concatenates
+ * with `-c copy` (fast, no re-encode — assumes all clips share the same
+ * codec/resolution, which holds for same-model Kling outputs), and uploads
+ * the result to `outputStorageKey`.
+ *
+ * If `-c copy` fails (e.g. mismatched codecs/timestamps across clips), falls
+ * back to re-encoding with libx264/aac.
+ *
+ * If only one storage key is provided, the clip is simply re-uploaded under
+ * `outputStorageKey` (no ffmpeg concat needed) so callers can treat the
+ * single-scene case uniformly.
+ */
+export async function concatVideos(
+  inputStorageKeys: string[],
+  outputStorageKey: string
+): Promise<{ storageKey: string; storageUrl: string }> {
+  if (inputStorageKeys.length === 0) {
+    throw new Error("concatVideos: at least one input storage key is required");
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-concat-"));
+  try {
+    if (inputStorageKeys.length === 1) {
+      const single = path.join(tmpDir, "single.mp4");
+      await downloadFromSpaces(inputStorageKeys[0], single);
+      await uploadToSpaces(single, outputStorageKey);
+      return { storageKey: outputStorageKey, storageUrl: spacesPublicUrl(outputStorageKey) };
+    }
+
+    const ffmpeg = AI_CONFIG.ffmpeg.path;
+    const inputPaths: string[] = [];
+    for (let i = 0; i < inputStorageKeys.length; i++) {
+      const dest = path.join(tmpDir, `in-${i}.mp4`);
+      await downloadFromSpaces(inputStorageKeys[i], dest);
+      inputPaths.push(dest);
+    }
+
+    const listFile = path.join(tmpDir, "concat.txt");
+    const listContent = inputPaths
+      .map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`)
+      .join("\n");
+    await fs.writeFile(listFile, listContent, "utf-8");
+
+    const outPath = path.join(tmpDir, "concat-out.mp4");
+
+    try {
+      await execFileAsync(ffmpeg, [
+        "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", listFile,
+        "-c", "copy",
+        outPath,
+      ]);
+    } catch (err) {
+      // Fall back to re-encode if stream copy fails (mismatched codecs/params).
+      console.error("[ffmpeg] concat -c copy failed, falling back to re-encode:", err);
+      await execFileAsync(ffmpeg, [
+        "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", listFile,
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        outPath,
+      ]);
+    }
+
+    await uploadToSpaces(outPath, outputStorageKey);
+    return { storageKey: outputStorageKey, storageUrl: spacesPublicUrl(outputStorageKey) };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -300,6 +460,19 @@ export async function composeAndExport(
     const targetRatios = params.targetRatios ?? ["9:16", "16:9", "1:1", "4:5"];
     const results: ComposeVideoResult["exports"] = {};
 
+    // Phase 4: download any Remotion overlay clips up front, keyed by ratio.
+    const overlayPaths: Partial<Record<VideoRatio, string>> = {};
+    if (params.overlayStorageKeys) {
+      await Promise.all(
+        Object.entries(params.overlayStorageKeys).map(async ([ratio, key]) => {
+          if (!key) return;
+          const overlayPath = path.join(tmpDir, `overlay-${ratio.replace(":", "-")}.webm`);
+          await downloadFromSpaces(key, overlayPath);
+          overlayPaths[ratio as VideoRatio] = overlayPath;
+        })
+      );
+    }
+
     await Promise.all(
       targetRatios.map(async (ratio) => {
         const outPath = path.join(tmpDir, `out-${ratio.replace(":", "-")}.mp4`);
@@ -312,6 +485,7 @@ export async function composeAndExport(
           outputPath: outPath,
           musicPath,
           coordinates: params.coordinates,
+          overlayPath: overlayPaths[ratio],
         });
 
         const storageKey = buildFinalClipKey(params.userId, params.requestId, ratio);
@@ -320,11 +494,29 @@ export async function composeAndExport(
       })
     );
 
-    // Dedicated Tvent App 9:16 export with its own (EN+ZH) subtitles, only
-    // rendered when its subtitle content actually differs from the general
-    // 9:16 export — avoids a redundant FFmpeg pass when the requester also
-    // chose English + Chinese.
-    if (
+    // Dedicated Tvent App 9:16 export. If the 9:16 Remotion overlay already
+    // covers Tvent's fixed English+Chinese subtitle requirement
+    // (`overlayCoversTventSubtitles`), reuse that overlay instead of
+    // burning `assSubtitlesContentTvent` via ASS. Otherwise, only run an
+    // extra ASS-based pass when its subtitle content actually differs from
+    // the general 9:16 export — avoids a redundant FFmpeg pass when the
+    // requester also chose English + Chinese.
+    if (overlayPaths["9:16"] && params.overlayCoversTventSubtitles) {
+      const outPath = path.join(tmpDir, "out-tvent.mp4");
+      await composeSingleRatio({
+        videoPath,
+        audioPath,
+        ratio: "9:16",
+        outputPath: outPath,
+        musicPath,
+        coordinates: params.coordinates,
+        overlayPath: overlayPaths["9:16"],
+      });
+
+      const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");
+      await uploadToSpaces(outPath, storageKey);
+      results["tvent"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+    } else if (
       params.assSubtitlesContentTvent &&
       params.assSubtitlesContentTvent !== params.assSubtitlesContent
     ) {
@@ -341,6 +533,8 @@ export async function composeAndExport(
         outputPath: outPath,
         musicPath,
         coordinates: params.coordinates,
+        // Don't reuse the general 9:16 overlay here — its captions may not
+        // be EN+ZH, and burning both ASS + overlay captions would duplicate text.
       });
 
       const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");

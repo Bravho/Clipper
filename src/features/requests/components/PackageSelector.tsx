@@ -11,10 +11,10 @@ interface Props {
 
 export function PackageSelector({ creditBalance }: Props) {
   const [selected, setSelected] = useState<"ai" | "editor" | null>(null);
-  const [durationSeconds, setDurationSeconds] = useState(
+  const [durationSeconds, setDurationSeconds] = useState<number>(
     PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS
   );
-  const [platformCount, setPlatformCount] = useState(
+  const [platformCount, setPlatformCount] = useState<number>(
     PIPELINE_STEP_COSTS.RESIZE_FREE_CHANNELS
   );
 

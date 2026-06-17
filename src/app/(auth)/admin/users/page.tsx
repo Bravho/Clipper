@@ -3,13 +3,11 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { adminUserService } from "@/services/admin/AdminUserService";
 import { Badge } from "@/components/ui/Badge";
-import { AddEditorForm } from "@/features/admin/components/AddEditorForm";
 
 export const metadata: Metadata = { title: "User Management — Admin" };
 
 const ROLE_BADGE: Record<Role, "green" | "blue" | "red"> = {
   [Role.Requester]: "blue",
-  [Role.Editor]: "green",
   [Role.Admin]: "red",
 };
 
@@ -26,7 +24,6 @@ export default async function AdminUsersPage() {
   );
 
   const requesters = users.filter((u) => u.role === Role.Requester);
-  const editors = users.filter((u) => u.role === Role.Editor);
   const admins = users.filter((u) => u.role === Role.Admin);
 
   return (
@@ -34,19 +31,15 @@ export default async function AdminUsersPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">User Management</h1>
         <p className="mt-1 text-sm text-slate-500">
-          {users.length} total users — {requesters.length} requesters, {editors.length} editors, {admins.length} admins.
+          {users.length} total users — {requesters.length} requesters, {admins.length} admins.
         </p>
       </div>
 
       {/* Summary cards */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <p className="text-3xl font-bold text-slate-900">{requesters.length}</p>
           <p className="mt-1 text-sm text-slate-500">Requesters</p>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <p className="text-3xl font-bold text-slate-900">{editors.length}</p>
-          <p className="mt-1 text-sm text-slate-500">Editors</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <p className="text-3xl font-bold text-slate-900">{admins.length}</p>
@@ -98,13 +91,6 @@ export default async function AdminUsersPage() {
         </table>
       </div>
 
-      {/* Add editor account */}
-      <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
-          Add Editor
-        </h2>
-        <AddEditorForm />
-      </div>
     </div>
   );
 }

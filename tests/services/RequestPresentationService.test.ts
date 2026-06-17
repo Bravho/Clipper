@@ -24,6 +24,14 @@ function makeRequest(overrides: Partial<ClipRequest> = {}): ClipRequest {
     queuePosition: null,
     creditConfirmed: false,
     rightsConfirmed: false,
+    durationSeconds: 15,
+    assignedEditorId: null,
+    editorType: null,
+    priceBaht: 500,
+    creditsUsed: 1,
+    discountBaht: 10,
+    amountPaidBaht: 490,
+    revisionCount: 0,
     creditsCost: 10,
     submittedAt: null,
     createdAt: new Date("2026-03-01"),
@@ -39,16 +47,16 @@ const svc = new RequestPresentationService();
 describe("RequestPresentationService.getStatusPresentation", () => {
   it("returns correct label for each status", () => {
     const cases: [RequestStatus, string][] = [
-      [RequestStatus.Draft, "Draft"],
-      [RequestStatus.Submitted, "Submitted"],
-      [RequestStatus.UnderReview, "In Review"],
-      [RequestStatus.AcceptedForProduction, "Accepted"],
-      [RequestStatus.Editing, "In Production"],
-      [RequestStatus.ScheduledForPublishing, "Scheduled"],
-      [RequestStatus.Published, "Published"],
-      [RequestStatus.Delivered, "Delivered"],
-      [RequestStatus.OnHold, "On Hold"],
-      [RequestStatus.Rejected, "Rejected"],
+      [RequestStatus.Draft, "แบบร่าง"],
+      [RequestStatus.Submitted, "ส่งแล้ว"],
+      [RequestStatus.UnderReview, "กำลังตรวจสอบ"],
+      [RequestStatus.AcceptedForProduction, "รับงานแล้ว"],
+      [RequestStatus.Editing, "กำลังผลิต"],
+      [RequestStatus.ScheduledForPublishing, "กำหนดเผยแพร่แล้ว"],
+      [RequestStatus.Published, "เผยแพร่แล้ว"],
+      [RequestStatus.Delivered, "ส่งมอบแล้ว"],
+      [RequestStatus.OnHold, "พักไว้ชั่วคราว"],
+      [RequestStatus.Rejected, "ปฏิเสธ"],
     ];
 
     for (const [status, expected] of cases) {
@@ -105,7 +113,7 @@ describe("RequestPresentationService.getDueDateDisplay", () => {
     const d = svc.getDueDateDisplay(req);
     expect(d.show).toBe(true);
     expect(d.formattedDate).toBeNull();
-    expect(d.message).toContain("under review");
+    expect(d.message).toContain("อยู่ระหว่างการตรวจสอบ");
   });
 
   it("shows confirmed date for AcceptedForProduction when staff confirmed", () => {
@@ -118,7 +126,7 @@ describe("RequestPresentationService.getDueDateDisplay", () => {
     const d = svc.getDueDateDisplay(req);
     expect(d.show).toBe(true);
     expect(d.formattedDate).not.toBeNull();
-    expect(d.message).toContain("Expected completion");
+    expect(d.message).toContain("คาดว่าเสร็จ");
   });
 
   it("shows pending message for AcceptedForProduction when not confirmed", () => {
@@ -130,7 +138,7 @@ describe("RequestPresentationService.getDueDateDisplay", () => {
     const d = svc.getDueDateDisplay(req);
     expect(d.show).toBe(true);
     expect(d.formattedDate).toBeNull();
-    expect(d.message).toContain("under review");
+    expect(d.message).toContain("อยู่ระหว่างการตรวจสอบ");
   });
 
   it("does not show due date for OnHold", () => {
@@ -161,7 +169,7 @@ describe("RequestPresentationService.getDueDateDisplay", () => {
     const d = svc.getDueDateDisplay(req);
     expect(d.show).toBe(true);
     expect(d.formattedDate).not.toBeNull();
-    expect(d.message).toContain("Completed");
+    expect(d.message).toContain("เสร็จสิ้นเมื่อ");
   });
 
   it("NEVER exposes estimatedDueDate to requester — only confirmedDueDate", () => {
@@ -208,7 +216,7 @@ describe("RequestPresentationService.getQueueDisplay", () => {
       makeRequest({ status: RequestStatus.AcceptedForProduction, queuePosition: 1 })
     );
     expect(d.show).toBe(true);
-    expect(d.message.toLowerCase()).toContain("next");
+    expect(d.message).toContain("ลำดับถัดไป");
   });
 
   it("does not show queue info for Delivered", () => {
@@ -228,13 +236,13 @@ describe("RequestPresentationService.getQueueDisplay", () => {
   it("shows active production message for Editing", () => {
     const d = svc.getQueueDisplay(makeRequest({ status: RequestStatus.Editing }));
     expect(d.show).toBe(true);
-    expect(d.message.toLowerCase()).toContain("produc");
+    expect(d.message).toContain("ผลิต");
   });
 
   it("shows hold message for OnHold", () => {
     const d = svc.getQueueDisplay(makeRequest({ status: RequestStatus.OnHold }));
     expect(d.show).toBe(true);
-    expect(d.message.toLowerCase()).toContain("hold");
+    expect(d.message).toContain("พัก");
   });
 });
 
@@ -255,6 +263,6 @@ describe("RequestPresentationService.buildRequestView", () => {
   it("sets statusPresentation correctly in the view", () => {
     const req = makeRequest({ status: RequestStatus.Editing });
     const view = svc.buildRequestView(req, [], [], []);
-    expect(view.statusPresentation.label).toBe("In Production");
+    expect(view.statusPresentation.label).toBe("กำลังผลิต");
   });
 });

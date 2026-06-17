@@ -35,13 +35,21 @@ import { dueDateConfirmationService } from "./DueDateConfirmationService";
 
 const ALLOWED_TRANSITIONS: Partial<Record<RequestStatus, RequestStatus[]>> = {
   [RequestStatus.Submitted]: [
+    RequestStatus.UnderReview,
+    RequestStatus.OnHold,
+    RequestStatus.Rejected,
+  ],
+  [RequestStatus.UnderReview]: [
+    RequestStatus.AcceptedForProduction,
+    RequestStatus.OnHold,
+    RequestStatus.Rejected,
+  ],
+  [RequestStatus.AcceptedForProduction]: [
     RequestStatus.Editing,
     RequestStatus.OnHold,
     RequestStatus.Rejected,
   ],
-  [RequestStatus.Rejected]: [
-    RequestStatus.Editing,   // staff re-accepts a rejected request
-  ],
+  [RequestStatus.Rejected]: [],  // terminal
   [RequestStatus.Editing]: [
     RequestStatus.ScheduledForPublishing,
     RequestStatus.OnHold,
@@ -49,20 +57,18 @@ const ALLOWED_TRANSITIONS: Partial<Record<RequestStatus, RequestStatus[]>> = {
   ],
   [RequestStatus.ScheduledForPublishing]: [
     RequestStatus.Published,
-    RequestStatus.Editing,   // admin sends back for revision
     RequestStatus.OnHold,
-    RequestStatus.Rejected,  // admin rejects directly from production review
   ],
   [RequestStatus.Published]: [
     RequestStatus.Delivered,
   ],
   [RequestStatus.OnHold]: [
-    RequestStatus.Submitted,  // resume — return to queue
+    RequestStatus.UnderReview,  // resume — back to review queue
     RequestStatus.Rejected,
   ],
 };
 
-export class StaffWorkflowService {
+export class RequestWorkflowService {
   isValidTransition(from: RequestStatus, to: RequestStatus): boolean {
     return ALLOWED_TRANSITIONS[from]?.includes(to) ?? false;
   }
@@ -84,6 +90,18 @@ export class StaffWorkflowService {
    * @param confirmedDate - Date staff commits to (required, must be provided)
    * @param effortClass   - Effort classification (required)
    */
+  /**
+   * Mark a submitted request as under review.
+   * Moves: Submitted → UnderReview
+   */
+  async markUnderReview(requestId: string, note?: string): Promise<ClipRequest> {
+    return this.transition(
+      requestId,
+      RequestStatus.UnderReview,
+      note ?? "Request is now under review."
+    );
+  }
+
   async acceptAndStartEditing(
     requestId: string,
     staffId: string,
@@ -264,7 +282,7 @@ export class StaffWorkflowService {
    * Staff will then re-review and re-accept.
    */
   async resumeFromHold(requestId: string, note?: string): Promise<ClipRequest> {
-    return this.transition(requestId, RequestStatus.Submitted, note, {
+    return this.transition(requestId, RequestStatus.UnderReview, note, {
       holdReason: null,
       assignedStaffId: null,
     });
@@ -304,4 +322,4 @@ export class StaffWorkflowService {
   }
 }
 
-export const staffWorkflowService = new StaffWorkflowService();
+export const requestWorkflowService = new RequestWorkflowService();

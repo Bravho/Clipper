@@ -1,13 +1,12 @@
 // NOTE: This route is kept for compatibility with the AwaitingVoiceApproval step.
-// The handler now calls approveVoiceConversionByRequester which triggers animation
-// generation (GeneratingAnimations) instead of FFmpeg composition directly.
+// The handler calls approveVoiceConversionByRequester which now triggers the
+// scene-design step before any background music selection or video generation.
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
-import { videoGenerationService } from "@/services/staff/VideoGenerationService";
-import { Platform } from "@/domain/enums/Platform";
+import { videoGenerationService } from "@/services/VideoGenerationService";
 
 export async function POST(
   request: Request,
@@ -24,10 +23,8 @@ export async function POST(
   }
   const body = await request.json().catch(() => null);
   const jobId = body?.jobId;
-  const targetPlatforms = body?.targetPlatforms as Platform[];
-  const selectedMusicTrack = body?.selectedMusicTrack ?? null;
-  if (!jobId || !targetPlatforms?.length) {
-    return NextResponse.json({ error: "Missing jobId or targetPlatforms." }, { status: 400 });
+  if (!jobId) {
+    return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
   }
   const job = await videoGenerationJobRepository.findById(jobId);
   if (!job || job.requestId !== id) {
@@ -36,9 +33,7 @@ export async function POST(
   try {
     const updated = await videoGenerationService.approveVoiceConversionByRequester(
       jobId,
-      session.user.id,
-      targetPlatforms,
-      selectedMusicTrack
+      session.user.id
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

@@ -19,8 +19,12 @@ import {
 // Seed account credentials (for development / testing)
 // ---------------------------------------------------------------------------
 // Requester:  user@example.com        / password123
-// Staff:      staff@clipper.internal  / staffpass123
 // Admin:      admin@clipper.internal  / adminpass123
+//
+// NOTE: "user-staff-001" is retained as a system/internal account (used as
+// the linked user for the AI Editor marketplace profile and referenced by
+// legacy assignedStaffId fields in seed data), but it now has the Requester
+// role since the Staff/Editor role has been removed.
 // ---------------------------------------------------------------------------
 
 // Hash passwords synchronously at module initialisation.
@@ -39,14 +43,16 @@ export const SEED_USERS: User[] = [
     email: "user@example.com",
     name: "Alex Requester",
     role: Role.Requester,
+    emailVerified: true,
     createdAt: now,
     updatedAt: now,
   },
   {
     id: "user-staff-001",
-    email: "staff@clipper.internal",
-    name: "Sam Staff",
-    role: Role.Editor,
+    email: "ai-editor@clipper.internal",
+    name: "AI Editor System",
+    role: Role.Requester,
+    emailVerified: true,
     createdAt: now,
     updatedAt: now,
   },
@@ -55,6 +61,7 @@ export const SEED_USERS: User[] = [
     email: "admin@clipper.internal",
     name: "Admin User",
     role: Role.Admin,
+    emailVerified: true,
     createdAt: now,
     updatedAt: now,
   },

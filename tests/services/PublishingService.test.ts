@@ -9,7 +9,7 @@
  * - markPublished requires at least one link
  */
 
-import { PublishingService } from "@/services/staff/PublishingService";
+import { PublishingService } from "@/services/PublishingService";
 import { Platform } from "@/domain/enums/Platform";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 

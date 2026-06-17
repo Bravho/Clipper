@@ -23,7 +23,6 @@ export const ROUTES = {
 
   // Authenticated (role-specific)
   DASHBOARD: "/dashboard",
-  STAFF: "/staff",
   ADMIN: "/admin",
   ACCOUNT: "/account",
 
@@ -47,8 +46,6 @@ export function getRoleHomePath(role: Role): string {
   switch (role) {
     case Role.Admin:
       return ROUTES.ADMIN;
-    case Role.Editor:
-      return ROUTES.STAFF;
     case Role.Requester:
     default:
       return ROUTES.DASHBOARD;
@@ -58,7 +55,6 @@ export function getRoleHomePath(role: Role): string {
 /** Routes that require authentication (matched by middleware) */
 export const PROTECTED_ROUTE_PREFIXES = [
   ROUTES.DASHBOARD,
-  ROUTES.STAFF,
   ROUTES.ADMIN,
   ROUTES.ACCOUNT,
 ];

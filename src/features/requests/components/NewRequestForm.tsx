@@ -25,7 +25,6 @@ import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import type { ChatGptContentOutput } from "@/lib/ai/chatGptVisionService";
-import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 interface PendingFile {
   id: string;
@@ -67,21 +66,12 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
     setEditedResult((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
 
-  const updateScene = (index: number, field: string, value: string) => {
-    setEditedResult((prev) => {
-      if (!prev) return prev;
-      const updated = prev.scenePlan.map((s, i) =>
-        i === index ? { ...s, [field]: value } : s
-      );
-      return { ...prev, scenePlan: updated };
-    });
-  };
-
   const {
     register,
     handleSubmit,
     watch,
     setValue,
+    setFocus,
     formState: { errors, isSubmitting },
   } = useForm<SubmitClipRequestValues>({
     resolver: zodResolver(submitClipRequestSchema),
@@ -195,7 +185,13 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
       const res = await fetch(`/api/requests/${submittedRequestId}/start-production`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editedResult),
+        body: JSON.stringify({
+          scriptThai: editedResult.scriptThai,
+          scriptEnglish: null,
+          captionThai: editedResult.captionThai,
+          captionEnglish: null,
+          captionChinese: null,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -308,6 +304,25 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
     }
   };
 
+  // If client-side validation fails, react-hook-form doesn't scroll to the
+  // offending field by itself — when the user is scrolled down to the
+  // "ก่อนส่งคำขอ" section, clicking "ส่งคำขอ" can otherwise look like nothing
+  // happened. Surface a visible message and jump to the first invalid field.
+  const onInvalid = (formErrors: typeof errors) => {
+    const fieldMessages = Object.entries(formErrors)
+      .map(([field, err]) => `${field}: ${(err as { message?: string })?.message ?? "ไม่ถูกต้อง"}`)
+      .join(" / ");
+    console.error("[NewRequestForm] validation errors:", formErrors);
+    setSubmitError(
+      `กรุณาตรวจสอบข้อมูลในฟอร์ม: ${fieldMessages || "มีบางช่องที่ยังไม่ถูกต้องหรือยังไม่ได้กรอก"}`
+    );
+    const firstErrorField = Object.keys(formErrors)[0] as keyof SubmitClipRequestValues | undefined;
+    if (firstErrorField) {
+      setFocus(firstErrorField);
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const insufficientCredits = creditBalance < COST;
 
   if (phase === "analyzing") {
@@ -332,10 +347,10 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />
         <div>
           <p className="text-lg font-semibold text-slate-800">
-            กำลังเริ่มสร้างวิดีโอ
+            กำลังสร้างเสียงพากย์
           </p>
           <p className="mt-1 text-sm text-slate-500">
-            ส่งแผนฉากไปยัง Kling AI — จะนำคุณไปยังหน้าติดตามสถานะในอีกสักครู่
+            ระบบกำลังสร้างเสียงพากย์จากบทพูดที่อนุมัติ — จะนำคุณไปยังหน้าติดตามสถานะในอีกสักครู่
           </p>
         </div>
       </div>
@@ -349,7 +364,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
         <div className="rounded-xl border border-green-200 bg-green-50 p-4">
           <p className="text-sm font-semibold text-green-800">AI วิเคราะห์เสร็จแล้ว</p>
           <p className="mt-0.5 text-sm text-green-700">
-            ตรวจสอบและแก้ไขแผนฉาก บทพูด และแคปชั่นด้านล่างได้เลย เมื่อพร้อมแล้วคลิก "อนุมัติและสร้างวิดีโอ"
+            ตรวจสอบและแก้ไขบทพูดและแคปชั่นด้านล่างได้เลย เมื่อพร้อมแล้วคลิก "สร้างเสียงพากย์"
           </p>
         </div>
 
@@ -364,57 +379,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
             rows={2}
             className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
           />
-        </div>
-
-        {/* Hook */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
-          <h3 className="mb-3 text-sm font-semibold text-slate-500 uppercase tracking-wide">
-            ฮุค (3 วินาทีแรก)
-          </h3>
-          <div className="flex flex-col gap-2">
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">ภาษาไทย</p>
-              <textarea
-                value={editedResult.hookThai}
-                onChange={(e) => updateResultField("hookThai", e.target.value)}
-                rows={2}
-                className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Scene plan */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-500 uppercase tracking-wide">
-            แผนฉาก
-          </h3>
-          <div className="flex flex-col gap-3">
-            {editedResult.scenePlan.map((scene: ScenePlan, index: number) => (
-              <div
-                key={scene.sceneNumber}
-                className="rounded-lg border border-slate-100 bg-slate-50 p-4"
-              >
-                <div className="mb-3 flex items-center gap-2">
-                  <span className="text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">
-                    ฉาก {scene.sceneNumber}
-                  </span>
-                  <span className="text-xs text-slate-400">{scene.durationSeconds} วินาที</span>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <div>
-                    <p className="mb-1 text-xs font-medium text-slate-400">คำอธิบายภาพ (ไทย)</p>
-                    <textarea
-                      value={scene.visualDescriptionThai ?? ""}
-                      onChange={(e) => updateScene(index, "visualDescriptionThai", e.target.value)}
-                      rows={2}
-                      className="w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
 
         {/* Script */}
@@ -470,7 +434,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
             ดูรายละเอียดคำขอ
           </button>
           <Button onClick={handleApproveAndStart}>
-            อนุมัติและสร้างวิดีโอ →
+            สร้างเสียงพากย์ →
           </Button>
         </div>
       </div>
@@ -478,7 +442,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-8">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-8">
       {/* Insufficient credits warning */}
       {insufficientCredits && (
         <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4">

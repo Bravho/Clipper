@@ -31,6 +31,7 @@ const VALID_FORM_DATA = {
   targetPlatforms: [Platform.TikTok] as [Platform, ...Platform[]],
   preferredStyle: "Dynamic / Energetic",
   preferredLanguage: "English",
+  durationSeconds: 15,
 };
 
 const COST = CREDITS_CONFIG.REQUEST_COST_CREDITS;

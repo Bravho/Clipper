@@ -6,20 +6,68 @@ import {
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
-import { buildVoiceRecordingKey, buildTmpKey, buildAnimatedVideoKey } from "@/lib/spacesKeys";
+import { buildVoiceRecordingKey, buildTmpKey, buildAnimatedVideoKey, buildAnimatedOverlayKey, buildAiVideoKey } from "@/lib/spacesKeys";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
 import * as klingService from "@/lib/ai/klingService";
 import * as elevenLabsTtsService from "@/lib/ai/elevenLabsTtsService";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
 import * as animationService from "@/lib/ai/animationService";
+import * as remotionService from "@/lib/ai/remotionService";
 import type { VideoGenerationJob, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+import { AI_CONFIG } from "@/config/aiTools";
 
+const execFileAsync = promisify(execFile);
 const PRESIGNED_TTL = 15 * 60; // 15 minutes
+
+/**
+ * Probe the real duration (seconds) of a stored audio asset using ffprobe.
+ * Downloads the asset to a temp file, runs ffprobe, then cleans up.
+ *
+ * Used after voice generation (step 2) so Kling (step 3) can be sized to the
+ * real voice duration instead of the scene-plan estimate.
+ */
+async function probeAudioDurationSeconds(storageKey: string): Promise<number> {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-voice-"));
+  const tmpFile = path.join(tmpDir, "voice.mp3");
+  try {
+    const bucket = process.env.DO_SPACES_BUCKET!;
+    const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: storageKey }));
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    await fs.writeFile(tmpFile, Buffer.concat(chunks));
+
+    const ffprobePath = (AI_CONFIG.ffmpeg.path ?? "ffmpeg").replace(/ffmpeg(\.exe)?$/i, (m) =>
+      m.toLowerCase().endsWith(".exe") ? "ffprobe.exe" : "ffprobe"
+    );
+
+    const { stdout } = await execFileAsync(ffprobePath, [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      tmpFile,
+    ]);
+
+    const duration = parseFloat(stdout.trim());
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new Error(`ffprobe returned invalid duration: "${stdout.trim()}"`);
+    }
+    return duration;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
 
 export class VideoGenerationService {
   /**
@@ -65,22 +113,29 @@ export class VideoGenerationService {
       approvedCaptionEnglish: null,
       approvedCaptionChinese: null,
       klingTaskId: null,
+      klingTaskIds: null,
       klingStatus: null,
       klingLastPolledAt: null,
+      sceneVideoAssetIds: null,
       baseVideoAssetId: null,
       ttsTaskId: null,
       rvcVoiceModel: params.rvcVoiceModel ?? "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       selectedMusicTrack: null,
+      voiceDurationSeconds: null,
+      voiceTimestamps: null,
       subtitleTimeline: null,
       animationSpec: null,
       animatedVideoAssetId: null,
+      animatedOverlayAssetIds: null,
       animationApprovedBy: null,
       finalExport_9_16_assetId: null,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
       finalExport_4_5_assetId: null,
+      finalExport_tvent_assetId: null,
+      subtitleLanguages: ["th", "en"],
       failedAtStep: null,
       contentApprovedBy: null,
       videoApprovedBy: null,
@@ -129,7 +184,7 @@ export class VideoGenerationService {
       }
     }
 
-    const output = await chatGptVisionService.generateScenePlanAndScript({
+    const output = await chatGptVisionService.generateSpeakingScript({
       ...params,
       videoDurationSeconds: 15,
       businessProfileContext,
@@ -137,9 +192,9 @@ export class VideoGenerationService {
 
     await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.AwaitingContentApproval,
-      scenePlan: JSON.stringify(output.scenePlan),
+      scenePlan: null,
       scriptThai: output.scriptThai,
-      hookThai: output.hookThai,
+      hookThai: null,
       captionThai: output.captionThai,
     });
 
@@ -171,17 +226,17 @@ export class VideoGenerationService {
   }
 
   /**
-   * Staff approves the scene plan and script (with optional edits), then
-   * submits to Kling AI for video generation.
+   * Staff approves the speaking script (with optional edits), then starts
+   * iAppTTS voice generation.
    */
   async approveContent(
     jobId: string,
     staffId: string,
     approved: {
-      scenePlan: string;
+      scenePlan?: string | null;
       scriptThai: string;
       scriptEnglish: string;
-      hookThai: string;
+      hookThai?: string | null;
       hookEnglish: string;
       captionThai: string;
       captionEnglish: string;
@@ -191,11 +246,11 @@ export class VideoGenerationService {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingContentApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      approvedScenePlan: approved.scenePlan,
+      currentStep: VideoGenerationStep.GeneratingVoice,
+      approvedScenePlan: approved.scenePlan ?? null,
       approvedScriptThai: approved.scriptThai,
       approvedScriptEnglish: approved.scriptEnglish,
-      approvedHookThai: approved.hookThai,
+      approvedHookThai: approved.hookThai ?? null,
       approvedHookEnglish: approved.hookEnglish,
       approvedCaptionThai: approved.captionThai,
       approvedCaptionEnglish: approved.captionEnglish,
@@ -203,96 +258,243 @@ export class VideoGenerationService {
       contentApprovedBy: staffId,
     });
 
-    try {
-      await this._runKlingGeneration(updated);
-    } catch (err) {
-      console.error("Kling generation failed:", err);
-      return videoGenerationJobRepository.update(jobId, {
+    this._runIAppTtsGeneration(updated).catch(async (err) => {
+      console.error("[ElevenLabs] Voice generation failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+        failedAtStep: VideoGenerationStep.GeneratingVoice,
       });
-    }
+    });
 
     return this._getJob(jobId);
   }
 
-  private async _runKlingGeneration(job: VideoGenerationJob): Promise<void> {
-    const request = await this._getClipRequestImages(job.requestId);
-    const scenePlan = JSON.parse(job.approvedScenePlan!) as ScenePlan[];
-    const scenePrompt = scenePlan.map((s) => s.visualDescriptionThai ?? s.visualDescription ?? "").join(" Then: ");
-    const prompt =
-      scenePrompt +
-      " IMPORTANT: Do not fabricate or hallucinate final product visuals (e.g. finished dishes, packaged goods, retail displays) that are not present in the submitted source images. If the submitted images already show the final product, you may recreate or animate those faithfully. Only invent visuals for raw materials and ingredients. Fabricating final products that differ from the real item risks misrepresentation.";
+  /**
+   * Allocate `totalSeconds` across `scenePlan` entries proportionally to
+   * each scene's original estimated `durationSeconds` (from the ChatGPT
+   * scene plan). This is the Phase 3 per-scene duration strategy.
+   *
+   * Why proportional allocation rather than deriving durations directly from
+   * `voiceTimestamps`: `voiceTimestamps` is a flat array of per-SENTENCE
+   * `{start, end, text}` segments produced by Gemini alignment, with no
+   * `sceneNumber` linking a segment to a specific scene — there is no
+   * reliable 1:1 or N:1 mapping from timestamp segments to scenes without
+   * re-running alignment per scene (out of scope for this phase). The scene
+   * plan's `durationSeconds` estimates, however, DO sum to the original
+   * estimated total and reflect the AI's intended relative pacing across
+   * scenes, so scaling them to the real total voice duration preserves that
+   * pacing while matching the real audio length.
+   *
+   * Falls back to an equal split if scene estimates are missing/zero.
+   */
+  private _allocateSceneDurations(scenePlan: ScenePlan[], totalSeconds: number): number[] {
+    const estimates = scenePlan.map((s) => (Number.isFinite(s.durationSeconds) && s.durationSeconds > 0 ? s.durationSeconds : 0));
+    const sumEstimates = estimates.reduce((a, b) => a + b, 0);
 
-    const aspectRatio = PLATFORM_ASPECT_RATIOS[request.primaryPlatform];
-    const taskId = await klingService.createVideo({
-      imageUrls: request.imageUrls,
-      prompt,
-      aspectRatio,
-      durationSeconds: request.durationSeconds,
-    });
+    if (sumEstimates <= 0) {
+      const equal = totalSeconds / scenePlan.length;
+      return scenePlan.map(() => equal);
+    }
 
-    await videoGenerationJobRepository.update(job.id, { klingTaskId: taskId });
+    return estimates.map((e) => (e / sumEstimates) * totalSeconds);
   }
 
   /**
-   * Poll Kling for video completion. Called by the status endpoint.
-   * Advances step to AwaitingVideoApproval when done.
+   * Select image URLs for a scene using `scene.imageIndexes`, falling back
+   * to all images if `imageIndexes` is empty, and silently dropping any
+   * out-of-bounds indexes. If every index is out of bounds (or the array
+   * ends up empty), falls back to the full image set so Kling always
+   * receives at least one image.
+   */
+  private _selectSceneImages(allImageUrls: string[], imageIndexes: number[] | undefined): string[] {
+    if (!imageIndexes || imageIndexes.length === 0) {
+      return allImageUrls;
+    }
+    const selected = imageIndexes
+      .filter((i) => Number.isInteger(i) && i >= 0 && i < allImageUrls.length)
+      .map((i) => allImageUrls[i]);
+    return selected.length > 0 ? selected : allImageUrls;
+  }
+
+  /**
+   * Issue one Kling `createVideo` call per scene in `approvedScenePlan`,
+   * using requester-approved scene durations plus that scene's
+   * `visualDescriptionThai` + `imageIndexes`-selected images. Records all task
+   * IDs (in scene order) on `klingTaskIds`, plus the first task ID on the
+   * legacy `klingTaskId` field for any code paths that still read it as an
+   * "in-flight" signal.
+   */
+  private async _runKlingGeneration(job: VideoGenerationJob): Promise<void> {
+    const request = await this._getClipRequestImages(job.requestId);
+    const scenePlan = JSON.parse(job.approvedScenePlan!) as ScenePlan[];
+
+    const ANTI_HALLUCINATION =
+      " IMPORTANT: Do not fabricate or hallucinate final product visuals (e.g. finished dishes, packaged goods, retail displays) that are not present in the submitted source images. If the submitted images already show the final product, you may recreate or animate those faithfully. Only invent visuals for raw materials and ingredients. Fabricating final products that differ from the real item risks misrepresentation.";
+
+    const aspectRatio = PLATFORM_ASPECT_RATIOS[request.primaryPlatform];
+    const sceneDurations = scenePlan.map((scene) =>
+      Number.isFinite(scene.durationSeconds) && scene.durationSeconds > 0
+        ? scene.durationSeconds
+        : Math.max(1, request.durationSeconds / scenePlan.length)
+    );
+
+    const taskIds: string[] = [];
+    for (let i = 0; i < scenePlan.length; i++) {
+      const scene = scenePlan[i];
+      const prompt = (scene.visualDescriptionThai ?? scene.visualDescription ?? "") + ANTI_HALLUCINATION;
+      const imageUrls = this._selectSceneImages(request.imageUrls, scene.imageIndexes);
+
+      const taskId = await klingService.createVideo({
+        imageUrls,
+        prompt,
+        aspectRatio,
+        durationSeconds: sceneDurations[i],
+      });
+      taskIds.push(taskId);
+    }
+
+    await videoGenerationJobRepository.update(job.id, {
+      klingTaskIds: taskIds,
+      klingTaskId: taskIds[0] ?? null,
+      sceneVideoAssetIds: null,
+    });
+  }
+
+  /**
+   * Poll Kling for ALL per-scene video completions. Called by the status
+   * endpoint. Once every scene's clip has been downloaded and stored, the
+   * clips are concatenated (in scene order) with `ffmpegService.concatVideos`
+   * into a single `baseVideoAssetId` and the job advances to
+   * AwaitingVideoApproval.
    */
   async checkBaseVideoReady(jobId: string): Promise<VideoGenerationJob> {
     const job = await this._getJob(jobId);
 
     if (job.currentStep !== VideoGenerationStep.GeneratingBaseVideo) return job;
-    if (!job.klingTaskId) return job;
 
-    const status = await klingService.pollTaskStatus(job.klingTaskId);
+    const taskIds = job.klingTaskIds ?? (job.klingTaskId ? [job.klingTaskId] : []);
+    if (taskIds.length === 0) return job;
 
-    console.log(`[Kling] task=${job.klingTaskId} status=${status.status} requestId=${job.requestId}`);
+    const request = await this._getClipRequestBasic(job.requestId);
 
-    if (status.status === "failed") {
-      console.error(`[Kling] task=${job.klingTaskId} failed: ${status.reason}`);
+    // Existing per-scene asset IDs from previous polls (null slots = not ready yet)
+    const sceneAssetIds: (string | null)[] =
+      job.sceneVideoAssetIds && job.sceneVideoAssetIds.length === taskIds.length
+        ? [...job.sceneVideoAssetIds]
+        : new Array(taskIds.length).fill(null);
+
+    let anyFailed = false;
+    let failReason = "";
+    let anyNewlyStored = false;
+
+    for (let i = 0; i < taskIds.length; i++) {
+      if (sceneAssetIds[i]) continue; // already stored from a previous poll
+
+      const status = await klingService.pollTaskStatus(taskIds[i]);
+      console.log(`[Kling] scene=${i} task=${taskIds[i]} status=${status.status} requestId=${job.requestId}`);
+
+      if (status.status === "failed") {
+        anyFailed = true;
+        failReason = status.reason;
+        console.error(`[Kling] scene=${i} task=${taskIds[i]} failed: ${status.reason}`);
+        continue;
+      }
+
+      if (status.status !== "succeed") {
+        continue; // still submitted/processing
+      }
+
+      // Download from Kling and store in DO Spaces
+      const { storageKey, storageUrl, fileSizeBytes } = await klingService.downloadAndStore(
+        status.videoUrl,
+        request.userId,
+        job.requestId
+      );
+
+      const scheduledDeletionAt = new Date();
+      scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
+
+      const asset = await uploadedAssetRepository.create({
+        requestId: job.requestId,
+        userId: request.userId,
+        fileName: `kling_scene_${i + 1}.mp4`,
+        assetType: AssetType.AIGeneratedBaseVideo,
+        fileSizeBytes,
+        mimeType: "video/mp4",
+        storageKey,
+        storageUrl,
+        thumbnailKey: "",
+        thumbnailUrl: "",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        scheduledDeletionAt,
+      });
+
+      sceneAssetIds[i] = asset.id;
+      anyNewlyStored = true;
+    }
+
+    if (anyFailed) {
+      console.error(`[Kling] one or more scenes failed: ${failReason}`);
       return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
         klingLastPolledAt: new Date(),
+        sceneVideoAssetIds: sceneAssetIds,
       });
     }
 
-    if (status.status !== "succeed") {
+    const allReady = sceneAssetIds.every((a) => a !== null);
+
+    if (!allReady) {
+      // sceneAssetIds is a sparse array (string | null) keyed by scene index
+      // — stored as-is so the next poll only re-checks scenes still null.
       return videoGenerationJobRepository.update(jobId, {
-        klingStatus: status.status,
         klingLastPolledAt: new Date(),
+        ...(anyNewlyStored ? { sceneVideoAssetIds: sceneAssetIds } : {}),
       });
     }
 
-    // Download from Kling and store in DO Spaces
-    const request = await this._getClipRequestBasic(job.requestId);
-    const { storageKey, storageUrl, fileSizeBytes } = await klingService.downloadAndStore(
-      status.videoUrl,
-      request.userId,
-      job.requestId
+    // All scenes ready — concatenate in scene order.
+    const readyAssetIds = sceneAssetIds as string[];
+    const sceneAssets = await Promise.all(
+      readyAssetIds.map((id) => uploadedAssetRepository.findById(id))
     );
+    const missingIdx = sceneAssets.findIndex((a) => !a);
+    if (missingIdx !== -1) {
+      return videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+      });
+    }
 
-    // Remove the previous base video asset if one exists from a prior attempt
+    const sceneStorageKeys = sceneAssets.map((a) => a!.storageKey);
+
+    // Remove the previous concatenated base video asset if one exists from a prior attempt
     if (job.baseVideoAssetId) {
       await uploadedAssetRepository.deleteById(job.baseVideoAssetId);
     }
 
-    // Create UploadedAsset record
+    const concatKey = buildAiVideoKey(request.userId, job.requestId);
+    const { storageKey: concatStorageKey, storageUrl: concatStorageUrl } = await ffmpegService.concatVideos(
+      sceneStorageKeys,
+      concatKey
+    );
+
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
 
-    const asset = await uploadedAssetRepository.create({
+    const concatAsset = await uploadedAssetRepository.create({
       requestId: job.requestId,
       userId: request.userId,
       fileName: "kling_generated.mp4",
       assetType: AssetType.AIGeneratedBaseVideo,
-      fileSizeBytes,
+      fileSizeBytes: 0,
       mimeType: "video/mp4",
-      storageKey,
-      storageUrl,
+      storageKey: concatStorageKey,
+      storageUrl: concatStorageUrl,
       thumbnailKey: "",
       thumbnailUrl: "",
       uploadStatus: AssetUploadStatus.Uploaded,
@@ -301,28 +503,32 @@ export class VideoGenerationService {
 
     return videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.AwaitingVideoApproval,
-      baseVideoAssetId: asset.id,
+      baseVideoAssetId: concatAsset.id,
+      sceneVideoAssetIds: readyAssetIds,
+      klingLastPolledAt: new Date(),
     });
   }
 
-  /** Staff approves the Kling video and triggers iAppTTS voice generation automatically. */
+  /** Staff approves the Kling video and triggers animation generation automatically. */
   async approveBaseVideo(
     jobId: string,
-    staffId: string
+    staffId: string,
+    selectedMusicTrack: string | null = null
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingVoice,
+      currentStep: VideoGenerationStep.GeneratingAnimations,
       videoApprovedBy: staffId,
+      ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
     });
 
-    this._runIAppTtsGeneration(updated).catch(async (err) => {
-      console.error("[iAppTTS] Voice generation failed:", err);
+    this._runAnimationGeneration(updated).catch(async (err) => {
+      console.error("[AnimationGeneration] Failed:", err);
       await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingVoice,
+        failedAtStep: VideoGenerationStep.GeneratingAnimations,
       });
     });
 
@@ -351,6 +557,8 @@ export class VideoGenerationService {
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
       klingTaskId: null,
+      klingTaskIds: null,
+      sceneVideoAssetIds: null,
       baseVideoAssetId: null,
     });
 
@@ -408,10 +616,73 @@ export class VideoGenerationService {
       scheduledDeletionAt,
     });
 
+    // Probe the real duration of the synthesized voice — this becomes the
+    // source of truth for Kling's durationSeconds (step 3).
+    let voiceDurationSeconds: number | null = null;
+    try {
+      voiceDurationSeconds = await probeAudioDurationSeconds(stored.storageKey);
+    } catch (err) {
+      console.error("[ffprobe] Failed to probe voice duration:", err);
+    }
+
+    // Gemini alignment — produce per-sentence timestamps now (moved up from
+    // the old "animation" step) so subtitleTimeline is ready before Kling.
+    let voiceTimestamps: string | null = null;
+    let subtitleTimeline: string | null = null;
+    try {
+      const { requireGeminiApiKey, AI_CONFIG } = await import("@/config/aiTools");
+      requireGeminiApiKey();
+
+      const scriptEnglishCurrent = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
+      const scriptChineseCurrent = job.approvedScriptChinese ?? job.scriptChinese ?? "";
+      let scriptEnglish = scriptEnglishCurrent;
+      let scriptChinese = scriptChineseCurrent;
+
+      if (!scriptEnglish || !scriptChinese) {
+        const { GoogleGenAI } = await import("@google/genai");
+        const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
+        const res = await ai.models.generateContent({
+          model: AI_CONFIG.gemini.textModel,
+          contents: `Translate this Thai script into natural, spoken English and Simplified Chinese for social media subtitles: "${scriptThai}"
+Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
+          config: { responseMimeType: "application/json", temperature: 0.2 },
+        });
+        try {
+          const parsed = JSON.parse(res.text ?? "{}");
+          scriptEnglish = scriptEnglish || (parsed.english ?? "");
+          scriptChinese = scriptChinese || (parsed.chinese ?? "");
+        } catch {
+          /* keep whatever we already had */
+        }
+        await videoGenerationJobRepository.update(job.id, {
+          scriptEnglish,
+          approvedScriptEnglish: scriptEnglish,
+          scriptChinese,
+          approvedScriptChinese: scriptChinese,
+        });
+      }
+
+      const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
+      const segments = await geminiSubtitlesService.alignAudioWithScript({
+        audioUrl: stored.storageUrl,
+        scriptThai,
+        scriptEnglish,
+        scriptChinese,
+        durationSeconds: voiceDurationSeconds ?? 15,
+      });
+      voiceTimestamps = JSON.stringify(segments);
+      subtitleTimeline = voiceTimestamps;
+    } catch (err) {
+      console.error("[GeminiAlignment] Failed to align voice timestamps:", err);
+    }
+
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingVoiceApproval,
       voiceRecordingAssetId: asset.id,
       processedVoiceAssetId: asset.id,
+      voiceDurationSeconds,
+      voiceTimestamps,
+      subtitleTimeline,
     });
     console.log(`[ElevenLabs] Voice stored for request ${job.requestId}: ${stored.storageKey}`);
   }
@@ -462,6 +733,14 @@ export class VideoGenerationService {
     return updated;
   }
 
+  /**
+   * Phase 4 (Remotion-based compositing): renders one transparent overlay
+   * clip per required aspect ratio (captions + motion graphics), stores
+   * them on `animatedOverlayAssetIds`, and composites a single
+   * representative-ratio preview (`animatedVideoAssetId`) for the
+   * `AwaitingAnimationApproval` review UI. `_runFFmpegComposition` later
+   * composites each ratio's overlay onto the final export directly.
+   */
   private async _runAnimationGeneration(job: VideoGenerationJob): Promise<void> {
     const audioAsset = await uploadedAssetRepository.findById(job.processedVoiceAssetId!);
     if (!audioAsset) throw new Error("Voice asset not found for animation generation");
@@ -471,53 +750,21 @@ export class VideoGenerationService {
     if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
     const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
-    let scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
-    let scriptChinese = job.approvedScriptChinese ?? job.scriptChinese ?? "";
-    const durationSeconds = request.durationSeconds || 15;
+    const durationSeconds = job.voiceDurationSeconds ?? request.durationSeconds ?? 15;
 
-    // Fail fast with a clear setup error before doing any work
-    const { requireGeminiApiKey, AI_CONFIG } = await import("@/config/aiTools");
-    requireGeminiApiKey();
-
-    // Translate script to English + Simplified Chinese if missing (needed for
-    // the subtitle timeline). Single Gemini call covers both languages.
-    if (!scriptEnglish || !scriptChinese) {
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
-      const res = await ai.models.generateContent({
-        model: AI_CONFIG.gemini.textModel,
-        contents: `Translate this Thai script into natural, spoken English and Simplified Chinese for social media subtitles: "${scriptThai}"
-Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
-        config: { responseMimeType: "application/json", temperature: 0.2 },
-      });
-      try {
-        const parsed = JSON.parse(res.text ?? "{}");
-        scriptEnglish = scriptEnglish || (parsed.english ?? "");
-        scriptChinese = scriptChinese || (parsed.chinese ?? "");
-      } catch {
-        /* keep whatever we already had */
-      }
-      await videoGenerationJobRepository.update(job.id, {
-        scriptEnglish,
-        approvedScriptEnglish: scriptEnglish,
-        scriptChinese,
-        approvedScriptChinese: scriptChinese,
-      });
+    // Per-sentence timestamps were produced by Gemini right after voice
+    // generation (step 2) and stored on the job as voiceTimestamps /
+    // subtitleTimeline. Reuse them here instead of re-running alignment.
+    const timestampsSource = job.voiceTimestamps ?? job.subtitleTimeline;
+    if (!timestampsSource) {
+      throw new Error("No voice timestamps available for animation generation");
     }
+    const segments = JSON.parse(timestampsSource);
+    const subtitleTimeline = job.subtitleTimeline ?? timestampsSource;
 
-    // Step 1: Gemini audio alignment — extract per-sentence timestamps
-    const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
-    const segments = await geminiSubtitlesService.alignAudioWithScript({
-      audioUrl: audioAsset.storageUrl,
-      scriptThai,
-      scriptEnglish,
-      scriptChinese,
-      durationSeconds,
-    });
-    const subtitleTimeline = JSON.stringify(segments);
-
-    // Step 2: Claude generates animation specs using timestamps
-    let scenePlan: any[] = [];
+    // Step 1: Claude generates motion-graphics specs (kinetic text,
+    // lower-thirds, CTA banners) from the real voice timeline + scene plan.
+    let scenePlan: ScenePlan[] = [];
     try { scenePlan = JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]"); } catch { /* ignore */ }
 
     const specs = await animationService.generateAnimationSpec({
@@ -528,27 +775,69 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       durationSeconds,
     });
 
-    // Step 3: FFmpeg renders animation overlays on the base video
-    const videoAsset = await uploadedAssetRepository.findById(job.baseVideoAssetId!);
-    if (!videoAsset) throw new Error("Base video asset not found");
+    const subtitleLanguages = job.subtitleLanguages && job.subtitleLanguages.length > 0
+      ? job.subtitleLanguages
+      : (["en", "zh"] as ("th" | "en" | "zh")[]);
 
-    const animatedKey = buildAnimatedVideoKey(request.userId, job.requestId);
-    await animationService.renderAnimationsOnVideo({
-      videoStorageKey: videoAsset.storageKey,
-      animationSpecs: specs,
-      outputStorageKey: animatedKey,
-    });
-
-    // Create asset record for the animated video
     const { spacesPublicUrl } = await import("@/lib/spaces");
     const { AssetType, AssetUploadStatus } = await import("@/domain/enums/AssetType");
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
 
+    // Step 2: render one Remotion overlay per required export ratio.
+    const targetRatios = ffmpegService.getRequiredRatiosForPlatforms(request.targetPlatforms ?? []);
+    const overlayAssetIds: Record<string, string> = {};
+
+    for (const ratio of targetRatios) {
+      const overlayKey = buildAnimatedOverlayKey(request.userId, job.requestId, ratio);
+      await remotionService.renderOverlay({
+        ratio,
+        durationSeconds,
+        subtitleTimeline: segments,
+        subtitleLanguages,
+        scenePlan,
+        animationSpecs: specs,
+        outputStorageKey: overlayKey,
+      });
+
+      const overlayAsset = await uploadedAssetRepository.create({
+        requestId: job.requestId,
+        userId: request.userId,
+        fileName: `overlay_${ratio.replace(":", "-")}.webm`,
+        assetType: AssetType.AnimatedVideo,
+        fileSizeBytes: 0,
+        mimeType: "video/webm",
+        storageKey: overlayKey,
+        storageUrl: spacesPublicUrl(overlayKey),
+        thumbnailKey: "",
+        thumbnailUrl: "",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        scheduledDeletionAt,
+        videoRatio: ratio,
+      });
+      overlayAssetIds[ratio] = overlayAsset.id;
+    }
+
+    // Step 3: composite a single representative-ratio preview (base video +
+    // that ratio's overlay) for the AwaitingAnimationApproval review UI.
+    const previewRatio = targetRatios.includes("9:16") ? "9:16" : targetRatios[0];
+    const videoAsset = await uploadedAssetRepository.findById(job.baseVideoAssetId!);
+    if (!videoAsset) throw new Error("Base video asset not found");
+    const previewOverlayAsset = await uploadedAssetRepository.findById(overlayAssetIds[previewRatio]);
+    if (!previewOverlayAsset) throw new Error("Overlay asset not found for animation preview");
+
+    const animatedKey = buildAnimatedVideoKey(request.userId, job.requestId);
+    await ffmpegService.renderOverlayPreview({
+      videoStorageKey: videoAsset.storageKey,
+      overlayStorageKey: previewOverlayAsset.storageKey,
+      ratio: previewRatio,
+      outputStorageKey: animatedKey,
+    });
+
     const animAsset = await uploadedAssetRepository.create({
       requestId: job.requestId,
       userId: request.userId,
-      fileName: "animated_video.mp4",
+      fileName: "animated_preview.mp4",
       assetType: AssetType.AnimatedVideo,
       fileSizeBytes: 0,
       mimeType: "video/mp4",
@@ -558,7 +847,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       thumbnailUrl: "",
       uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt,
-      videoRatio: null,
+      videoRatio: previewRatio,
     });
 
     await videoGenerationJobRepository.update(job.id, {
@@ -566,6 +855,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       subtitleTimeline,
       animationSpec: JSON.stringify(specs),
       animatedVideoAssetId: animAsset.id,
+      animatedOverlayAssetIds: overlayAssetIds,
     });
   }
 
@@ -612,6 +902,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingAnimations,
       animatedVideoAssetId: null,
+      animatedOverlayAssetIds: null,
     });
 
     this._runAnimationGeneration(updated).catch(async (err) => {
@@ -626,63 +917,143 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     return updated;
   }
 
-  /** Staff approves the iAppTTS voice and triggers animation generation. */
+  private async _runSceneDesignGeneration(job: VideoGenerationJob): Promise<void> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const { businessProfileService } = await import("@/services/BusinessProfileService");
+
+    const req = await clipRequestRepository.findById(job.requestId);
+    if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const assets = await uploadedAssetRepository.findByRequestId(job.requestId);
+    const imageUrls = assets
+      .filter((a) => a.assetType === AssetType.Image || a.assetType === AssetType.Video)
+      .filter((a) => a.uploadStatus === AssetUploadStatus.Uploaded)
+      .map((a) => a.storageUrl)
+      .filter(Boolean);
+
+    let businessProfileContext = null;
+    try {
+      const profile = await businessProfileService.getProfile(req.userId);
+      if (profile) {
+        businessProfileContext = {
+          businessName: profile.businessName,
+          category: profile.category,
+          location: profile.location,
+          description: profile.description,
+          menuDetails: profile.menuDetails,
+        };
+      }
+    } catch (err) {
+      console.error("Failed to load business profile context for scene design:", err);
+    }
+
+    const scriptThai = job.approvedScriptThai ?? job.scriptThai;
+    if (!scriptThai) throw new Error("Approved speaking script is missing");
+
+    const durationSeconds =
+      job.voiceDurationSeconds ??
+      (Number.isFinite(req.durationSeconds) && req.durationSeconds > 0 ? req.durationSeconds : 15);
+
+    const output = await chatGptVisionService.generateSceneDesignFromScript({
+      imageUrls,
+      description: req.description,
+      targetAudience: req.targetAudience,
+      targetPlatforms: req.targetPlatforms,
+      preferredStyle: req.preferredStyle,
+      videoDurationSeconds: durationSeconds,
+      businessProfileContext,
+      scriptThai,
+      voiceDurationSeconds: job.voiceDurationSeconds,
+    });
+
+    await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
+      scenePlan: JSON.stringify(output.scenePlan),
+      hookThai: output.hookThai,
+      captionThai: output.captionThai,
+    });
+  }
+
+  /** Staff approves the AI voice and triggers scene/hook design from the approved script. */
   async approveVoiceConversion(
     jobId: string,
     staffId: string,
-    selectedMusicTrack: string | null = null
+    _selectedMusicTrack: string | null = null
   ): Promise<VideoGenerationJob> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
+    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingAnimations,
+      currentStep: VideoGenerationStep.GeneratingSceneDesign,
       voiceApprovedBy: staffId,
-      selectedMusicTrack,
     });
 
-    this._runAnimationGeneration(updated).catch(async (err) => {
-      console.error("[AnimationGeneration] Failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
+    this._runSceneDesignGeneration(updated).catch(async (err) => {
+      console.error("Scene design generation failed:", err);
+      await videoGenerationJobRepository.update(job.id, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingAnimations,
+        failedAtStep: VideoGenerationStep.GeneratingSceneDesign,
       });
     });
 
-    return updated;
+    return this._getJob(jobId);
   }
 
-  /** Requester approves iAppTTS voice, selects music + platforms, triggers animation generation. */
+  /** Requester approves AI voice and triggers scene/hook design from the approved script. */
   async approveVoiceConversionByRequester(
     jobId: string,
-    userId: string,
-    targetPlatforms: Platform[],
-    selectedMusicTrack: string | null = null
+    userId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
 
-    const job = await this._getJob(jobId);
-
-    // Save platform selection to request
-    const { clipRequestRepository } = await import("@/repositories/index");
-    await clipRequestRepository.update(job.requestId, { targetPlatforms });
-
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingAnimations,
+      currentStep: VideoGenerationStep.GeneratingSceneDesign,
       voiceApprovedBy: userId,
-      selectedMusicTrack,
     });
 
-    this._runAnimationGeneration(updated).catch(async (err) => {
-      console.error("[AnimationGeneration] Failed:", err);
+    this._runSceneDesignGeneration(updated).catch(async (err) => {
+      console.error("Scene design generation failed:", err);
       await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingAnimations,
+        failedAtStep: VideoGenerationStep.GeneratingSceneDesign,
       });
     });
 
-    return updated;
+    return this._getJob(jobId);
+  }
+
+  async approveSceneDesignByRequester(
+    jobId: string,
+    userId: string,
+    approved: {
+      scenePlan: string;
+      durationSeconds: number;
+    }
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingSceneDesignApproval);
+    const job = await this._getJob(jobId);
+    const { clipRequestRepository } = await import("@/repositories/index");
+    await clipRequestRepository.update(job.requestId, { durationSeconds: approved.durationSeconds });
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingBaseVideo,
+      approvedScenePlan: approved.scenePlan,
+      contentApprovedBy: userId,
+    });
+
+    try {
+      await this._runKlingGeneration(updated);
+    } catch (err) {
+      console.error("Kling generation failed:", err);
+      return videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+      });
+    }
+
+    return this._getJob(jobId);
   }
 
   /** Staff rejects the voice and triggers re-generation with iAppTTS. */
@@ -724,8 +1095,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   private async _runFFmpegComposition(job: VideoGenerationJob): Promise<void> {
-    // Prefer the animated video (with graphic overlays) over the raw base video
-    const videoAssetId = job.animatedVideoAssetId ?? job.baseVideoAssetId;
+    // Phase 4: the base (concatenated) video is composited per-ratio with
+    // that ratio's Remotion overlay clip (animatedOverlayAssetIds) below —
+    // `animatedVideoAssetId` is just the AwaitingAnimationApproval preview
+    // and is not used as a source for the final exports.
+    const videoAssetId = job.baseVideoAssetId;
     const [videoAsset, audioAsset] = await Promise.all([
       uploadedAssetRepository.findById(videoAssetId!),
       uploadedAssetRepository.findById(job.processedVoiceAssetId!),
@@ -739,6 +1113,18 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const platforms = request.targetPlatforms ?? [];
     const targetRatios = ffmpegService.getRequiredRatiosForPlatforms(platforms);
 
+    // Resolve Phase 4 Remotion overlay clips (one per required ratio) so
+    // ffmpegService can composite + skip redundant subtitle burn-in.
+    const overlayStorageKeys: Partial<Record<ffmpegService.VideoRatio, string>> = {};
+    if (job.animatedOverlayAssetIds) {
+      await Promise.all(
+        Object.entries(job.animatedOverlayAssetIds).map(async ([ratio, assetId]) => {
+          const asset = await uploadedAssetRepository.findById(assetId);
+          if (asset) overlayStorageKeys[ratio as ffmpegService.VideoRatio] = asset.storageKey;
+        })
+      );
+    }
+
     // Use pre-computed subtitle timeline from animation step if available; otherwise re-run alignment
     let assSubtitlesContent: string | undefined = undefined;
     let assSubtitlesContentTvent: string | undefined = undefined;
@@ -746,6 +1132,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ? job.subtitleLanguages
       : (["en", "zh"] as ("th" | "en" | "zh")[]);
     const needsTventExport = platforms.includes(Platform.TventApp);
+    // The 9:16 Remotion overlay's captions were rendered with `subtitleLanguages`
+    // (set above in _runAnimationGeneration) — only reuse it for the Tvent
+    // export if that exactly matches Tvent's fixed English+Chinese requirement.
+    const overlayCoversTventSubtitles =
+      !!overlayStorageKeys["9:16"] &&
+      subtitleLanguages.length === 2 &&
+      subtitleLanguages.includes("en") &&
+      subtitleLanguages.includes("zh");
     try {
       const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
 
@@ -834,6 +1228,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       targetRatios,
       assSubtitlesContent,
       assSubtitlesContentTvent,
+      overlayStorageKeys,
+      overlayCoversTventSubtitles,
     });
 
     const scheduledDeletionAt = new Date();
@@ -925,7 +1321,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     const stepMap = {
       video: VideoGenerationStep.AwaitingVideoApproval,
-      voice: VideoGenerationStep.AwaitingVoiceRecording,
+      voice: VideoGenerationStep.AwaitingVoiceApproval,
       composition: VideoGenerationStep.ComposingFinalVideo,
     };
 
@@ -946,10 +1342,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     requestId: string,
     requesterId: string,
     analysis: {
-      scenePlan: string;
+      scenePlan?: string | null;
       scriptThai: string;
       scriptEnglish: string;
-      hookThai: string;
+      hookThai?: string | null;
       hookEnglish: string;
       captionThai: string;
       captionEnglish: string;
@@ -962,27 +1358,27 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // Update it with the requester-approved (possibly edited) data and start Kling.
     if (existing?.currentStep === VideoGenerationStep.AwaitingContentApproval) {
       const updated = await videoGenerationJobRepository.update(existing.id, {
-        currentStep: VideoGenerationStep.GeneratingBaseVideo,
-        approvedScenePlan: analysis.scenePlan,
+        currentStep: VideoGenerationStep.GeneratingVoice,
+        approvedScenePlan: analysis.scenePlan ?? null,
         approvedScriptThai: analysis.scriptThai,
         approvedScriptEnglish: analysis.scriptEnglish,
-        approvedHookThai: analysis.hookThai,
+        approvedHookThai: analysis.hookThai ?? null,
         approvedHookEnglish: analysis.hookEnglish,
         approvedCaptionThai: analysis.captionThai,
         approvedCaptionEnglish: analysis.captionEnglish,
         approvedCaptionChinese: analysis.captionChinese,
         contentApprovedBy: requesterId,
       });
-      try {
-        await this._runKlingGeneration(updated);
-      } catch (err) {
-        console.error("Kling generation failed:", err);
-        return videoGenerationJobRepository.update(existing.id, {
+
+      this._runIAppTtsGeneration(updated).catch(async (err) => {
+        console.error("[ElevenLabs] Voice generation failed:", err);
+        await videoGenerationJobRepository.update(existing.id, {
           status: VideoGenerationJobStatus.Failed,
           currentStep: VideoGenerationStep.Failed,
-          failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+          failedAtStep: VideoGenerationStep.GeneratingVoice,
         });
-      }
+      });
+
       return this._getJob(existing.id);
     }
 
@@ -993,37 +1389,42 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const job = await videoGenerationJobRepository.create({
       requestId,
       status: VideoGenerationJobStatus.Active,
-      currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      scenePlan: analysis.scenePlan,
+      currentStep: VideoGenerationStep.GeneratingVoice,
+      scenePlan: analysis.scenePlan ?? null,
       scriptThai: analysis.scriptThai,
       scriptEnglish: analysis.scriptEnglish,
       scriptChinese: null,
-      hookThai: analysis.hookThai,
+      hookThai: analysis.hookThai ?? null,
       hookEnglish: analysis.hookEnglish,
       captionThai: analysis.captionThai,
       captionEnglish: analysis.captionEnglish,
       captionChinese: analysis.captionChinese,
-      approvedScenePlan: analysis.scenePlan,
+      approvedScenePlan: analysis.scenePlan ?? null,
       approvedScriptThai: analysis.scriptThai,
       approvedScriptEnglish: analysis.scriptEnglish,
       approvedScriptChinese: null,
-      approvedHookThai: analysis.hookThai,
+      approvedHookThai: analysis.hookThai ?? null,
       approvedHookEnglish: analysis.hookEnglish,
       approvedCaptionThai: analysis.captionThai,
       approvedCaptionEnglish: analysis.captionEnglish,
       approvedCaptionChinese: analysis.captionChinese,
       klingTaskId: null,
+      klingTaskIds: null,
       klingStatus: null,
       klingLastPolledAt: null,
+      sceneVideoAssetIds: null,
       baseVideoAssetId: null,
       ttsTaskId: null,
       rvcVoiceModel: "",
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       selectedMusicTrack: null,
+      voiceDurationSeconds: null,
+      voiceTimestamps: null,
       subtitleTimeline: null,
       animationSpec: null,
       animatedVideoAssetId: null,
+      animatedOverlayAssetIds: null,
       animationApprovedBy: null,
       subtitleLanguages: ["en", "zh"],
       finalExport_9_16_assetId: null,
@@ -1038,16 +1439,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       finalApprovedBy: null,
     });
 
-    try {
-      await this._runKlingGeneration(job);
-    } catch (err) {
-      console.error("Kling generation failed:", err);
-      return videoGenerationJobRepository.update(job.id, {
+    this._runIAppTtsGeneration(job).catch(async (err) => {
+      console.error("[ElevenLabs] Voice generation failed:", err);
+      await videoGenerationJobRepository.update(job.id, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+        failedAtStep: VideoGenerationStep.GeneratingVoice,
       });
-    }
+    });
 
     return this._getJob(job.id);
   }
@@ -1144,6 +1543,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         const updated = await videoGenerationJobRepository.update(jobId, {
           currentStep: VideoGenerationStep.GeneratingBaseVideo,
           klingTaskId: null,
+          klingTaskIds: null,
+          sceneVideoAssetIds: null,
           baseVideoAssetId: null,
         });
         try {
@@ -1177,10 +1578,28 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         return updated;
       }
 
+      case VideoGenerationStep.GeneratingSceneDesign: {
+        const updated = await videoGenerationJobRepository.update(jobId, {
+          currentStep: VideoGenerationStep.GeneratingSceneDesign,
+          scenePlan: null,
+          hookThai: null,
+        });
+        this._runSceneDesignGeneration(updated).catch(async (err) => {
+          console.error("Scene design retry failed:", err);
+          await videoGenerationJobRepository.update(jobId, {
+            status: VideoGenerationJobStatus.Failed,
+            currentStep: VideoGenerationStep.Failed,
+            failedAtStep: VideoGenerationStep.GeneratingSceneDesign,
+          });
+        });
+        return updated;
+      }
+
       case VideoGenerationStep.GeneratingAnimations: {
         const updated = await videoGenerationJobRepository.update(jobId, {
           currentStep: VideoGenerationStep.GeneratingAnimations,
           animatedVideoAssetId: null,
+          animatedOverlayAssetIds: null,
         });
         this._runAnimationGeneration(updated).catch(async (err) => {
           console.error("[AnimationGeneration] Retry failed:", err);
@@ -1217,7 +1636,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
   }
 
-  /** Requester approves the Kling video and triggers iAppTTS voice generation automatically. */
+  /** Requester approves the Kling video and triggers animation generation automatically. */
   async approveBaseVideoByRequester(
     jobId: string,
     requesterId: string
@@ -1225,16 +1644,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingVoice,
+      currentStep: VideoGenerationStep.GeneratingAnimations,
       videoApprovedBy: requesterId,
     });
 
-    this._runIAppTtsGeneration(updated).catch(async (err) => {
-      console.error("[iAppTTS] Voice generation failed:", err);
+    this._runAnimationGeneration(updated).catch(async (err) => {
+      console.error("[AnimationGeneration] Failed:", err);
       await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingVoice,
+        failedAtStep: VideoGenerationStep.GeneratingAnimations,
       });
     });
 
@@ -1264,6 +1683,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       approvedScriptThai: editedContent.scriptThai,
       approvedCaptionThai: editedContent.captionThai,
       klingTaskId: null,
+      klingTaskIds: null,
+      sceneVideoAssetIds: null,
       baseVideoAssetId: null,
     });
 

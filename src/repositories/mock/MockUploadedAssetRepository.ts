@@ -4,6 +4,7 @@ import {
   CreateUploadedAssetInput,
   UpdateUploadedAssetInput,
 } from "@/domain/models/UploadedAsset";
+import { SEED_UPLOADED_ASSETS } from "@/seed/requestSeedData";
 
 // TODO: PostgreSQL — replace with PostgresUploadedAssetRepository.
 //   When deleting, also trigger DigitalOcean Spaces object deletion via UploadService.
@@ -19,6 +20,9 @@ declare global {
 function getStore(): Map<string, UploadedAsset> {
   if (!global.__mockUploadedAssetStore) {
     global.__mockUploadedAssetStore = new Map();
+    SEED_UPLOADED_ASSETS.forEach((a) =>
+      global.__mockUploadedAssetStore!.set(a.id, { ...a })
+    );
   }
   return global.__mockUploadedAssetStore;
 }

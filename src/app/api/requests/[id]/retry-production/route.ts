@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository } from "@/repositories/index";
-import { videoGenerationService } from "@/services/staff/VideoGenerationService";
+import { videoGenerationService } from "@/services/VideoGenerationService";
 
 /**
  * POST /api/requests/[id]/retry-production

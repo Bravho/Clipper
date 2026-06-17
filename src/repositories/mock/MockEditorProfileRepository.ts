@@ -60,8 +60,8 @@ export class MockEditorProfileRepository implements IEditorProfileRepository {
     const profile: EditorProfile = {
       ...input,
       id: crypto.randomUUID(),
-      avgRating: 0,
-      totalReviews: 0,
+      avgRating: input.avgRating ?? 0,
+      totalReviews: input.totalReviews ?? 0,
       totalCompleted: 0,
       createdAt: new Date(),
       updatedAt: new Date(),

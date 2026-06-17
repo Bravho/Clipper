@@ -8,8 +8,7 @@ import {
   videoGenerationJobRepository,
 } from "@/repositories/index";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-import { videoGenerationService } from "@/services/staff/VideoGenerationService";
-import * as klingService from "@/lib/ai/klingService";
+import { videoGenerationService } from "@/services/VideoGenerationService";
 
 /**
  * GET /api/requests/[id]/pipeline-status
@@ -45,31 +44,17 @@ export async function GET(
     return NextResponse.json({ currentStep: null, failedAtStep: null, jobId: null });
   }
 
-  // Kling: track live sub-status even if DB update fails
-  let liveKlingStatus: "submitted" | "processing" | null = null;
-  let liveKlingLastPolledAt: Date | null = null;
-
-  if (job.currentStep === VideoGenerationStep.GeneratingBaseVideo && job.klingTaskId) {
+  // Phase 3: Kling now runs N per-scene tasks (job.klingTaskIds). All
+  // per-scene polling, downloading, and the final concat are handled inside
+  // checkBaseVideoReady, which only advances the job once every scene's
+  // clip is ready. We just delegate to it and report whatever
+  // klingStatus/klingLastPolledAt it left on the job.
+  const hasKlingTasks = (job.klingTaskIds && job.klingTaskIds.length > 0) || !!job.klingTaskId;
+  if (job.currentStep === VideoGenerationStep.GeneratingBaseVideo && hasKlingTasks) {
     try {
-      const klingResult = await klingService.pollTaskStatus(job.klingTaskId);
-      console.log(`[pipeline-status] kling task=${job.klingTaskId} status=${klingResult.status} requestId=${id}`);
-
-      if (klingResult.status === "submitted" || klingResult.status === "processing") {
-        liveKlingStatus = klingResult.status;
-        liveKlingLastPolledAt = new Date();
-        videoGenerationJobRepository
-          .update(job.id, { klingStatus: klingResult.status, klingLastPolledAt: liveKlingLastPolledAt })
-          .catch((err) => console.error("[pipeline-status] DB klingStatus update failed:", err));
-      } else {
-        // "succeed" or "failed" - delegate full side effects
-        try {
-          job = await videoGenerationService.checkBaseVideoReady(job.id);
-        } catch (err) {
-          console.error("[pipeline-status] checkBaseVideoReady failed:", err);
-        }
-      }
+      job = await videoGenerationService.checkBaseVideoReady(job.id);
     } catch (err) {
-      console.error("[pipeline-status] Kling poll failed:", err);
+      console.error("[pipeline-status] checkBaseVideoReady failed:", err);
     }
   }
 
@@ -88,8 +73,8 @@ export async function GET(
       voiceError,
       processedVoiceAssetId: job.processedVoiceAssetId,
       processedVoiceUrl: processedVoiceAsset?.storageUrl ?? null,
-      klingStatus: liveKlingStatus ?? job.klingStatus ?? null,
-      klingLastPolledAt: (liveKlingLastPolledAt ?? job.klingLastPolledAt)?.toISOString() ?? null,
+      klingStatus: job.klingStatus ?? null,
+      klingLastPolledAt: job.klingLastPolledAt?.toISOString() ?? null,
     },
     {
       headers: {
