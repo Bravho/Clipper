@@ -1,23 +1,23 @@
 import {
   videoGenerationJobRepository,
   uploadedAssetRepository,
-  videoPublishRecordRepository,
 } from "@/repositories/index";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
-import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
+import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
-import { buildVoiceRecordingKey, buildTmpKey, buildAnimatedVideoKey, buildAnimatedOverlayKey, buildAiVideoKey } from "@/lib/spacesKeys";
-import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
+import { buildAnimatedVideoKey, buildAnimatedOverlayKey, buildAiVideoKey } from "@/lib/spacesKeys";
+import { spacesClient } from "@/lib/spaces";
 import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
-import * as klingService from "@/lib/ai/klingService";
+import * as veoService from "@/lib/ai/veoService";
 import * as elevenLabsTtsService from "@/lib/ai/elevenLabsTtsService";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
 import * as animationService from "@/lib/ai/animationService";
 import * as remotionService from "@/lib/ai/remotionService";
 import type { VideoGenerationJob, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import type { ImageCoordinates } from "@/lib/ai/geminiSubtitlesService";
+import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -27,14 +27,13 @@ import * as path from "path";
 import { AI_CONFIG } from "@/config/aiTools";
 
 const execFileAsync = promisify(execFile);
-const PRESIGNED_TTL = 15 * 60; // 15 minutes
 
 /**
  * Probe the real duration (seconds) of a stored audio asset using ffprobe.
  * Downloads the asset to a temp file, runs ffprobe, then cleans up.
  *
- * Used after voice generation (step 2) so Kling (step 3) can be sized to the
- * real voice duration instead of the scene-plan estimate.
+ * Used after voice generation (step 2) so video generation (step 3) can be
+ * sized to the real voice duration instead of the scene-plan estimate.
  */
 async function probeAudioDurationSeconds(storageKey: string): Promise<number> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-voice-"));
@@ -112,10 +111,10 @@ export class VideoGenerationService {
       approvedCaptionThai: null,
       approvedCaptionEnglish: null,
       approvedCaptionChinese: null,
-      klingTaskId: null,
-      klingTaskIds: null,
-      klingStatus: null,
-      klingLastPolledAt: null,
+      videoGenTaskId: null,
+      videoGenTaskIds: null,
+      videoGenStatus: null,
+      videoGenLastPolledAt: null,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
       ttsTaskId: null,
@@ -243,12 +242,14 @@ export class VideoGenerationService {
       captionChinese: string;
     }
   ): Promise<VideoGenerationJob> {
-    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingContentApproval);
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingContentApproval);
+    const scriptThai = sanitizeThaiVoiceScript(approved.scriptThai);
+    if (!scriptThai) throw new Error("No approved Thai script available for TTS");
 
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingVoice,
       approvedScenePlan: approved.scenePlan ?? null,
-      approvedScriptThai: approved.scriptThai,
+      approvedScriptThai: scriptThai,
       approvedScriptEnglish: approved.scriptEnglish,
       approvedHookThai: approved.hookThai ?? null,
       approvedHookEnglish: approved.hookEnglish,
@@ -304,8 +305,8 @@ export class VideoGenerationService {
    * Select image URLs for a scene using `scene.imageIndexes`, falling back
    * to all images if `imageIndexes` is empty, and silently dropping any
    * out-of-bounds indexes. If every index is out of bounds (or the array
-   * ends up empty), falls back to the full image set so Kling always
-   * receives at least one image.
+   * ends up empty), falls back to the full image set so the video generator
+   * always receives at least one image.
    */
   private _selectSceneImages(allImageUrls: string[], imageIndexes: number[] | undefined): string[] {
     if (!imageIndexes || imageIndexes.length === 0) {
@@ -318,14 +319,14 @@ export class VideoGenerationService {
   }
 
   /**
-   * Issue one Kling `createVideo` call per scene in `approvedScenePlan`,
+   * Issue one Veo `createVideo` call per scene in `approvedScenePlan`,
    * using requester-approved scene durations plus that scene's
    * `visualDescriptionThai` + `imageIndexes`-selected images. Records all task
-   * IDs (in scene order) on `klingTaskIds`, plus the first task ID on the
-   * legacy `klingTaskId` field for any code paths that still read it as an
+   * IDs (in scene order) on `videoGenTaskIds`, plus the first task ID on the
+   * legacy `videoGenTaskId` field for any code paths that still read it as an
    * "in-flight" signal.
    */
-  private async _runKlingGeneration(job: VideoGenerationJob): Promise<void> {
+  private async _runVideoGeneration(job: VideoGenerationJob): Promise<void> {
     const request = await this._getClipRequestImages(job.requestId);
     const scenePlan = JSON.parse(job.approvedScenePlan!) as ScenePlan[];
 
@@ -345,7 +346,7 @@ export class VideoGenerationService {
       const prompt = (scene.visualDescriptionThai ?? scene.visualDescription ?? "") + ANTI_HALLUCINATION;
       const imageUrls = this._selectSceneImages(request.imageUrls, scene.imageIndexes);
 
-      const taskId = await klingService.createVideo({
+      const taskId = await veoService.createVideo({
         imageUrls,
         prompt,
         aspectRatio,
@@ -355,25 +356,25 @@ export class VideoGenerationService {
     }
 
     await videoGenerationJobRepository.update(job.id, {
-      klingTaskIds: taskIds,
-      klingTaskId: taskIds[0] ?? null,
+      videoGenTaskIds: taskIds,
+      videoGenTaskId: taskIds[0] ?? null,
       sceneVideoAssetIds: null,
     });
   }
 
   /**
-   * Poll Kling for ALL per-scene video completions. Called by the status
+   * Poll Veo for ALL per-scene video completions. Called by the status
    * endpoint. Once every scene's clip has been downloaded and stored, the
-   * clips are concatenated (in scene order) with `ffmpegService.concatVideos`
-   * into a single `baseVideoAssetId` and the job advances to
-   * AwaitingVideoApproval.
+   * clips are merged automatically (in scene order) with
+   * `ffmpegService.concatVideos` into a single `baseVideoAssetId` and the job
+   * advances to AwaitingVideoApproval.
    */
   async checkBaseVideoReady(jobId: string): Promise<VideoGenerationJob> {
     const job = await this._getJob(jobId);
 
     if (job.currentStep !== VideoGenerationStep.GeneratingBaseVideo) return job;
 
-    const taskIds = job.klingTaskIds ?? (job.klingTaskId ? [job.klingTaskId] : []);
+    const taskIds = job.videoGenTaskIds ?? (job.videoGenTaskId ? [job.videoGenTaskId] : []);
     if (taskIds.length === 0) return job;
 
     const request = await this._getClipRequestBasic(job.requestId);
@@ -391,13 +392,13 @@ export class VideoGenerationService {
     for (let i = 0; i < taskIds.length; i++) {
       if (sceneAssetIds[i]) continue; // already stored from a previous poll
 
-      const status = await klingService.pollTaskStatus(taskIds[i]);
-      console.log(`[Kling] scene=${i} task=${taskIds[i]} status=${status.status} requestId=${job.requestId}`);
+      const status = await veoService.pollTaskStatus(taskIds[i]);
+      console.log(`[Veo] scene=${i} task=${taskIds[i]} status=${status.status} requestId=${job.requestId}`);
 
       if (status.status === "failed") {
         anyFailed = true;
         failReason = status.reason;
-        console.error(`[Kling] scene=${i} task=${taskIds[i]} failed: ${status.reason}`);
+        console.error(`[Veo] scene=${i} task=${taskIds[i]} failed: ${status.reason}`);
         continue;
       }
 
@@ -405,8 +406,8 @@ export class VideoGenerationService {
         continue; // still submitted/processing
       }
 
-      // Download from Kling and store in DO Spaces
-      const { storageKey, storageUrl, fileSizeBytes } = await klingService.downloadAndStore(
+      // Download from Veo and store in DO Spaces
+      const { storageKey, storageUrl, fileSizeBytes } = await veoService.downloadAndStore(
         status.videoUrl,
         request.userId,
         job.requestId
@@ -418,7 +419,7 @@ export class VideoGenerationService {
       const asset = await uploadedAssetRepository.create({
         requestId: job.requestId,
         userId: request.userId,
-        fileName: `kling_scene_${i + 1}.mp4`,
+        fileName: `veo_scene_${i + 1}.mp4`,
         assetType: AssetType.AIGeneratedBaseVideo,
         fileSizeBytes,
         mimeType: "video/mp4",
@@ -435,12 +436,12 @@ export class VideoGenerationService {
     }
 
     if (anyFailed) {
-      console.error(`[Kling] one or more scenes failed: ${failReason}`);
+      console.error(`[Veo] one or more scenes failed: ${failReason}`);
       return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-        klingLastPolledAt: new Date(),
+        videoGenLastPolledAt: new Date(),
         sceneVideoAssetIds: sceneAssetIds,
       });
     }
@@ -451,7 +452,7 @@ export class VideoGenerationService {
       // sceneAssetIds is a sparse array (string | null) keyed by scene index
       // — stored as-is so the next poll only re-checks scenes still null.
       return videoGenerationJobRepository.update(jobId, {
-        klingLastPolledAt: new Date(),
+        videoGenLastPolledAt: new Date(),
         ...(anyNewlyStored ? { sceneVideoAssetIds: sceneAssetIds } : {}),
       });
     }
@@ -489,7 +490,7 @@ export class VideoGenerationService {
     const concatAsset = await uploadedAssetRepository.create({
       requestId: job.requestId,
       userId: request.userId,
-      fileName: "kling_generated.mp4",
+      fileName: "veo_generated.mp4",
       assetType: AssetType.AIGeneratedBaseVideo,
       fileSizeBytes: 0,
       mimeType: "video/mp4",
@@ -505,11 +506,11 @@ export class VideoGenerationService {
       currentStep: VideoGenerationStep.AwaitingVideoApproval,
       baseVideoAssetId: concatAsset.id,
       sceneVideoAssetIds: readyAssetIds,
-      klingLastPolledAt: new Date(),
+      videoGenLastPolledAt: new Date(),
     });
   }
 
-  /** Staff approves the Kling video and triggers animation generation automatically. */
+  /** Staff approves the generated video and triggers animation generation automatically. */
   async approveBaseVideo(
     jobId: string,
     staffId: string,
@@ -536,14 +537,13 @@ export class VideoGenerationService {
   }
 
   /**
-   * Staff rejects the Kling video.
-   * @param backToStep  "video" → regenerate with Kling; "content" → go back to ChatGPT
+   * Staff rejects the generated video.
+   * @param backToStep  "video" → regenerate with Veo; "content" → go back to ChatGPT
    */
   async rejectBaseVideo(
     jobId: string,
     staffId: string,
-    backToStep: "video" | "content",
-    newPrompt?: string
+    backToStep: "video" | "content"
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
@@ -556,16 +556,16 @@ export class VideoGenerationService {
     // Regenerate video with optional updated prompt
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      klingTaskId: null,
-      klingTaskIds: null,
+      videoGenTaskId: null,
+      videoGenTaskIds: null,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
     });
 
     try {
-      await this._runKlingGeneration(updated);
+      await this._runVideoGeneration(updated);
     } catch (err) {
-      console.error("Kling regeneration failed:", err);
+      console.error("Veo regeneration failed:", err);
       return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
@@ -587,8 +587,15 @@ export class VideoGenerationService {
    * Uses job.approvedScriptThai (the staff/requester-approved speaking script).
    */
   private async _runIAppTtsGeneration(job: VideoGenerationJob): Promise<void> {
-    const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
+    const scriptThai = sanitizeThaiVoiceScript(job.approvedScriptThai ?? job.scriptThai ?? "");
     if (!scriptThai) throw new Error("No approved Thai script available for TTS");
+
+    if (scriptThai !== (job.approvedScriptThai ?? job.scriptThai ?? "")) {
+      await videoGenerationJobRepository.update(job.id, {
+        scriptThai,
+        approvedScriptThai: scriptThai,
+      });
+    }
 
     console.log(`[ElevenLabs] Synthesizing voice for request ${job.requestId}...`);
     const request = await this._getClipRequestBasic(job.requestId);
@@ -617,7 +624,7 @@ export class VideoGenerationService {
     });
 
     // Probe the real duration of the synthesized voice — this becomes the
-    // source of truth for Kling's durationSeconds (step 3).
+    // source of truth for the video generator's durationSeconds (step 3).
     let voiceDurationSeconds: number | null = null;
     try {
       voiceDurationSeconds = await probeAudioDurationSeconds(stored.storageKey);
@@ -626,7 +633,7 @@ export class VideoGenerationService {
     }
 
     // Gemini alignment — produce per-sentence timestamps now (moved up from
-    // the old "animation" step) so subtitleTimeline is ready before Kling.
+    // the old "animation" step) so subtitleTimeline is ready before Veo.
     let voiceTimestamps: string | null = null;
     let subtitleTimeline: string | null = null;
     try {
@@ -700,6 +707,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     jobId: string,
     _userId: string
   ): Promise<VideoGenerationJob> {
+    void _userId; // retained for caller-identity parity; not yet persisted
     const job = await this._getJob(jobId);
     const isVoiceFailure =
       job.currentStep === VideoGenerationStep.Failed &&
@@ -897,6 +905,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     jobId: string,
     userId: string
   ): Promise<VideoGenerationJob> {
+    void userId; // retained for caller-identity parity; not yet persisted
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
@@ -947,7 +956,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       console.error("Failed to load business profile context for scene design:", err);
     }
 
-    const scriptThai = job.approvedScriptThai ?? job.scriptThai;
+    const scriptThai = sanitizeThaiVoiceScript(job.approvedScriptThai ?? job.scriptThai ?? "");
     if (!scriptThai) throw new Error("Approved speaking script is missing");
 
     const durationSeconds =
@@ -980,6 +989,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     staffId: string,
     _selectedMusicTrack: string | null = null
   ): Promise<VideoGenerationJob> {
+    void _selectedMusicTrack; // retained for signature parity with the requester path
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
@@ -1043,9 +1053,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     });
 
     try {
-      await this._runKlingGeneration(updated);
+      await this._runVideoGeneration(updated);
     } catch (err) {
-      console.error("Kling generation failed:", err);
+      console.error("Veo generation failed:", err);
       return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
@@ -1197,7 +1207,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
 
     // Call Gemini coordinates detection for smart crop focus
-    let coords: any = undefined;
+    let coords: ImageCoordinates | undefined = undefined;
     try {
       const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
       const assets = await uploadedAssetRepository.findByRequestId(job.requestId);
@@ -1335,8 +1345,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /**
-   * Requester-triggered: skip the staff content-review gate and start Kling
-   * directly using the AI analysis already shown to the requester.
+   * Requester-triggered: skip the staff content-review gate and start the
+   * pipeline directly using the AI analysis already shown to the requester.
    */
   async startFromRequesterApproval(
     requestId: string,
@@ -1353,14 +1363,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
   ): Promise<VideoGenerationJob> {
     const existing = await videoGenerationJobRepository.findByRequestId(requestId);
+    const scriptThai = sanitizeThaiVoiceScript(analysis.scriptThai);
+    if (!scriptThai) throw new Error("No approved Thai script available for TTS");
 
     // Job was pre-created by the analyze endpoint at AwaitingContentApproval.
-    // Update it with the requester-approved (possibly edited) data and start Kling.
+    // Update it with the requester-approved (possibly edited) data and start the pipeline.
     if (existing?.currentStep === VideoGenerationStep.AwaitingContentApproval) {
       const updated = await videoGenerationJobRepository.update(existing.id, {
         currentStep: VideoGenerationStep.GeneratingVoice,
         approvedScenePlan: analysis.scenePlan ?? null,
-        approvedScriptThai: analysis.scriptThai,
+        approvedScriptThai: scriptThai,
         approvedScriptEnglish: analysis.scriptEnglish,
         approvedHookThai: analysis.hookThai ?? null,
         approvedHookEnglish: analysis.hookEnglish,
@@ -1391,7 +1403,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       status: VideoGenerationJobStatus.Active,
       currentStep: VideoGenerationStep.GeneratingVoice,
       scenePlan: analysis.scenePlan ?? null,
-      scriptThai: analysis.scriptThai,
+      scriptThai,
       scriptEnglish: analysis.scriptEnglish,
       scriptChinese: null,
       hookThai: analysis.hookThai ?? null,
@@ -1400,7 +1412,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       captionEnglish: analysis.captionEnglish,
       captionChinese: analysis.captionChinese,
       approvedScenePlan: analysis.scenePlan ?? null,
-      approvedScriptThai: analysis.scriptThai,
+      approvedScriptThai: scriptThai,
       approvedScriptEnglish: analysis.scriptEnglish,
       approvedScriptChinese: null,
       approvedHookThai: analysis.hookThai ?? null,
@@ -1408,10 +1420,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       approvedCaptionThai: analysis.captionThai,
       approvedCaptionEnglish: analysis.captionEnglish,
       approvedCaptionChinese: analysis.captionChinese,
-      klingTaskId: null,
-      klingTaskIds: null,
-      klingStatus: null,
-      klingLastPolledAt: null,
+      videoGenTaskId: null,
+      videoGenTaskIds: null,
+      videoGenStatus: null,
+      videoGenLastPolledAt: null,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
       ttsTaskId: null,
@@ -1494,7 +1506,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           : existingPlan;
       await videoGenerationJobRepository.update(jobId, {
         approvedScenePlan: JSON.stringify(updatedScenePlan),
-        approvedScriptThai: editedContent.scriptThai,
+        approvedScriptThai:
+          editedContent.scriptThai === null
+            ? null
+            : sanitizeThaiVoiceScript(editedContent.scriptThai),
         approvedScriptEnglish: editedContent.scriptEnglish,
         approvedHookThai: editedContent.hookThai,
         approvedHookEnglish: editedContent.hookEnglish,
@@ -1542,15 +1557,15 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       case VideoGenerationStep.GeneratingBaseVideo: {
         const updated = await videoGenerationJobRepository.update(jobId, {
           currentStep: VideoGenerationStep.GeneratingBaseVideo,
-          klingTaskId: null,
-          klingTaskIds: null,
+          videoGenTaskId: null,
+          videoGenTaskIds: null,
           sceneVideoAssetIds: null,
           baseVideoAssetId: null,
         });
         try {
-          await this._runKlingGeneration(updated);
+          await this._runVideoGeneration(updated);
         } catch (err) {
-          console.error("Kling retry failed:", err);
+          console.error("Veo retry failed:", err);
           return videoGenerationJobRepository.update(jobId, {
             status: VideoGenerationJobStatus.Failed,
             currentStep: VideoGenerationStep.Failed,
@@ -1636,7 +1651,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
   }
 
-  /** Requester approves the Kling video and triggers animation generation automatically. */
+  /** Requester approves the generated video and triggers animation generation automatically. */
   async approveBaseVideoByRequester(
     jobId: string,
     requesterId: string
@@ -1662,7 +1677,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
   /**
    * Requester requests a video revision with an updated script.
-   * Saves edited approved fields and re-triggers Kling generation.
+   * Saves edited approved fields and re-triggers Veo generation.
    */
   async requestVideoRevisionByRequester(
     jobId: string,
@@ -1675,23 +1690,24 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+    const scriptThai = sanitizeThaiVoiceScript(editedContent.scriptThai);
 
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
       approvedScenePlan: editedContent.scenePlan,
       approvedHookThai: editedContent.hookThai,
-      approvedScriptThai: editedContent.scriptThai,
+      approvedScriptThai: scriptThai,
       approvedCaptionThai: editedContent.captionThai,
-      klingTaskId: null,
-      klingTaskIds: null,
+      videoGenTaskId: null,
+      videoGenTaskIds: null,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
     });
 
     try {
-      await this._runKlingGeneration(updated);
+      await this._runVideoGeneration(updated);
     } catch (err) {
-      console.error("Kling regeneration failed:", err);
+      console.error("Veo regeneration failed:", err);
       return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,

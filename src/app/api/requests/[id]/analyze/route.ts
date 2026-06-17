@@ -10,7 +10,6 @@ import {
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-import { AI_CONFIG } from "@/config/aiTools";
 import { generateSpeakingScript } from "@/lib/ai/chatGptVisionService";
 
 /**
@@ -93,9 +92,9 @@ export async function POST(
         approvedCaptionThai: null,
         approvedCaptionEnglish: null,
         approvedCaptionChinese: null,
-        klingTaskId: null,
-        klingStatus: null,
-        klingLastPolledAt: null,
+        videoGenTaskId: null,
+        videoGenStatus: null,
+        videoGenLastPolledAt: null,
         baseVideoAssetId: null,    ttsTaskId: null,
 
         rvcVoiceModel: "",
@@ -104,7 +103,7 @@ export async function POST(
         selectedMusicTrack: null,
         voiceDurationSeconds: null,
         voiceTimestamps: null,
-        klingTaskIds: null,
+        videoGenTaskIds: null,
         sceneVideoAssetIds: null,
         subtitleTimeline: null,
         animationSpec: null,

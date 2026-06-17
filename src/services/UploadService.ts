@@ -188,7 +188,7 @@ export class UploadService {
     const destKey = buildRequestMatKey(asset.userId, asset.requestId, asset.fileName);
 
     // Copy from tmp/ to request_mat/ — ACL must be public-read so external
-    // services (e.g. Kling AI) can fetch the file without credentials.
+    // services (e.g. the Veo video generator) can fetch the file without credentials.
     await spacesClient.send(
       new CopyObjectCommand({
         Bucket: SPACES_BUCKET,

@@ -7,26 +7,26 @@ import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerati
 interface Props {
   requestId: string;
   currentStep: VideoGenerationStep;
-  onKlingStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
+  onVideoGenStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
 }
 
-// Kling video generation takes 2–5 minutes; poll less aggressively to avoid
-// hammering the Kling API. All other async steps (GPT, FFmpeg) complete
+// Veo video generation takes a few minutes; poll less aggressively to avoid
+// hammering the Veo API. All other async steps (GPT, FFmpeg) complete
 // within ~30s so 5s is appropriate there.
-const KLING_POLL_INTERVAL_MS = 30_000;
+const VIDEO_GEN_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
-export function PipelineStatusPoller({ requestId, currentStep, onKlingStatus }: Props) {
+export function PipelineStatusPoller({ requestId, currentStep, onVideoGenStatus }: Props) {
   const router = useRouter();
-  const onKlingStatusRef = useRef(onKlingStatus);
+  const onVideoGenStatusRef = useRef(onVideoGenStatus);
 
-  useEffect(() => { onKlingStatusRef.current = onKlingStatus; }, [onKlingStatus]);
+  useEffect(() => { onVideoGenStatusRef.current = onVideoGenStatus; }, [onVideoGenStatus]);
 
   useEffect(() => {
     if (!POLLING_STEPS.includes(currentStep)) return;
 
-    const isKlingStep = currentStep === VideoGenerationStep.GeneratingBaseVideo;
-    const intervalMs = isKlingStep ? KLING_POLL_INTERVAL_MS : DEFAULT_POLL_INTERVAL_MS;
+    const isVideoGenStep = currentStep === VideoGenerationStep.GeneratingBaseVideo;
+    const intervalMs = isVideoGenStep ? VIDEO_GEN_POLL_INTERVAL_MS : DEFAULT_POLL_INTERVAL_MS;
 
     const interval = setInterval(async () => {
       try {
@@ -35,14 +35,14 @@ export function PipelineStatusPoller({ requestId, currentStep, onKlingStatus }: 
         });
         if (!res.ok) return;
         const data = await res.json();
-        const { currentStep: newStep, klingStatus, klingLastPolledAt } = data;
+        const { currentStep: newStep, videoGenStatus, videoGenLastPolledAt } = data;
 
-        // Update klingStatus directly in client state — do not rely on RSC
+        // Update videoGenStatus directly in client state — do not rely on RSC
         // refresh for intra-step sub-status changes.
-        if (isKlingStep && klingStatus && onKlingStatusRef.current) {
-          onKlingStatusRef.current(
-            klingStatus,
-            klingLastPolledAt ? new Date(klingLastPolledAt) : new Date()
+        if (isVideoGenStep && videoGenStatus && onVideoGenStatusRef.current) {
+          onVideoGenStatusRef.current(
+            videoGenStatus,
+            videoGenLastPolledAt ? new Date(videoGenLastPolledAt) : new Date()
           );
         }
 

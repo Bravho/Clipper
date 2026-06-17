@@ -24,7 +24,6 @@ import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
-import type { ChatGptContentOutput } from "@/lib/ai/chatGptVisionService";
 
 interface PendingFile {
   id: string;
@@ -45,7 +44,7 @@ interface NewRequestFormProps {
 const MAX_IMAGE_SIZE_MB = MAX_IMAGE_SIZE_BYTES / (1024 * 1024);
 const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE_BYTES / (1024 * 1024);
 
-type SubmitPhase = "form" | "analyzing" | "results" | "starting";
+type SubmitPhase = "form" | "submitting";
 
 export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, onCreditParamsChange }: NewRequestFormProps) {
   const COST = creditCost ?? CREDITS_CONFIG.REQUEST_COST_CREDITS;
@@ -58,19 +57,11 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
   const [isDraftSaving, setIsDraftSaving] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [phase, setPhase] = useState<SubmitPhase>("form");
-  const [submittedRequestId, setSubmittedRequestId] = useState<string | null>(null);
-  const [editedResult, setEditedResult] = useState<ChatGptContentOutput | null>(null);
-  const [startError, setStartError] = useState<string | null>(null);
-
-  const updateResultField = (field: string, value: string) => {
-    setEditedResult((prev) => (prev ? { ...prev, [field]: value } : prev));
-  };
 
   const {
     register,
     handleSubmit,
     watch,
-    setValue,
     setFocus,
     formState: { errors, isSubmitting },
   } = useForm<SubmitClipRequestValues>({
@@ -176,35 +167,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
       setIsDraftSaving(false);
     }
   };
-
-  const handleApproveAndStart = async () => {
-    if (!submittedRequestId || !editedResult) return;
-    setStartError(null);
-    setPhase("starting");
-    try {
-      const res = await fetch(`/api/requests/${submittedRequestId}/start-production`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scriptThai: editedResult.scriptThai,
-          scriptEnglish: null,
-          captionThai: editedResult.captionThai,
-          captionEnglish: null,
-          captionChinese: null,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถเริ่มสร้างวิดีโอได้");
-      }
-    } catch (err) {
-      setStartError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
-      setPhase("results");
-      return;
-    }
-    router.push(requestDetailPath(submittedRequestId));
-  };
-
   const onSubmit = async (data: SubmitClipRequestValues) => {
     setSubmitError(null);
 
@@ -221,6 +183,8 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
     }
 
     try {
+      setPhase("submitting");
+
       const requestRes = await fetch("/api/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -277,25 +241,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
         throw new Error(body.error ?? "ไม่สามารถส่งคำขอได้");
       }
 
-      // Request submitted — now call AI analysis
-      setSubmittedRequestId(requestId);
-      setPhase("analyzing");
-
-      try {
-        const analyzeRes = await fetch(`/api/requests/${requestId}/analyze`, {
-          method: "POST",
-        });
-        if (analyzeRes.ok) {
-          const { analysis } = await analyzeRes.json();
-          setEditedResult(analysis);
-          setPhase("results");
-        } else {
-          // AI failed — still navigate to detail page
-          router.push(requestDetailPath(requestId));
-        }
-      } catch {
-        router.push(requestDetailPath(requestId));
-      }
+      router.push(requestDetailPath(requestId));
     } catch (err) {
       setPhase("form");
       setSubmitError(
@@ -325,7 +271,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
 
   const insufficientCredits = creditBalance < COST;
 
-  if (phase === "analyzing") {
+  if (phase === "submitting") {
     return (
       <div className="flex flex-col items-center justify-center gap-6 py-24 text-center">
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />
@@ -340,107 +286,6 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
       </div>
     );
   }
-
-  if (phase === "starting") {
-    return (
-      <div className="flex flex-col items-center justify-center gap-6 py-24 text-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />
-        <div>
-          <p className="text-lg font-semibold text-slate-800">
-            กำลังสร้างเสียงพากย์
-          </p>
-          <p className="mt-1 text-sm text-slate-500">
-            ระบบกำลังสร้างเสียงพากย์จากบทพูดที่อนุมัติ — จะนำคุณไปยังหน้าติดตามสถานะในอีกสักครู่
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === "results" && editedResult && submittedRequestId) {
-    return (
-      <div className="flex flex-col gap-6">
-        {/* Success banner */}
-        <div className="rounded-xl border border-green-200 bg-green-50 p-4">
-          <p className="text-sm font-semibold text-green-800">AI วิเคราะห์เสร็จแล้ว</p>
-          <p className="mt-0.5 text-sm text-green-700">
-            ตรวจสอบและแก้ไขบทพูดและแคปชั่นด้านล่างได้เลย เมื่อพร้อมแล้วคลิก "สร้างเสียงพากย์"
-          </p>
-        </div>
-
-        {/* Theme */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
-          <h3 className="mb-2 text-sm font-semibold text-slate-500 uppercase tracking-wide">
-            ธีมและสไตล์
-          </h3>
-          <textarea
-            value={editedResult.theme}
-            onChange={(e) => updateResultField("theme", e.target.value)}
-            rows={2}
-            className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-          />
-        </div>
-
-        {/* Script */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
-          <h3 className="mb-3 text-sm font-semibold text-slate-500 uppercase tracking-wide">
-            บทพูด
-          </h3>
-          <div className="flex flex-col gap-2">
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">ภาษาไทย</p>
-              <textarea
-                value={editedResult.scriptThai}
-                onChange={(e) => updateResultField("scriptThai", e.target.value)}
-                rows={4}
-                className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Captions */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
-          <h3 className="mb-3 text-sm font-semibold text-slate-500 uppercase tracking-wide">
-            แคปชั่นโซเชียล
-          </h3>
-          <div className="flex flex-col gap-3">
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-400">ภาษาไทย</p>
-              <textarea
-                value={editedResult.captionThai}
-                onChange={(e) => updateResultField("captionThai", e.target.value)}
-                rows={3}
-                className="w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Start error */}
-        {startError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-            <p className="text-sm text-red-700">{startError}</p>
-          </div>
-        )}
-
-        {/* Action */}
-        <div className="flex items-center justify-between pb-4">
-          <button
-            type="button"
-            onClick={() => router.push(requestDetailPath(submittedRequestId))}
-            className="text-sm text-slate-500 hover:text-slate-700"
-          >
-            ดูรายละเอียดคำขอ
-          </button>
-          <Button onClick={handleApproveAndStart}>
-            สร้างเสียงพากย์ →
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-8">
       {/* Insufficient credits warning */}

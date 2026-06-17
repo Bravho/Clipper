@@ -39,8 +39,8 @@ export interface VideoGenerationJob {
   /** See scriptChinese. */
   approvedScriptChinese?: string | null;
 
-  // Step 2: ElevenLabs voice generation (now runs BEFORE Kling — see
-  // VideoGenerationStep for the audio-first pipeline reorder)
+  // Step 2: ElevenLabs voice generation (now runs BEFORE video generation —
+  // see VideoGenerationStep for the audio-first pipeline reorder)
   /** TTS async task ID returned by the local TTS server (currently iAppTTS) - used for polling. */
   ttsTaskId: string | null;
   /** Legacy field retained for database compatibility. iAppTTS always uses its default voice. */
@@ -51,8 +51,8 @@ export interface VideoGenerationJob {
   /**
    * Real duration (seconds) of the generated voice audio, probed with
    * ffprobe immediately after ElevenLabs synthesis. This is the source of
-   * truth for Kling's `durationSeconds` (step 3) — replaces the scene-plan
-   * estimate. Null until the voice step completes.
+   * truth for the video generator's `durationSeconds` (step 3) — replaces the
+   * scene-plan estimate. Null until the voice step completes.
    */
   voiceDurationSeconds: number | null;
   /**
@@ -69,33 +69,34 @@ export interface VideoGenerationJob {
    * response handling) than Phase 1's scope. We therefore KEEP the Gemini
    * `alignAudioWithScript` step, but RUN IT immediately after voice
    * generation (this step) instead of during the old "animation" step, so
-   * `subtitleTimeline` is available before Kling and animation run.
+   * `subtitleTimeline` is available before video generation and animation run.
    */
   voiceTimestamps: string | null;
 
-  // Step 3: Kling AI base video, now PER-SCENE (Phase 3 / "Phase 2" of the
-  // audio-first plan). `job.voiceDurationSeconds` is split across
+  // Step 3: AI base video (Google Veo 3.1 Lite), PER-SCENE (Phase 3 / "Phase
+  // 2" of the audio-first plan). `job.voiceDurationSeconds` is split across
   // `approvedScenePlan`/`scenePlan` scenes proportionally to each scene's
-  // original estimated `durationSeconds`, and one Kling call is issued per
-  // scene using that scene's `visualDescriptionThai` + images selected via
-  // `imageIndexes`.
+  // original estimated `durationSeconds`, and one video-generation call is
+  // issued per scene using that scene's `visualDescriptionThai` + images
+  // selected via `imageIndexes`. Field names are provider-neutral so the
+  // underlying generator can be swapped without further model changes.
   /**
-   * JSON-encoded `string[]` — one Kling task ID per scene, in scene order.
-   * Replaces the old single `klingTaskId` (kept below for DB/legacy compat
-   * and as a quick "any task in flight" signal, but no longer the source of
-   * truth once N > 1).
+   * JSON-encoded `string[]` — one provider task/operation ID per scene, in
+   * scene order. Replaces the old single `videoGenTaskId` (kept below for
+   * DB/legacy compat and as a quick "any task in flight" signal, but no longer
+   * the source of truth once N > 1).
    */
-  klingTaskIds: string[] | null;
-  /** @deprecated Phase 3 — superseded by klingTaskIds. Kept for DB/legacy compat. */
-  klingTaskId: string | null;
-  klingStatus: "submitted" | "processing" | null;
-  klingLastPolledAt: Date | null;
+  videoGenTaskIds: string[] | null;
+  /** @deprecated Phase 3 — superseded by videoGenTaskIds. Kept for DB/legacy compat. */
+  videoGenTaskId: string | null;
+  videoGenStatus: "submitted" | "processing" | null;
+  videoGenLastPolledAt: Date | null;
   /**
-   * Per-scene Kling output assets, in scene order, before concatenation.
+   * Per-scene generated output assets, in scene order, before concatenation.
    * JSON-encoded `string[]` of UploadedAsset IDs (AssetType.AIGeneratedBaseVideo).
    * While polling is in progress this array may be "sparse" — entries for
-   * scenes whose Kling task hasn't completed yet are `null` placeholders
-   * (same length as `klingTaskIds`) so `checkBaseVideoReady` can resume
+   * scenes whose generation task hasn't completed yet are `null` placeholders
+   * (same length as `videoGenTaskIds`) so `checkBaseVideoReady` can resume
    * polling only the still-pending scenes. Once all scenes are ready this
    * holds the final `string[]` with no nulls.
    */

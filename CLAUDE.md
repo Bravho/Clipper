@@ -68,7 +68,7 @@ Staff triggers the pipeline on a `ClipRequest`. The pipeline is orchestrated by 
 
 **5-step pipeline** (each async AI step followed by a staff approval gate):
 1. **ChatGPT/Gemini Vision** → scene plan + Thai/English/Chinese scripts (`AnalyzingContent` → `AwaitingContentApproval`)
-2. **Kling AI** image-to-video → 15-second base video (`GeneratingBaseVideo` → `AwaitingVideoApproval`)
+2. **Google Veo 3.1 Lite** image-to-video → one clip per approved scene (scene script + its images + its duration), auto-merged with FFmpeg into a single base video (`GeneratingBaseVideo` → `AwaitingVideoApproval`)
 3. **Staff voice recording** → ElevenLabs Speech-to-Speech conversion (`AwaitingVoiceRecording` → `ProcessingVoice` → `AwaitingVoiceApproval`)
 4. **FFmpeg** composition → subtitles + 4-ratio exports (9:16, 16:9, 1:1, 4:5) (`ComposingFinalVideo` → `AwaitingFinalApproval`)
 5. **Social publishing** → TikTok, Facebook, Instagram, YouTube, Tvent (`Publishing` → `Complete`)
@@ -105,7 +105,7 @@ Five groups defined in `.env.example`:
 - **Email:** `SMTP_*`, `EMAIL_FROM`
 - **Storage:** `DO_SPACES_KEY/SECRET/ENDPOINT/BUCKET/REGION`
 - **Database:** `PGHOST`, `PGDATABASE`, `PGPORT`, `PG_USER`, `PG_PASSWORD`
-- **AI pipeline:** `GEMINI_API_KEY`, `KLING_API_KEY/SECRET`, `ELEVENLABS_API_KEY/DEFAULT_VOICE_ID`, `FFMPEG_PATH`, `FFMPEG_TMP_DIR`
+- **AI pipeline:** `GEMINI_API_KEY`, `VEO_API_KEY/MODEL_NAME/RESOLUTION/DURATION/ASPECT_RATIO` (Veo reuses `GEMINI_API_KEY` if `VEO_API_KEY` is unset), `ELEVENLABS_API_KEY/DEFAULT_VOICE_ID`, `FFMPEG_PATH`, `FFMPEG_TMP_DIR`
 - **Social publishing:** `YOUTUBE_*`, `TIKTOK_*`, `INSTAGRAM_*`, `FACEBOOK_*`, `TVENT_*`
 
 All AI/social keys are read through `src/config/aiTools.ts` (`AI_CONFIG`).

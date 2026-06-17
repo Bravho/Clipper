@@ -14,8 +14,8 @@ interface Props {
 }
 
 /**
- * Client wrapper that owns klingStatus state.
- * PipelineStatusPoller updates klingStatus directly via a callback so the
+ * Client wrapper that owns videoGenStatus state.
+ * PipelineStatusPoller updates videoGenStatus directly via a callback so the
  * sub-status text reflects every poll response without waiting for an RSC
  * refresh (which is unreliable for intra-step state changes).
  */
@@ -26,8 +26,8 @@ export function PipelineSection({
   durationSeconds,
   totalChannels,
 }: Props) {
-  const [klingStatus, setKlingStatus] = useState<"submitted" | "processing" | null>(null);
-  const [klingLastPolledAt, setKlingLastPolledAt] = useState<Date | null>(null);
+  const [videoGenStatus, setVideoGenStatus] = useState<"submitted" | "processing" | null>(null);
+  const [videoGenLastPolledAt, setVideoGenLastPolledAt] = useState<Date | null>(null);
 
   const isPolling = POLLING_STEPS.includes(currentStep);
 
@@ -38,16 +38,16 @@ export function PipelineSection({
         failedAtStep={failedAtStep}
         durationSeconds={durationSeconds}
         totalChannels={totalChannels}
-        klingStatus={klingStatus}
-        klingLastPolledAt={klingLastPolledAt}
+        videoGenStatus={videoGenStatus}
+        videoGenLastPolledAt={videoGenLastPolledAt}
       />
       {isPolling && (
         <PipelineStatusPoller
           requestId={requestId}
           currentStep={currentStep}
-          onKlingStatus={(status, polledAt) => {
-            setKlingStatus(status);
-            setKlingLastPolledAt(polledAt);
+          onVideoGenStatus={(status, polledAt) => {
+            setVideoGenStatus(status);
+            setVideoGenLastPolledAt(polledAt);
           }}
         />
       )}

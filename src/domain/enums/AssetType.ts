@@ -14,7 +14,7 @@ export enum AssetType {
   EditedClip = "edited_clip",
 
   // ── AI Pipeline asset types ─────────────────────────────────────────────────
-  /** Raw 15s video produced by Kling AI from requester images. */
+  /** Raw video produced by the AI video generator (Veo) from requester images. */
   AIGeneratedBaseVideo = "ai_generated_base_video",
   /** RVC-converted voice audio uploaded by staff (conversion happens in browser before upload). */
   StaffVoiceRecording = "staff_voice_recording",

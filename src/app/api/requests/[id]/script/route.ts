@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
+import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 
 /**
  * PATCH /api/requests/[id]/script
@@ -46,7 +47,7 @@ export async function PATCH(
   }
 
   const patch: Record<string, string> = {};
-  if (typeof scriptThai === "string") patch.approvedScriptThai = scriptThai;
+  if (typeof scriptThai === "string") patch.approvedScriptThai = sanitizeThaiVoiceScript(scriptThai);
   if (typeof captionThai === "string") patch.approvedCaptionThai = captionThai;
 
   if (Object.keys(patch).length === 0) {

@@ -7,7 +7,7 @@ import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 const FAILED_STEP_LABELS: Partial<Record<VideoGenerationStep, string>> = {
   [VideoGenerationStep.AnalyzingContent]:    "การวิเคราะห์เนื้อหา (AI)",
-  [VideoGenerationStep.GeneratingBaseVideo]: "การสร้างวิดีโอ (Kling AI)",
+  [VideoGenerationStep.GeneratingBaseVideo]: "การสร้างวิดีโอ (Veo AI)",
   [VideoGenerationStep.GeneratingVoice]:     "การสร้างเสียงพากย์ (AI)",
   [VideoGenerationStep.ProcessingVoice]:     "การประมวลผลเสียง",
   [VideoGenerationStep.ComposingFinalVideo]: "การตัดต่อวิดีโอ (FFmpeg)",

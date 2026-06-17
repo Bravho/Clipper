@@ -12,7 +12,7 @@ export enum VideoGenerationStep {
   GeneratingSceneDesign   = "generating_scene_design",
   AwaitingSceneDesignApproval = "awaiting_scene_design_approval",
 
-  // Step 3 - Kling AI video generation, sized to the real voice duration.
+  // Step 3 - Veo AI video generation, sized to the real voice duration.
   GeneratingBaseVideo     = "generating_base_video",
   AwaitingVideoApproval   = "awaiting_video_approval",
 

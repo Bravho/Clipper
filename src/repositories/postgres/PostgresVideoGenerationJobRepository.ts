@@ -33,16 +33,16 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     approvedCaptionThai: (row.approved_caption_thai as string) ?? null,
     approvedCaptionEnglish: (row.approved_caption_english as string) ?? null,
     approvedCaptionChinese: (row.approved_caption_chinese as string) ?? null,
-    klingTaskId: (row.kling_task_id as string) ?? null,
+    videoGenTaskId: (row.video_gen_task_id as string) ?? null,
     // NOTE: no DB columns yet for these Phase 3 per-scene fields (out of
     // scope — requires a migration). Falls back to null until added; updates
     // to these fields are intentionally excluded from JOB_UPDATE_COLS below
     // so they don't error against a missing column. Same pattern as
     // voiceDurationSeconds/voiceTimestamps above.
-    klingTaskIds: row.kling_task_ids ? (JSON.parse(row.kling_task_ids as string) as string[]) : null,
+    videoGenTaskIds: row.video_gen_task_ids ? (JSON.parse(row.video_gen_task_ids as string) as string[]) : null,
     sceneVideoAssetIds: row.scene_video_asset_ids ? (JSON.parse(row.scene_video_asset_ids as string) as (string | null)[]) : null,
-    klingStatus: null,
-    klingLastPolledAt: null,
+    videoGenStatus: null,
+    videoGenLastPolledAt: null,
     baseVideoAssetId: (row.base_video_asset_id as string) ?? null,
     ttsTaskId: (row.tts_task_id as string) ?? null,
     rvcVoiceModel: row.eleven_labs_voice_id as string,
@@ -67,7 +67,7 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     // NOTE: no DB column yet for this Phase 4 field (out of scope — requires
     // a migration). Falls back to null until added; updates to this field
     // are intentionally excluded from JOB_UPDATE_COLS below so they don't
-    // error against a missing column. Same pattern as klingTaskIds/sceneVideoAssetIds.
+    // error against a missing column. Same pattern as videoGenTaskIds/sceneVideoAssetIds.
     animatedOverlayAssetIds: row.animated_overlay_asset_ids
       ? (JSON.parse(row.animated_overlay_asset_ids as string) as Record<string, string>)
       : null,
@@ -103,7 +103,7 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   approvedCaptionThai: "approved_caption_thai",
   approvedCaptionEnglish: "approved_caption_english",
   approvedCaptionChinese: "approved_caption_chinese",
-  klingTaskId: "kling_task_id",
+  videoGenTaskId: "video_gen_task_id",
   ttsTaskId: "tts_task_id",
   baseVideoAssetId: "base_video_asset_id",
   rvcVoiceModel: "eleven_labs_voice_id",
@@ -157,7 +157,7 @@ export class PostgresVideoGenerationJobRepository
          approved_scene_plan, approved_script_thai, approved_script_english, approved_script_chinese,
          approved_hook_thai, approved_hook_english,
          approved_caption_thai, approved_caption_english, approved_caption_chinese,
-         kling_task_id, tts_task_id, base_video_asset_id, eleven_labs_voice_id,
+         video_gen_task_id, tts_task_id, base_video_asset_id, eleven_labs_voice_id,
          voice_recording_asset_id, processed_voice_asset_id,
          final_export_9_16_asset_id, final_export_16_9_asset_id,
          final_export_1_1_asset_id, final_export_4_5_asset_id, final_export_tvent_asset_id,
@@ -192,7 +192,7 @@ export class PostgresVideoGenerationJobRepository
         input.approvedCaptionThai ?? null,
         input.approvedCaptionEnglish ?? null,
         input.approvedCaptionChinese ?? null,
-        input.klingTaskId ?? null,
+        input.videoGenTaskId ?? null,
         input.ttsTaskId ?? null,
         input.baseVideoAssetId ?? null,
         input.rvcVoiceModel,

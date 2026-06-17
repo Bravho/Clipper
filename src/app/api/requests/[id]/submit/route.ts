@@ -3,6 +3,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestService } from "@/services/ClipRequestService";
+import { videoGenerationService } from "@/services/VideoGenerationService";
+import { uploadedAssetRepository } from "@/repositories/index";
+import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { z } from "zod";
 
 const submitBodySchema = z.object({
@@ -56,7 +59,26 @@ export async function POST(
       parsed.data.creditConfirmed,
       parsed.data.rightsConfirmed
     );
-    return NextResponse.json({ request: submitted });
+
+    const assets = await uploadedAssetRepository.findByRequestId(id);
+    const imageUrls = assets
+      .filter(
+        (asset) =>
+          (asset.assetType === AssetType.Image || asset.assetType === AssetType.Video) &&
+          asset.uploadStatus === AssetUploadStatus.Uploaded
+      )
+      .map((asset) => asset.storageUrl)
+      .filter((url): url is string => Boolean(url));
+
+    const job = await videoGenerationService.initializePipeline(id, session.user.id, {
+      imageUrls,
+      description: submitted.description,
+      targetAudience: submitted.targetAudience,
+      targetPlatforms: submitted.targetPlatforms,
+      preferredStyle: submitted.preferredStyle ?? "",
+    });
+
+    return NextResponse.json({ request: submitted, jobId: job.id });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error.";
     if (message === "Request not found." || message === "Access denied.") {

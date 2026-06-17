@@ -28,7 +28,6 @@ import {
 import { VideoApprovalPanel } from "@/features/requests/components/VideoApprovalPanel";
 import { AnalyzeButton } from "@/features/requests/components/AnalyzeButton";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-import { CREDITS_CONFIG } from "@/config/credits";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
@@ -215,8 +214,8 @@ export default async function RequestDetailPage({
         const isAwaitingApproval =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingContentApproval;
         const isFailed = pipelineJob.currentStep === VideoGenerationStep.Failed;
-        // Audio-first reorder: voice generation now runs before Kling, so a
-        // GeneratingVoice failure happens before any base video exists.
+        // Audio-first reorder: voice generation now runs before video generation,
+        // so a GeneratingVoice failure happens before any base video exists.
         // Handled by the generic PipelineFailurePanel retry flow below.
         const isAwaitingVoiceApproval =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceApproval;
@@ -232,7 +231,7 @@ export default async function RequestDetailPage({
           try { scenePlan = JSON.parse(scenePlanSrc); } catch { /* ignore */ }
         }
 
-        // Requester must approve before Kling starts — show editable script panel
+        // Requester must approve before video generation starts — show editable script panel
         if (isAwaitingApproval) {
           return (
             <ContentApprovalPanel
@@ -317,7 +316,7 @@ export default async function RequestDetailPage({
               />
             )}
 
-            {/* Generated base video + script — shown once Kling completes */}
+            {/* Generated base video + script — shown once video generation completes */}
             {!isFailed && !isAwaitingVoiceApproval && baseVideoAsset?.storageUrl && (
               <VideoApprovalPanel
                 requestId={id}

@@ -8,7 +8,7 @@ import { videoGenerationService } from "@/services/VideoGenerationService";
 /**
  * POST /api/requests/[id]/approve-video
  *
- * Requester-only. Approves the Kling-generated base video and advances
+ * Requester-only. Approves the AI-generated base video and advances
  * the pipeline to the voice recording step.
  */
 export async function POST(

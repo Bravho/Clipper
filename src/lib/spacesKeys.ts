@@ -97,7 +97,7 @@ export function buildClipKey(
 // Separate folders with distinct lifecycle policies for each pipeline stage.
 
 /**
- * Key for a Kling AI-generated base video (15s raw output).
+ * Key for an AI-generated base video (Veo) — raw per-scene output before merge.
  * Lifecycle: retained for 8 years (same as final clips — needed for reproductions).
  */
 export function buildAiVideoKey(userId: string, requestId: string): string {

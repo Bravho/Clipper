@@ -59,10 +59,11 @@ export const OPTIONAL_FORM_PLATFORMS: Platform[] = [
 
 /**
  * Maps each platform to its preferred aspect ratio for base video generation.
- * The requester's #1 priority platform determines which ratio is sent to Kling AI.
- * Note: aspect_ratio is a text2video parameter; for image2video Kling uses the
- * input image's native ratio. This mapping drives future image pre-processing and
- * FFmpeg export priority.
+ * The requester's #1 priority platform determines which ratio is sent to the
+ * video generator (Veo). Veo only accepts "16:9"/"9:16", so other ratios are
+ * mapped onto the nearest of those for the source clip; the final per-platform
+ * crops are produced later by FFmpeg. This mapping also drives FFmpeg export
+ * priority.
  */
 export const PLATFORM_ASPECT_RATIOS: Record<Platform, string> = {
   [Platform.TikTok]: "9:16",

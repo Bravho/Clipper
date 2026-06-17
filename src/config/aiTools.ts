@@ -23,24 +23,22 @@ export const AI_CONFIG = {
     scriptWordTarget: 45,
     scenesTarget: 3,
   },
-  kling: {
-    apiKey: process.env.KLING_API_KEY ?? "",
-    apiSecret: process.env.KLING_API_SECRET ?? "",
-    baseUrl: "https://api.klingai.com",
-    /** e.g. "kling-v3-omni-std", "kling-v1-6", "kling-v2-1-master". KLING_MODEL kept for back-compat. */
-    modelName: process.env.KLING_MODEL_NAME ?? process.env.KLING_MODEL,
-    /** "std" | "pro" — only meaningful for models that support a mode/tier. */
-    mode: process.env.KLING_MODE,
-    /** Fallback duration (seconds) used only if a request has no durationSeconds. */
-    defaultDuration: process.env.KLING_DURATION ? Number(process.env.KLING_DURATION) : undefined,
-    /** Fallback aspect ratio used only if a request has no aspectRatio. */
-    defaultAspectRatio: process.env.KLING_ASPECT_RATIO,
-    /** "on" | "off" — generate native audio (kling-v3 models only). */
-    sound: process.env.KLING_SOUND,
-    /** Keep the original audio track from the source image/video, if any. */
-    keepOriginalSound: process.env.KLING_KEEP_ORIGINAL_SOUND === "true",
-    /** Whether Kling should burn its watermark into the output. */
-    watermark: process.env.KLING_WATERMARK === "true",
+  veo: {
+    /**
+     * Google Veo runs through the Gemini API, so it reuses the Gemini API key
+     * by default. VEO_API_KEY can override it if a separate key is preferred.
+     */
+    apiKey: (process.env.VEO_API_KEY ?? process.env.GEMINI_API_KEY ?? "").trim(),
+    /** Veo model id. Defaults to the cost-effective Veo 3.1 Lite preview. */
+    modelName: process.env.VEO_MODEL_NAME ?? "veo-3.1-lite-generate-preview",
+    /** "720p" | "1080p" (1080p requires an 8s duration on Veo 3.1 Lite). */
+    resolution: process.env.VEO_RESOLUTION ?? "720p",
+    /** Fallback duration (seconds, one of 4/6/8) when a scene has no duration. */
+    defaultDuration: process.env.VEO_DURATION ? Number(process.env.VEO_DURATION) : 8,
+    /** Fallback aspect ratio ("16:9" | "9:16") used when none is supplied. */
+    defaultAspectRatio: process.env.VEO_ASPECT_RATIO ?? "9:16",
+    /** Optional global negative prompt applied to every generation. */
+    negativePrompt: process.env.VEO_NEGATIVE_PROMPT ?? "",
   },
   elevenLabs: {
     // ElevenLabs cloud TTS — current pipeline voice engine. No local server.

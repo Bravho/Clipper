@@ -43,10 +43,10 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     approvedCaptionEnglish: null,
     approvedCaptionChinese: null,
 
-    klingTaskId: null,
-    klingTaskIds: null,
-    klingStatus: null,
-    klingLastPolledAt: null,
+    videoGenTaskId: null,
+    videoGenTaskIds: null,
+    videoGenStatus: null,
+    videoGenLastPolledAt: null,
     sceneVideoAssetIds: null,
     baseVideoAssetId: null,    ttsTaskId: null,
 
@@ -130,10 +130,10 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     approvedCaptionEnglish: null,
     approvedCaptionChinese: null,
 
-    klingTaskId: null,
-    klingTaskIds: null,
-    klingStatus: null,
-    klingLastPolledAt: null,
+    videoGenTaskId: null,
+    videoGenTaskIds: null,
+    videoGenStatus: null,
+    videoGenLastPolledAt: null,
     sceneVideoAssetIds: null,
     baseVideoAssetId: null,    ttsTaskId: null,
 

@@ -13,13 +13,6 @@ const execFileAsync = promisify(execFile);
 
 export type VideoRatio = "9:16" | "16:9" | "1:1" | "4:5";
 
-const RATIO_DIMENSIONS: Record<VideoRatio, { width: number; height: number }> = {
-  "9:16":  { width: 1080, height: 1920 },
-  "16:9":  { width: 1920, height: 1080 },
-  "1:1":   { width: 1080, height: 1080 },
-  "4:5":   { width: 1080, height: 1350 },
-};
-
 export function getRequiredRatiosForPlatforms(platforms: string[]): VideoRatio[] {
   const ratios = new Set<VideoRatio>();
   for (const p of platforms) {
@@ -348,7 +341,7 @@ export async function renderOverlayPreview(params: {
  * Concatenate multiple video clips (in order) into a single video file using
  * ffmpeg's concat demuxer. Downloads each input from DO Spaces, concatenates
  * with `-c copy` (fast, no re-encode — assumes all clips share the same
- * codec/resolution, which holds for same-model Kling outputs), and uploads
+ * codec/resolution, which holds for same-model Veo outputs), and uploads
  * the result to `outputStorageKey`.
  *
  * If `-c copy` fails (e.g. mismatched codecs/timestamps across clips), falls

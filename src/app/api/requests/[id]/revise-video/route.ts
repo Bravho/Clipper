@@ -9,7 +9,7 @@ import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 /**
  * POST /api/requests/[id]/revise-video
  *
- * Requester-only. Saves edited script fields and re-triggers Kling video
+ * Requester-only. Saves edited script fields and re-triggers Veo video
  * generation from the AwaitingVideoApproval step.
  */
 export async function POST(

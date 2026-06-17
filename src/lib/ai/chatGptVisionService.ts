@@ -4,6 +4,7 @@ import { AI_CONFIG } from "@/config/aiTools";
 import { spacesClient } from "@/lib/spaces";
 import { Platform } from "@/domain/enums/Platform";
 import { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 
 export interface ChatGptContentOutput {
   scenePlan: ScenePlan[];
@@ -235,10 +236,15 @@ async function downloadImageAsBase64(
 export async function generateScenePlanAndScript(
   params: GenerateContentParams
 ): Promise<ChatGptContentOutput> {
-  return generateWithImages<ChatGptContentOutput>(
+  const output = await generateWithImages<ChatGptContentOutput>(
     params,
     `${SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}`
   );
+  return {
+    ...output,
+    scriptThai: sanitizeThaiVoiceScript(output.scriptThai),
+    hookThai: sanitizeThaiVoiceScript(output.hookThai),
+  };
 }
 
 async function generateWithImages<T>(params: GenerateContentParams, prompt: string): Promise<T> {
@@ -275,10 +281,14 @@ async function generateWithImages<T>(params: GenerateContentParams, prompt: stri
 export async function generateSpeakingScript(
   params: GenerateContentParams
 ): Promise<SpeakingScriptOutput> {
-  return generateWithImages<SpeakingScriptOutput>(
+  const output = await generateWithImages<SpeakingScriptOutput>(
     params,
     `${SCRIPT_ONLY_SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}`
   );
+  return {
+    ...output,
+    scriptThai: sanitizeThaiVoiceScript(output.scriptThai),
+  };
 }
 
 export async function generateSceneDesignFromScript(

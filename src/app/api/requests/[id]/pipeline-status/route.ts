@@ -16,7 +16,7 @@ import { videoGenerationService } from "@/services/VideoGenerationService";
  * Returns the current pipeline step for the requester's job.
  * Used by PipelineStatusPoller to detect step changes.
  *
- * - GeneratingBaseVideo: polls Kling and delegates to checkBaseVideoReady on completion.
+ * - GeneratingBaseVideo: polls Veo and delegates to checkBaseVideoReady on completion.
  * - GeneratingVoice: no polling needed — ElevenLabs synthesis runs inline on the
  *   server and advances the job itself; this route just reports the current step.
  */
@@ -44,13 +44,13 @@ export async function GET(
     return NextResponse.json({ currentStep: null, failedAtStep: null, jobId: null });
   }
 
-  // Phase 3: Kling now runs N per-scene tasks (job.klingTaskIds). All
-  // per-scene polling, downloading, and the final concat are handled inside
+  // Phase 3: Veo now runs N per-scene tasks (job.videoGenTaskIds). All
+  // per-scene polling, downloading, and the final merge are handled inside
   // checkBaseVideoReady, which only advances the job once every scene's
   // clip is ready. We just delegate to it and report whatever
-  // klingStatus/klingLastPolledAt it left on the job.
-  const hasKlingTasks = (job.klingTaskIds && job.klingTaskIds.length > 0) || !!job.klingTaskId;
-  if (job.currentStep === VideoGenerationStep.GeneratingBaseVideo && hasKlingTasks) {
+  // videoGenStatus/videoGenLastPolledAt it left on the job.
+  const hasVideoGenTasks = (job.videoGenTaskIds && job.videoGenTaskIds.length > 0) || !!job.videoGenTaskId;
+  if (job.currentStep === VideoGenerationStep.GeneratingBaseVideo && hasVideoGenTasks) {
     try {
       job = await videoGenerationService.checkBaseVideoReady(job.id);
     } catch (err) {
@@ -73,8 +73,8 @@ export async function GET(
       voiceError,
       processedVoiceAssetId: job.processedVoiceAssetId,
       processedVoiceUrl: processedVoiceAsset?.storageUrl ?? null,
-      klingStatus: job.klingStatus ?? null,
-      klingLastPolledAt: job.klingLastPolledAt?.toISOString() ?? null,
+      videoGenStatus: job.videoGenStatus ?? null,
+      videoGenLastPolledAt: job.videoGenLastPolledAt?.toISOString() ?? null,
     },
     {
       headers: {

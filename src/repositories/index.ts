@@ -71,15 +71,11 @@ import { MockEditorProfileRepository } from "./mock/MockEditorProfileRepository"
 
 export const editorProfileRepository = new MockEditorProfileRepository();
 
-// ── AI Video Pipeline — PostgreSQL ───────────────────────────────────────────
-// Now that clip_requests is on PostgreSQL above, the
-// `video_generation_jobs.request_id -> clip_requests.id` FK is satisfiable, so
-// the pipeline job record persists to PostgreSQL too. Migration 006 also
-// re-asserts the 003-005 pipeline columns (tts_task_id, subtitle_languages,
-// etc.) with IF NOT EXISTS so the job insert is safe.
-import { PostgresVideoGenerationJobRepository } from "./postgres/PostgresVideoGenerationJobRepository";
+// ── AI Video Pipeline — Mock (TODO: replace with Postgres implementation) ───
+// Pipeline jobs are still in-memory until the video_generation_jobs table and
+// migrations are fully materialised.
+import { MockVideoGenerationJobRepository } from "./mock/MockVideoGenerationJobRepository";
 import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordRepository";
 
-export const videoGenerationJobRepository = new PostgresVideoGenerationJobRepository();
+export const videoGenerationJobRepository = new MockVideoGenerationJobRepository();
 export const videoPublishRecordRepository = new MockVideoPublishRecordRepository(); // TODO: PostgresVideoPublishRecordRepository (no Postgres impl / table yet)
-

@@ -835,7 +835,7 @@ export function VideoApprovalPanel({
         {videoUrl && (
           <>
             <h2 className="mb-3 text-base font-semibold text-slate-900">
-              วิดีโอที่สร้างโดย Kling AI
+              วิดีโอที่สร้างโดย Veo AI
             </h2>
             <video
               src={videoUrl}
@@ -1285,7 +1285,7 @@ export function VideoApprovalPanel({
             <p className="text-sm font-semibold text-amber-800">แก้ไขสคริปต์วิดีโอที่อนุมัติ</p>
             <p className="mt-0.5 text-sm text-amber-700">
               แก้ไขบทพูดและแผนฉากด้านล่าง จากนั้นคลิก{" "}
-              <strong>ส่งขอสร้างวีดิโอใหม่</strong> เพื่อให้ Kling AI สร้างวิดีโอใหม่
+              <strong>ส่งขอสร้างวีดิโอใหม่</strong> เพื่อให้ Veo AI สร้างวิดีโอใหม่
             </p>
           </div>
 

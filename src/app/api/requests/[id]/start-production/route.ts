@@ -45,7 +45,7 @@ export async function POST(
     captionChinese,
   } = body;
 
-  if (!scriptThai) {
+  if (typeof scriptThai !== "string" || !scriptThai.trim()) {
     return NextResponse.json({ error: "Missing required speaking script." }, { status: 400 });
   }
 

@@ -2,18 +2,18 @@
  * Focused test for the audio-first pipeline reorder (Phase 1):
  *
  *   ChatGPT analysis -> voice generation (ElevenLabs + ffprobe + Gemini
- *   alignment) -> Kling base video sized to the REAL voice duration ->
+ *   alignment) -> Veo base video sized to the REAL voice duration ->
  *   animations -> FFmpeg composition -> publishing.
  *
  * This test exercises `approveVoiceConversion`, which transitions a job from
- * AwaitingVoiceApproval -> GeneratingBaseVideo and triggers Kling generation.
- * It asserts that Kling is called with `durationSeconds` taken from
- * `job.voiceDurationSeconds` (the ffprobe-measured voice length) rather than
- * the original scene-plan/request estimate.
+ * AwaitingVoiceApproval -> GeneratingBaseVideo and triggers Veo generation.
+ * It asserts that the video generator is called with `durationSeconds` taken
+ * from `job.voiceDurationSeconds` (the ffprobe-measured voice length) rather
+ * than the original scene-plan/request estimate.
  *
  * Repositories are wired with fresh in-memory Mock instances (per CLAUDE.md
  * testing pattern: `new Map()`), bypassing the globalThis singletons. The
- * Kling AI client is mocked so no real network call is made.
+ * Veo client is mocked so no real network call is made.
  */
 
 import { MockClipRequestRepository } from "@/repositories/mock/MockClipRequestRepository";
@@ -35,11 +35,11 @@ jest.mock("@/repositories/index", () => ({
   videoPublishRecordRepository: new (require("@/repositories/mock/MockVideoPublishRecordRepository").MockVideoPublishRecordRepository)(new Map()),
 }));
 
-// ── Mock Kling AI client — capture the params it's called with ─────────────
-const createVideoMock = jest.fn().mockResolvedValue("kling-task-123");
+// ── Mock Veo client — capture the params it's called with ──────────────────
+const createVideoMock = jest.fn().mockResolvedValue("veo-task-123");
 const pollTaskStatusMock = jest.fn();
 const downloadAndStoreMock = jest.fn();
-jest.mock("@/lib/ai/klingService", () => ({
+jest.mock("@/lib/ai/veoService", () => ({
   createVideo: (...args: unknown[]) => createVideoMock(...args),
   pollTaskStatus: (...args: unknown[]) => pollTaskStatusMock(...args),
   downloadAndStore: (...args: unknown[]) => downloadAndStoreMock(...args),
@@ -188,13 +188,13 @@ async function createJobAwaitingVoiceApproval(requestId: string, voiceDurationSe
     processedVoiceAssetId: "asset-voice-001",
     selectedMusicTrack: null,
     // Real ffprobe-measured duration of the synthesized voice — different
-    // from the request's 15s estimate, to prove Kling uses THIS value.
+    // from the request's 15s estimate, to prove video generation uses THIS value.
     voiceDurationSeconds,
     voiceTimestamps: JSON.stringify([{ start: 0, end: voiceDurationSeconds, text: "สวัสดีค่ะ ยินดีต้อนรับ" }]),
-    klingTaskId: null,
-    klingTaskIds: null,
-    klingStatus: null,
-    klingLastPolledAt: null,
+    videoGenTaskId: null,
+    videoGenTaskIds: null,
+    videoGenStatus: null,
+    videoGenLastPolledAt: null,
     baseVideoAssetId: null,
     sceneVideoAssetIds: null,
     subtitleTimeline: JSON.stringify([{ start: 0, end: voiceDurationSeconds, text: "สวัสดีค่ะ ยินดีต้อนรับ" }]),
@@ -222,7 +222,7 @@ describe("VideoGenerationService — audio-first pipeline (Phase 1)", () => {
     mockGenerateSceneDesignFromScript.mockClear();
   });
 
-  it("sizes Kling generation to the real voice duration, not the request estimate", async () => {
+  it("sizes video generation to the real voice duration, not the request estimate", async () => {
     const request = await createRequest();
     const voiceDurationSeconds = 18.4; // differs from request.durationSeconds (15)
     const job = await createJobAwaitingVoiceApproval(request.id, voiceDurationSeconds);
@@ -254,12 +254,12 @@ describe("VideoGenerationService — audio-first pipeline (Phase 1)", () => {
     });
 
     expect(createVideoMock).toHaveBeenCalledTimes(1);
-    const [klingParams] = createVideoMock.mock.calls[0];
-    expect(klingParams.durationSeconds).toBe(request.durationSeconds);
+    const [veoParams] = createVideoMock.mock.calls[0];
+    expect(veoParams.durationSeconds).toBe(request.durationSeconds);
   });
 });
 
-// ── Phase 3: per-scene Kling generation ─────────────────────────────────────
+// ── Phase 3: per-scene Veo generation ───────────────────────────────────────
 
 const MULTI_SCENE_PLAN: ScenePlan[] = [
   {
@@ -340,10 +340,10 @@ async function createMultiSceneJobAwaitingVoiceApproval(requestId: string, voice
     selectedMusicTrack: null,
     voiceDurationSeconds,
     voiceTimestamps: JSON.stringify([{ start: 0, end: voiceDurationSeconds, text: "สวัสดีค่ะ ยินดีต้อนรับ" }]),
-    klingTaskId: null,
-    klingTaskIds: null,
-    klingStatus: null,
-    klingLastPolledAt: null,
+    videoGenTaskId: null,
+    videoGenTaskIds: null,
+    videoGenStatus: null,
+    videoGenLastPolledAt: null,
     sceneVideoAssetIds: null,
     baseVideoAssetId: null,
     subtitleTimeline: JSON.stringify([{ start: 0, end: voiceDurationSeconds, text: "สวัสดีค่ะ ยินดีต้อนรับ" }]),
@@ -365,16 +365,16 @@ async function createMultiSceneJobAwaitingVoiceApproval(requestId: string, voice
   });
 }
 
-describe("VideoGenerationService — per-scene Kling generation (Phase 3)", () => {
+describe("VideoGenerationService — per-scene Veo generation (Phase 3)", () => {
   beforeEach(() => {
     createVideoMock.mockClear();
-    createVideoMock.mockResolvedValueOnce("kling-task-scene-1").mockResolvedValueOnce("kling-task-scene-2");
+    createVideoMock.mockResolvedValueOnce("veo-task-scene-1").mockResolvedValueOnce("veo-task-scene-2");
     pollTaskStatusMock.mockReset();
     downloadAndStoreMock.mockReset();
     concatVideosMock.mockReset();
   });
 
-  it("issues one Kling call per scene with allocated durations and per-scene image subsets", async () => {
+  it("issues one Veo call per scene with allocated durations and per-scene image subsets", async () => {
     const request = await createRequestWithImages(3); // scene0, scene1, scene2
     const voiceDurationSeconds = 20;
     const job = await createMultiSceneJobAwaitingVoiceApproval(request.id, voiceDurationSeconds);
@@ -408,8 +408,8 @@ describe("VideoGenerationService — per-scene Kling generation (Phase 3)", () =
 
     // Job records both task IDs and advances to GeneratingBaseVideo.
     expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingBaseVideo);
-    expect(updated.klingTaskIds).toEqual(["kling-task-scene-1", "kling-task-scene-2"]);
-    expect(updated.klingTaskId).toBe("kling-task-scene-1");
+    expect(updated.videoGenTaskIds).toEqual(["veo-task-scene-1", "veo-task-scene-2"]);
+    expect(updated.videoGenTaskId).toBe("veo-task-scene-1");
   });
 
   it("checkBaseVideoReady waits for ALL scenes before advancing, then concatenates", async () => {
@@ -428,7 +428,7 @@ describe("VideoGenerationService — per-scene Kling generation (Phase 3)", () =
 
     // First poll: scene 1 succeeds, scene 2 still processing.
     pollTaskStatusMock
-      .mockResolvedValueOnce({ status: "succeed", videoUrl: "https://kling.example.com/scene1.mp4" })
+      .mockResolvedValueOnce({ status: "succeed", videoUrl: "https://veo.example.com/scene1.mp4" })
       .mockResolvedValueOnce({ status: "processing" });
     downloadAndStoreMock.mockResolvedValueOnce({
       storageKey: "ai_videos/scene1.mp4",
@@ -447,7 +447,7 @@ describe("VideoGenerationService — per-scene Kling generation (Phase 3)", () =
 
     // Second poll: scene 2 now succeeds. Only scene 2 is re-polled (scene 1 already stored).
     pollTaskStatusMock.mockReset();
-    pollTaskStatusMock.mockResolvedValueOnce({ status: "succeed", videoUrl: "https://kling.example.com/scene2.mp4" });
+    pollTaskStatusMock.mockResolvedValueOnce({ status: "succeed", videoUrl: "https://veo.example.com/scene2.mp4" });
     downloadAndStoreMock.mockReset();
     downloadAndStoreMock.mockResolvedValueOnce({
       storageKey: "ai_videos/scene2.mp4",
@@ -528,10 +528,10 @@ describe("VideoGenerationService — Remotion overlay compositing (Phase 4)", ()
       selectedMusicTrack: null,
       voiceDurationSeconds: 15,
       voiceTimestamps: JSON.stringify(TIMED_SEGMENTS),
-      klingTaskId: null,
-      klingTaskIds: null,
-      klingStatus: null,
-      klingLastPolledAt: null,
+      videoGenTaskId: null,
+      videoGenTaskIds: null,
+      videoGenStatus: null,
+      videoGenLastPolledAt: null,
       baseVideoAssetId,
       sceneVideoAssetIds: null,
       subtitleTimeline: JSON.stringify(TIMED_SEGMENTS),

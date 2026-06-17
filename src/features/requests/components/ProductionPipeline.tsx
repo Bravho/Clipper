@@ -21,7 +21,7 @@ const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
 const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
   [VideoGenerationStep.AnalyzingContent]:          1,
   [VideoGenerationStep.AwaitingContentApproval]:   1,
-  // Audio-first reorder: voice generation now runs before Kling.
+  // Audio-first reorder: voice generation now runs before video generation.
   [VideoGenerationStep.GeneratingVoice]:            2,
   [VideoGenerationStep.AwaitingVoiceApproval]:      2,
   [VideoGenerationStep.GeneratingSceneDesign]:      3,
@@ -73,8 +73,8 @@ interface Props {
   failedAtStep?: VideoGenerationStep | null;
   durationSeconds?: number;
   totalChannels?: number;
-  klingStatus?: "submitted" | "processing" | null;
-  klingLastPolledAt?: Date | null;
+  videoGenStatus?: "submitted" | "processing" | null;
+  videoGenLastPolledAt?: Date | null;
 }
 
 export function ProductionPipeline({
@@ -82,8 +82,8 @@ export function ProductionPipeline({
   failedAtStep,
   durationSeconds = PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
   totalChannels = PIPELINE_STEP_COSTS.RESIZE_FREE_CHANNELS,
-  klingStatus,
-  klingLastPolledAt,
+  videoGenStatus,
+  videoGenLastPolledAt,
 }: Props) {
   const costs = calcPipelineCost(durationSeconds, totalChannels);
 
@@ -218,16 +218,16 @@ export function ProductionPipeline({
                   >
                     {phase.desc}
                   </p>
-                  {/* Kling sub-status: only shown while AI is actively rendering, not after */}
+                  {/* Video-gen sub-status: only shown while AI is actively rendering, not after */}
                   {isActive && currentStep === VideoGenerationStep.GeneratingBaseVideo && phase.id === 3 && (
                     <p className="mt-1 text-xs text-blue-400">
-                      {klingStatus === "submitted" && "รอ Kling AI รับงานในคิว..."}
-                      {klingStatus === "processing" && "Kling AI กำลังเรนเดอร์วิดีโอ"}
-                      {!klingStatus && "กำลังส่งงานไปยัง Kling AI..."}
-                      {klingLastPolledAt && (
+                      {videoGenStatus === "submitted" && "รอ Veo AI รับงานในคิว..."}
+                      {videoGenStatus === "processing" && "Veo AI กำลังเรนเดอร์วิดีโอ"}
+                      {!videoGenStatus && "กำลังส่งงานไปยัง Veo AI..."}
+                      {videoGenLastPolledAt && (
                         <span className="ml-2 text-slate-400">
                           · ตรวจสอบล่าสุด{" "}
-                          {klingLastPolledAt.toLocaleTimeString("th-TH", {
+                          {videoGenLastPolledAt.toLocaleTimeString("th-TH", {
                             hour: "2-digit",
                             minute: "2-digit",
                             second: "2-digit",
