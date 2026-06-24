@@ -29,9 +29,9 @@ export const AI_CONFIG = {
      * by default. VEO_API_KEY can override it if a separate key is preferred.
      */
     apiKey: (process.env.VEO_API_KEY ?? process.env.GEMINI_API_KEY ?? "").trim(),
-    /** Veo model id. Defaults to the cost-effective Veo 3.1 Lite preview. */
-    modelName: process.env.VEO_MODEL_NAME ?? "veo-3.1-lite-generate-preview",
-    /** "720p" | "1080p" (1080p requires an 8s duration on Veo 3.1 Lite). */
+    /** Veo model id. Defaults to Veo 3.1 Fast so video extension is available. */
+    modelName: process.env.VEO_MODEL_NAME ?? "veo-3.1-fast-generate-preview",
+    /** "720p" | "1080p"; video extension is limited to 720p. */
     resolution: process.env.VEO_RESOLUTION ?? "720p",
     /** Fallback duration (seconds, one of 4/6/8) when a scene has no duration. */
     defaultDuration: process.env.VEO_DURATION ? Number(process.env.VEO_DURATION) : 8,

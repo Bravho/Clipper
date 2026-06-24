@@ -43,6 +43,7 @@ export async function POST(
     captionThai,
     captionEnglish,
     captionChinese,
+    storyboard,
   } = body;
 
   if (typeof scriptThai !== "string" || !scriptThai.trim()) {
@@ -62,6 +63,7 @@ export async function POST(
         captionThai: captionThai ?? "",
         captionEnglish: captionEnglish ?? "",
         captionChinese: captionChinese ?? "",
+        storyboard: Array.isArray(storyboard) ? storyboard : undefined,
       }
     );
     return NextResponse.json({ jobId: job.id });

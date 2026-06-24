@@ -5,12 +5,12 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { GoogleGenAI } from "@google/genai";
 
 /**
- * Google Veo 3.1 Lite image-to-video service.
+ * Google Veo 3.1 Fast image-to-video and video-extension service.
  *
  * Exposes a provider-neutral `createVideo` / `pollTaskStatus` /
  * `downloadAndStore` contract so `VideoGenerationService` can issue one
- * generation per approved scene and concatenate the results, without knowing
- * which provider is behind it.
+ * initial scene generation, then extend the approved cumulative video for
+ * each following scene without knowing which provider is behind it.
  *
  * Veo is an async, long-running-operation API: `generateVideos` returns an
  * operation immediately; we persist its `name` as the "task ID" and poll it
@@ -25,7 +25,25 @@ export type VeoTaskStatus =
   | { status: "succeed"; videoUrl: string }
   | { status: "failed"; reason: string };
 
-/** Veo 3.1 Lite only accepts 4, 6 or 8 second clips. */
+interface RawVeoOperation {
+  done?: boolean;
+  error?: { message?: string };
+  response?: {
+    generateVideoResponse?: {
+      generatedSamples?: Array<{ video?: { uri?: string } }>;
+      raiMediaFilteredReasons?: string[];
+    };
+  };
+}
+
+interface VeoOperationsWithInternal {
+  getVideosOperationInternal(params: {
+    operationName: string;
+    config?: unknown;
+  }): Promise<RawVeoOperation>;
+}
+
+/** Veo accepts 4, 6 or 8 second clips. Extension must use 8 seconds. */
 const VEO_ALLOWED_DURATIONS = [4, 6, 8] as const;
 
 function nearestVeoDuration(requested: number): number {
@@ -81,10 +99,11 @@ async function fetchImageAsInlineData(
 }
 
 /**
- * Submit one Veo 3.1 Lite image-to-video generation.
+ * Submit one Veo 3.1 Fast image-to-video generation.
  *
  * The first selected image is the starting frame. When a scene supplies more
- * than one image, the last one is used as the interpolation `lastFrame`.
+ * than one image, the last one is used as the interpolation `lastFrame` only
+ * for 8-second clips, because Gemini rejects `lastFrame` for 4s/6s Veo jobs.
  * Returns the Veo operation name, used as the task ID for subsequent polling.
  */
 export async function createVideo(params: {
@@ -104,7 +123,7 @@ export async function createVideo(params: {
 
   const image = await fetchImageAsInlineData(params.imageUrls[0]);
   const lastFrame =
-    params.imageUrls.length > 1
+    duration === 8 && params.imageUrls.length > 1
       ? await fetchImageAsInlineData(params.imageUrls[params.imageUrls.length - 1])
       : undefined;
 
@@ -124,7 +143,14 @@ export async function createVideo(params: {
   console.log("VEO_ASPECT_RATIO =", aspectRatio);
   console.log("VEO_DURATION =", duration);
   console.log("VEO_RESOLUTION =", AI_CONFIG.veo.resolution);
-  console.log("VEO_IMAGES =", params.imageUrls.length, "(lastFrame:", !!lastFrame, ")");
+  console.log(
+    "VEO_IMAGES =",
+    params.imageUrls.length,
+    "(lastFrame:",
+    !!lastFrame,
+    duration === 8 ? "" : "disabled: lastFrame requires 8s",
+    ")"
+  );
   console.log("=================================");
 
   const operation = await ai.models.generateVideos({
@@ -141,30 +167,86 @@ export async function createVideo(params: {
   return name;
 }
 
+/**
+ * Submit a Veo video-extension generation. The previous task must be a
+ * completed Veo operation; its generated video is downloaded and passed back
+ * to Veo as inline video input for the next scene extension.
+ */
+export async function extendVideo(params: {
+  previousTaskId: string;
+  prompt: string;
+  aspectRatio: string;
+}): Promise<string> {
+  const previousStatus = await pollTaskStatus(params.previousTaskId);
+  if (previousStatus.status !== "succeed") {
+    throw new Error(
+      `Veo extendVideo: previous task is not ready for extension (${previousStatus.status})`
+    );
+  }
+
+  const ai = getClient();
+  const model = AI_CONFIG.veo.modelName;
+  const aspectRatio = toVeoAspectRatio(params.aspectRatio);
+  // Veo extension on the Gemini Developer API only accepts a reference to the
+  // previously generated video by its Files `uri`. Passing inline `videoBytes`
+  // serializes to the `encodedVideo` field, which this model rejects with
+  // "`encodedVideo` isn't supported by this model". Pass the uri instead.
+  const video = { uri: previousStatus.videoUrl };
+
+  const config: Record<string, unknown> = {
+    aspectRatio,
+    durationSeconds: 8,
+    numberOfVideos: 1,
+    resolution: "720p",
+    // Image-to-video uses allow_adult; extension follows text/video rules.
+    personGeneration: "allow_all",
+  };
+  if (AI_CONFIG.veo.negativePrompt) config.negativePrompt = AI_CONFIG.veo.negativePrompt;
+
+  console.log("=================================");
+  console.log("VEO_EXTENSION_MODEL_NAME =", model);
+  console.log("VEO_EXTENSION_ASPECT_RATIO =", aspectRatio);
+  console.log("VEO_EXTENSION_DURATION = 8");
+  console.log("VEO_EXTENSION_RESOLUTION = 720p");
+  console.log("VEO_EXTENSION_PREVIOUS_TASK =", params.previousTaskId);
+  console.log("=================================");
+
+  const operation = await ai.models.generateVideos({
+    model,
+    prompt: params.prompt,
+    video,
+    config,
+  } as Parameters<typeof ai.models.generateVideos>[0]);
+
+  const name = (operation as { name?: string }).name;
+  if (!name) {
+    throw new Error("Veo extendVideo returned an operation without a name");
+  }
+  return name;
+}
+
 /** Poll a Veo generation operation by its operation name. */
 export async function pollTaskStatus(taskId: string): Promise<VeoTaskStatus> {
   const ai = getClient();
 
-  const operation = await ai.operations.getVideosOperation({
-    // The SDK only needs the operation name to build the GET request.
-    operation: { name: taskId } as Parameters<
-      typeof ai.operations.getVideosOperation
-    >[0]["operation"],
-  });
+  const operations = ai.operations as unknown as VeoOperationsWithInternal;
+  const operation = await operations.getVideosOperationInternal({ operationName: taskId });
 
   if (!operation.done) return { status: "processing" };
 
-  const error = (operation as { error?: { message?: string } }).error;
-  if (error) {
-    return { status: "failed", reason: error.message ?? "Unknown Veo error" };
+  if (operation.error) {
+    return { status: "failed", reason: operation.error.message ?? "Unknown Veo error" };
   }
 
-  const video = operation.response?.generatedVideos?.[0]?.video as
-    | { uri?: string }
-    | undefined;
-  const uri = video?.uri;
+  const uri = operation.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
   if (!uri) {
-    return { status: "failed", reason: "Veo operation completed but returned no video URI" };
+    const reasons = operation.response?.generateVideoResponse?.raiMediaFilteredReasons;
+    return {
+      status: "failed",
+      reason: reasons?.length
+        ? `Veo filtered the output: ${reasons.join(", ")}`
+        : "Veo operation completed but returned no video URI",
+    };
   }
   return { status: "succeed", videoUrl: uri };
 }

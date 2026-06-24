@@ -25,11 +25,14 @@ import {
   SceneDesignApprovalPanel,
   SceneDesignGeneratingPanel,
 } from "@/features/requests/components/SceneDesignApprovalPanel";
+import { SceneScriptApprovalPanel } from "@/features/requests/components/SceneScriptApprovalPanel";
 import { VideoApprovalPanel } from "@/features/requests/components/VideoApprovalPanel";
 import { AnalyzeButton } from "@/features/requests/components/AnalyzeButton";
+import { StoryboardView } from "@/features/requests/components/StoryboardView";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
-import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import { orderSourceAssets } from "@/lib/sourceAssets";
+import type { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
 
 export const metadata: Metadata = { title: "Request Detail — RClipper" };
 export const dynamic = "force-dynamic";
@@ -63,6 +66,17 @@ export default async function RequestDetailPage({
     ? assets.find((a) => a.id === pipelineJob.baseVideoAssetId) ?? null
     : null;
 
+  // Latest generated cumulative video, derived independently of the current
+  // step. Prefer the most recent completed per-scene cumulative asset; fall
+  // back to the active baseVideoAssetId. Used to show the previously approved
+  // video on the next scene's script gate.
+  const latestSceneVideoAssetId =
+    pipelineJob?.sceneVideoAssetIds?.filter((id): id is string => Boolean(id)).pop() ?? null;
+  const latestVideoAsset =
+    (latestSceneVideoAssetId
+      ? assets.find((a) => a.id === latestSceneVideoAssetId) ?? null
+      : null) ?? baseVideoAsset;
+
   const voiceRecordingAsset = pipelineJob?.processedVoiceAssetId
     ? assets.find((a) => a.id === pipelineJob.processedVoiceAssetId) ?? null
     : null;
@@ -79,6 +93,25 @@ export default async function RequestDetailPage({
       a.uploadStatus === AssetUploadStatus.Uploaded &&
       (a.assetType === AssetType.Image || a.assetType === AssetType.Video)
   );
+  const sourceImageOptions = sourceAssets
+    .map((asset, sourceIndex) => ({ asset, sourceIndex }))
+    .filter(({ asset }) => asset.assetType === AssetType.Image)
+    .map(({ asset, sourceIndex }) => ({
+      sourceIndex,
+      id: asset.id,
+      fileName: asset.fileName,
+      thumbnailUrl: asset.thumbnailUrl,
+      storageUrl: asset.storageUrl,
+    }));
+
+  // Canonical ordering for storyboard/montage thumbnails — an index here is the
+  // same asset everywhere (storyboard, scene design, renderer).
+  const storyboardAssets = orderSourceAssets(assets).map((a) => ({
+    index: a.index,
+    thumbnailUrl: a.thumbnailUrl,
+    kind: a.kind,
+    fileName: a.fileName,
+  }));
 
   const view = requestPresentationService.buildRequestView(
     request,
@@ -223,6 +256,11 @@ export default async function RequestDetailPage({
           pipelineJob.currentStep === VideoGenerationStep.GeneratingSceneDesign;
         const isAwaitingSceneDesignApproval =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval;
+        const isAwaitingSceneScriptApproval =
+          pipelineJob.currentStep === VideoGenerationStep.AwaitingSceneScriptApproval;
+        const effectiveDurationSeconds = Math.round(
+          pipelineJob.voiceDurationSeconds ?? request.durationSeconds
+        );
 
         // Parse scene plan — prefer approved version; fall back to raw AI output
         let scenePlan: ScenePlan[] = [];
@@ -230,6 +268,24 @@ export default async function RequestDetailPage({
         if (scenePlanSrc) {
           try { scenePlan = JSON.parse(scenePlanSrc); } catch { /* ignore */ }
         }
+
+        // Parse the Stage-1 storyboard — prefer approved; fall back to generated.
+        let storyboard: StoryboardScene[] = [];
+        const storyboardSrc = pipelineJob.approvedStoryboard ?? pipelineJob.storyboard;
+        if (storyboardSrc) {
+          try { storyboard = JSON.parse(storyboardSrc); } catch { /* ignore */ }
+        }
+        const completedSceneVideoCount =
+          pipelineJob.sceneVideoAssetIds?.filter((assetId) => Boolean(assetId)).length ?? 0;
+        const activeSceneIndex = Math.min(
+          Math.max(
+            pipelineJob.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval
+              ? completedSceneVideoCount
+              : Math.max(completedSceneVideoCount - 1, 0),
+            0
+          ),
+          Math.max(scenePlan.length - 1, 0)
+        );
 
         // Requester must approve before video generation starts — show editable script panel
         if (isAwaitingApproval) {
@@ -241,6 +297,8 @@ export default async function RequestDetailPage({
               initialCaptionThai={pipelineJob.captionThai}
               initialCaptionEnglish={pipelineJob.captionEnglish}
               initialCaptionChinese={pipelineJob.captionChinese}
+              storyboard={storyboard}
+              storyboardAssets={storyboardAssets}
             />
           );
         }
@@ -252,7 +310,7 @@ export default async function RequestDetailPage({
                 requestId={id}
                 currentStep={pipelineJob.currentStep}
                 failedAtStep={pipelineJob.failedAtStep}
-                durationSeconds={request.durationSeconds}
+                durationSeconds={effectiveDurationSeconds}
                 totalChannels={request.targetPlatforms.length}
               />
               <SceneDesignApprovalPanel
@@ -260,11 +318,40 @@ export default async function RequestDetailPage({
                 jobId={pipelineJob.id}
                 initialScenes={scenePlan}
                 scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
-                initialDurationSeconds={request.durationSeconds}
+                initialDurationSeconds={effectiveDurationSeconds}
                 voiceDurationSeconds={pipelineJob.voiceDurationSeconds}
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 totalChannels={request.targetPlatforms.length}
+                sourceAssets={sourceAssets}
+                activeSceneIndex={activeSceneIndex}
+              />
+            </>
+          );
+        }
+
+        if (isAwaitingSceneScriptApproval) {
+          return (
+            <>
+              <PipelineSection
+                requestId={id}
+                currentStep={pipelineJob.currentStep}
+                failedAtStep={pipelineJob.failedAtStep}
+                durationSeconds={effectiveDurationSeconds}
+                totalChannels={request.targetPlatforms.length}
+              />
+              <SceneScriptApprovalPanel
+                requestId={id}
+                jobId={pipelineJob.id}
+                initialScenes={scenePlan}
+                scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
+                hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
+                captionThai={pipelineJob.approvedCaptionThai ?? pipelineJob.captionThai}
+                activeSceneIndex={pipelineJob.currentSceneIndex ?? 0}
+                voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
+                voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
+                latestVideoUrl={latestVideoAsset?.storageUrl ?? null}
+                latestVideoAssetId={latestVideoAsset?.id ?? null}
                 sourceAssets={sourceAssets}
               />
             </>
@@ -277,7 +364,7 @@ export default async function RequestDetailPage({
               requestId={id}
               currentStep={pipelineJob.currentStep}
               failedAtStep={pipelineJob.failedAtStep}
-              durationSeconds={request.durationSeconds}
+              durationSeconds={effectiveDurationSeconds}
               totalChannels={request.targetPlatforms.length}
             />
 
@@ -286,7 +373,18 @@ export default async function RequestDetailPage({
             )}
 
             {/* Voice approval + script — shown once voice generation completes,
-                before the base video exists (audio-first reorder) */}
+                before the base video exists (audio-first reorder). The approved
+                storyboard is shown read-only so the requester can picture the
+                story while judging the voiceover. */}
+            {!isFailed && isAwaitingVoiceApproval && storyboard.length > 0 && (
+              <div className="mb-6">
+                <StoryboardView
+                  scenes={storyboard}
+                  assets={storyboardAssets}
+                  subtitle="ภาพรวมฉากที่อนุมัติแล้ว — ใช้จินตนาการเรื่องราวขณะฟังเสียงพากย์"
+                />
+              </div>
+            )}
             {!isFailed && isAwaitingVoiceApproval && (
               <VideoApprovalPanel
                 requestId={id}
@@ -313,6 +411,8 @@ export default async function RequestDetailPage({
                 captionThai={pipelineJob.approvedCaptionThai ?? pipelineJob.captionThai}
                 captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
                 captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
+                sourceAssets={sourceAssets}
+                activeSceneIndex={activeSceneIndex}
               />
             )}
 
@@ -351,6 +451,8 @@ export default async function RequestDetailPage({
                 captionThai={pipelineJob.approvedCaptionThai ?? pipelineJob.captionThai}
                 captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
                 captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
+                sourceAssets={sourceAssets}
+                activeSceneIndex={activeSceneIndex}
               />
             )}
 
@@ -361,6 +463,8 @@ export default async function RequestDetailPage({
                 jobId={pipelineJob.id}
                 failedAtStep={pipelineJob.failedAtStep}
                 scenePlan={scenePlan}
+                sourceImages={sourceImageOptions}
+                voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 scriptThai={pipelineJob.approvedScriptThai}
                 hookThai={pipelineJob.approvedHookThai}
               />

@@ -14,10 +14,16 @@ import {
   MAX_UPLOAD_COUNT,
   MAX_IMAGE_SIZE_BYTES,
   MAX_VIDEO_SIZE_BYTES,
+  MAX_UPLOAD_SIZE_BYTES,
+  MAX_CLIP_DURATION_SECONDS,
   ACCEPTED_MIME_TYPES,
   ACCEPTED_IMAGE_MIME_TYPES,
   ACCEPTED_VIDEO_MIME_TYPES,
 } from "@/domain/enums/AssetType";
+import {
+  validateTotalUploadSize,
+  validateClipDuration,
+} from "@/features/requests/validation/clipRequestSchema";
 import { CREDITS_CONFIG, PIPELINE_STEP_COSTS, calcPipelineCost } from "@/config/credits";
 import { ROUTES, requestDetailPath } from "@/config/routes";
 import { Input } from "@/components/ui/Input";
@@ -43,6 +49,33 @@ interface NewRequestFormProps {
 
 const MAX_IMAGE_SIZE_MB = MAX_IMAGE_SIZE_BYTES / (1024 * 1024);
 const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE_BYTES / (1024 * 1024);
+const MAX_UPLOAD_SIZE_MB = Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024));
+
+/**
+ * Read a video file's duration (seconds) in the browser via a detached
+ * <video> element's metadata. Resolves NaN on failure so callers can treat
+ * "unknown" as non-blocking (the server ffprobe is the authoritative guard).
+ */
+function readVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    try {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.onloadedmetadata = () => {
+        URL.revokeObjectURL(url);
+        resolve(video.duration);
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(NaN);
+      };
+      video.src = url;
+    } catch {
+      resolve(NaN);
+    }
+  });
+}
 
 type SubmitPhase = "form" | "submitting";
 
@@ -100,6 +133,12 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
   };
 
   const addFiles = (files: File[]) => {
+    // Running total of bytes already accepted, so the per-request total cap is
+    // enforced as files are added (matches the server presign-route check).
+    let runningBytes = pendingFiles
+      .filter((f) => !f.error)
+      .reduce((sum, f) => sum + f.file.size, 0);
+
     const newItems: PendingFile[] = files.map((file) => {
       const id = crypto.randomUUID();
       let error: string | undefined;
@@ -116,12 +155,37 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
         error = `ไฟล์เกินขนาดสูงสุด ${isVideo ? MAX_VIDEO_SIZE_MB : MAX_IMAGE_SIZE_MB} MB`;
       } else if (!acceptedTypes.includes(file.type as never)) {
         error = "ประเภทไฟล์ไม่รองรับ";
+      } else if (validateTotalUploadSize(runningBytes, file.size)) {
+        error = `ขนาดไฟล์รวมเกิน ${MAX_UPLOAD_SIZE_MB} MB ต่อคำขอ`;
       }
 
+      if (!error) runningBytes += file.size;
       return { id, file, error };
     });
 
     setPendingFiles((prev) => [...prev, ...newItems].slice(0, MAX_UPLOAD_COUNT));
+
+    // Asynchronously verify each accepted video's duration (≤45s) and flag any
+    // that are too long. The server re-checks with ffprobe at confirm time.
+    for (const item of newItems) {
+      if (item.error) continue;
+      const isVideo = ACCEPTED_VIDEO_MIME_TYPES.includes(
+        item.file.type as (typeof ACCEPTED_VIDEO_MIME_TYPES)[number]
+      );
+      if (!isVideo) continue;
+
+      void readVideoDuration(item.file).then((duration) => {
+        if (validateClipDuration(duration)) {
+          setPendingFiles((prev) =>
+            prev.map((f) =>
+              f.id === item.id
+                ? { ...f, error: `คลิปต้องยาวไม่เกิน ${MAX_CLIP_DURATION_SECONDS} วินาที` }
+                : f
+            )
+          );
+        }
+      });
+    }
   };
 
   const removeFile = (id: string) => {
@@ -202,6 +266,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
 
       const { requestId } = await requestRes.json();
 
+      const failedUploads: string[] = [];
       for (const item of pendingFiles.filter((f) => !f.error)) {
         const metaRes = await fetch(`/api/uploads/${requestId}`, {
           method: "POST",
@@ -212,7 +277,11 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
             mimeType: item.file.type,
           }),
         });
-        if (!metaRes.ok) continue;
+        if (!metaRes.ok) {
+          const body = await metaRes.json().catch(() => ({}));
+          failedUploads.push(`${item.file.name} (${body.error ?? `error ${metaRes.status}`})`);
+          continue;
+        }
 
         const { assetId, presignedUrl } = await metaRes.json();
 
@@ -221,13 +290,30 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
           headers: { "Content-Type": item.file.type },
           body: item.file,
         });
-        if (!uploadRes.ok) continue;
+        if (!uploadRes.ok) {
+          failedUploads.push(`${item.file.name} (อัปโหลดไม่สำเร็จ)`);
+          continue;
+        }
 
-        await fetch(`/api/uploads/${requestId}/confirm`, {
+        const confirmRes = await fetch(`/api/uploads/${requestId}/confirm`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ assetId }),
         });
+        if (!confirmRes.ok) {
+          const body = await confirmRes.json().catch(() => ({}));
+          failedUploads.push(`${item.file.name} (${body.error ?? "ยืนยันไฟล์ไม่สำเร็จ"})`);
+        }
+      }
+
+      // Surface any rejected files instead of silently dropping them, so the
+      // requester knows which media did not make it into the request.
+      if (failedUploads.length > 0) {
+        setPhase("form");
+        setSubmitError(
+          `ไฟล์เหล่านี้อัปโหลดไม่สำเร็จและจะไม่ถูกใช้ในวิดีโอ: ${failedUploads.join(" · ")}`
+        );
+        return;
       }
 
       const submitRes = await fetch(`/api/requests/${requestId}/submit`, {
@@ -385,7 +471,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
           <p className="mt-1 text-xs text-slate-400">
             {imageOnly
               ? `รูปภาพเท่านั้น (JPEG, PNG, WebP, GIF) · สูงสุด ${MAX_IMAGE_SIZE_MB} MB ต่อไฟล์ · สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์`
-              : `รูปภาพสูงสุด ${MAX_IMAGE_SIZE_MB} MB · วิดีโอสูงสุด ${MAX_VIDEO_SIZE_MB} MB · สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์`}
+              : `รูปภาพสูงสุด ${MAX_IMAGE_SIZE_MB} MB · วิดีโอสูงสุด ${MAX_VIDEO_SIZE_MB} MB และยาวไม่เกิน ${MAX_CLIP_DURATION_SECONDS} วินาที · สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์ · รวมไม่เกิน ${MAX_UPLOAD_SIZE_MB} MB`}
           </p>
           <input
             id="file-input"

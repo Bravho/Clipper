@@ -1,17 +1,25 @@
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import {
   AssetType,
   AssetUploadStatus,
   MAX_UPLOAD_COUNT,
   MAX_IMAGE_SIZE_BYTES,
   MAX_VIDEO_SIZE_BYTES,
+  MAX_UPLOAD_SIZE_BYTES,
   ACCEPTED_VIDEO_MIME_TYPES,
 } from "@/domain/enums/AssetType";
+import { validateClipDuration, validateTotalUploadSize } from "@/features/requests/validation/clipRequestSchema";
 import { UploadedAsset } from "@/domain/models/UploadedAsset";
 import { uploadedAssetRepository } from "@/repositories";
 import { spacesClient, SPACES_BUCKET, spacesPublicUrl } from "@/lib/spaces";
@@ -21,6 +29,21 @@ import {
   buildThumbnailKey,
 } from "@/lib/spacesKeys";
 import { generateImageThumbnail } from "@/lib/thumbnails";
+import { AI_CONFIG } from "@/config/aiTools";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Thrown when an uploaded file fails a business-rule validation (e.g. a video
+ * clip exceeds the maximum duration) as opposed to an infrastructure error.
+ * API routes map this to HTTP 422 rather than 500.
+ */
+export class UploadValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UploadValidationError";
+  }
+}
 
 /**
  * UploadService — manages the full lifecycle of requester-uploaded source files.
@@ -79,7 +102,8 @@ export class UploadService {
    */
   validateFile(
     file: { name: string; size: number; type: string },
-    currentCount: number
+    currentCount: number,
+    existingBytes = 0
   ): UploadValidationResult {
     if (currentCount >= MAX_UPLOAD_COUNT) {
       return {
@@ -109,7 +133,67 @@ export class UploadService {
       };
     }
 
+    // Per-request total upload size cap (sum of already-stored bytes + this file).
+    const totalError = validateTotalUploadSize(existingBytes, file.size);
+    if (totalError) {
+      return { valid: false, error: totalError };
+    }
+
     return { valid: true };
+  }
+
+  /**
+   * Sum the byte size of all non-deleted assets on a request. Used to enforce
+   * the per-request total upload size cap before issuing a new presigned URL.
+   */
+  async sumUploadedBytes(requestId: string): Promise<number> {
+    const assets = await uploadedAssetRepository.findByRequestId(requestId);
+    return assets
+      .filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted)
+      // Number() guard: some repos surface fileSizeBytes as a string (Postgres
+      // BIGINT), and `+` would concatenate rather than add.
+      .reduce((sum, a) => sum + (Number(a.fileSizeBytes) || 0), 0);
+  }
+
+  /**
+   * Probe a stored video's duration (seconds) with ffprobe. Downloads the
+   * object from DO Spaces to a temp file, runs ffprobe, then cleans up.
+   * Throws on any infrastructure/probe failure (caller decides fail-open vs
+   * fail-closed).
+   */
+  private async probeVideoDurationSeconds(storageKey: string): Promise<number> {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-clip-"));
+    const tmpFile = path.join(tmpDir, "clip");
+    try {
+      const res = await spacesClient.send(
+        new GetObjectCommand({ Bucket: SPACES_BUCKET, Key: storageKey })
+      );
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
+        chunks.push(chunk);
+      }
+      await fs.writeFile(tmpFile, Buffer.concat(chunks));
+
+      const ffprobePath = (AI_CONFIG.ffmpeg.path ?? "ffmpeg").replace(
+        /ffmpeg(\.exe)?$/i,
+        (m) => (m.toLowerCase().endsWith(".exe") ? "ffprobe.exe" : "ffprobe")
+      );
+
+      const { stdout } = await execFileAsync(ffprobePath, [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        tmpFile,
+      ]);
+
+      const duration = parseFloat(stdout.trim());
+      if (!Number.isFinite(duration) || duration <= 0) {
+        throw new Error(`ffprobe returned invalid duration: "${stdout.trim()}"`);
+      }
+      return duration;
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   }
 
   /**
@@ -184,6 +268,36 @@ export class UploadService {
       throw new Error("Asset is not in pending (tmp) state.");
     }
 
+    // Authoritative server-side clip-duration guard. Probe the just-uploaded
+    // video (still in tmp/) and reject clips longer than the cap BEFORE moving
+    // them into request_mat/. Probe infrastructure failures (ffprobe missing,
+    // download error) fail OPEN — we log and allow the upload rather than block
+    // legitimate uploads on an infra hiccup; the client-side check is the
+    // first line of defence and over-long clips remain rare.
+    if (asset.assetType === AssetType.Video) {
+      let durationSeconds: number | null = null;
+      try {
+        durationSeconds = await this.probeVideoDurationSeconds(asset.storageKey);
+      } catch (err) {
+        console.error("[UploadService] clip duration probe failed (allowing upload):", err);
+      }
+
+      if (durationSeconds !== null) {
+        const durationError = validateClipDuration(durationSeconds);
+        if (durationError) {
+          // Drop the rejected tmp object and mark the record Failed so the
+          // request isn't left with a dangling pending asset.
+          await spacesClient
+            .send(new DeleteObjectCommand({ Bucket: SPACES_BUCKET, Key: asset.storageKey }))
+            .catch(() => {});
+          await uploadedAssetRepository.update(assetId, {
+            uploadStatus: AssetUploadStatus.Failed,
+          });
+          throw new UploadValidationError(durationError);
+        }
+      }
+    }
+
     // Destination key in request_mat/
     const destKey = buildRequestMatKey(asset.userId, asset.requestId, asset.fileName);
 
@@ -213,9 +327,20 @@ export class UploadService {
     let thumbnailGenerated = false;
 
     if (asset.assetType === AssetType.Image) {
-      // Generate immediately using sharp (resize + iterative quality reduction)
-      await generateImageThumbnail(destKey, thumbKey);
-      thumbnailGenerated = true;
+      // Generate immediately using sharp (resize + iterative quality reduction).
+      // Non-fatal: if sharp can't decode the format (e.g. HEIC) or thumbnailing
+      // otherwise fails, keep the asset — it must still become Uploaded with a
+      // valid storageUrl so it appears in the storyboard/montage. The full image
+      // is used as its own thumbnail fallback (thumbnailUrl || storageUrl).
+      try {
+        await generateImageThumbnail(destKey, thumbKey);
+        thumbnailGenerated = true;
+      } catch (err) {
+        console.error(
+          `[UploadService] thumbnail generation failed for "${asset.fileName}" (keeping image without thumbnail):`,
+          err
+        );
+      }
     }
     // Video thumbnails require ffmpeg — key is reserved but generation is deferred.
     // TODO: Dispatch a background job here to call generateVideoThumbnail(destKey, thumbKey)

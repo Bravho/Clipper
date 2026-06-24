@@ -44,11 +44,9 @@ export async function GET(
     return NextResponse.json({ currentStep: null, failedAtStep: null, jobId: null });
   }
 
-  // Phase 3: Veo now runs N per-scene tasks (job.videoGenTaskIds). All
-  // per-scene polling, downloading, and the final merge are handled inside
-  // checkBaseVideoReady, which only advances the job once every scene's
-  // clip is ready. We just delegate to it and report whatever
-  // videoGenStatus/videoGenLastPolledAt it left on the job.
+  // Phase 3: Veo runs one cumulative scene task at a time. Polling and
+  // downloading are handled inside checkBaseVideoReady, which advances to the
+  // review gate after each cumulative scene output is ready.
   const hasVideoGenTasks = (job.videoGenTaskIds && job.videoGenTaskIds.length > 0) || !!job.videoGenTaskId;
   if (job.currentStep === VideoGenerationStep.GeneratingBaseVideo && hasVideoGenTasks) {
     try {

@@ -3,6 +3,7 @@ import {
   VideoGenerationJob,
   CreateVideoGenerationJobInput,
   UpdateVideoGenerationJobInput,
+  VideoGenerationStepHistoryEntry,
 } from "@/domain/models/VideoGenerationJob";
 
 // TODO: PostgreSQL — replace this entire class with PostgresVideoGenerationJobRepository.
@@ -10,6 +11,8 @@ import {
 declare global {
   // eslint-disable-next-line no-var
   var __mockVideoGenerationJobStore: Map<string, VideoGenerationJob> | undefined;
+  // eslint-disable-next-line no-var
+  var __mockVideoGenerationStepHistory: VideoGenerationStepHistoryEntry[] | undefined;
 }
 
 function getStore(): Map<string, VideoGenerationJob> {
@@ -23,9 +26,32 @@ export class MockVideoGenerationJobRepository
   implements IVideoGenerationJobRepository
 {
   private store: Map<string, VideoGenerationJob>;
+  private history: VideoGenerationStepHistoryEntry[];
 
-  constructor(store?: Map<string, VideoGenerationJob>) {
+  constructor(
+    store?: Map<string, VideoGenerationJob>,
+    history?: VideoGenerationStepHistoryEntry[]
+  ) {
     this.store = store ?? getStore();
+    if (history) {
+      this.history = history;
+    } else {
+      if (!global.__mockVideoGenerationStepHistory) {
+        global.__mockVideoGenerationStepHistory = [];
+      }
+      this.history = global.__mockVideoGenerationStepHistory;
+    }
+  }
+
+  private recordStep(job: VideoGenerationJob): void {
+    this.history.push({
+      id: crypto.randomUUID(),
+      jobId: job.id,
+      requestId: job.requestId,
+      step: job.currentStep,
+      sceneIndex: job.currentSceneIndex ?? null,
+      createdAt: new Date(),
+    });
   }
 
   async findById(id: string): Promise<VideoGenerationJob | null> {
@@ -48,6 +74,7 @@ export class MockVideoGenerationJobRepository
       updatedAt: now,
     };
     this.store.set(job.id, job);
+    this.recordStep(job);
     return { ...job };
   }
 
@@ -64,6 +91,13 @@ export class MockVideoGenerationJobRepository
       updatedAt: new Date(),
     };
     this.store.set(id, updated);
+    if (input.currentStep !== undefined) this.recordStep(updated);
     return { ...updated };
+  }
+
+  async listStepHistory(jobId: string): Promise<VideoGenerationStepHistoryEntry[]> {
+    return this.history
+      .filter((entry) => entry.jobId === jobId)
+      .map((entry) => ({ ...entry }));
   }
 }

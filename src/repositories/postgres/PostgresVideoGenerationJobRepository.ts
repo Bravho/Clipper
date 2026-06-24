@@ -3,10 +3,38 @@ import {
   VideoGenerationJob,
   CreateVideoGenerationJobInput,
   UpdateVideoGenerationJobInput,
+  VideoGenerationStepHistoryEntry,
 } from "@/domain/models/VideoGenerationJob";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { pool } from "@/lib/db";
+
+function parseJsonField<T>(value: unknown, fallback: T): T {
+  if (value == null) return fallback;
+  if (typeof value !== "string") return value as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function serializeJobValue(key: string, value: unknown): unknown {
+  if (
+    key === "videoGenTaskIds" ||
+    key === "sceneVideoAssetIds" ||
+    key === "animatedOverlayAssetIds"
+  ) {
+    return value == null ? null : JSON.stringify(value);
+  }
+  return value;
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
   return {
@@ -14,7 +42,12 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     requestId: row.request_id as string,
     status: row.status as VideoGenerationJobStatus,
     currentStep: row.current_step as VideoGenerationStep,
+    currentSceneIndex: nullableNumber(row.current_scene_index) ?? 0,
     failedAtStep: (row.failed_at_step as VideoGenerationStep) ?? null,
+    storyboard: (row.storyboard as string) ?? null,
+    approvedStoryboard: (row.approved_storyboard as string) ?? null,
+    videoEngine: (row.video_engine as "montage" | "veo") ?? "montage",
+    aiBrollEnabled: (row.ai_broll_enabled as boolean) ?? false,
     scenePlan: (row.scene_plan as string) ?? null,
     scriptThai: (row.script_thai as string) ?? null,
     scriptEnglish: (row.script_english as string) ?? null,
@@ -34,26 +67,19 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     approvedCaptionEnglish: (row.approved_caption_english as string) ?? null,
     approvedCaptionChinese: (row.approved_caption_chinese as string) ?? null,
     videoGenTaskId: (row.video_gen_task_id as string) ?? null,
-    // NOTE: no DB columns yet for these Phase 3 per-scene fields (out of
-    // scope — requires a migration). Falls back to null until added; updates
-    // to these fields are intentionally excluded from JOB_UPDATE_COLS below
-    // so they don't error against a missing column. Same pattern as
-    // voiceDurationSeconds/voiceTimestamps above.
-    videoGenTaskIds: row.video_gen_task_ids ? (JSON.parse(row.video_gen_task_ids as string) as string[]) : null,
-    sceneVideoAssetIds: row.scene_video_asset_ids ? (JSON.parse(row.scene_video_asset_ids as string) as (string | null)[]) : null,
-    videoGenStatus: null,
-    videoGenLastPolledAt: null,
+    videoGenTaskIds: parseJsonField<string[] | null>(row.video_gen_task_ids, null),
+    sceneVideoAssetIds: parseJsonField<(string | null)[] | null>(row.scene_video_asset_ids, null),
+    videoGenStatus: (row.video_gen_status as "submitted" | "processing") ?? null,
+    videoGenLastPolledAt: row.video_gen_last_polled_at
+      ? new Date(row.video_gen_last_polled_at as string)
+      : null,
     baseVideoAssetId: (row.base_video_asset_id as string) ?? null,
     ttsTaskId: (row.tts_task_id as string) ?? null,
-    rvcVoiceModel: row.eleven_labs_voice_id as string,
+    rvcVoiceModel: (row.eleven_labs_voice_id as string) ?? "",
     voiceRecordingAssetId: (row.voice_recording_asset_id as string) ?? null,
     processedVoiceAssetId: (row.processed_voice_asset_id as string) ?? null,
     selectedMusicTrack: (row.selected_music_track as string) ?? null,
-    // NOTE: no DB columns yet for these Phase 1 fields (out of scope —
-    // requires a migration). Falls back to null until added; updates to
-    // these fields are intentionally excluded from JOB_UPDATE_COLS below
-    // so they don't error against a missing column.
-    voiceDurationSeconds: (row.voice_duration_seconds as number) ?? null,
+    voiceDurationSeconds: nullableNumber(row.voice_duration_seconds),
     voiceTimestamps: (row.voice_timestamps as string) ?? null,
     finalExport_9_16_assetId: (row.final_export_9_16_asset_id as string) ?? null,
     finalExport_16_9_assetId: (row.final_export_16_9_asset_id as string) ?? null,
@@ -64,17 +90,14 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     subtitleTimeline: (row.subtitle_timeline as string) ?? null,
     animationSpec: (row.animation_spec as string) ?? null,
     animatedVideoAssetId: (row.animated_video_asset_id as string) ?? null,
-    // NOTE: no DB column yet for this Phase 4 field (out of scope — requires
-    // a migration). Falls back to null until added; updates to this field
-    // are intentionally excluded from JOB_UPDATE_COLS below so they don't
-    // error against a missing column. Same pattern as videoGenTaskIds/sceneVideoAssetIds.
-    animatedOverlayAssetIds: row.animated_overlay_asset_ids
-      ? (JSON.parse(row.animated_overlay_asset_ids as string) as Record<string, string>)
-      : null,
+    animatedOverlayAssetIds: parseJsonField<Record<string, string> | null>(
+      row.animated_overlay_asset_ids,
+      null
+    ),
     contentApprovedBy: (row.content_approved_by as string) ?? null,
     videoApprovedBy: (row.video_approved_by as string) ?? null,
     voiceApprovedBy: (row.voice_approved_by as string) ?? null,
-    animationApprovedBy: null,
+    animationApprovedBy: (row.animation_approved_by as string) ?? null,
     finalApprovedBy: (row.final_approved_by as string) ?? null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
@@ -84,7 +107,12 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
 const JOB_UPDATE_COLS: Record<string, string> = {
   status: "status",
   currentStep: "current_step",
+  currentSceneIndex: "current_scene_index",
   failedAtStep: "failed_at_step",
+  storyboard: "storyboard",
+  approvedStoryboard: "approved_storyboard",
+  videoEngine: "video_engine",
+  aiBrollEnabled: "ai_broll_enabled",
   scenePlan: "scene_plan",
   scriptThai: "script_thai",
   scriptEnglish: "script_english",
@@ -104,12 +132,18 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   approvedCaptionEnglish: "approved_caption_english",
   approvedCaptionChinese: "approved_caption_chinese",
   videoGenTaskId: "video_gen_task_id",
+  videoGenTaskIds: "video_gen_task_ids",
+  sceneVideoAssetIds: "scene_video_asset_ids",
+  videoGenStatus: "video_gen_status",
+  videoGenLastPolledAt: "video_gen_last_polled_at",
   ttsTaskId: "tts_task_id",
   baseVideoAssetId: "base_video_asset_id",
   rvcVoiceModel: "eleven_labs_voice_id",
   voiceRecordingAssetId: "voice_recording_asset_id",
   processedVoiceAssetId: "processed_voice_asset_id",
   selectedMusicTrack: "selected_music_track",
+  voiceDurationSeconds: "voice_duration_seconds",
+  voiceTimestamps: "voice_timestamps",
   "finalExport_9_16_assetId": "final_export_9_16_asset_id",
   "finalExport_16_9_assetId": "final_export_16_9_asset_id",
   "finalExport_1_1_assetId": "final_export_1_1_asset_id",
@@ -119,9 +153,11 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   subtitleTimeline: "subtitle_timeline",
   animationSpec: "animation_spec",
   animatedVideoAssetId: "animated_video_asset_id",
+  animatedOverlayAssetIds: "animated_overlay_asset_ids",
   contentApprovedBy: "content_approved_by",
   videoApprovedBy: "video_approved_by",
   voiceApprovedBy: "voice_approved_by",
+  animationApprovedBy: "animation_approved_by",
   finalApprovedBy: "final_approved_by",
 };
 
@@ -163,11 +199,14 @@ export class PostgresVideoGenerationJobRepository
          final_export_1_1_asset_id, final_export_4_5_asset_id, final_export_tvent_asset_id,
          subtitle_languages,
          content_approved_by, video_approved_by, voice_approved_by, final_approved_by,
-         subtitle_timeline, animation_spec, animated_video_asset_id
+         subtitle_timeline, animation_spec, animated_video_asset_id,
+         current_scene_index,
+         storyboard, approved_storyboard, video_engine, ai_broll_enabled
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
          $18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,
-         $32,$33,$34,$35,$36,$37,$38,$39,$40,$41
+         $32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,
+         $43,$44,$45,$46
        ) RETURNING *`,
       [
         input.requestId,
@@ -211,9 +250,16 @@ export class PostgresVideoGenerationJobRepository
         input.subtitleTimeline ?? null,
         input.animationSpec ?? null,
         input.animatedVideoAssetId ?? null,
+        input.currentSceneIndex ?? 0,
+        input.storyboard ?? null,
+        input.approvedStoryboard ?? null,
+        input.videoEngine ?? "montage",
+        input.aiBrollEnabled ?? false,
       ]
     );
-    return rowToJob(rows[0]);
+    const created = rowToJob(rows[0]);
+    await this._recordStepHistory(created.id, created.requestId, created.currentStep, created.currentSceneIndex);
+    return created;
   }
 
   async update(
@@ -229,7 +275,7 @@ export class PostgresVideoGenerationJobRepository
       const col = JOB_UPDATE_COLS[key];
       if (!col) continue;
       sets.push(`${col} = $${idx++}`);
-      values.push(value);
+      values.push(serializeJobValue(key, value));
     }
 
     if (sets.length === 0) {
@@ -249,6 +295,56 @@ export class PostgresVideoGenerationJobRepository
       values
     );
     if (!rows[0]) throw new Error(`VideoGenerationJob not found: ${id}`);
-    return rowToJob(rows[0]);
+    const updated = rowToJob(rows[0]);
+
+    // Record every step transition the service requests (any update that sets
+    // currentStep), so the full pipeline history — including each per-scene
+    // gate — is preserved, not just the latest current_step.
+    if (input.currentStep !== undefined) {
+      await this._recordStepHistory(
+        updated.id,
+        updated.requestId,
+        updated.currentStep,
+        updated.currentSceneIndex
+      );
+    }
+
+    return updated;
+  }
+
+  private async _recordStepHistory(
+    jobId: string,
+    requestId: string,
+    step: VideoGenerationStep,
+    sceneIndex: number | null
+  ): Promise<void> {
+    try {
+      await this.db.query(
+        `INSERT INTO video_generation_step_history (job_id, request_id, step, scene_index)
+         VALUES ($1, $2, $3, $4)`,
+        [jobId, requestId, step, sceneIndex]
+      );
+    } catch (err) {
+      // History is an audit aid — never let a logging failure break the pipeline.
+      console.error("[stepHistory] failed to record step:", err);
+    }
+  }
+
+  async listStepHistory(jobId: string): Promise<VideoGenerationStepHistoryEntry[]> {
+    const { rows } = await this.db.query(
+      `SELECT id, job_id, request_id, step, scene_index, created_at
+         FROM video_generation_step_history
+        WHERE job_id = $1
+        ORDER BY created_at ASC`,
+      [jobId]
+    );
+    return rows.map((row) => ({
+      id: row.id as string,
+      jobId: row.job_id as string,
+      requestId: row.request_id as string,
+      step: row.step as VideoGenerationStep,
+      sceneIndex: nullableNumber(row.scene_index),
+      createdAt: new Date(row.created_at as string),
+    }));
   }
 }

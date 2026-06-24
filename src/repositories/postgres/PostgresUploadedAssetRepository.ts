@@ -14,7 +14,9 @@ function rowToAsset(row: Record<string, unknown>): UploadedAsset {
     userId: row.user_id as string,
     fileName: row.file_name as string,
     assetType: row.asset_type as AssetType,
-    fileSizeBytes: row.file_size_bytes as number,
+    // Postgres returns BIGINT/NUMERIC as a string — coerce to a real number so
+    // arithmetic (e.g. summing upload sizes) adds instead of string-concatenating.
+    fileSizeBytes: Number(row.file_size_bytes ?? 0),
     mimeType: row.mime_type as string,
     storageKey: row.storage_key as string,
     storageUrl: row.storage_url as string,

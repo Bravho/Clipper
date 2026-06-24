@@ -71,11 +71,11 @@ import { MockEditorProfileRepository } from "./mock/MockEditorProfileRepository"
 
 export const editorProfileRepository = new MockEditorProfileRepository();
 
-// ── AI Video Pipeline — Mock (TODO: replace with Postgres implementation) ───
-// Pipeline jobs are still in-memory until the video_generation_jobs table and
-// migrations are fully materialised.
-import { MockVideoGenerationJobRepository } from "./mock/MockVideoGenerationJobRepository";
+// AI Video Pipeline - PostgreSQL
+// Pipeline jobs are PostgreSQL-backed so browser reloads and server restarts
+// resume from the current AI generation/approval step.
+import { PostgresVideoGenerationJobRepository } from "./postgres/PostgresVideoGenerationJobRepository";
 import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordRepository";
 
-export const videoGenerationJobRepository = new MockVideoGenerationJobRepository();
+export const videoGenerationJobRepository = new PostgresVideoGenerationJobRepository();
 export const videoPublishRecordRepository = new MockVideoPublishRecordRepository(); // TODO: PostgresVideoPublishRecordRepository (no Postgres impl / table yet)

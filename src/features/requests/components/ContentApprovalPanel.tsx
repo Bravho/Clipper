@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
+import { type StoryboardAssetThumb } from "@/features/requests/components/StoryboardView";
+import { StoryboardEditor } from "@/features/requests/components/StoryboardEditor";
+import type { StoryboardScene } from "@/domain/models/VideoGenerationJob";
 
 interface ContentApprovalPanelProps {
   requestId: string;
@@ -11,6 +14,9 @@ interface ContentApprovalPanelProps {
   initialCaptionThai: string | null;
   initialCaptionEnglish: string | null;
   initialCaptionChinese: string | null;
+  /** Rough Stage-1 storyboard, shown for visual context with the script. */
+  storyboard?: StoryboardScene[];
+  storyboardAssets?: StoryboardAssetThumb[];
 }
 
 const ta =
@@ -23,10 +29,13 @@ export function ContentApprovalPanel({
   initialCaptionThai,
   initialCaptionEnglish,
   initialCaptionChinese,
+  storyboard,
+  storyboardAssets,
 }: ContentApprovalPanelProps) {
   const router = useRouter();
   const [scriptThai, setScriptThai] = useState(initialScriptThai ?? "");
   const [captionThai, setCaptionThai] = useState(initialCaptionThai ?? "");
+  const [storyboardScenes, setStoryboardScenes] = useState<StoryboardScene[]>(storyboard ?? []);
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +53,7 @@ export function ContentApprovalPanel({
           captionThai,
           captionEnglish: initialCaptionEnglish,
           captionChinese: initialCaptionChinese,
+          storyboard: storyboardScenes,
         }),
       });
       if (!res.ok) {
@@ -67,6 +77,14 @@ export function ContentApprovalPanel({
           ก่อน แล้วค่อยออกแบบฉากและฮุกในขั้นตอนถัดไป
         </p>
       </div>
+
+      {storyboardScenes.length > 0 && (
+        <StoryboardEditor
+          scenes={storyboardScenes}
+          assets={storyboardAssets ?? []}
+          onChange={setStoryboardScenes}
+        />
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">

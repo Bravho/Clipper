@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
+import { sanitizeSceneDescription, sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
+import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 /**
  * PATCH /api/requests/[id]/script
@@ -36,7 +38,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { jobId, scriptThai, captionThai } = body as Record<string, unknown>;
+  const { jobId, scriptThai, captionThai, hookThai, scenes } = body as Record<string, unknown>;
   if (!jobId || typeof jobId !== "string") {
     return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
   }
@@ -49,6 +51,45 @@ export async function PATCH(
   const patch: Record<string, string> = {};
   if (typeof scriptThai === "string") patch.approvedScriptThai = sanitizeThaiVoiceScript(scriptThai);
   if (typeof captionThai === "string") patch.approvedCaptionThai = captionThai;
+  if (typeof hookThai === "string") patch.approvedHookThai = sanitizeThaiVoiceScript(hookThai);
+
+  if (Array.isArray(scenes)) {
+    const existingPlan = JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[];
+    const nextPlan = existingPlan.map((scene, index) => {
+      const edited = scenes[index] as
+        | {
+            visualDescriptionThai?: unknown;
+            durationSeconds?: unknown;
+            imageIndexes?: unknown;
+          }
+        | undefined;
+
+      const imageIndexes = Array.isArray(edited?.imageIndexes)
+        ? edited.imageIndexes
+            .filter((value): value is number => Number.isInteger(value) && value >= 0)
+            .slice(0, 2)
+        : scene.imageIndexes;
+
+      const durationSeconds =
+        imageIndexes.length === 2
+          ? 8
+          : Number.isFinite(Number(edited?.durationSeconds)) && Number(edited?.durationSeconds) > 0
+            ? Number(edited?.durationSeconds)
+            : scene.durationSeconds;
+
+      return {
+        ...scene,
+        imageIndexes,
+        durationSeconds,
+        visualDescriptionThai:
+          typeof edited?.visualDescriptionThai === "string"
+            ? sanitizeSceneDescription(edited.visualDescriptionThai)
+            : scene.visualDescriptionThai,
+      };
+    });
+
+    patch.approvedScenePlan = JSON.stringify(sanitizeScenePlanDescriptions(nextPlan));
+  }
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ ok: true });

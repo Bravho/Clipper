@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { Platform } from "@/domain/enums/Platform";
-import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
+import {
+  MAX_UPLOAD_COUNT,
+  MAX_UPLOAD_SIZE_BYTES,
+  MAX_CLIP_DURATION_SECONDS,
+} from "@/domain/enums/AssetType";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 
 /**
@@ -90,6 +94,35 @@ export type SubmitClipRequestValues = z.infer<typeof submitClipRequestSchema>;
 export function validateUploadCount(count: number): string | null {
   if (count > MAX_UPLOAD_COUNT) {
     return `You may attach a maximum of ${MAX_UPLOAD_COUNT} files per request.`;
+  }
+  return null;
+}
+
+/**
+ * Returns a validation error message if adding `additionalBytes` to the
+ * request's existing `currentBytes` would exceed the per-request total upload
+ * cap (MAX_UPLOAD_SIZE_BYTES). Shared by the client form and the server
+ * presign route so both enforce the same total.
+ */
+export function validateTotalUploadSize(
+  currentBytes: number,
+  additionalBytes: number
+): string | null {
+  if (currentBytes + additionalBytes > MAX_UPLOAD_SIZE_BYTES) {
+    const maxMB = Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024));
+    return `Total upload size exceeds the ${maxMB} MB limit for a single request.`;
+  }
+  return null;
+}
+
+/**
+ * Returns a validation error message if a video clip is longer than
+ * MAX_CLIP_DURATION_SECONDS. A non-finite/zero duration is treated as
+ * "unknown" and passes (the server probe is the authoritative guard).
+ */
+export function validateClipDuration(durationSeconds: number): string | null {
+  if (Number.isFinite(durationSeconds) && durationSeconds > MAX_CLIP_DURATION_SECONDS) {
+    return `Video clips must be ${MAX_CLIP_DURATION_SECONDS} seconds or shorter.`;
   }
   return null;
 }

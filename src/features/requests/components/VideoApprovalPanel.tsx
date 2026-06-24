@@ -5,7 +5,9 @@ import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
+import { AssetType } from "@/domain/enums/AssetType";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import { Platform, PLATFORM_LABELS, FORM_PLATFORMS } from "@/domain/enums/Platform";
 
@@ -93,6 +95,8 @@ interface Props {
   captionThai: string | null;
   captionEnglish: string | null;
   captionChinese: string | null;
+  sourceAssets?: UploadedAsset[];
+  activeSceneIndex?: number;
 }
 
 type RecorderState = "idle" | "recording" | "recorded" | "converting" | "converted";
@@ -122,6 +126,8 @@ export function VideoApprovalPanel({
   captionThai,
   captionEnglish,
   captionChinese,
+  sourceAssets = [],
+  activeSceneIndex = 0,
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -133,6 +139,11 @@ export function VideoApprovalPanel({
   const [editScriptThai, setEditScriptThai] = useState(scriptThai ?? "");
   const [editCaptionThai, setEditCaptionThai] = useState(captionThai ?? "");
   const [editScenes, setEditScenes] = useState<ScenePlan[]>(scenes);
+  const safeActiveSceneIndex = Math.min(Math.max(activeSceneIndex, 0), Math.max(editScenes.length - 1, 0));
+  const activeEditScene = editScenes[safeActiveSceneIndex];
+  const sourceImageOptions = sourceAssets
+    .map((asset, sourceIndex) => ({ asset, sourceIndex }))
+    .filter(({ asset }) => asset.assetType === AssetType.Image);
 
   // Voice recorder state
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
@@ -781,6 +792,32 @@ export function VideoApprovalPanel({
     );
   };
 
+  const updateScene = (index: number, patch: Partial<ScenePlan>) => {
+    setEditScenes((prev) => prev.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
+  };
+
+  const getSceneImages = (scene: ScenePlan): number[] =>
+    Array.isArray(scene.imageIndexes) ? scene.imageIndexes.slice(0, 2) : [];
+
+  const toggleSceneImage = (sceneIndex: number, sourceIndex: number) => {
+    setEditScenes((prev) =>
+      prev.map((scene, index) => {
+        if (index !== sceneIndex) return scene;
+
+        const current = getSceneImages(scene);
+        const imageIndexes = current.includes(sourceIndex)
+          ? current.filter((idx) => idx !== sourceIndex)
+          : [...current, sourceIndex].slice(0, 2);
+
+        return {
+          ...scene,
+          imageIndexes,
+          durationSeconds: imageIndexes.length === 2 ? 8 : scene.durationSeconds,
+        };
+      })
+    );
+  };
+
   const handleApprove = async () => {
     setIsSubmitting(true);
     setError(null);
@@ -794,7 +831,8 @@ export function VideoApprovalPanel({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ไม่สามารถอนุมัติวิดีโอได้");
       }
-      router.push(pathname);
+      router.refresh();
+      setIsSubmitting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
       setIsSubmitting(false);
@@ -820,7 +858,8 @@ export function VideoApprovalPanel({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ไม่สามารถส่งขอแก้ไขได้");
       }
-      router.push(pathname);
+      router.refresh();
+      setIsSubmitting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
       setIsSubmitting(false);
@@ -1308,25 +1347,77 @@ export function VideoApprovalPanel({
               แผนฉาก
             </h3>
             <div className="flex flex-col gap-3">
-              {editScenes.map((scene, index) => (
+              {activeEditScene && (
                 <div
-                  key={scene.sceneNumber}
+                  key={activeEditScene.sceneNumber}
                   className="rounded-lg border border-slate-100 bg-slate-50 p-4"
                 >
-                  <div className="mb-2 flex items-center gap-2">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-600">
-                      ฉาก {scene.sceneNumber}
+                      Scene {safeActiveSceneIndex + 1} of {editScenes.length}
                     </span>
-                    <span className="text-xs text-slate-400">{scene.durationSeconds} วินาที</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={activeEditScene.durationSeconds}
+                      disabled={getSceneImages(activeEditScene).length === 2}
+                      onChange={(e) =>
+                        updateScene(safeActiveSceneIndex, { durationSeconds: Number(e.target.value) || 1 })
+                      }
+                      className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                    <span className="text-xs text-slate-400">seconds</span>
                   </div>
                   <textarea
-                    value={scene.visualDescriptionThai ?? ""}
-                    onChange={(e) => updateSceneDescription(index, e.target.value)}
+                    value={activeEditScene.visualDescriptionThai ?? ""}
+                    onChange={(e) => updateSceneDescription(safeActiveSceneIndex, e.target.value)}
                     rows={3}
                     className={`${ta} text-sm text-slate-700`}
                   />
+                  {sourceImageOptions.length > 0 && (
+                    <div className="mt-3">
+                      <p className="mb-2 text-xs font-medium text-slate-500">
+                        Uploaded images for this scene (max 2)
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {sourceImageOptions.map(({ asset, sourceIndex }) => {
+                          const selected = getSceneImages(activeEditScene).includes(sourceIndex);
+                          const maxSelected = getSceneImages(activeEditScene).length >= 2 && !selected;
+                          const thumbSrc = asset.thumbnailUrl || asset.storageUrl;
+
+                          return (
+                            <button
+                              type="button"
+                              key={asset.id}
+                              disabled={maxSelected}
+                              onClick={() => toggleSceneImage(safeActiveSceneIndex, sourceIndex)}
+                              className={`overflow-hidden rounded-md border text-left transition ${
+                                selected
+                                  ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                                  : "border-slate-200 bg-white hover:border-blue-200"
+                              } disabled:cursor-not-allowed disabled:opacity-40`}
+                            >
+                              <div className="aspect-video bg-slate-100">
+                                <img src={thumbSrc} alt={asset.fileName} className="h-full w-full object-cover" />
+                              </div>
+                              <div className="px-2 py-1">
+                                <p className="truncate text-xs text-slate-600">
+                                  {selected ? "Selected" : "Image"} {sourceIndex + 1}
+                                </p>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {getSceneImages(activeEditScene).length === 2 && (
+                        <p className="mt-1 text-xs text-blue-600">
+                          Two images selected: scene time is fixed at 8 seconds for morphing.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
           </div>
 

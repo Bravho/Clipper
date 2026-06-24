@@ -7,6 +7,7 @@ import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { AnimationSpec } from "@/lib/ai/animationService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
+import { getRemotionBundle } from "@/lib/ai/remotionBundle";
 
 /**
  * Phase 4 — Remotion-based motion-graphics/caption overlay rendering.
@@ -31,29 +32,6 @@ import type { VideoRatio } from "@/lib/ai/ffmpegService";
  */
 
 const RENDER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per ratio — generous for headless Chromium cold starts
-
-let bundleLocationPromise: Promise<string> | null = null;
-
-/**
- * Bundles the `remotion/` entry point with `@remotion/bundler` once per
- * process and caches the resulting serve URL/dir. Bundling a React +
- * webpack project takes several seconds, so this is done lazily on first
- * use rather than at module load (keeps `npm test` / non-pipeline routes
- * fast, since this module is only imported dynamically from
- * `VideoGenerationService`).
- */
-async function getBundleLocation(): Promise<string> {
-  if (!bundleLocationPromise) {
-    bundleLocationPromise = (async () => {
-      const { bundle } = await import("@remotion/bundler");
-      return bundle({
-        entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
-        onProgress: () => {},
-      });
-    })();
-  }
-  return bundleLocationPromise;
-}
 
 export interface RenderOverlayParams {
   ratio: VideoRatio;
@@ -102,7 +80,7 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
   };
 
   const { selectComposition, renderMedia } = await import("@remotion/renderer");
-  const serveUrl = await getBundleLocation();
+  const serveUrl = await getRemotionBundle();
 
   const composition = await selectComposition({
     serveUrl,

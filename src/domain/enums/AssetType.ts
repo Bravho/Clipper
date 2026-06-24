@@ -67,3 +67,13 @@ export const MAX_VIDEO_SIZE_BYTES = 80 * 1024 * 1024;
 
 /** Maximum overall upload size accepted by the upload service: 500 MB */
 export const MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024;
+
+/**
+ * Maximum duration for a single uploaded video clip: 45 seconds.
+ *
+ * Enforced on the client (HTMLVideoElement metadata probe) for fast feedback
+ * and authoritatively on the server at upload-confirm time (ffprobe). Clips
+ * become source material for the real-media montage renderer, so over-long
+ * clips are rejected before they enter the pipeline.
+ */
+export const MAX_CLIP_DURATION_SECONDS = 45;

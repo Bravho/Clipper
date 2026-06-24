@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
-import { uploadService } from "@/services/UploadService";
+import { uploadService, UploadValidationError } from "@/services/UploadService";
 import { clipRequestService } from "@/services/ClipRequestService";
 
 /**
@@ -60,6 +60,10 @@ export async function POST(
     const asset = await uploadService.confirmUpload(assetId, session.user.id);
     return NextResponse.json({ asset }, { status: 200 });
   } catch (err) {
+    // Business-rule rejections (e.g. clip too long) → 422, not 500.
+    if (err instanceof UploadValidationError) {
+      return NextResponse.json({ error: err.message }, { status: 422 });
+    }
     console.error("[POST /api/uploads/[requestId]/confirm]", err);
     const message = err instanceof Error ? err.message : "Failed to confirm upload.";
     return NextResponse.json({ error: message }, { status: 500 });

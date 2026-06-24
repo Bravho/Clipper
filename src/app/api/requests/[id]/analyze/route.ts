@@ -7,10 +7,10 @@ import {
   uploadedAssetRepository,
   videoGenerationJobRepository,
 } from "@/repositories/index";
-import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { generateSpeakingScript } from "@/lib/ai/chatGptVisionService";
+import { orderSourceAssets } from "@/lib/sourceAssets";
 
 /**
  * POST /api/requests/[id]/analyze
@@ -40,14 +40,9 @@ export async function POST(
   }
 
   const assets = await uploadedAssetRepository.findByRequestId(id);
-  const imageUrls = assets
-    .filter(
-      (a) =>
-        (a.assetType === AssetType.Image || a.assetType === AssetType.Video) &&
-        a.uploadStatus === AssetUploadStatus.Uploaded
-    )
-    .map((a) => a.storageUrl)
-    .filter((url): url is string => Boolean(url));
+  // Use the canonical ordering so storyboard asset indexes line up with the
+  // StoryboardView thumbnails and the montage renderer.
+  const imageUrls = orderSourceAssets(assets).map((a) => a.url);
 
   try {
     const scriptOutput = await generateSpeakingScript({
@@ -63,17 +58,28 @@ export async function POST(
       hookThai: "",
       captionThai: scriptOutput.captionThai,
       theme: scriptOutput.theme,
+      storyboard: scriptOutput.storyboard,
       businessProfile: scriptOutput.businessProfile,
     };
 
     // Persist the analysis in a VideoGenerationJob so it survives navigation.
-    // Only create if no job exists yet (idempotent on retry).
+    // Create if no job exists yet; if one exists but is still at the content-
+    // approval gate (not yet started), REGENERATE its script + storyboard so
+    // re-analyzing reflects the current uploads and latest generation logic.
     const existingJob = await videoGenerationJobRepository.findByRequestId(id);
-    if (!existingJob) {
+    if (existingJob && existingJob.currentStep === VideoGenerationStep.AwaitingContentApproval) {
+      await videoGenerationJobRepository.update(existingJob.id, {
+        scriptThai: analysis.scriptThai,
+        captionThai: analysis.captionThai,
+        storyboard: JSON.stringify(scriptOutput.storyboard),
+      });
+    } else if (!existingJob) {
       await videoGenerationJobRepository.create({
         requestId: id,
         status: VideoGenerationJobStatus.Active,
         currentStep: VideoGenerationStep.AwaitingContentApproval,
+        storyboard: JSON.stringify(scriptOutput.storyboard),
+        approvedStoryboard: null,
         scenePlan: null,
         scriptThai: analysis.scriptThai,
         scriptEnglish: null,

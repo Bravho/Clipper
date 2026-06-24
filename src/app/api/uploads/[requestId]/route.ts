@@ -77,10 +77,12 @@ export async function POST(
     return NextResponse.json({ error: "Invalid file size." }, { status: 400 });
   }
 
-  // Validate file type and size
+  // Validate file type, per-file size, and per-request total upload size.
+  const existingBytes = await uploadService.sumUploadedBytes(requestId);
   const validation = uploadService.validateFile(
     { name: fileName, size: fileSizeBytesRaw, type: mimeType },
-    currentCount
+    currentCount,
+    existingBytes
   );
   if (!validation.valid) {
     return NextResponse.json({ error: validation.error }, { status: 422 });

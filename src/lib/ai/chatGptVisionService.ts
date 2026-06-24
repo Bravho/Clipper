@@ -3,8 +3,10 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { AI_CONFIG } from "@/config/aiTools";
 import { spacesClient } from "@/lib/spaces";
 import { Platform } from "@/domain/enums/Platform";
-import { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
+import { sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
+import { sanitizeStoryboard } from "@/lib/ai/storyboard";
 
 export interface ChatGptContentOutput {
   scenePlan: ScenePlan[];
@@ -25,6 +27,8 @@ export interface SpeakingScriptOutput {
   scriptThai: string;
   captionThai: string;
   theme: string;
+  /** Rough Stage-1 storyboard (sanitized; always present, fallback if needed). */
+  storyboard: StoryboardScene[];
   businessProfile?: ChatGptContentOutput["businessProfile"];
 }
 
@@ -63,6 +67,9 @@ Requirements:
 - TTS-safe text only: the script must use clear, standard Thai words and spelling suitable for AI text-to-speech (voice generation). Avoid English loanwords, abbreviations, slang, ambiguous spellings, numerals/symbols, and uncommon words that an AI voice could mispronounce — write numbers and units out as Thai words and prefer common vocabulary with unambiguous pronunciation.
 - Caption: platform post caption with hashtags in Thai.
 - Scene plan: break the video into ~3 scenes whose total duration equals 15 seconds.
+- Scene descriptions must never mention image file names, original upload names, URLs, cloud storage keys, or image indexes such as "image 1". Refer only to visible characteristics, objects, colors, layout, mood, framing, and motion.
+- Scene descriptions must not ask the video generator to render any text in the video. Do not include captions, subtitles, title cards, labels, typography, price text, CTA text, hashtags, logos-as-text, or on-screen words. Text overlays are handled in a later pipeline step.
+- Veo morphing rule: only use more than one imageIndex for a scene when the scene is an image-to-image morph/interpolation. Such a scene MUST have durationSeconds exactly 8, and its visualDescriptionThai MUST begin with "Morphing scene (8 seconds): ". Single-image scenes may use other durations.
 - Scene descriptions: detailed Thai description of the visuals — include all necessary direction within the description itself.
 - Target audience is provided for THEME and STYLE reference only. Do NOT mention, address, or reference the target audience in the script, hook, caption, scene descriptions, or any spoken or visible content. Use it solely to inform visual tone, energy level, and creative direction.
 - CRITICAL — product accuracy: Only reference, describe, or feature products, items, and details that are visibly present in the uploaded images. Do NOT invent, assume, or include any product, feature, colour, brand, or claim that cannot be directly verified from the provided images. Scripts and scene descriptions that mention unverifiable products will be rejected.
@@ -103,7 +110,9 @@ Requirements:
 - TTS-safe text only: use clear standard Thai words and spelling suitable for AI text-to-speech. Avoid English loanwords, abbreviations, slang, ambiguous spellings, numerals/symbols, and uncommon words that an AI voice could mispronounce. Write numbers and units as Thai words.
 - Target audience is for theme/style reference only. Do NOT mention, address, or reference the target audience in the spoken script.
 - Product accuracy: only reference products, items, and details that are visibly present in the uploaded images or clearly provided by the requester.
-- Do NOT create a scene plan, hook field, or visual design in this step.
+- Do NOT create the final scene plan, hook field, or detailed visual design in this step (that happens later).
+- Also produce a ROUGH STORYBOARD: a sequence of scenes, each with a short one-line Thai summary and the zero-based indexes of the uploaded images/clips that scene will draw from. This is a rough visual outline for the requester to approve alongside the script — no motion, timing, or detailed direction yet.
+- IMPORTANT: every uploaded image/clip (indexes 0 to N-1, where N is the number of uploaded files) MUST appear in at least one scene's "assetIndexes". Do not leave any uploaded file unused. Create as many scenes as needed (typically around 3, but more if there are many files) so that all uploaded media is covered. Use only valid indexes in range 0 to N-1.
 - Extract business details into businessProfile when possible.
 
 Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
@@ -113,6 +122,9 @@ Schema:
   "scriptThai": "string",
   "captionThai": "string",
   "theme": "string",
+  "storyboard": [
+    { "sceneNumber": 1, "summary": "string (Thai, one line)", "assetIndexes": [0] }
+  ],
   "businessProfile": {
     "businessName": "string",
     "category": "string",
@@ -131,7 +143,10 @@ Requirements:
 - Do NOT rewrite the speaking script.
 - Create a strong hookThai that matches the approved script and captures attention in the first three seconds.
 - Scene plan: about three scenes whose total duration equals the provided duration.
-- Scene descriptions: detailed Thai visual direction. Include motion, framing, product focus, and on-screen emphasis where helpful.
+- Scene descriptions must never mention image file names, original upload names, URLs, cloud storage keys, or image indexes such as "image 1". Refer only to visible characteristics, objects, colors, layout, mood, framing, and motion.
+- Scene descriptions must not ask the video generator to render any text in the video. Do not include captions, subtitles, title cards, labels, typography, price text, CTA text, hashtags, logos-as-text, or on-screen words. Text overlays are handled in a later pipeline step.
+- Veo morphing rule: only use more than one imageIndex for a scene when the scene is an image-to-image morph/interpolation. Such a scene MUST have durationSeconds exactly 8, and its visualDescriptionThai MUST begin with "Morphing scene (8 seconds): ". Single-image scenes may use other durations.
+- Scene descriptions: detailed Thai visual direction. Include motion, framing, and product focus where helpful.
 - Use imageIndexes to point to relevant uploaded images by zero-based index.
 - Target audience is provided for theme/style reference only. Do NOT mention, address, or reference the target audience in visible or spoken content.
 - Product accuracy: Only feature products, items, and details that are visibly present in uploaded images or clearly provided by the requester. Do NOT invent final product visuals, colours, offers, brands, or claims.
@@ -184,15 +199,34 @@ function buildUserPrompt(params: GenerateContentParams): string {
 }
 
 function buildSceneDesignPrompt(
-  params: GenerateContentParams & { scriptThai: string; voiceDurationSeconds?: number | null }
+  params: GenerateContentParams & {
+    scriptThai: string;
+    voiceDurationSeconds?: number | null;
+    storyboard?: StoryboardScene[] | null;
+  }
 ): string {
-  return [
+  const lines = [
     buildUserPrompt(params),
     "",
     `Approved speaking script: ${params.scriptThai}`,
     `Generated voice duration: ${params.voiceDurationSeconds ?? params.videoDurationSeconds ?? 15} seconds`,
-    "Design scenes, hook, and caption from the approved speaking script and requester-provided information.",
-  ].join("\n");
+  ];
+
+  if (params.storyboard && params.storyboard.length > 0) {
+    lines.push(
+      "",
+      "Approved storyboard (use as the seed — keep the scene order and image selection unless the script clearly needs otherwise):",
+      ...params.storyboard.map(
+        (s) =>
+          `  Scene ${s.sceneNumber}: ${s.summary || "(no summary)"} — images [${s.assetIndexes.join(", ")}]`
+      )
+    );
+  }
+
+  lines.push(
+    "Design scenes, hook, and caption from the approved speaking script, approved storyboard, and requester-provided information."
+  );
+  return lines.join("\n");
 }
 
 /**
@@ -242,6 +276,7 @@ export async function generateScenePlanAndScript(
   );
   return {
     ...output,
+    scenePlan: sanitizeScenePlanDescriptions(output.scenePlan),
     scriptThai: sanitizeThaiVoiceScript(output.scriptThai),
     hookThai: sanitizeThaiVoiceScript(output.hookThai),
   };
@@ -281,21 +316,31 @@ async function generateWithImages<T>(params: GenerateContentParams, prompt: stri
 export async function generateSpeakingScript(
   params: GenerateContentParams
 ): Promise<SpeakingScriptOutput> {
-  const output = await generateWithImages<SpeakingScriptOutput>(
+  const output = await generateWithImages<SpeakingScriptOutput & { storyboard?: unknown }>(
     params,
     `${SCRIPT_ONLY_SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}`
   );
   return {
     ...output,
     scriptThai: sanitizeThaiVoiceScript(output.scriptThai),
+    // Always return a usable storyboard — repair the model output or fall back.
+    storyboard: sanitizeStoryboard(output.storyboard, params.imageUrls.length),
   };
 }
 
 export async function generateSceneDesignFromScript(
-  params: GenerateContentParams & { scriptThai: string; voiceDurationSeconds?: number | null }
+  params: GenerateContentParams & {
+    scriptThai: string;
+    voiceDurationSeconds?: number | null;
+    storyboard?: StoryboardScene[] | null;
+  }
 ): Promise<SceneDesignOutput> {
-  return generateWithImages<SceneDesignOutput>(
+  const output = await generateWithImages<SceneDesignOutput>(
     params,
     `${SCENE_DESIGN_SYSTEM_PROMPT}\n\n${buildSceneDesignPrompt(params)}`
   );
+  return {
+    ...output,
+    scenePlan: sanitizeScenePlanDescriptions(output.scenePlan),
+  };
 }

@@ -97,3 +97,79 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user_id ON email_verification_tokens(user_id);
+
+-- -----------------------------------------------------------------------------
+-- video_generation_jobs
+-- Durable AI pipeline state for each clip request. The requester/staff UI reads
+-- this record after browser reloads and server restarts to resume the current
+-- generation/approval step.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS video_generation_jobs (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  request_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  current_step TEXT NOT NULL,
+  failed_at_step TEXT,
+
+  scene_plan TEXT,
+  script_thai TEXT,
+  script_english TEXT,
+  script_chinese TEXT,
+  hook_thai TEXT,
+  hook_english TEXT,
+  caption_thai TEXT,
+  caption_english TEXT,
+  caption_chinese TEXT,
+
+  approved_scene_plan TEXT,
+  approved_script_thai TEXT,
+  approved_script_english TEXT,
+  approved_script_chinese TEXT,
+  approved_hook_thai TEXT,
+  approved_hook_english TEXT,
+  approved_caption_thai TEXT,
+  approved_caption_english TEXT,
+  approved_caption_chinese TEXT,
+
+  video_gen_task_id TEXT,
+  video_gen_task_ids TEXT,
+  scene_video_asset_ids TEXT,
+  video_gen_status TEXT,
+  video_gen_last_polled_at TIMESTAMPTZ,
+  base_video_asset_id TEXT,
+
+  tts_task_id TEXT,
+  eleven_labs_voice_id TEXT NOT NULL DEFAULT '',
+  voice_recording_asset_id TEXT,
+  processed_voice_asset_id TEXT,
+  selected_music_track TEXT,
+  voice_duration_seconds NUMERIC,
+  voice_timestamps TEXT,
+
+  subtitle_languages TEXT[] NOT NULL DEFAULT ARRAY['en','zh'],
+  subtitle_timeline TEXT,
+  animation_spec TEXT,
+  animated_video_asset_id TEXT,
+  animated_overlay_asset_ids TEXT,
+
+  final_export_9_16_asset_id TEXT,
+  final_export_16_9_asset_id TEXT,
+  final_export_1_1_asset_id TEXT,
+  final_export_4_5_asset_id TEXT,
+  final_export_tvent_asset_id TEXT,
+
+  content_approved_by TEXT,
+  video_approved_by TEXT,
+  voice_approved_by TEXT,
+  animation_approved_by TEXT,
+  final_approved_by TEXT,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_request_id
+  ON video_generation_jobs(request_id);
+
+CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_current_step
+  ON video_generation_jobs(current_step);

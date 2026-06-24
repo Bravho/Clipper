@@ -12,6 +12,13 @@ export enum VideoGenerationStep {
   GeneratingSceneDesign   = "generating_scene_design",
   AwaitingSceneDesignApproval = "awaiting_scene_design_approval",
 
+  // Step 2.75 - Per-scene script gate. After the all-scenes overview is
+  // approved, the requester reviews/edits each scene's script + image
+  // selection individually right before that scene is generated. The pipeline
+  // loops between this gate and GeneratingBaseVideo/AwaitingVideoApproval once
+  // per scene (Veo 3.1 video-extension model — each scene extends the prior).
+  AwaitingSceneScriptApproval = "awaiting_scene_script_approval",
+
   // Step 3 - Veo AI video generation, sized to the real voice duration.
   GeneratingBaseVideo     = "generating_base_video",
   AwaitingVideoApproval   = "awaiting_video_approval",
@@ -53,6 +60,7 @@ export const PIPELINE_STEP_LABELS: Record<VideoGenerationStep, string> = {
   [VideoGenerationStep.AwaitingVoiceApproval]:      "Voiceover ready for review",
   [VideoGenerationStep.GeneratingSceneDesign]:      "Writing video script and scene plan...",
   [VideoGenerationStep.AwaitingSceneDesignApproval]: "Video script ready for review",
+  [VideoGenerationStep.AwaitingSceneScriptApproval]: "Scene script ready for review",
   [VideoGenerationStep.GeneratingBaseVideo]:        "Generating your video...",
   [VideoGenerationStep.AwaitingVideoApproval]:      "Video ready for review",
   [VideoGenerationStep.GeneratingAnimations]:       "Generating animations...",
@@ -74,6 +82,7 @@ export const PIPELINE_STEP_DESCRIPTIONS: Record<VideoGenerationStep, string> = {
   [VideoGenerationStep.AwaitingVoiceApproval]:      "Your AI voiceover is ready - please listen and approve.",
   [VideoGenerationStep.GeneratingSceneDesign]:      "AI is writing the video scene plan from the approved voiceover length and your request details.",
   [VideoGenerationStep.AwaitingSceneDesignApproval]: "Please review the video script and scene timing before video generation begins.",
+  [VideoGenerationStep.AwaitingSceneScriptApproval]: "Review and edit this scene's script and images before it is generated.",
   [VideoGenerationStep.GeneratingBaseVideo]:        "AI is generating your video from your uploaded images, timed to match your approved voiceover.",
   [VideoGenerationStep.AwaitingVideoApproval]:      "Your AI-generated video is ready - please review and approve.",
   [VideoGenerationStep.GeneratingAnimations]:       "AI is adding animations and graphic overlays synced to your voiceover.",

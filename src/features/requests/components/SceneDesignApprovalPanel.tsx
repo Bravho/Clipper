@@ -19,6 +19,7 @@ interface SceneDesignApprovalPanelProps {
   voiceRecordingAssetId: string | null;
   totalChannels: number;
   sourceAssets: UploadedAsset[];
+  activeSceneIndex?: number;
 }
 
 const ta =
@@ -36,24 +37,55 @@ function sceneTotal(scenes: ScenePlan[]): number {
   return scenes.reduce((sum, scene) => sum + (Number(scene.durationSeconds) || 0), 0);
 }
 
+function getInitialSceneImages(scene: ScenePlan): number[] {
+  return Array.isArray(scene.imageIndexes) ? scene.imageIndexes.slice(0, 2) : [];
+}
+
 function scaleScenesToDuration(scenes: ScenePlan[], durationSeconds: number): ScenePlan[] {
   if (scenes.length === 0) return scenes;
 
-  const currentTotal = sceneTotal(scenes);
-  if (currentTotal <= 0) {
-    const equal = Math.max(1, Math.round(durationSeconds / scenes.length));
-    return scenes.map((scene) => ({ ...scene, durationSeconds: equal }));
+  const fixedDurations: number[] = scenes.map((scene) =>
+    getInitialSceneImages(scene).length === 2 ? 8 : 0
+  );
+  const fixedTotal = fixedDurations.reduce((sum, duration) => sum + duration, 0);
+  const flexibleIndexes = scenes
+    .map((scene, index) => ({ scene, index }))
+    .filter(({ scene }) => getInitialSceneImages(scene).length !== 2)
+    .map(({ index }) => index);
+  const flexibleTarget = Math.max(flexibleIndexes.length, durationSeconds - fixedTotal);
+
+  if (flexibleIndexes.length === 0) {
+    return scenes.map((scene) => ({
+      ...scene,
+      durationSeconds: getInitialSceneImages(scene).length === 2 ? 8 : scene.durationSeconds,
+    }));
   }
 
-  let remaining = durationSeconds;
+  const currentTotal = flexibleIndexes.reduce(
+    (sum, index) => sum + (Number(scenes[index].durationSeconds) || 0),
+    0
+  );
+  if (currentTotal <= 0) {
+    const equal = Math.max(1, Math.round(flexibleTarget / flexibleIndexes.length));
+    return scenes.map((scene) => ({
+      ...scene,
+      durationSeconds: getInitialSceneImages(scene).length === 2 ? 8 : equal,
+    }));
+  }
+
+  let remaining = flexibleTarget;
   return scenes.map((scene, index) => {
-    if (index === scenes.length - 1) {
+    if (getInitialSceneImages(scene).length === 2) {
+      return { ...scene, durationSeconds: 8 };
+    }
+
+    if (index === flexibleIndexes[flexibleIndexes.length - 1]) {
       return { ...scene, durationSeconds: Math.max(1, remaining) };
     }
 
     const nextDuration = Math.max(
       1,
-      Math.round(((Number(scene.durationSeconds) || 0) / currentTotal) * durationSeconds)
+      Math.round(((Number(scene.durationSeconds) || 0) / currentTotal) * flexibleTarget)
     );
     remaining -= nextDuration;
     return { ...scene, durationSeconds: nextDuration };
@@ -71,9 +103,10 @@ export function SceneDesignApprovalPanel({
   voiceRecordingAssetId,
   totalChannels,
   sourceAssets,
+  activeSceneIndex = 0,
 }: SceneDesignApprovalPanelProps) {
   const router = useRouter();
-  const submittedDuration = clampDuration(initialDurationSeconds);
+  const submittedDuration = clampDuration(voiceDurationSeconds ?? initialDurationSeconds);
   const [durationSeconds, setDurationSeconds] = useState(submittedDuration);
   const [scenes, setScenes] = useState<ScenePlan[]>(() =>
     scaleScenesToDuration(initialScenes, submittedDuration)
@@ -86,6 +119,13 @@ export function SceneDesignApprovalPanel({
     () => calcPipelineCost(durationSeconds, totalChannels),
     [durationSeconds, totalChannels]
   );
+  const sourceImageOptions = useMemo(
+    () =>
+      sourceAssets
+        .map((asset, sourceIndex) => ({ asset, sourceIndex }))
+        .filter(({ asset }) => asset.assetType === AssetType.Image),
+    [sourceAssets]
+  );
 
   const updateScene = (index: number, patch: Partial<ScenePlan>) => {
     setScenes((prev) => prev.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
@@ -95,6 +135,25 @@ export function SceneDesignApprovalPanel({
     const nextDuration = clampDuration(value);
     setDurationSeconds(nextDuration);
     setScenes((prev) => scaleScenesToDuration(prev, nextDuration));
+  };
+
+  const toggleSceneImage = (sceneIndex: number, sourceIndex: number) => {
+    setScenes((prev) =>
+      prev.map((scene, index) => {
+        if (index !== sceneIndex) return scene;
+
+        const current = getInitialSceneImages(scene);
+        const imageIndexes = current.includes(sourceIndex)
+          ? current.filter((idx) => idx !== sourceIndex)
+          : [...current, sourceIndex].slice(0, 2);
+
+        return {
+          ...scene,
+          imageIndexes,
+          durationSeconds: imageIndexes.length === 2 ? 8 : scene.durationSeconds,
+        };
+      })
+    );
   };
 
   const handleApprove = async () => {
@@ -230,27 +289,86 @@ export function SceneDesignApprovalPanel({
           )}
         </div>
         <div className="flex flex-col gap-3">
-          {scenes.map((scene, index) => (
-            <div key={`${scene.sceneNumber}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+          {scenes.map((scene, sceneIndex) => (
+            <div
+              key={`${scene.sceneNumber}-${sceneIndex}`}
+              className={`rounded-lg border p-4 ${
+                sceneIndex === 0
+                  ? "border-purple-300 bg-purple-50/40 ring-1 ring-purple-200"
+                  : "border-slate-100 bg-slate-50"
+              }`}
+            >
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <span className="rounded border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">
-                  ฉาก {scene.sceneNumber} · {scene.durationSeconds} วินาที
+                  Scene {sceneIndex + 1} of {scenes.length} - {scene.durationSeconds} seconds
                 </span>
+                {sceneIndex === 0 && (
+                  <span className="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                    อนุมัติฉากนี้ก่อน
+                  </span>
+                )}
                 <input
                   type="number"
                   min={1}
                   value={scene.durationSeconds}
-                  onChange={(e) => updateScene(index, { durationSeconds: Number(e.target.value) || 1 })}
-                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600"
+                  disabled={getInitialSceneImages(scene).length === 2}
+                  onChange={(e) =>
+                    updateScene(sceneIndex, { durationSeconds: Number(e.target.value) || 1 })
+                  }
+                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 disabled:bg-slate-100 disabled:text-slate-400"
                 />
-                <span className="text-xs text-slate-400">วินาที</span>
+                <span className="text-xs text-slate-400">seconds</span>
               </div>
               <textarea
                 value={scene.visualDescriptionThai ?? ""}
-                onChange={(e) => updateScene(index, { visualDescriptionThai: e.target.value })}
+                onChange={(e) =>
+                  updateScene(sceneIndex, { visualDescriptionThai: e.target.value })
+                }
                 rows={3}
                 className={`${ta} text-sm text-slate-700`}
               />
+              {sourceImageOptions.length > 0 && (
+                <div className="mt-3">
+                  <p className="mb-2 text-xs font-medium text-slate-500">
+                    Uploaded images for this scene (max 2)
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {sourceImageOptions.map(({ asset, sourceIndex }) => {
+                      const selected = getInitialSceneImages(scene).includes(sourceIndex);
+                      const maxSelected = getInitialSceneImages(scene).length >= 2 && !selected;
+                      const thumbSrc = asset.thumbnailUrl || asset.storageUrl;
+
+                      return (
+                        <button
+                          type="button"
+                          key={asset.id}
+                          disabled={maxSelected}
+                          onClick={() => toggleSceneImage(sceneIndex, sourceIndex)}
+                          className={`overflow-hidden rounded-md border text-left transition ${
+                            selected
+                              ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                              : "border-slate-200 bg-white hover:border-blue-200"
+                          } disabled:cursor-not-allowed disabled:opacity-40`}
+                        >
+                          <div className="aspect-video bg-slate-100">
+                            <img src={thumbSrc} alt={asset.fileName} className="h-full w-full object-cover" />
+                          </div>
+                          <div className="px-2 py-1">
+                            <p className="truncate text-xs text-slate-600">
+                              {selected ? "Selected" : "Image"} {sourceIndex + 1}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {getInitialSceneImages(scene).length === 2 && (
+                    <p className="mt-1 text-xs text-blue-600">
+                      Two images selected: scene time is fixed at 8 seconds for morphing.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>

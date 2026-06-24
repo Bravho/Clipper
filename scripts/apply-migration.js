@@ -35,9 +35,12 @@ const client = new Client({
   const { rows } = await client.query(
     `SELECT column_name FROM information_schema.columns
      WHERE table_name = 'video_generation_jobs'
-       AND column_name IN ('jai_tts_task_id','subtitle_timeline','animation_spec','animated_video_asset_id')`
+       AND column_name IN ('storyboard','approved_storyboard','video_engine','ai_broll_enabled')`
   );
-  console.log("Columns now present:", rows.map((r) => r.column_name).join(", ") || "(none!)");
+  console.log(
+    "Montage columns now present:",
+    rows.map((r) => r.column_name).join(", ") || "(none!)"
+  );
   await client.end();
 })().catch((e) => {
   console.error("FAILED:", e.message);

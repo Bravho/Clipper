@@ -1,7 +1,16 @@
 import { UploadService } from "@/services/UploadService";
 import { MockUploadedAssetRepository } from "@/repositories/mock/MockUploadedAssetRepository";
-import { AssetUploadStatus } from "@/domain/enums/AssetType";
-import { MAX_UPLOAD_COUNT, MAX_UPLOAD_SIZE_BYTES } from "@/domain/enums/AssetType";
+import { AssetUploadStatus, AssetType } from "@/domain/enums/AssetType";
+import {
+  MAX_UPLOAD_COUNT,
+  MAX_UPLOAD_SIZE_BYTES,
+  MAX_CLIP_DURATION_SECONDS,
+} from "@/domain/enums/AssetType";
+import {
+  validateTotalUploadSize,
+  validateClipDuration,
+} from "@/features/requests/validation/clipRequestSchema";
+import { uploadedAssetRepository } from "@/repositories";
 
 // UploadService uses uploadedAssetRepository singleton from @/repositories.
 // We test the validation logic directly since it doesn't depend on the repo.
@@ -79,6 +88,71 @@ describe("UploadService.validateFile", () => {
 
   it("enforces MAX_UPLOAD_SIZE_BYTES = 500 MB", () => {
     expect(MAX_UPLOAD_SIZE_BYTES).toBe(500 * 1024 * 1024);
+  });
+
+  it("rejects a file that pushes the request over the total upload cap", () => {
+    // existing bytes already at the cap → any further file is rejected
+    const result = svc.validateFile(VALID_IMAGE, 1, MAX_UPLOAD_SIZE_BYTES);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("Total upload size");
+  });
+
+  it("accepts a file that stays within the total upload cap", () => {
+    const result = svc.validateFile(VALID_IMAGE, 1, 1 * 1024 * 1024);
+    expect(result.valid).toBe(true);
+  });
+
+  it("defaults existingBytes to 0 (back-compat two-arg call)", () => {
+    const result = svc.validateFile(VALID_IMAGE, 0);
+    expect(result.valid).toBe(true);
+  });
+});
+
+describe("upload validation helpers", () => {
+  it("validateTotalUploadSize flags sums over the cap", () => {
+    expect(validateTotalUploadSize(MAX_UPLOAD_SIZE_BYTES, 1)).toContain("Total upload size");
+    expect(validateTotalUploadSize(0, MAX_UPLOAD_SIZE_BYTES)).toBeNull();
+  });
+
+  it("validateClipDuration flags clips over the limit", () => {
+    expect(validateClipDuration(MAX_CLIP_DURATION_SECONDS + 1)).toContain(
+      String(MAX_CLIP_DURATION_SECONDS)
+    );
+    expect(validateClipDuration(MAX_CLIP_DURATION_SECONDS)).toBeNull();
+  });
+
+  it("validateClipDuration treats unknown (NaN/0) durations as non-blocking", () => {
+    expect(validateClipDuration(NaN)).toBeNull();
+    expect(validateClipDuration(0)).toBeNull();
+  });
+});
+
+describe("UploadService.sumUploadedBytes", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("sums only non-deleted asset bytes", async () => {
+    jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
+      { fileSizeBytes: 1000, uploadStatus: AssetUploadStatus.Uploaded },
+      { fileSizeBytes: 2000, uploadStatus: AssetUploadStatus.Pending },
+      { fileSizeBytes: 9999, uploadStatus: AssetUploadStatus.Deleted },
+    ] as never);
+
+    const total = await svc.sumUploadedBytes("req-x");
+    expect(total).toBe(3000);
+  });
+
+  it("returns 0 when there are no assets", async () => {
+    jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([]);
+    expect(await svc.sumUploadedBytes("req-empty")).toBe(0);
+  });
+
+  it("sums numerically when fileSizeBytes arrives as a string (Postgres BIGINT)", async () => {
+    jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
+      { fileSizeBytes: "3040870", uploadStatus: AssetUploadStatus.Uploaded },
+      { fileSizeBytes: "5033165", uploadStatus: AssetUploadStatus.Uploaded },
+    ] as never);
+    // Must be 8,074,035 — not the concatenated "30408705033165".
+    expect(await svc.sumUploadedBytes("req-strings")).toBe(8074035);
   });
 });
 

@@ -24,6 +24,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     requestId: "req-004",
     status: VideoGenerationJobStatus.Failed,
     currentStep: VideoGenerationStep.Failed,
+    currentSceneIndex: 0,
     failedAtStep: VideoGenerationStep.AnalyzingContent,
 
     scenePlan: null,
@@ -83,6 +84,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     requestId: "req-011",
     status: VideoGenerationJobStatus.Active,
     currentStep: VideoGenerationStep.AwaitingContentApproval,
+    currentSceneIndex: 0,
     failedAtStep: null,
 
     scenePlan: JSON.stringify([

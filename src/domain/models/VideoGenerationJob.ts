@@ -1,5 +1,6 @@
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
+import type { MotionPreset, MontageTransition } from "@/config/montage";
 
 /**
  * Represents one AI video production pipeline run attached to a ClipRequest.
@@ -13,7 +14,34 @@ export interface VideoGenerationJob {
   status: VideoGenerationJobStatus;
   currentStep: VideoGenerationStep;
 
+  /**
+   * 0-based index of the scene whose per-scene script gate / generation is
+   * currently active. Drives the AwaitingSceneScriptApproval → GeneratingBaseVideo
+   * → AwaitingVideoApproval loop: incremented when a scene's video is approved,
+   * so the next scene's script gate (and its Veo extension) target the right
+   * scene. Starts at 0 when the all-scenes overview is approved.
+   */
+  currentSceneIndex: number;
+
   // Step 1: ChatGPT Vision outputs
+  /**
+   * Rough, pre-voice storyboard generated at Stage 1 alongside the script:
+   * JSON-encoded `StoryboardScene[]`. The requester approves it with the
+   * script; `approvedStoryboard` then seeds the Stage-3 montage scene design
+   * and is shown read-only at Stage 2. Optional/absent on legacy jobs.
+   */
+  storyboard?: string | null;
+  approvedStoryboard?: string | null;
+
+  /**
+   * Which engine produces the base video. "montage" (default) = real-media
+   * Remotion montage from the uploaded photos/clips; "veo" = generative video
+   * (no-media fallback or the optional AI add-on). Absent on legacy jobs.
+   */
+  videoEngine?: "montage" | "veo";
+  /** Whether the optional Veo "AI intro/B-roll" add-on is enabled for this job. */
+  aiBrollEnabled?: boolean;
+
   scenePlan: string | null;
   scriptThai: string | null;
   scriptEnglish: string | null;
@@ -73,43 +101,34 @@ export interface VideoGenerationJob {
    */
   voiceTimestamps: string | null;
 
-  // Step 3: AI base video (Google Veo 3.1 Lite), PER-SCENE (Phase 3 / "Phase
-  // 2" of the audio-first plan). `job.voiceDurationSeconds` is split across
-  // `approvedScenePlan`/`scenePlan` scenes proportionally to each scene's
-  // original estimated `durationSeconds`, and one video-generation call is
-  // issued per scene using that scene's `visualDescriptionThai` + images
-  // selected via `imageIndexes`. Field names are provider-neutral so the
-  // underlying generator can be swapped without further model changes.
+  // Step 3: AI base video (Google Veo 3.1 Fast). Scene 1 is generated from
+  // the approved scene data and requester images; each following scene is
+  // generated only after approval by extending the previous cumulative Veo
+  // output. Field names are provider-neutral so the underlying generator can
+  // be swapped without further model changes.
   /**
-   * JSON-encoded `string[]` — one provider task/operation ID per scene, in
-   * scene order. Replaces the old single `videoGenTaskId` (kept below for
-   * DB/legacy compat and as a quick "any task in flight" signal, but no longer
-   * the source of truth once N > 1).
+   * JSON-encoded `string[]` - one provider task/operation ID per cumulative
+   * scene generation, in scene order. Replaces the old single `videoGenTaskId`
+   * (kept below for DB/legacy compat and as a quick "any task in flight"
+   * signal, but no longer the source of truth once N > 1).
    */
   videoGenTaskIds: string[] | null;
-  /** @deprecated Phase 3 — superseded by videoGenTaskIds. Kept for DB/legacy compat. */
+  /** @deprecated Phase 3 - superseded by videoGenTaskIds. Kept for DB/legacy compat. */
   videoGenTaskId: string | null;
   videoGenStatus: "submitted" | "processing" | null;
   videoGenLastPolledAt: Date | null;
   /**
-   * Per-scene generated output assets, in scene order, before concatenation.
-   * JSON-encoded `string[]` of UploadedAsset IDs (AssetType.AIGeneratedBaseVideo).
-   * While polling is in progress this array may be "sparse" — entries for
-   * scenes whose generation task hasn't completed yet are `null` placeholders
-   * (same length as `videoGenTaskIds`) so `checkBaseVideoReady` can resume
-   * polling only the still-pending scenes. Once all scenes are ready this
-   * holds the final `string[]` with no nulls.
+   * Cumulative generated output assets, in scene order. Entry 0 is scene 1,
+   * entry 1 is scene 1+2, and so on. While polling is in progress this array
+   * may contain a null placeholder for the current in-flight scene.
    */
   sceneVideoAssetIds: (string | null)[] | null;
   /**
-   * The final, ffmpeg-concatenated video covering all scenes in order. This
-   * remains the single asset that downstream steps (animation, FFmpeg
-   * composition, retry logic, and the pipeline review UI) consume — kept
-   * unchanged from Phase 1/2 to minimize churn. When there's only one scene,
-   * this is just that scene's clip (no concat needed).
+   * The latest approved cumulative Veo video covering all generated scenes.
+   * This remains the single asset that downstream steps (animation, FFmpeg
+   * composition, retry logic, and the pipeline review UI) consume.
    */
   baseVideoAssetId: string | null;
-
   // Step 3.5: Animation generation
   /** Copied from voiceTimestamps (see above) once the voice step completes. */
   subtitleTimeline: string | null;
@@ -176,10 +195,66 @@ export interface ScenePlan {
   durationSeconds: number;
   visualDescriptionThai: string;
   imageIndexes: number[];
+  /**
+   * Real-media montage assets for this scene, in render order. Each references
+   * an uploaded asset by its index in the canonical ordered source list
+   * (`getOrderedSourceAssets`) and carries its motion/trim/focus. Drives the
+   * Remotion montage renderer (Phase 3). Absent on legacy/Veo-only scenes.
+   */
+  assets?: MontageSceneAsset[];
+  /** Transition into this scene within the concatenated montage. */
+  transitionIn?: MontageTransition;
   /** @deprecated kept for seed/legacy data compat. */
   visualDescription?: string;
   /** @deprecated kept for seed/legacy data compat. */
   motionNotes?: string;
   /** @deprecated kept for seed/legacy data compat. */
   motionNotesThai?: string;
+}
+
+/**
+ * One real-media asset within a montage scene. References an uploaded asset by
+ * its index in the canonical ordered source list (`getOrderedSourceAssets`);
+ * the URL is resolved at render time. `trim*` apply to clips; `focusX/Y`
+ * (0..1) steer Ken Burns / crop focus toward the subject.
+ */
+export interface MontageSceneAsset {
+  assetIndex: number;
+  kind: "image" | "clip";
+  motion: MotionPreset;
+  durationSeconds: number;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+  focusX?: number;
+  focusY?: number;
+}
+
+/**
+ * One rough storyboard scene produced at Stage 1 (pre-voice): a one-line Thai
+ * summary plus the indexes of the uploaded photos/clips it will draw from
+ * (indexing the canonical ordered source list). No motion presets or exact
+ * timing yet — those are decided at Stage 3 against the measured voice length.
+ */
+export interface StoryboardScene {
+  sceneNumber: number;
+  summary: string;
+  assetIndexes: number[];
+  /** Optional pre-voice duration estimate (not binding). */
+  roughDurationHint?: number;
+}
+
+/**
+ * One immutable audit row recording that a job entered a given pipeline step.
+ * Written on every `currentStep` transition (and on job creation) so the full
+ * sequence of steps a job passed through — including each per-scene gate — is
+ * preserved in the database, not just the latest `currentStep`.
+ */
+export interface VideoGenerationStepHistoryEntry {
+  id: string;
+  jobId: string;
+  requestId: string;
+  step: VideoGenerationStep;
+  /** Active scene index at the moment of the transition (null if not applicable). */
+  sceneIndex: number | null;
+  createdAt: Date;
 }

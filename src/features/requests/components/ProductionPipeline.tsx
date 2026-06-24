@@ -26,6 +26,7 @@ const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
   [VideoGenerationStep.AwaitingVoiceApproval]:      2,
   [VideoGenerationStep.GeneratingSceneDesign]:      3,
   [VideoGenerationStep.AwaitingSceneDesignApproval]: 3,
+  [VideoGenerationStep.AwaitingSceneScriptApproval]: 3,
   [VideoGenerationStep.GeneratingBaseVideo]:        3,
   [VideoGenerationStep.AwaitingVideoApproval]:      3,
   [VideoGenerationStep.GeneratingAnimations]:       3,
