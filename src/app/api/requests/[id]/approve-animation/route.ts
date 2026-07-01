@@ -27,15 +27,17 @@ export async function POST(
 
   const body = await request.json().catch(() => null);
   const jobId = body?.jobId;
-  const targetPlatforms = body?.targetPlatforms as Platform[];
+  // Distribution channels are chosen at voice approval; only honoured here if a
+  // caller still sends them. Otherwise the request's persisted channels are used.
+  const targetPlatforms =
+    Array.isArray(body?.targetPlatforms) && body.targetPlatforms.length > 0
+      ? (body.targetPlatforms as Platform[])
+      : undefined;
   const selectedMusicTrack = body?.selectedMusicTrack ?? null;
   const subtitleLanguages = body?.subtitleLanguages as ("th" | "en" | "zh")[] | undefined;
 
   if (!jobId) {
     return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
-  }
-  if (!targetPlatforms || !Array.isArray(targetPlatforms) || targetPlatforms.length === 0) {
-    return NextResponse.json({ error: "Please select at least one distribution channel." }, { status: 400 });
   }
   if (
     subtitleLanguages !== undefined &&

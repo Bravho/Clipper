@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
+import { Platform } from "@/domain/enums/Platform";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 
@@ -26,6 +27,14 @@ export async function POST(
   if (!jobId) {
     return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
   }
+  // Optional distribution channels (ordered, primary first). The primary
+  // channel sets the base video's aspect ratio; the rest are export targets.
+  const validPlatforms = new Set(Object.values(Platform) as string[]);
+  const targetPlatforms = Array.isArray(body?.targetPlatforms)
+    ? (body.targetPlatforms.filter(
+        (p: unknown): p is Platform => typeof p === "string" && validPlatforms.has(p)
+      ) as Platform[])
+    : undefined;
   const job = await videoGenerationJobRepository.findById(jobId);
   if (!job || job.requestId !== id) {
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
@@ -33,7 +42,8 @@ export async function POST(
   try {
     const updated = await videoGenerationService.approveVoiceConversionByRequester(
       jobId,
-      session.user.id
+      session.user.id,
+      targetPlatforms
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

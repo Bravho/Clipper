@@ -52,11 +52,20 @@ const concatVideosMock = jest.fn();
 const getRequiredRatiosForPlatformsMock = jest.fn((..._args: any[]) => ["9:16"]);
 const composeAndExportMock = jest.fn();
 const renderOverlayPreviewMock = jest.fn();
+const overlayOnMasterMock = jest.fn(async (params: any) => ({
+  storageKey: `captioned/${params.outputStorageKey ?? "out"}.mp4`,
+  storageUrl: `https://cdn.example.com/captioned/out.mp4`,
+  fileSizeBytes: 4096,
+}));
 jest.mock("@/lib/ai/ffmpegService", () => ({
   concatVideos: (...args: unknown[]) => concatVideosMock(...args),
   getRequiredRatiosForPlatforms: (...args: unknown[]) => getRequiredRatiosForPlatformsMock(...args),
   composeAndExport: (...args: unknown[]) => composeAndExportMock(...args),
   renderOverlayPreview: (...args: unknown[]) => renderOverlayPreviewMock(...args),
+  overlayOnMaster: (...args: unknown[]) => overlayOnMasterMock(...args),
+  // Constants read by the Phase-7 overlay timing helpers.
+  MUSIC_LEAD_IN_SECONDS: 0.6,
+  DEFAULT_COMPOSE_DURATION_SECONDS: 15,
 }));
 
 // ── Mock Phase 4 motion-graphics + Remotion overlay rendering ───────────────
@@ -66,8 +75,26 @@ jest.mock("@/lib/ai/animationService", () => ({
 }));
 
 const renderOverlayMock = jest.fn();
+const renderTemplatedVideoMock = jest.fn(async (p: any) => ({
+  storageKey: `styled/${p?.outputStorageKey ?? "out"}.mp4`,
+  storageUrl: "https://cdn.example.com/styled/out.mp4",
+  fileSizeBytes: 5000,
+}));
 jest.mock("@/lib/ai/remotionService", () => ({
   renderOverlay: (...args: unknown[]) => renderOverlayMock(...args),
+  renderTemplatedVideo: (...args: unknown[]) => renderTemplatedVideoMock(...args),
+}));
+
+// ── Mock palette derivation (no network in tests) ───────────────────────────
+const derivePaletteMock = jest.fn(async () => ({
+  primary: "#111111",
+  secondary: "#222222",
+  accent: "#333333",
+  neutral: "#FFFFFF",
+}));
+jest.mock("@/lib/ai/paletteService", () => ({
+  derivePalette: (...args: unknown[]) => derivePaletteMock(...args),
+  DEFAULT_PALETTE: { primary: "#FF6B35", secondary: "#FFB703", accent: "#06D6A0", neutral: "#FFFFFF" },
 }));
 
 // ── Mock Gemini subtitle helpers used during final composition ─────────────
@@ -167,6 +194,9 @@ async function createJobAwaitingVoiceApproval(requestId: string, voiceDurationSe
     status: VideoGenerationJobStatus.Active,
     currentStep: VideoGenerationStep.AwaitingVoiceApproval,
     currentSceneIndex: 0,
+    // These suites assert the legacy Veo generative path; montage is now the
+    // default, so pin the engine to 'veo' to exercise that branch explicitly.
+    videoEngine: "veo",
     scenePlan: null,
     scriptThai: "สวัสดีค่ะ ยินดีต้อนรับ",
     scriptEnglish: null,
@@ -219,414 +249,9 @@ async function createJobAwaitingVoiceApproval(requestId: string, voiceDurationSe
   });
 }
 
-describe("VideoGenerationService — audio-first pipeline (Phase 1)", () => {
-  beforeEach(() => {
-    createVideoMock.mockClear();
-    mockGenerateSceneDesignFromScript.mockClear();
-  });
+// ── Step-history coverage (engine-agnostic) ─────────────────────────────────
 
-  it("sizes video generation to the real voice duration, not the request estimate", async () => {
-    const request = await createRequest();
-    const voiceDurationSeconds = 18.4; // differs from request.durationSeconds (15)
-    const job = await createJobAwaitingVoiceApproval(request.id, voiceDurationSeconds);
-
-    const service = new VideoGenerationService();
-    const updated = await service.approveVoiceConversion(job.id, STAFF_ID, "none");
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(createVideoMock).not.toHaveBeenCalled();
-    expect(mockGenerateSceneDesignFromScript).toHaveBeenCalledTimes(1);
-    expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingSceneDesign);
-    expect(updated.voiceApprovedBy).toBe(STAFF_ID);
-    expect(updated.selectedMusicTrack).toBeNull();
-  });
-
-  it("falls back to the request's duration estimate when voiceDurationSeconds is null", async () => {
-    const request = await createRequest();
-    const job = await createJobAwaitingVoiceApproval(request.id, 0);
-    // Simulate a job where ffprobe failed and voiceDurationSeconds stayed null.
-    await mockJobRepo.update(job.id, { voiceDurationSeconds: null });
-    await mockJobRepo.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-    });
-
-    const service = new VideoGenerationService();
-    // Approving the all-scenes overview approves scene 1 and starts its generation.
-    await service.approveSceneDesignByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(SCENE_PLAN),
-      durationSeconds: request.durationSeconds,
-    });
-
-    expect(createVideoMock).toHaveBeenCalledTimes(1);
-    const [veoParams] = createVideoMock.mock.calls[0];
-    expect(veoParams.durationSeconds).toBe(8);
-  });
-});
-
-// ── Phase 3: progressive Veo extension ───────────────────────────────────────
-
-const MULTI_SCENE_PLAN: ScenePlan[] = [
-  {
-    sceneNumber: 1,
-    durationSeconds: 5, // 25% of 20s estimate total
-    visualDescriptionThai: "ฉากที่ 1: เปิดร้าน",
-    imageIndexes: [0],
-  },
-  {
-    sceneNumber: 2,
-    durationSeconds: 15, // 75% of 20s estimate total
-    visualDescriptionThai: "ฉากที่ 2: เสิร์ฟอาหาร",
-    imageIndexes: [1, 2],
-  },
-];
-
-async function createRequestWithImages(imageCount: number) {
-  const request = await mockClipRepo.create({
-    userId: "user-001",
-    title: "Test Clip Multi-Scene",
-    description: "Test description",
-    targetAudience: "All",
-    targetPlatforms: [Platform.TikTok],
-    preferredStyle: "Dynamic",
-    preferredLanguage: "Thai",
-    durationSeconds: 15,
-  });
-
-  await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {});
-
-  for (let i = 0; i < imageCount; i++) {
-    await mockAssetRepo.create({
-      requestId: request.id,
-      userId: "user-001",
-      fileName: `scene${i}.jpg`,
-      assetType: AssetType.Image,
-      fileSizeBytes: 1024,
-      mimeType: "image/jpeg",
-      storageKey: `tmp/scene${i}.jpg`,
-      storageUrl: `https://cdn.example.com/scene${i}.jpg`,
-      thumbnailKey: "",
-      thumbnailUrl: "",
-      uploadStatus: AssetUploadStatus.Uploaded,
-      scheduledDeletionAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
-    });
-  }
-
-  return request;
-}
-
-async function createMultiSceneJobAwaitingVoiceApproval(requestId: string, voiceDurationSeconds: number) {
-  return mockJobRepo.create({
-    requestId,
-    status: VideoGenerationJobStatus.Active,
-    currentStep: VideoGenerationStep.AwaitingVoiceApproval,
-    currentSceneIndex: 0,
-    scenePlan: null,
-    scriptThai: "สวัสดีค่ะ ยินดีต้อนรับ",
-    scriptEnglish: null,
-    scriptChinese: null,
-    hookThai: null,
-    hookEnglish: null,
-    captionThai: null,
-    captionEnglish: null,
-    captionChinese: null,
-    approvedScenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-    approvedScriptThai: "สวัสดีค่ะ ยินดีต้อนรับ",
-    approvedScriptEnglish: null,
-    approvedScriptChinese: null,
-    approvedHookThai: null,
-    approvedHookEnglish: null,
-    approvedCaptionThai: null,
-    approvedCaptionEnglish: null,
-    approvedCaptionChinese: null,
-    ttsTaskId: null,
-    rvcVoiceModel: "",
-    voiceRecordingAssetId: "asset-voice-001",
-    processedVoiceAssetId: "asset-voice-001",
-    selectedMusicTrack: null,
-    voiceDurationSeconds,
-    voiceTimestamps: JSON.stringify([{ start: 0, end: voiceDurationSeconds, text: "สวัสดีค่ะ ยินดีต้อนรับ" }]),
-    videoGenTaskId: null,
-    videoGenTaskIds: null,
-    videoGenStatus: null,
-    videoGenLastPolledAt: null,
-    sceneVideoAssetIds: null,
-    baseVideoAssetId: null,
-    subtitleTimeline: JSON.stringify([{ start: 0, end: voiceDurationSeconds, text: "สวัสดีค่ะ ยินดีต้อนรับ" }]),
-    animationSpec: null,
-    animatedVideoAssetId: null,
-    animatedOverlayAssetIds: null,
-    subtitleLanguages: ["en", "zh"],
-    finalExport_9_16_assetId: null,
-    finalExport_16_9_assetId: null,
-    finalExport_1_1_assetId: null,
-    finalExport_4_5_assetId: null,
-    finalExport_tvent_assetId: null,
-    failedAtStep: null,
-    contentApprovedBy: "user-001",
-    videoApprovedBy: null,
-    voiceApprovedBy: null,
-    animationApprovedBy: null,
-    finalApprovedBy: null,
-  });
-}
-
-describe("VideoGenerationService - progressive Veo extension (Phase 3)", () => {
-  beforeEach(() => {
-    createVideoMock.mockReset();
-    createVideoMock.mockResolvedValue("veo-task-scene-1");
-    extendVideoMock.mockReset();
-    extendVideoMock.mockResolvedValue("veo-task-scene-2");
-    pollTaskStatusMock.mockReset();
-    downloadAndStoreMock.mockReset();
-    concatVideosMock.mockReset();
-  });
-
-  it("starts only the first scene from uploaded images", async () => {
-    const request = await createRequestWithImages(3);
-    const voiceDurationSeconds = 20;
-    const job = await createMultiSceneJobAwaitingVoiceApproval(request.id, voiceDurationSeconds);
-
-    const service = new VideoGenerationService();
-    await mockJobRepo.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-    });
-    const updated = await service.approveSceneDesignByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-      durationSeconds: voiceDurationSeconds,
-    });
-    // Overview approval approves scene 1 and starts only the first scene.
-    expect(updated.currentSceneIndex).toBe(0);
-    expect(createVideoMock).toHaveBeenCalledTimes(1);
-    expect(extendVideoMock).not.toHaveBeenCalled();
-
-    const [scene1Params] = createVideoMock.mock.calls[0];
-    expect(scene1Params.durationSeconds).toBe(8);
-    expect(scene1Params.imageUrls).toEqual(["https://cdn.example.com/scene0.jpg"]);
-    expect(scene1Params.prompt).toContain("Do not fabricate or hallucinate");
-
-    expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingBaseVideo);
-    expect(updated.videoGenTaskIds).toEqual(["veo-task-scene-1"]);
-    expect(updated.videoGenTaskId).toBe("veo-task-scene-1");
-  });
-
-  it("approves scene 1 video, then opens scene 2's script gate before the Veo extension", async () => {
-    const request = await createRequestWithImages(3);
-    const job = await createMultiSceneJobAwaitingVoiceApproval(request.id, 20);
-
-    const service = new VideoGenerationService();
-    await mockJobRepo.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-    });
-    // Overview approval approves scene 1 and starts its generation directly.
-    await service.approveSceneDesignByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-      durationSeconds: 20,
-    });
-
-    pollTaskStatusMock.mockResolvedValueOnce({
-      status: "succeed",
-      videoUrl: "https://veo.example.com/scene1-cumulative.mp4",
-    });
-    downloadAndStoreMock.mockResolvedValueOnce({
-      storageKey: "ai_videos/scene1-cumulative.mp4",
-      storageUrl: "https://cdn.example.com/ai_videos/scene1-cumulative.mp4",
-      fileSizeBytes: 1000,
-    });
-
-    let result = await service.checkBaseVideoReady(job.id);
-    expect(result.currentStep).toBe(VideoGenerationStep.AwaitingVideoApproval);
-    expect(result.baseVideoAssetId).toBeTruthy();
-    expect(result.sceneVideoAssetIds).toHaveLength(1);
-    expect(concatVideosMock).not.toHaveBeenCalled();
-
-    // Approving scene 1's video advances to scene 2's script gate (no extension yet).
-    result = await service.approveBaseVideoByRequester(job.id, STAFF_ID);
-    expect(result.currentStep).toBe(VideoGenerationStep.AwaitingSceneScriptApproval);
-    expect(result.currentSceneIndex).toBe(1);
-    expect(extendVideoMock).not.toHaveBeenCalled();
-
-    // Approving scene 2's script triggers the Veo extension from scene 1.
-    result = await service.approveSceneScriptByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-    });
-
-    expect(result.currentStep).toBe(VideoGenerationStep.GeneratingBaseVideo);
-    expect(extendVideoMock).toHaveBeenCalledTimes(1);
-    const [extensionParams] = extendVideoMock.mock.calls[0];
-    expect(extensionParams.previousTaskId).toBe("veo-task-scene-1");
-    expect(extensionParams.prompt).toContain("Morphing scene (8 seconds):");
-    expect(result.videoGenTaskIds).toEqual(["veo-task-scene-1", "veo-task-scene-2"]);
-  });
-
-  it("retrying a failed scene-2 extension resumes scene 2 — it does NOT regenerate scene 1 or skip a scene", async () => {
-    const request = await createRequestWithImages(3);
-    const job = await createMultiSceneJobAwaitingVoiceApproval(request.id, 20);
-
-    const service = new VideoGenerationService();
-    await mockJobRepo.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-    });
-    await service.approveSceneDesignByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-      durationSeconds: 20,
-    });
-
-    // Scene 1 generates and is approved → scene 2's script gate.
-    pollTaskStatusMock.mockResolvedValueOnce({
-      status: "succeed",
-      videoUrl: "https://veo.example.com/scene1-cumulative.mp4",
-    });
-    downloadAndStoreMock.mockResolvedValueOnce({
-      storageKey: "ai_videos/scene1-cumulative.mp4",
-      storageUrl: "https://cdn.example.com/ai_videos/scene1-cumulative.mp4",
-      fileSizeBytes: 1000,
-    });
-    const ready = await service.checkBaseVideoReady(job.id);
-    const scene1AssetId = ready.baseVideoAssetId;
-    expect(scene1AssetId).toBeTruthy();
-    await service.approveBaseVideoByRequester(job.id, STAFF_ID);
-
-    // Approving scene 2's script triggers the extension — which FAILS (the
-    // original Veo `encodedVideo` error). The job lands in Failed state with
-    // currentSceneIndex still at 1 and scene 1's asset still recorded.
-    extendVideoMock.mockRejectedValueOnce(new Error("`encodedVideo` isn't supported by this model"));
-    const failed = await service.approveSceneScriptByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-    });
-    expect(failed.currentStep).toBe(VideoGenerationStep.Failed);
-    expect(failed.failedAtStep).toBe(VideoGenerationStep.GeneratingBaseVideo);
-    expect(failed.currentSceneIndex).toBe(1);
-
-    createVideoMock.mockClear();
-    extendVideoMock.mockClear(); // next call uses the default resolved task id
-
-    // Retrying must RESUME scene 2 (extend from scene 1), not regenerate scene 1.
-    const retried = await service.retryPipeline(job.id);
-
-    expect(retried.currentStep).toBe(VideoGenerationStep.GeneratingBaseVideo);
-    // Regression: previously this re-ran scene 1 via createVideo and left
-    // currentSceneIndex at 1, so the next approval skipped to scene 3.
-    expect(createVideoMock).not.toHaveBeenCalled();
-    expect(extendVideoMock).toHaveBeenCalledTimes(1);
-    expect(extendVideoMock.mock.calls[0][0].previousTaskId).toBe("veo-task-scene-1");
-    expect(retried.currentSceneIndex).toBe(1);
-    expect(retried.videoGenTaskIds).toEqual(["veo-task-scene-1", "veo-task-scene-2"]);
-    // Scene 1's already-approved cumulative video is preserved, not wiped.
-    expect(retried.baseVideoAssetId).toBe(scene1AssetId);
-  });
-
-  it("after the final cumulative scene is approved, advances to animation without concatenating", async () => {
-    const request = await createRequestWithImages(3);
-    const audioAsset = await mockAssetRepo.create({
-      requestId: request.id,
-      userId: "user-001",
-      fileName: "voice.mp3",
-      assetType: AssetType.StaffVoiceRecording,
-      fileSizeBytes: 1024,
-      mimeType: "audio/mpeg",
-      storageKey: "voice/voice.mp3",
-      storageUrl: "https://cdn.example.com/voice/voice.mp3",
-      thumbnailKey: "",
-      thumbnailUrl: "",
-      uploadStatus: AssetUploadStatus.Uploaded,
-      scheduledDeletionAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
-    });
-    const job = await createMultiSceneJobAwaitingVoiceApproval(request.id, 20);
-    await mockJobRepo.update(job.id, {
-      voiceRecordingAssetId: audioAsset.id,
-      processedVoiceAssetId: audioAsset.id,
-    });
-
-    const service = new VideoGenerationService();
-    await mockJobRepo.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-    });
-    await service.approveSceneDesignByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-      durationSeconds: 20,
-    });
-
-    pollTaskStatusMock.mockResolvedValueOnce({
-      status: "succeed",
-      videoUrl: "https://veo.example.com/scene1-cumulative.mp4",
-    });
-    downloadAndStoreMock.mockResolvedValueOnce({
-      storageKey: "ai_videos/scene1-cumulative.mp4",
-      storageUrl: "https://cdn.example.com/ai_videos/scene1-cumulative.mp4",
-      fileSizeBytes: 1000,
-    });
-    await service.checkBaseVideoReady(job.id);
-    await service.approveBaseVideoByRequester(job.id, STAFF_ID);
-    await service.approveSceneScriptByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-    });
-
-    pollTaskStatusMock.mockResolvedValueOnce({
-      status: "succeed",
-      videoUrl: "https://veo.example.com/scene2-cumulative.mp4",
-    });
-    downloadAndStoreMock.mockResolvedValueOnce({
-      storageKey: "ai_videos/scene2-cumulative.mp4",
-      storageUrl: "https://cdn.example.com/ai_videos/scene2-cumulative.mp4",
-      fileSizeBytes: 2000,
-    });
-
-    let result = await service.checkBaseVideoReady(job.id);
-    expect(result.currentStep).toBe(VideoGenerationStep.AwaitingVideoApproval);
-    expect(result.sceneVideoAssetIds).toHaveLength(2);
-    expect(concatVideosMock).not.toHaveBeenCalled();
-
-    result = await service.approveBaseVideoByRequester(job.id, STAFF_ID);
-    expect(result.currentStep).toBe(VideoGenerationStep.GeneratingAnimations);
-    expect(concatVideosMock).not.toHaveBeenCalled();
-  });
-
-  it("edit & resubmit regenerates the current scene from the edited script (no reject path)", async () => {
-    const request = await createRequestWithImages(3);
-    const job = await createMultiSceneJobAwaitingVoiceApproval(request.id, 20);
-
-    const service = new VideoGenerationService();
-    await mockJobRepo.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-    });
-    await service.approveSceneDesignByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(MULTI_SCENE_PLAN),
-      durationSeconds: 20,
-    });
-
-    pollTaskStatusMock.mockResolvedValueOnce({
-      status: "succeed",
-      videoUrl: "https://veo.example.com/scene1.mp4",
-    });
-    downloadAndStoreMock.mockResolvedValueOnce({
-      storageKey: "ai_videos/scene1.mp4",
-      storageUrl: "https://cdn.example.com/ai_videos/scene1.mp4",
-      fileSizeBytes: 1000,
-    });
-    const ready = await service.checkBaseVideoReady(job.id);
-    expect(ready.currentStep).toBe(VideoGenerationStep.AwaitingVideoApproval);
-
-    createVideoMock.mockClear();
-    const editedPlan = JSON.parse(JSON.stringify(MULTI_SCENE_PLAN));
-    editedPlan[0].visualDescriptionThai = "ฉากที่ 1 แก้ไขแล้ว";
-
-    const result = await service.requestVideoRevisionByRequester(job.id, STAFF_ID, {
-      scenePlan: JSON.stringify(editedPlan),
-    });
-
-    // Same scene index regenerated fresh; no extension, no reject step.
-    expect(result.currentStep).toBe(VideoGenerationStep.GeneratingBaseVideo);
-    expect(result.currentSceneIndex).toBe(0);
-    expect(createVideoMock).toHaveBeenCalledTimes(1);
-    expect(extendVideoMock).not.toHaveBeenCalled();
-    // Rejected scene's in-flight artifacts dropped before regeneration.
-    expect(result.videoGenTaskIds).toEqual(["veo-task-scene-1"]);
-    expect(result.sceneVideoAssetIds).toBeNull();
-    // Edit persisted to the approved scene plan.
-    const persisted = JSON.parse((await mockJobRepo.findById(job.id))!.approvedScenePlan!);
-    expect(persisted).toHaveLength(2);
-  });
-
+describe("VideoGenerationService — step history", () => {
   it("records every pipeline step transition in the step history (and skips non-step updates)", async () => {
     const request = await createRequest();
     const job = await createJobAwaitingVoiceApproval(request.id, 12);
@@ -772,30 +397,20 @@ describe("VideoGenerationService — Remotion overlay compositing (Phase 4)", ()
     const service = new VideoGenerationService();
     await (service as any)._runAnimationGeneration(job);
 
-    // Remotion rendered one overlay per required ratio.
-    expect(renderOverlayMock).toHaveBeenCalledTimes(2);
-    const calledRatios = renderOverlayMock.mock.calls.map(([params]) => params.ratio);
-    expect(calledRatios).toEqual(["9:16", "16:9"]);
-    for (const [params] of renderOverlayMock.mock.calls) {
-      expect(params.durationSeconds).toBe(15);
-      expect(params.subtitleLanguages).toEqual(["en", "zh"]);
-      expect(params.animationSpecs).toHaveLength(1);
-    }
-
-    // Preview composite uses the 9:16 overlay against the base video.
-    expect(renderOverlayPreviewMock).toHaveBeenCalledTimes(1);
-    const [previewParams] = renderOverlayPreviewMock.mock.calls[0];
-    expect(previewParams.ratio).toBe("9:16");
-    expect(previewParams.videoStorageKey).toBe(videoAsset.storageKey);
+    // Phase 7 (deferred): no Remotion overlays, no preview composite, no
+    // animation-spec generation — the step just advances and uses the base
+    // video as the review preview with no overlay assets.
+    expect(renderOverlayMock).not.toHaveBeenCalled();
+    expect(renderOverlayPreviewMock).not.toHaveBeenCalled();
+    expect(generateAnimationSpecMock).not.toHaveBeenCalled();
 
     const updated = await mockJobRepo.findById(job.id);
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingAnimationApproval);
-    expect(updated?.animatedVideoAssetId).toBeTruthy();
-    expect(updated?.animatedOverlayAssetIds).toBeTruthy();
-    expect(Object.keys(updated!.animatedOverlayAssetIds!)).toEqual(["9:16", "16:9"]);
+    expect(updated?.animatedVideoAssetId).toBe(videoAsset.id);
+    expect(updated?.animatedOverlayAssetIds).toEqual({});
   });
 
-  it("_runFFmpegComposition composites per-ratio Remotion overlays and creates final export assets", async () => {
+  it("_runFFmpegComposition skips overlays/subtitles (Phase 7 deferred) and creates final export assets", async () => {
     const request = await createRequest();
 
     const audioAsset = await mockAssetRepo.create({
@@ -866,13 +481,232 @@ describe("VideoGenerationService — Remotion overlay compositing (Phase 4)", ()
     expect(composeAndExportMock).toHaveBeenCalledTimes(1);
     const [composeParams] = composeAndExportMock.mock.calls[0];
     expect(composeParams.targetRatios).toEqual(["9:16"]);
-    expect(composeParams.overlayStorageKeys).toEqual({ "9:16": overlayAsset.storageKey });
-    // subtitleLanguages on the job are exactly ["en","zh"] and a 9:16 overlay
-    // is present, so the overlay is treated as covering Tvent's subtitle needs.
-    expect(composeParams.overlayCoversTventSubtitles).toBe(true);
+    // Phase 7: this step produces un-captioned masters only — no overlays, no
+    // burned-in subtitles, and (per the Phase-7 directive) NO smart-crop
+    // product-coordinate detection.
+    expect(composeParams.overlayStorageKeys).toEqual({});
+    expect(composeParams.assSubtitlesContent).toBeUndefined();
+    expect(composeParams.assSubtitlesContentTvent).toBeUndefined();
+    expect(composeParams.coordinates).toBeUndefined();
+    // Subtitle generation + auto product positioning must not run here.
+    expect(generateAssSubtitlesMock).not.toHaveBeenCalled();
+    expect(detectProductCoordinatesMock).not.toHaveBeenCalled();
 
     const updated = await mockJobRepo.findById(job.id);
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingFinalApproval);
     expect(updated?.finalExport_9_16_assetId).toBeTruthy();
+    // Travy is no longer produced here — it is rendered in the Phase-7 step.
+    expect(updated?.finalExport_tvent_assetId).toBeNull();
+  });
+});
+
+// ── Phase 7: subtitle + motion-graphic overlay (composited on the masters) ──
+
+const flushBackground = async () => {
+  for (let i = 0; i < 12; i++) await new Promise((r) => setImmediate(r));
+};
+
+describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
+  beforeEach(() => {
+    renderTemplatedVideoMock.mockClear();
+    getRequiredRatiosForPlatformsMock.mockReset();
+    composeAndExportMock.mockReset();
+    overlayOnMasterMock.mockClear();
+    detectProductCoordinatesMock.mockClear();
+    alignAudioWithScriptMock.mockClear();
+  });
+
+  async function createRequestWithPlatforms(platforms: Platform[]) {
+    const request = await mockClipRepo.create({
+      userId: "user-001",
+      title: "Phase7 Clip",
+      description: "desc",
+      targetAudience: "All",
+      targetPlatforms: platforms,
+      preferredStyle: "Dynamic",
+      preferredLanguage: "Thai",
+      durationSeconds: 15,
+    });
+    await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {});
+    return request;
+  }
+
+  async function createMaster(requestId: string, ratio: string) {
+    return mockAssetRepo.create({
+      requestId,
+      userId: "user-001",
+      fileName: `final_${ratio.replace(":", "-")}.mp4`,
+      assetType: AssetType.FinalClip,
+      fileSizeBytes: 2048,
+      mimeType: "video/mp4",
+      storageKey: `final_exports/${ratio.replace(":", "-")}.mp4`,
+      storageUrl: `https://cdn.example.com/final_${ratio.replace(":", "-")}.mp4`,
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Uploaded,
+      scheduledDeletionAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+      videoRatio: ratio as any,
+    });
+  }
+
+  async function createOverlayJob(
+    requestId: string,
+    currentStep: VideoGenerationStep,
+    masters: Partial<Record<"9:16" | "16:9" | "1:1" | "4:5", string>>,
+    subtitleLanguages: ("th" | "en" | "zh")[] = ["th"]
+  ) {
+    return mockJobRepo.create({
+      requestId,
+      status: VideoGenerationJobStatus.Active,
+      currentStep,
+      currentSceneIndex: 0,
+      scenePlan: null,
+      scriptThai: "อร่อยมาก",
+      scriptEnglish: "Delicious",
+      scriptChinese: "好吃",
+      hookThai: "อร่อย",
+      hookEnglish: null,
+      captionThai: null,
+      captionEnglish: null,
+      captionChinese: null,
+      approvedScenePlan: JSON.stringify(SCENE_PLAN),
+      approvedScriptThai: "อร่อยมาก",
+      approvedScriptEnglish: "Delicious",
+      approvedScriptChinese: "好吃",
+      approvedHookThai: "อร่อย",
+      approvedHookEnglish: null,
+      approvedCaptionThai: null,
+      approvedCaptionEnglish: null,
+      approvedCaptionChinese: null,
+      ttsTaskId: null,
+      rvcVoiceModel: "",
+      voiceRecordingAssetId: "voice-1",
+      processedVoiceAssetId: "voice-1",
+      selectedMusicTrack: null,
+      voiceDurationSeconds: 12,
+      voiceTimestamps: JSON.stringify(TIMED_SEGMENTS),
+      videoGenTaskId: null,
+      videoGenTaskIds: null,
+      videoGenStatus: null,
+      videoGenLastPolledAt: null,
+      baseVideoAssetId: "base-1",
+      sceneVideoAssetIds: null,
+      subtitleTimeline: JSON.stringify(TIMED_SEGMENTS),
+      animationSpec: null,
+      animatedVideoAssetId: null,
+      animatedOverlayAssetIds: null,
+      subtitleLanguages,
+      finalExport_9_16_assetId: masters["9:16"] ?? null,
+      finalExport_16_9_assetId: masters["16:9"] ?? null,
+      finalExport_1_1_assetId: masters["1:1"] ?? null,
+      finalExport_4_5_assetId: masters["4:5"] ?? null,
+      finalExport_tvent_assetId: null,
+      failedAtStep: null,
+      contentApprovedBy: "user-001",
+      videoApprovedBy: null,
+      voiceApprovedBy: null,
+      animationApprovedBy: null,
+      finalApprovedBy: null,
+    });
+  }
+
+  it("approveFinalVideoByRequester persists languages and renders the PRIMARY captioned preview (no align/detect, lead-in shifted)", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const master = await createMaster(request.id, "9:16");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingFinalApproval,
+      { "9:16": master.id },
+      ["en", "zh"]
+    );
+
+    const service = new VideoGenerationService();
+    await service.approveFinalVideoByRequester(job.id, "user-001", ["th"]);
+    await flushBackground();
+
+    // Only the primary ratio is rendered at this step, as ONE styled MP4.
+    expect(renderTemplatedVideoMock).toHaveBeenCalledTimes(1);
+    const [tp] = renderTemplatedVideoMock.mock.calls[0];
+    expect(tp.ratio).toBe("9:16");
+    expect(tp.subtitleLanguages).toEqual(["th"]);
+    expect(tp.templateId).toBeDefined();
+    expect(tp.palette).toBeDefined();
+    // The master plays INSIDE the composition (its public URL, audio intact).
+    expect(tp.masterUrl).toBe(master.storageUrl);
+    // Duration covers voice + music lead-in; captions shifted by the lead-in.
+    expect(tp.durationSeconds).toBeCloseTo(12 + 0.6, 5);
+    expect(tp.subtitleTimeline[0].startSecond).toBeCloseTo(0.6, 5);
+    // Single-pass render — no alpha compositing and no removed AI calls.
+    expect(overlayOnMasterMock).not.toHaveBeenCalled();
+    expect(alignAudioWithScriptMock).not.toHaveBeenCalled();
+    expect(detectProductCoordinatesMock).not.toHaveBeenCalled();
+
+    const updated = await mockJobRepo.findById(job.id);
+    expect(updated?.subtitleLanguages).toEqual(["th"]);
+    expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingOverlayApproval);
+    expect(updated?.captionedExport_9_16_assetId).toBeTruthy();
+  });
+
+  it("approveOverlayByRequester (single ratio) delivers, then renders Travy EN+ZH in the background", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const master = await createMaster(request.id, "9:16");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingOverlayApproval,
+      { "9:16": master.id }
+    );
+
+    const service = new VideoGenerationService();
+    await service.approveOverlayByRequester(job.id, "user-001");
+    await flushBackground();
+
+    const updated = await mockJobRepo.findById(job.id);
+    expect(updated?.currentStep).toBe(VideoGenerationStep.Complete);
+    expect(updated?.tventVideoStatus).toBe("ready");
+    expect(updated?.finalExport_tvent_assetId).toBeTruthy();
+
+    const deliveredRequest = await mockClipRepo.findById(request.id);
+    expect(deliveredRequest?.status).toBe(RequestStatus.Delivered);
+
+    // The Travy render uses EN+ZH regardless of the requester's choice.
+    const tventCall = renderTemplatedVideoMock.mock.calls.find(
+      ([p]: any[]) => JSON.stringify(p.subtitleLanguages) === JSON.stringify(["en", "zh"])
+    );
+    expect(tventCall).toBeTruthy();
+  });
+
+  it("approveOverlayByRequester (multi-ratio) gates on AwaitingAdditionalRatios, then generates the rest before Travy", async () => {
+    const request = await createRequestWithPlatforms([
+      Platform.TikTok,
+      Platform.YouTube,
+      Platform.TventApp,
+    ]);
+    const master916 = await createMaster(request.id, "9:16");
+    const master169 = await createMaster(request.id, "16:9");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16", "16:9"]);
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingOverlayApproval,
+      { "9:16": master916.id, "16:9": master169.id }
+    );
+
+    const service = new VideoGenerationService();
+    const gated = await service.approveOverlayByRequester(job.id, "user-001");
+    expect(gated.currentStep).toBe(VideoGenerationStep.AwaitingAdditionalRatios);
+    expect(gated.finalExport_tvent_assetId).toBeNull();
+
+    await service.generateAdditionalRatiosByRequester(job.id, "user-001");
+    await flushBackground();
+
+    const updated = await mockJobRepo.findById(job.id);
+    expect(updated?.captionedExport_16_9_assetId).toBeTruthy();
+    expect(updated?.currentStep).toBe(VideoGenerationStep.Complete);
+    expect(updated?.tventVideoStatus).toBe("ready");
+    expect(updated?.finalExport_tvent_assetId).toBeTruthy();
   });
 });

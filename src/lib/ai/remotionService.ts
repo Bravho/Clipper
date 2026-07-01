@@ -7,6 +7,7 @@ import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { AnimationSpec } from "@/lib/ai/animationService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
+import type { Palette } from "@/lib/ai/paletteService";
 import { getRemotionBundle } from "@/lib/ai/remotionBundle";
 
 /**
@@ -45,6 +46,8 @@ export interface RenderOverlayParams {
   scenePlan: ScenePlan[];
   /** Motion-graphics overlay specs from `animationService.generateAnimationSpec`. */
   animationSpecs: AnimationSpec[];
+  /** Brand/content palette for the decorative shape layer. */
+  palette: Palette;
   /** DO Spaces key the rendered `.webm` overlay clip will be uploaded to. */
   outputStorageKey: string;
 }
@@ -62,6 +65,7 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
     subtitleLanguages,
     scenePlan,
     animationSpecs,
+    palette,
     outputStorageKey,
   } = params;
 
@@ -77,6 +81,7 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
       imageIndexes: s.imageIndexes,
     })),
     animationSpecs,
+    palette,
   };
 
   const { selectComposition, renderMedia } = await import("@remotion/renderer");
@@ -95,8 +100,14 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
     await renderMedia({
       composition,
       serveUrl,
-      codec: "vp8",
+      // VP9 (not VP8) for the alpha WebM: FFmpeg decodes VP9 `yuva420p` alpha
+      // reliably, whereas the VP8 alpha plane was being dropped to black at
+      // composite time (the "black video behind the captions" bug).
+      codec: "vp9",
       pixelFormat: "yuva420p",
+      // Transparent (alpha) output requires PNG frames — the default JPEG image
+      // format cannot carry an alpha channel and Remotion rejects the combo.
+      imageFormat: "png",
       outputLocation: outputPath,
       inputProps,
       timeoutInMilliseconds: RENDER_TIMEOUT_MS,
@@ -114,6 +125,83 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
       })
     );
     return spacesPublicUrl(outputStorageKey);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+export interface RenderTemplatedVideoParams {
+  /** Public URL of the merged (voice+music) master for this ratio. */
+  masterUrl: string;
+  ratio: VideoRatio;
+  durationSeconds: number;
+  templateId: string;
+  palette: Palette;
+  subtitleTimeline: TimedSegment[];
+  subtitleLanguages: ("th" | "en" | "zh")[];
+  /** DO Spaces key the rendered `.mp4` will be uploaded to. */
+  outputStorageKey: string;
+}
+
+/**
+ * Phase 7 (template redesign) — render the final styled/captioned video in a
+ * SINGLE Remotion pass: the master plays inside the composition (audio carried
+ * through OffthreadVideo) with the template frame/decor + subtitles on top,
+ * output as an opaque H.264 MP4. No alpha compositing (this is what fixes the
+ * black-video bug). Returns the stored clip.
+ */
+export async function renderTemplatedVideo(
+  params: RenderTemplatedVideoParams
+): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+  const inputProps = {
+    masterUrl: params.masterUrl,
+    ratio: params.ratio,
+    durationSeconds: params.durationSeconds,
+    templateId: params.templateId,
+    palette: params.palette,
+    subtitleTimeline: params.subtitleTimeline,
+    subtitleLanguages: params.subtitleLanguages,
+  };
+
+  const { selectComposition, renderMedia } = await import("@remotion/renderer");
+  const serveUrl = await getRemotionBundle();
+
+  const composition = await selectComposition({
+    serveUrl,
+    id: "TemplatedVideo",
+    inputProps,
+  });
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-templated-"));
+  const outputPath = path.join(tmpDir, "styled.mp4");
+
+  try {
+    await renderMedia({
+      composition,
+      serveUrl,
+      codec: "h264",
+      pixelFormat: "yuv420p",
+      outputLocation: outputPath,
+      inputProps,
+      timeoutInMilliseconds: RENDER_TIMEOUT_MS,
+    });
+
+    const data = await fs.readFile(outputPath);
+    const bucket = process.env.DO_SPACES_BUCKET!;
+    await spacesClient.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: params.outputStorageKey,
+        Body: data,
+        ContentType: "video/mp4",
+        ACL: "public-read",
+      })
+    );
+    return {
+      storageKey: params.outputStorageKey,
+      storageUrl: spacesPublicUrl(params.outputStorageKey),
+      fileSizeBytes: data.length,
+    };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }

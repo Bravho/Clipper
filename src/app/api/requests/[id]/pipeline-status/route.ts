@@ -7,8 +7,6 @@ import {
   uploadedAssetRepository,
   videoGenerationJobRepository,
 } from "@/repositories/index";
-import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-import { videoGenerationService } from "@/services/VideoGenerationService";
 
 /**
  * GET /api/requests/[id]/pipeline-status
@@ -16,7 +14,8 @@ import { videoGenerationService } from "@/services/VideoGenerationService";
  * Returns the current pipeline step for the requester's job.
  * Used by PipelineStatusPoller to detect step changes.
  *
- * - GeneratingBaseVideo: polls Veo and delegates to checkBaseVideoReady on completion.
+ * - GeneratingBaseVideo: the montage segment renders in a background task that
+ *   advances the job itself; this route just reports the current step.
  * - GeneratingVoice: no polling needed — ElevenLabs synthesis runs inline on the
  *   server and advances the job itself; this route just reports the current step.
  */
@@ -44,17 +43,9 @@ export async function GET(
     return NextResponse.json({ currentStep: null, failedAtStep: null, jobId: null });
   }
 
-  // Phase 3: Veo runs one cumulative scene task at a time. Polling and
-  // downloading are handled inside checkBaseVideoReady, which advances to the
-  // review gate after each cumulative scene output is ready.
-  const hasVideoGenTasks = (job.videoGenTaskIds && job.videoGenTaskIds.length > 0) || !!job.videoGenTaskId;
-  if (job.currentStep === VideoGenerationStep.GeneratingBaseVideo && hasVideoGenTasks) {
-    try {
-      job = await videoGenerationService.checkBaseVideoReady(job.id);
-    } catch (err) {
-      console.error("[pipeline-status] checkBaseVideoReady failed:", err);
-    }
-  }
+  // The montage engine renders each scene segment in a background task that
+  // advances the step itself, so there is nothing to poll here — the poller
+  // simply reads the current step below.
 
   // Voice generation (ElevenLabs) runs inline server-side — no polling here.
   const voiceError: string | null = null;
@@ -73,6 +64,9 @@ export async function GET(
       processedVoiceUrl: processedVoiceAsset?.storageUrl ?? null,
       videoGenStatus: job.videoGenStatus ?? null,
       videoGenLastPolledAt: job.videoGenLastPolledAt?.toISOString() ?? null,
+      // Phase 7 — background Travy render status, so the poller can keep the
+      // Travy spinner live while the job is already Complete.
+      tventVideoStatus: job.tventVideoStatus ?? "idle",
     },
     {
       headers: {

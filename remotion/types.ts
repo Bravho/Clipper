@@ -52,6 +52,21 @@ export const RATIO_DIMENSIONS: Record<VideoRatio, { width: number; height: numbe
 /** Frame rate used for all overlay renders — must match the FFmpeg composition step's expectations. */
 export const FPS = 30;
 
+/** Brand/content-derived palette for the decorative motion-graphics layer. */
+export interface Palette {
+  primary: string;
+  secondary: string;
+  accent: string;
+  neutral: string;
+}
+
+export const DEFAULT_PALETTE: Palette = {
+  primary: "#FF6B35",
+  secondary: "#FFB703",
+  accent: "#06D6A0",
+  neutral: "#FFFFFF",
+};
+
 export interface OverlayInputProps {
   ratio: VideoRatio;
   durationSeconds: number;
@@ -59,6 +74,8 @@ export interface OverlayInputProps {
   subtitleLanguages: ("th" | "en" | "zh")[];
   scenePlan: ScenePlanEntry[];
   animationSpecs: AnimationSpec[];
+  /** Palette for the decorative shapes (waves/triangles/blobs/sparkles). */
+  palette: Palette;
 }
 
 export const DEFAULT_OVERLAY_PROPS: OverlayInputProps = {
@@ -68,4 +85,33 @@ export const DEFAULT_OVERLAY_PROPS: OverlayInputProps = {
   subtitleLanguages: ["en", "zh"],
   scenePlan: [],
   animationSpecs: [],
+  palette: DEFAULT_PALETTE,
+};
+
+/**
+ * Phase 7 (template redesign) — single-pass styled render: the merged master
+ * video is placed INSIDE this composition (via OffthreadVideo, which carries its
+ * voice+music audio), with the chosen template's frame/decor + subtitles drawn
+ * around it, output as an opaque MP4. No alpha compositing (fixes the black bug).
+ */
+export interface TemplatedVideoInputProps {
+  /** Public URL of the merged (voice+music) master for this ratio. */
+  masterUrl: string;
+  ratio: VideoRatio;
+  durationSeconds: number;
+  /** Template id from src/config/motionTemplates.ts ("none" | "clean_frame" | …). */
+  templateId: string;
+  palette: Palette;
+  subtitleTimeline: TimedSegment[];
+  subtitleLanguages: ("th" | "en" | "zh")[];
+}
+
+export const DEFAULT_TEMPLATED_VIDEO_PROPS: TemplatedVideoInputProps = {
+  masterUrl: "",
+  ratio: "9:16",
+  durationSeconds: 15,
+  templateId: "none",
+  palette: DEFAULT_PALETTE,
+  subtitleTimeline: [],
+  subtitleLanguages: ["en", "zh"],
 };

@@ -10,14 +10,17 @@ import {
 import { MontageAsset, MontageSceneInputProps, MontageTransition } from "./montageTypes";
 import { allocateAssetFrames, buildKenBurnsTransform, clamp } from "./montageMotion";
 
-const TRANSITION_DURATION_SECONDS = 0.3;
+const TRANSITION_DURATION_SECONDS = 0.2;
 
 /**
  * Renders one montage scene from the client's real photos/clips: each asset
  * occupies a contiguous slice of the scene, stills get Ken Burns motion, clips
- * play their trimmed range, and (except for "cut") each asset after the first
- * eases in with a fade/slide/zoom entrance. Captions, voice, and music are NOT
- * here — they are added downstream at the FFmpeg compose step.
+ * play their trimmed range. Except for "cut", each asset after the first mounts
+ * a short overlap EARLY — it sits on top of the previous asset's tail and fades
+ * in over it, producing a true cross-dissolve (not a dip to black). Because the
+ * overlap borrows from the adjacent slot rather than trimming, the scene's total
+ * length is unchanged, so the voiceover stays in sync downstream. Captions,
+ * voice, and music are added later at the FFmpeg compose step.
  */
 export function MontageScene(props: MontageSceneInputProps) {
   const { assets, transition } = props;
@@ -31,18 +34,30 @@ export function MontageScene(props: MontageSceneInputProps) {
     assets.map((a) => a.durationSeconds),
     durationInFrames
   );
+  const fadeFramesBase =
+    transition === "cut" ? 0 : Math.max(1, Math.round(TRANSITION_DURATION_SECONDS * fps));
 
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       {assets.map((asset, i) => {
         const range = ranges[i];
+        const prev = ranges[i - 1];
+        // Don't dissolve longer than half of either neighbouring shot.
+        const maxFade = prev
+          ? Math.floor(Math.min(range.durationInFrames, prev.durationInFrames) / 2)
+          : 0;
+        const fadeInFrames = i === 0 ? 0 : clamp(fadeFramesBase, 0, Math.max(0, maxFade));
+        // Mount `fadeInFrames` early to overlap the previous asset's tail; keep
+        // the same end frame so the contiguous timeline (and total) is preserved.
+        const from = Math.max(0, range.from - fadeInFrames);
+        const seqDuration = range.from + range.durationInFrames - from;
         return (
-          <Sequence key={i} from={range.from} durationInFrames={range.durationInFrames}>
+          <Sequence key={i} from={from} durationInFrames={seqDuration}>
             <AssetLayer
               asset={asset}
-              durationInFrames={range.durationInFrames}
-              fps={fps}
-              transition={i === 0 ? "cut" : transition}
+              durationInFrames={seqDuration}
+              fadeInFrames={fadeInFrames}
+              transition={transition}
             />
           </Sequence>
         );
@@ -54,25 +69,26 @@ export function MontageScene(props: MontageSceneInputProps) {
 function AssetLayer({
   asset,
   durationInFrames,
-  fps,
+  fadeInFrames,
   transition,
 }: {
   asset: MontageAsset;
   durationInFrames: number;
-  fps: number;
+  fadeInFrames: number;
   transition: MontageTransition;
 }) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const progress = durationInFrames > 1 ? clamp(frame / (durationInFrames - 1), 0, 1) : 1;
 
-  // Entrance easing (relative to this asset's own start).
-  const entranceFrames = Math.max(1, Math.round(TRANSITION_DURATION_SECONDS * fps));
-  const tp = transition === "cut" ? 1 : clamp(frame / entranceFrames, 0, 1);
-  const opacity = transition === "fade" || transition === "slide" || transition === "zoom" ? tp : 1;
+  // Cross-dissolve in over the overlap window with the previous asset.
+  const fadeIn = fadeInFrames > 0 ? clamp(frame / fadeInFrames, 0, 1) : 1;
+  const opacity = fadeIn;
 
+  // Optional slide/zoom flourish layered on top of the dissolve.
   let entranceTransform = "";
-  if (transition === "slide") entranceTransform = `translateX(${(1 - tp) * 30}%)`;
-  else if (transition === "zoom") entranceTransform = `scale(${1.06 - 0.06 * tp})`;
+  if (transition === "slide") entranceTransform = `translateX(${(1 - fadeIn) * 12}%)`;
+  else if (transition === "zoom") entranceTransform = `scale(${1.04 - 0.04 * fadeIn})`;
 
   const focusX = clamp(asset.focusX ?? 0.5, 0, 1) * 100;
   const focusY = clamp(asset.focusY ?? 0.5, 0, 1) * 100;

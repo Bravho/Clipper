@@ -5,6 +5,10 @@ import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 
+/**
+ * Requester re-renders the subtitle + motion-graphic overlay (Phase 7),
+ * optionally changing the subtitle languages, from the overlay review step.
+ */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -42,21 +46,15 @@ export async function POST(
       ALLOWED_LANGS.includes(l as (typeof ALLOWED_LANGS)[number])
     );
 
-  const { isValidTemplateId } = await import("@/config/motionTemplates");
-  const selectedMotionTemplate = isValidTemplateId(body?.selectedMotionTemplate)
-    ? (body.selectedMotionTemplate as string)
-    : undefined;
-
   try {
-    const updated = await videoGenerationService.approveFinalVideoByRequester(
+    const updated = await videoGenerationService.regenerateOverlayByRequester(
       jobId,
       session.user.id,
-      subtitleLanguages && subtitleLanguages.length > 0 ? subtitleLanguages : undefined,
-      selectedMotionTemplate
+      subtitleLanguages && subtitleLanguages.length > 0 ? subtitleLanguages : undefined
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to approve final video.";
+    const message = err instanceof Error ? err.message : "Failed to regenerate overlay.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

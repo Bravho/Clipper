@@ -16,6 +16,8 @@ const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
   VideoGenerationStep.AwaitingSceneDesignApproval,
   VideoGenerationStep.AwaitingAnimationApproval,
   VideoGenerationStep.AwaitingFinalApproval,
+  VideoGenerationStep.AwaitingOverlayApproval,
+  VideoGenerationStep.AwaitingAdditionalRatios,
 ]);
 
 const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
@@ -33,6 +35,10 @@ const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
   [VideoGenerationStep.AwaitingAnimationApproval]:  3,
   [VideoGenerationStep.ComposingFinalVideo]:        4,
   [VideoGenerationStep.AwaitingFinalApproval]:      4,
+  [VideoGenerationStep.GeneratingOverlay]:          4,
+  [VideoGenerationStep.AwaitingOverlayApproval]:    4,
+  [VideoGenerationStep.AwaitingAdditionalRatios]:   4,
+  [VideoGenerationStep.GeneratingAdditionalRatios]: 4,
   [VideoGenerationStep.Publishing]:                 5,
   [VideoGenerationStep.Complete]:                   5,
   // Legacy steps
@@ -222,9 +228,9 @@ export function ProductionPipeline({
                   {/* Video-gen sub-status: only shown while AI is actively rendering, not after */}
                   {isActive && currentStep === VideoGenerationStep.GeneratingBaseVideo && phase.id === 3 && (
                     <p className="mt-1 text-xs text-blue-400">
-                      {videoGenStatus === "submitted" && "รอ Veo AI รับงานในคิว..."}
-                      {videoGenStatus === "processing" && "Veo AI กำลังเรนเดอร์วิดีโอ"}
-                      {!videoGenStatus && "กำลังส่งงานไปยัง Veo AI..."}
+                      {videoGenStatus === "submitted" && "กำลังเตรียมเรนเดอร์วิดีโอจากรูปและคลิป..."}
+                      {videoGenStatus === "processing" && "กำลังเรนเดอร์วิดีโอจากรูปและคลิปของคุณ"}
+                      {!videoGenStatus && "กำลังประกอบวิดีโอจากรูปและคลิป..."}
                       {videoGenLastPolledAt && (
                         <span className="ml-2 text-slate-400">
                           · ตรวจสอบล่าสุด{" "}

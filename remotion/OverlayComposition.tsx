@@ -2,7 +2,8 @@ import React from "react";
 import { AbsoluteFill } from "remotion";
 import { CaptionOverlay } from "./CaptionOverlay";
 import { SceneLowerThird } from "./SceneLowerThird";
-import { OverlayInputProps } from "./types";
+import { DecorativeGraphics } from "./DecorativeGraphics";
+import { DEFAULT_PALETTE, OverlayInputProps } from "./types";
 
 /**
  * Root Phase-4 overlay composition: a transparent (alpha-channel) frame
@@ -17,7 +18,11 @@ import { OverlayInputProps } from "./types";
 export function OverlayComposition(props: OverlayInputProps) {
   return (
     <AbsoluteFill style={{ backgroundColor: "transparent" }}>
+      {/* Back layer: lively decorative shapes (edge/corner-weighted). */}
+      <DecorativeGraphics palette={props.palette ?? DEFAULT_PALETTE} scenePlan={props.scenePlan} />
+      {/* Mid layer: English text motion graphics. */}
       <SceneLowerThird animationSpecs={props.animationSpecs} />
+      {/* Front layer: subtitles on top, always legible. */}
       <CaptionOverlay subtitleTimeline={props.subtitleTimeline} subtitleLanguages={props.subtitleLanguages} />
     </AbsoluteFill>
   );

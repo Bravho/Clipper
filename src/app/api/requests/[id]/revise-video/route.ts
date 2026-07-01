@@ -36,10 +36,11 @@ export async function POST(
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { jobId, scenePlan, hookThai, scriptThai, captionThai } = body;
+  const { jobId, scenePlan, hookThai, scriptThai, captionThai, sceneIndex } = body;
   if (!jobId || !scenePlan || !hookThai || !scriptThai) {
     return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
   }
+  const targetSceneIndex = Number.isInteger(sceneIndex) ? (sceneIndex as number) : undefined;
 
   const job = await videoGenerationJobRepository.findById(jobId);
   if (!job || job.requestId !== id) {
@@ -55,7 +56,8 @@ export async function POST(
         hookThai,
         scriptThai,
         captionThai: captionThai ?? "",
-      }
+      },
+      targetSceneIndex
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

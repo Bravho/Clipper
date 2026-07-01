@@ -53,8 +53,8 @@ export const DEFAULT_MONTAGE_TRANSITION: MontageTransition = "fade";
  */
 export const MONTAGE_FPS = 30;
 
-/** Transition duration in seconds (fade/slide ramp at the start of an asset). */
-export const TRANSITION_DURATION_SECONDS = 0.3;
+/** Transition duration in seconds (very short cross-dissolve between shots). */
+export const TRANSITION_DURATION_SECONDS = 0.2;
 
 /**
  * One real-media asset within a montage scene. `url` is a publicly readable

@@ -53,7 +53,11 @@ export const AI_CONFIG = {
   },
   claude: {
     apiKey: process.env.ANTHROPIC_API_KEY ?? "",
-    model: "claude-sonnet-4-6",
+    // Overridable so the deployed model id / API version can be corrected
+    // without a code change if the API rejects the default. The Phase-7
+    // animation step logs the full 400 body, so a bad model id is diagnosable.
+    model: (process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6").trim(),
+    apiVersion: (process.env.ANTHROPIC_VERSION ?? "2023-06-01").trim(),
   },
   ffmpeg: {
     path: process.env.FFMPEG_PATH ?? "ffmpeg",

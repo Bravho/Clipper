@@ -5,15 +5,22 @@ import {
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
-import { buildAnimatedVideoKey, buildAnimatedOverlayKey } from "@/lib/spacesKeys";
 import { spacesClient } from "@/lib/spaces";
 import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
-import * as veoService from "@/lib/ai/veoService";
+import * as montageService from "@/lib/ai/montageService";
 import * as elevenLabsTtsService from "@/lib/ai/elevenLabsTtsService";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
-import * as animationService from "@/lib/ai/animationService";
+import type { VideoRatio } from "@/lib/ai/ffmpegService";
+// Phase 7: subtitle + motion-graphic overlay rendering (Remotion) composited on
+// top of the merged masters.
 import * as remotionService from "@/lib/ai/remotionService";
-import type { VideoGenerationJob, ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
+import { derivePalette, type Palette } from "@/lib/ai/paletteService";
+import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
+import { orderSourceAssets, type OrderedSourceAsset } from "@/lib/sourceAssets";
+import { buildSceneMontageAssets, inferMotionFromText, toRenderAssetSpecs } from "@/lib/ai/montagePlan";
+import { DEFAULT_MONTAGE_TRANSITION, isMontageTransition } from "@/config/montage";
+import { buildAiVideoKey, buildFinalClipKey } from "@/lib/spacesKeys";
+import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput } from "@/domain/models/VideoGenerationJob";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import type { ImageCoordinates } from "@/lib/ai/geminiSubtitlesService";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
@@ -29,6 +36,19 @@ import { AI_CONFIG } from "@/config/aiTools";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Thrown when a request reaches scene design with zero usable uploaded media
+ * (no images/clips). The montage engine animates only the client's real
+ * uploads, so there is nothing to render — the pipeline fails clearly instead
+ * of inventing imagery. Surfaced to the requester as an actionable message.
+ */
+export class NoUsableMediaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoUsableMediaError";
+  }
+}
 
 function sanitizeScenePlanJson(scenePlanJson: string | null | undefined): string | null {
   if (!scenePlanJson) return scenePlanJson ?? null;
@@ -369,166 +389,217 @@ export class VideoGenerationService {
     return estimates.map((e) => (e / sumEstimates) * totalSeconds);
   }
 
+  // ── Real-media montage engine (the only base-video engine) ──────────────────
+
+  /** Montage canvas ratio for a request's primary platform. */
+  private _montageCanvasRatio(primaryPlatform: Platform): VideoRatio {
+    const raw = PLATFORM_ASPECT_RATIOS[primaryPlatform];
+    const valid: VideoRatio[] = ["9:16", "16:9", "1:1", "4:5"];
+    return (valid as string[]).includes(raw) ? (raw as VideoRatio) : "9:16";
+  }
+
+  /** Fetch + canonically order a request's source assets (index-stable). */
+  private async _orderedSourceAssets(requestId: string): Promise<OrderedSourceAsset[]> {
+    const assets = await uploadedAssetRepository.findByRequestId(requestId);
+    return orderSourceAssets(assets);
+  }
+
   /**
-   * Select image URLs for a scene using `scene.imageIndexes`, falling back
-   * to all images if `imageIndexes` is empty, and silently dropping any
-   * out-of-bounds indexes. If every index is out of bounds (or the array
-   * ends up empty), falls back to the full image set so the video generator
-   * always receives at least one image.
+   * Detect the hero subject (dish/sign) in each IMAGE asset via Gemini and map
+   * its bounding-box center to a 0..1 focus point, keyed by canonical asset
+   * index. Used to steer Ken Burns motion onto the subject instead of the photo
+   * center. Clips are skipped (not still images). Fail-open: on any error this
+   * returns an empty map and motion falls back to center framing.
    */
-  private _selectSceneImages(allImageUrls: string[], imageIndexes: number[] | undefined): string[] {
-    if (!imageIndexes || imageIndexes.length === 0) {
-      return allImageUrls;
-    }
-    const selected = imageIndexes
-      .filter((i) => Number.isInteger(i) && i >= 0 && i < allImageUrls.length)
-      .map((i) => allImageUrls[i]);
-    return selected.length > 0 ? selected : allImageUrls;
-  }
+  private async _detectFocusByIndex(
+    ordered: OrderedSourceAsset[]
+  ): Promise<Map<number, { focusX: number; focusY: number }>> {
+    const focusByIndex = new Map<number, { focusX: number; focusY: number }>();
+    const images = ordered.filter((a) => a.kind === "image");
+    if (images.length === 0) return focusByIndex;
 
-  private _buildVeoScenePrompt(scene: ScenePlan): string {
-    const antiHallucination =
-       " IMPORTANT: Do not add any new objects, props, people, logos, text, packaging, furniture, background items, decorations, food items, or product details that are not clearly visible in the uploaded source images. Use only the elements already present in the submitted images. You may animate camera movement, lighting, depth, and motion, but do not invent additional visual elements. Do not fabricate or hallucinate final product visuals...";
-    return (
-      sanitizeSceneDescription(scene.visualDescriptionThai ?? scene.visualDescription ?? "") +
-      antiHallucination
-    );
-  }
-
-  /** Issue the first Veo task. Later scenes are submitted after each approval. */
-  private async _runVideoGeneration(job: VideoGenerationJob): Promise<void> {
-    const request = await this._getClipRequestImages(job.requestId);
-    const rawScenePlan = JSON.parse(job.approvedScenePlan!) as ScenePlan[];
-    const scenePlan = sanitizeScenePlanDescriptions(rawScenePlan);
-    const sanitizedScenePlanJson = JSON.stringify(scenePlan);
-    if (sanitizedScenePlanJson !== job.approvedScenePlan) {
-      await videoGenerationJobRepository.update(job.id, {
-        approvedScenePlan: sanitizedScenePlanJson,
+    try {
+      const { detectProductCoordinates } = await import("@/lib/ai/geminiSubtitlesService");
+      const coords = await detectProductCoordinates(images.map((a) => a.url));
+      images.forEach((img, i) => {
+        const c = coords?.[i];
+        if (!c) return;
+        const cx = (c.xmin + c.xmax) / 2 / 1000;
+        const cy = (c.ymin + c.ymax) / 2 / 1000;
+        if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
+        focusByIndex.set(img.index, {
+          focusX: Math.min(1, Math.max(0, cx)),
+          focusY: Math.min(1, Math.max(0, cy)),
+        });
       });
+    } catch (err) {
+      console.error("[Montage] subject-focus detection failed, using center framing:", err);
     }
-
-    const aspectRatio = PLATFORM_ASPECT_RATIOS[request.primaryPlatform];
-    const firstScene = scenePlan[0];
-    if (!firstScene) throw new Error("No approved scene plan available for Veo generation");
-
-    const durationSeconds = Math.min(
-      8,
-      Number.isFinite(firstScene.durationSeconds) && firstScene.durationSeconds > 0
-        ? firstScene.durationSeconds
-        : Math.max(1, request.durationSeconds / scenePlan.length)
-    );
-
-    const taskId = await veoService.createVideo({
-      imageUrls: this._selectSceneImages(request.imageUrls, firstScene.imageIndexes),
-      prompt: this._buildVeoScenePrompt(firstScene),
-      aspectRatio,
-      durationSeconds,
-    });
-
-    await videoGenerationJobRepository.update(job.id, {
-      videoGenTaskIds: [taskId],
-      videoGenTaskId: taskId,
-      videoGenStatus: "submitted",
-      videoGenLastPolledAt: new Date(),
-      sceneVideoAssetIds: null,
-    });
+    return focusByIndex;
   }
 
-  private async _runNextVideoExtension(job: VideoGenerationJob): Promise<VideoGenerationJob> {
-    const request = await this._getClipRequestImages(job.requestId);
+  /**
+   * Render ONE montage scene segment (the requester's real photos/clips with
+   * Ken Burns + transitions) and write it into `sceneVideoAssetIds[sceneIndex]`
+   * NON-cumulatively. Does NOT change the pipeline step — the caller decides
+   * when to advance (one scene → AwaitingVideoApproval, or all scenes → review).
+   * Returns the new segment asset's id. Re-reads the latest segment array before
+   * writing so sequential batch renders accumulate correctly.
+   */
+  private async _renderSceneInto(job: VideoGenerationJob, sceneIndex: number): Promise<string> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const req = await clipRequestRepository.findById(job.requestId);
+    if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const ordered = await this._orderedSourceAssets(job.requestId);
     const scenePlan = sanitizeScenePlanDescriptions(
       JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[]
     );
-    const taskIds = job.videoGenTaskIds ?? (job.videoGenTaskId ? [job.videoGenTaskId] : []);
-    const nextScene = scenePlan[taskIds.length];
-    const previousTaskId = taskIds[taskIds.length - 1];
+    const scene = scenePlan[sceneIndex];
+    if (!scene) throw new Error(`No approved scene at index ${sceneIndex} for montage render`);
 
-    if (!nextScene || !previousTaskId) {
-      return videoGenerationJobRepository.update(job.id, {
-        currentStep: VideoGenerationStep.GeneratingAnimations,
-      });
-    }
+    const fallbackSceneDuration =
+      (job.voiceDurationSeconds ?? req.durationSeconds ?? 15) / Math.max(1, scenePlan.length);
+    const sceneDuration =
+      Number.isFinite(scene.durationSeconds) && scene.durationSeconds > 0
+        ? scene.durationSeconds
+        : Math.max(1, fallbackSceneDuration);
 
-    const taskId = await veoService.extendVideo({
-      previousTaskId,
-      prompt: this._buildVeoScenePrompt(nextScene),
-      aspectRatio: PLATFORM_ASPECT_RATIOS[request.primaryPlatform],
+    // Prefer the concrete montage assets fixed at scene-design; rebuild from the
+    // canonical ordering for legacy scenes that only carry `imageIndexes`.
+    const sceneAssets =
+      scene.assets && scene.assets.length > 0
+        ? scene.assets
+        : buildSceneMontageAssets(scene, ordered, sceneDuration);
+    const renderAssets = toRenderAssetSpecs(sceneAssets, ordered);
+    const totalDuration =
+      renderAssets.reduce((sum, a) => sum + a.durationSeconds, 0) || sceneDuration;
+
+    const ratio = this._montageCanvasRatio(req.targetPlatforms[0] ?? Platform.TventApp);
+    const transition = isMontageTransition(scene.transitionIn)
+      ? scene.transitionIn
+      : DEFAULT_MONTAGE_TRANSITION;
+    const outputStorageKey = buildAiVideoKey(req.userId, job.requestId);
+
+    const stored = await montageService.renderScene({
+      ratio,
+      durationSeconds: totalDuration,
+      assets: renderAssets,
+      transition,
+      outputStorageKey,
     });
-
-    return videoGenerationJobRepository.update(job.id, {
-      currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      videoGenTaskIds: [...taskIds, taskId],
-      videoGenTaskId: taskId,
-      videoGenStatus: "submitted",
-      videoGenLastPolledAt: new Date(),
-    });
-  }
-
-  /**
-   * Poll the current Veo task. Each task output is cumulative: scene 1, then
-   * scene 1+2, then scene 1+2+3. The user reviews each cumulative result
-   * before the next extension starts.
-   */
-  async checkBaseVideoReady(jobId: string): Promise<VideoGenerationJob> {
-    const job = await this._getJob(jobId);
-
-    if (job.currentStep !== VideoGenerationStep.GeneratingBaseVideo) return job;
-
-    const taskIds = job.videoGenTaskIds ?? (job.videoGenTaskId ? [job.videoGenTaskId] : []);
-    if (taskIds.length === 0) return job;
-
-    const request = await this._getClipRequestBasic(job.requestId);
-    const currentIndex = taskIds.length - 1;
-    const sceneAssetIds: (string | null)[] =
-      job.sceneVideoAssetIds && job.sceneVideoAssetIds.length === taskIds.length
-        ? [...job.sceneVideoAssetIds]
-        : [...(job.sceneVideoAssetIds ?? []), ...new Array(taskIds.length).fill(null)].slice(0, taskIds.length);
-
-    if (sceneAssetIds[currentIndex]) {
-      return videoGenerationJobRepository.update(jobId, {
-        currentStep: VideoGenerationStep.AwaitingVideoApproval,
-        baseVideoAssetId: sceneAssetIds[currentIndex],
-        videoGenStatus: null,
-        videoGenLastPolledAt: new Date(),
-      });
-    }
-
-    const status = await veoService.pollTaskStatus(taskIds[currentIndex]);
-    console.log(
-      `[Veo] cumulativeScene=${currentIndex + 1} task=${taskIds[currentIndex]} status=${status.status} requestId=${job.requestId}`
-    );
-
-    if (status.status === "failed") {
-      console.error(`[Veo] cumulative scene ${currentIndex + 1} failed: ${status.reason}`);
-      return videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-        videoGenLastPolledAt: new Date(),
-        sceneVideoAssetIds: sceneAssetIds,
-      });
-    }
-
-    if (status.status !== "succeed") {
-      return videoGenerationJobRepository.update(jobId, {
-        videoGenStatus: "processing",
-        videoGenLastPolledAt: new Date(),
-      });
-    }
-
-    const { storageKey, storageUrl, fileSizeBytes } = await veoService.downloadAndStore(
-      status.videoUrl,
-      request.userId,
-      job.requestId
-    );
 
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
 
     const asset = await uploadedAssetRepository.create({
       requestId: job.requestId,
-      userId: request.userId,
-      fileName: `veo_cumulative_scene_${currentIndex + 1}.mp4`,
+      userId: req.userId,
+      fileName: `montage_scene_${sceneIndex + 1}.mp4`,
+      assetType: AssetType.AIGeneratedBaseVideo,
+      fileSizeBytes: stored.fileSizeBytes,
+      mimeType: "video/mp4",
+      storageKey: stored.storageKey,
+      storageUrl: stored.storageUrl,
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Uploaded,
+      scheduledDeletionAt,
+      videoRatio: ratio,
+    });
+
+    // Per-scene (non-cumulative): index i holds scene i's segment only. Re-read
+    // the latest array so a sequential batch render doesn't clobber siblings.
+    const latest = await videoGenerationJobRepository.findById(job.id);
+    const segments: (string | null)[] = [...(latest?.sceneVideoAssetIds ?? job.sceneVideoAssetIds ?? [])];
+    while (segments.length <= sceneIndex) segments.push(null);
+    segments[sceneIndex] = asset.id;
+
+    await videoGenerationJobRepository.update(job.id, {
+      sceneVideoAssetIds: segments,
+      videoGenLastPolledAt: new Date(),
+    });
+    return asset.id;
+  }
+
+  /**
+   * Render ONE scene then advance to the combined review (AwaitingVideoApproval).
+   * Used for a single-scene re-render (per-scene revision / retry); the other
+   * scenes' segments are left untouched. Fire-and-forget.
+   */
+  private async _renderSceneSegment(job: VideoGenerationJob, sceneIndex: number): Promise<void> {
+    const assetId = await this._renderSceneInto(job, sceneIndex);
+    await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.AwaitingVideoApproval,
+      baseVideoAssetId: assetId,
+      videoGenStatus: null,
+      videoGenLastPolledAt: new Date(),
+    });
+  }
+
+  /**
+   * Render EVERY scene's segment sequentially, then advance to the combined
+   * review where the requester reviews all scene videos together and clicks
+   * "Approve all" to merge. Fire-and-forget; on any scene failure the caller's
+   * `.catch` records `failedAtStep = GeneratingBaseVideo` for retry.
+   */
+  private async _renderAllSceneSegments(job: VideoGenerationJob): Promise<void> {
+    const scenePlan = sanitizeScenePlanDescriptions(
+      JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[]
+    );
+    for (let i = 0; i < scenePlan.length; i++) {
+      await this._renderSceneInto(job, i);
+    }
+
+    const latest = await videoGenerationJobRepository.findById(job.id);
+    const firstSegment =
+      (latest?.sceneVideoAssetIds ?? []).find((id): id is string => !!id) ?? null;
+
+    await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.AwaitingVideoApproval,
+      // Representative id so the review panel renders; the real concatenated
+      // base is built at "Approve all" (approveBaseVideoByRequester).
+      baseVideoAssetId: firstSegment,
+      videoGenStatus: null,
+      videoGenLastPolledAt: new Date(),
+    });
+  }
+
+  /**
+   * Concatenate all approved per-scene montage segments (in scene order) into
+   * the single `baseVideoAssetId` the rest of the pipeline consumes, using the
+   * existing `ffmpegService.concatVideos`. Returns the new base asset's id.
+   */
+  private async _concatMontageBaseVideo(job: VideoGenerationJob): Promise<string> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const req = await clipRequestRepository.findById(job.requestId);
+    if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const segmentIds = (job.sceneVideoAssetIds ?? []).filter((id): id is string => !!id);
+    if (segmentIds.length === 0) throw new Error("No montage segments to concatenate");
+
+    const segmentAssets = await Promise.all(
+      segmentIds.map((id) => uploadedAssetRepository.findById(id))
+    );
+    const storageKeys = segmentAssets
+      .filter((a): a is NonNullable<typeof a> => !!a)
+      .map((a) => a.storageKey);
+    if (storageKeys.length === 0) throw new Error("Montage segment assets missing for concatenation");
+
+    const outputKey = buildAiVideoKey(req.userId, job.requestId);
+    // Cross-dissolve at scene joins (falls back to hard-cut concat on failure).
+    const { storageKey, storageUrl, fileSizeBytes } = await ffmpegService.concatVideosWithCrossfade(
+      storageKeys,
+      outputKey
+    );
+
+    const scheduledDeletionAt = new Date();
+    scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
+
+    const baseAsset = await uploadedAssetRepository.create({
+      requestId: job.requestId,
+      userId: req.userId,
+      fileName: "montage_base.mp4",
       assetType: AssetType.AIGeneratedBaseVideo,
       fileSizeBytes,
       mimeType: "video/mp4",
@@ -539,74 +610,43 @@ export class VideoGenerationService {
       uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt,
     });
-
-    sceneAssetIds[currentIndex] = asset.id;
-
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingVideoApproval,
-      baseVideoAssetId: asset.id,
-      sceneVideoAssetIds: sceneAssetIds,
-      videoGenStatus: null,
-      videoGenLastPolledAt: new Date(),
-    });
+    return baseAsset.id;
   }
 
-  /** Staff approves the generated video and triggers extension or animation. */
+  /**
+   * Montage path: the scene segment renders inline in a fire-and-forget
+   * background task (`_renderSceneSegment`) that advances the step to
+   * AwaitingVideoApproval itself — there is no async provider to poll, so this
+   * just returns the job. Retained because the status-poll endpoint calls it.
+   */
+  async checkBaseVideoReady(jobId: string): Promise<VideoGenerationJob> {
+    return this._getJob(jobId);
+  }
+
+  /** Staff approves the generated scene video; defers to the requester logic. */
   async approveBaseVideo(
     jobId: string,
     staffId: string,
     selectedMusicTrack: string | null = null
   ): Promise<VideoGenerationJob> {
-    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
-    const scenePlan = sanitizeScenePlanDescriptions(
-      JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[]
-    );
-    const taskIds = job.videoGenTaskIds ?? (job.videoGenTaskId ? [job.videoGenTaskId] : []);
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
-    if (taskIds.length < scenePlan.length) {
-      const approvedForExtension = await videoGenerationJobRepository.update(jobId, {
-        videoApprovedBy: staffId,
-      });
-      try {
-        await this._runNextVideoExtension(approvedForExtension);
-      } catch (err) {
-        console.error("[VeoExtension] Failed:", err);
-        return videoGenerationJobRepository.update(jobId, {
-          status: VideoGenerationJobStatus.Failed,
-          currentStep: VideoGenerationStep.Failed,
-          failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-        });
-      }
-      return this._getJob(jobId);
+    if (selectedMusicTrack !== null) {
+      await videoGenerationJobRepository.update(jobId, { selectedMusicTrack });
     }
-
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingAnimations,
-      videoApprovedBy: staffId,
-      ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
-    });
-
-    this._runAnimationGeneration(updated).catch(async (err) => {
-      console.error("[AnimationGeneration] Failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingAnimations,
-      });
-    });
-
-    return this._getJob(jobId);
+    return this.approveBaseVideoByRequester(jobId, staffId);
   }
 
   /**
    * Staff rejects the generated video.
-   * @param backToStep  "video" → regenerate with Veo; "content" → go back to ChatGPT
+   * @param backToStep  "video" → re-render all scenes; "content" → back to ChatGPT
    */
   async rejectBaseVideo(
     jobId: string,
     staffId: string,
     backToStep: "video" | "content"
   ): Promise<VideoGenerationJob> {
+    void staffId;
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
     if (backToStep === "content") {
@@ -615,26 +655,22 @@ export class VideoGenerationService {
       });
     }
 
-    // Regenerate video with optional updated prompt
-    const updated = await videoGenerationJobRepository.update(jobId, {
+    // Re-render the whole batch from a clean slate, then return to review.
+    const prepared = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      videoGenTaskId: null,
-      videoGenTaskIds: null,
+      currentSceneIndex: 0,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
+      videoGenStatus: null,
     });
-
-    try {
-      await this._runVideoGeneration(updated);
-    } catch (err) {
-      console.error("Veo regeneration failed:", err);
-      return videoGenerationJobRepository.update(jobId, {
+    this._renderAllSceneSegments(prepared).catch(async (err) => {
+      console.error("[Montage] batch re-render failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
       });
-    }
-
+    });
     return this._getJob(jobId);
   }
 
@@ -810,120 +846,23 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * composites each ratio's overlay onto the final export directly.
    */
   private async _runAnimationGeneration(job: VideoGenerationJob): Promise<void> {
-    const audioAsset = await uploadedAssetRepository.findById(job.processedVoiceAssetId!);
-    if (!audioAsset) throw new Error("Voice asset not found for animation generation");
-
-    const { clipRequestRepository } = await import("@/repositories/index");
-    const request = await clipRequestRepository.findById(job.requestId);
-    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
-
-    const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
-    const durationSeconds = job.voiceDurationSeconds ?? request.durationSeconds ?? 15;
-
-    // Per-sentence timestamps were produced by Gemini right after voice
-    // generation (step 2) and stored on the job as voiceTimestamps /
-    // subtitleTimeline. Reuse them here instead of re-running alignment.
-    const timestampsSource = job.voiceTimestamps ?? job.subtitleTimeline;
-    if (!timestampsSource) {
-      throw new Error("No voice timestamps available for animation generation");
+    // Phase 7 (deferred): this step previously generated Claude motion-graphics
+    // specs and rendered a transparent Remotion caption/motion overlay per ratio,
+    // then composited a preview. That work — together with burned-in subtitles —
+    // is temporarily disabled and will return in Phase 7 with accurate subtitle
+    // timestamp/timeline alignment.
+    //
+    // For now the AwaitingAnimationApproval step only collects the requester's
+    // music choice; the base video stands in as the review preview, and no
+    // overlay assets are produced (so the final compose burns no captions).
+    if (!job.baseVideoAssetId) {
+      throw new Error("Base video asset not found for animation step");
     }
-    const segments = JSON.parse(timestampsSource);
-    const subtitleTimeline = job.subtitleTimeline ?? timestampsSource;
-
-    // Step 1: Claude generates motion-graphics specs (kinetic text,
-    // lower-thirds, CTA banners) from the real voice timeline + scene plan.
-    let scenePlan: ScenePlan[] = [];
-    try { scenePlan = JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]"); } catch { /* ignore */ }
-
-    const specs = await animationService.generateAnimationSpec({
-      scriptThai,
-      timedSegments: segments,
-      scenePlan,
-      hookThai: job.approvedHookThai ?? job.hookThai ?? "",
-      durationSeconds,
-    });
-
-    const subtitleLanguages = job.subtitleLanguages && job.subtitleLanguages.length > 0
-      ? job.subtitleLanguages
-      : (["en", "zh"] as ("th" | "en" | "zh")[]);
-
-    const { spacesPublicUrl } = await import("@/lib/spaces");
-    const { AssetType, AssetUploadStatus } = await import("@/domain/enums/AssetType");
-    const scheduledDeletionAt = new Date();
-    scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
-
-    // Step 2: render one Remotion overlay per required export ratio.
-    const targetRatios = ffmpegService.getRequiredRatiosForPlatforms(request.targetPlatforms ?? []);
-    const overlayAssetIds: Record<string, string> = {};
-
-    for (const ratio of targetRatios) {
-      const overlayKey = buildAnimatedOverlayKey(request.userId, job.requestId, ratio);
-      await remotionService.renderOverlay({
-        ratio,
-        durationSeconds,
-        subtitleTimeline: segments,
-        subtitleLanguages,
-        scenePlan,
-        animationSpecs: specs,
-        outputStorageKey: overlayKey,
-      });
-
-      const overlayAsset = await uploadedAssetRepository.create({
-        requestId: job.requestId,
-        userId: request.userId,
-        fileName: `overlay_${ratio.replace(":", "-")}.webm`,
-        assetType: AssetType.AnimatedVideo,
-        fileSizeBytes: 0,
-        mimeType: "video/webm",
-        storageKey: overlayKey,
-        storageUrl: spacesPublicUrl(overlayKey),
-        thumbnailKey: "",
-        thumbnailUrl: "",
-        uploadStatus: AssetUploadStatus.Uploaded,
-        scheduledDeletionAt,
-        videoRatio: ratio,
-      });
-      overlayAssetIds[ratio] = overlayAsset.id;
-    }
-
-    // Step 3: composite a single representative-ratio preview (base video +
-    // that ratio's overlay) for the AwaitingAnimationApproval review UI.
-    const previewRatio = targetRatios.includes("9:16") ? "9:16" : targetRatios[0];
-    const videoAsset = await uploadedAssetRepository.findById(job.baseVideoAssetId!);
-    if (!videoAsset) throw new Error("Base video asset not found");
-    const previewOverlayAsset = await uploadedAssetRepository.findById(overlayAssetIds[previewRatio]);
-    if (!previewOverlayAsset) throw new Error("Overlay asset not found for animation preview");
-
-    const animatedKey = buildAnimatedVideoKey(request.userId, job.requestId);
-    await ffmpegService.renderOverlayPreview({
-      videoStorageKey: videoAsset.storageKey,
-      overlayStorageKey: previewOverlayAsset.storageKey,
-      ratio: previewRatio,
-      outputStorageKey: animatedKey,
-    });
-
-    const animAsset = await uploadedAssetRepository.create({
-      requestId: job.requestId,
-      userId: request.userId,
-      fileName: "animated_preview.mp4",
-      assetType: AssetType.AnimatedVideo,
-      fileSizeBytes: 0,
-      mimeType: "video/mp4",
-      storageKey: animatedKey,
-      storageUrl: spacesPublicUrl(animatedKey),
-      thumbnailKey: "",
-      thumbnailUrl: "",
-      uploadStatus: AssetUploadStatus.Uploaded,
-      scheduledDeletionAt,
-      videoRatio: previewRatio,
-    });
 
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingAnimationApproval,
-      subtitleTimeline,
-      animationSpec: JSON.stringify(specs),
-      animatedVideoAssetId: animAsset.id,
-      animatedOverlayAssetIds: overlayAssetIds,
+      animatedVideoAssetId: job.baseVideoAssetId,
+      animatedOverlayAssetIds: {},
     });
   }
 
@@ -931,15 +870,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   async approveAnimationByRequester(
     jobId: string,
     userId: string,
-    targetPlatforms: Platform[],
+    targetPlatforms?: Platform[],
     selectedMusicTrack: string | null = null,
     subtitleLanguages?: ("th" | "en" | "zh")[]
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
 
     const job = await this._getJob(jobId);
-    const { clipRequestRepository } = await import("@/repositories/index");
-    await clipRequestRepository.update(job.requestId, { targetPlatforms });
+    // Distribution channels are chosen at voice approval. Only overwrite them
+    // here if a non-empty set is explicitly provided (legacy callers).
+    if (targetPlatforms && targetPlatforms.length > 0) {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      await clipRequestRepository.update(job.requestId, { targetPlatforms });
+    }
 
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.ComposingFinalVideo,
@@ -960,7 +903,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     return updated;
   }
 
-  /** Requester rejects the animation result and re-triggers animation generation. */
+  /** Requester re-triggers animation generation (Phase 7: motion graphics + subtitles). */
   async regenerateAnimationByRequester(
     jobId: string,
     userId: string
@@ -993,12 +936,20 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const req = await clipRequestRepository.findById(job.requestId);
     if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
-    const assets = await uploadedAssetRepository.findByRequestId(job.requestId);
-    const imageUrls = assets
-      .filter((a) => a.assetType === AssetType.Image || a.assetType === AssetType.Video)
-      .filter((a) => a.uploadStatus === AssetUploadStatus.Uploaded)
-      .map((a) => a.storageUrl)
-      .filter(Boolean);
+    // Canonical ordering: the indexes the Vision model returns (imageIndexes /
+    // assetIndex) resolve to the SAME asset in the renderer and the panels.
+    const ordered = await this._orderedSourceAssets(job.requestId);
+
+    // The montage engine animates the client's real uploads — it cannot invent
+    // imagery. With no usable photos/clips there is nothing to render, so fail
+    // clearly here rather than producing an empty video.
+    if (ordered.length === 0) {
+      throw new NoUsableMediaError(
+        "No usable photos or clips were uploaded for this request. Please upload at least one image or video clip and try again."
+      );
+    }
+
+    const imageUrls = ordered.map((a) => a.url);
 
     let businessProfileContext = null;
     try {
@@ -1044,9 +995,38 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       storyboard,
     });
 
+    // Subject-aware focus: steer Ken Burns onto the dish/sign per image asset.
+    const focusByIndex = await this._detectFocusByIndex(ordered);
+
+    // Fix the concrete per-scene asset list now (motion presets + per-asset
+    // durations snapped to the scene length) so the renderer and the approval
+    // panels share one index-aligned plan.
+    const sceneDurations = this._allocateSceneDurations(output.scenePlan, durationSeconds);
+    const scenePlanToPersist: ScenePlan[] = output.scenePlan.map((scene, i) => {
+      const sceneDuration =
+        Number.isFinite(sceneDurations[i]) && sceneDurations[i] > 0
+          ? sceneDurations[i]
+          : scene.durationSeconds;
+      const assets = buildSceneMontageAssets(scene, ordered, sceneDuration).map((a) => {
+        // Only stills get Ken Burns focus; don't overwrite an explicit choice.
+        if (ordered[a.assetIndex]?.kind === "image" && a.focusX == null && a.focusY == null) {
+          const f = focusByIndex.get(a.assetIndex);
+          if (f) return { ...a, focusX: f.focusX, focusY: f.focusY };
+        }
+        return a;
+      });
+      return {
+        ...scene,
+        assets,
+        transitionIn: isMontageTransition(scene.transitionIn)
+          ? scene.transitionIn
+          : DEFAULT_MONTAGE_TRANSITION,
+      };
+    });
+
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-      scenePlan: JSON.stringify(output.scenePlan),
+      scenePlan: JSON.stringify(scenePlanToPersist),
       hookThai: output.hookThai,
       captionThai: output.captionThai,
     });
@@ -1078,12 +1058,41 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     return this._getJob(jobId);
   }
 
+  /**
+   * Persist the requester's chosen distribution channels (ordered, primary
+   * first) on the request. `targetPlatforms[0]` is the PRIMARY channel and sets
+   * the montage base video's aspect ratio (`_montageCanvasRatio` reads it); the
+   * rest are export targets, cropped from the base downstream. Invalid entries
+   * are dropped and Travy App (Tvent) is always included as a mandatory channel.
+   * No-op on an empty/invalid list. Done at voice approval, BEFORE any render.
+   */
+  private async _setDistributionChannels(requestId: string, platforms: Platform[]): Promise<void> {
+    const valid = platforms.filter((p) => Object.values(Platform).includes(p));
+    // Dedupe, preserving the (primary-first) order.
+    const ordered = Array.from(new Set(valid));
+    if (ordered.length === 0) return;
+    // Travy App is mandatory — always part of the distribution set.
+    if (!ordered.includes(Platform.TventApp)) ordered.push(Platform.TventApp);
+
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const req = await clipRequestRepository.findById(requestId);
+    if (!req) return;
+    await clipRequestRepository.update(requestId, { targetPlatforms: ordered });
+  }
+
   /** Requester approves AI voice and triggers scene/hook design from the approved script. */
   async approveVoiceConversionByRequester(
     jobId: string,
-    userId: string
+    userId: string,
+    targetPlatforms?: Platform[]
   ): Promise<VideoGenerationJob> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
+    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
+
+    // The chosen channels set the distribution set; the primary (first) sets the
+    // base video's aspect ratio.
+    if (targetPlatforms && targetPlatforms.length > 0) {
+      await this._setDistributionChannels(job.requestId, targetPlatforms);
+    }
 
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingSceneDesign,
@@ -1123,34 +1132,27 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const { clipRequestRepository } = await import("@/repositories/index");
     await clipRequestRepository.update(job.requestId, { durationSeconds });
 
-    // The all-scenes overview page shows every scene's script (editable) but
-    // approval applies to scene 1 only: approving it persists any edits to the
-    // full plan and immediately generates scene 1. Scenes 2..N are then each
-    // confirmed at their own AwaitingSceneScriptApproval gate (which also shows
-    // all scenes for context) before being extended from the prior scene.
-    const updated = await videoGenerationJobRepository.update(jobId, {
+    // The all-scenes overview page shows every scene's script (editable).
+    // Approving it persists the full plan and renders ALL scenes; the requester
+    // then reviews every scene video together and clicks "Approve all" to merge.
+    //
+    // Fresh batch — clear any stale segment state in the same update.
+    const cleared = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
       currentSceneIndex: 0,
       approvedScenePlan: JSON.stringify(scenePlan),
       contentApprovedBy: userId,
+      sceneVideoAssetIds: null,
+      baseVideoAssetId: null,
     });
-
-    try {
-      const taskIds = updated.videoGenTaskIds ?? (updated.videoGenTaskId ? [updated.videoGenTaskId] : []);
-      if (taskIds.length > 0) {
-        await this._runNextVideoExtension(updated);
-      } else {
-        await this._runVideoGeneration(updated);
-      }
-    } catch (err) {
-      console.error("[SceneDesignApproval] Veo generation failed:", err);
-      return videoGenerationJobRepository.update(jobId, {
+    this._renderAllSceneSegments(cleared).catch(async (err) => {
+      console.error("[Montage] batch scene render failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
       });
-    }
-
+    });
     return this._getJob(jobId);
   }
 
@@ -1181,10 +1183,35 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /**
+   * Re-derive scene `idx`'s still-image motion from its (edited) description so a
+   * script change like "zoom out" is reflected on the next render. Honors the
+   * script's intent over the previously baked motion; no-op when the description
+   * names no camera move (the existing motion is kept). Clips stay static.
+   */
+  private async _reinferSceneMotion(jobId: string, idx: number): Promise<void> {
+    const job = await this._getJob(jobId);
+    let plan: ScenePlan[];
+    try {
+      plan = JSON.parse(job.approvedScenePlan ?? "[]") as ScenePlan[];
+    } catch {
+      return;
+    }
+    const scene = plan[idx];
+    if (!scene?.assets || scene.assets.length === 0) return;
+
+    const motion = inferMotionFromText(scene.visualDescriptionThai ?? scene.visualDescription);
+    if (!motion) return;
+
+    scene.assets = scene.assets.map((a) => (a.kind === "image" ? { ...a, motion } : a));
+    await videoGenerationJobRepository.update(jobId, {
+      approvedScenePlan: JSON.stringify(plan),
+    });
+  }
+
+  /**
    * Per-scene script gate (requester-only). The requester reviews/edits the
-   * active scene's script + image selection, then approves — which generates
-   * that scene's video (scene 0 fresh, later scenes by extending the previous
-   * approved cumulative Veo output).
+   * active scene's script + asset selection, then approves — which renders that
+   * scene's real-media montage segment.
    */
   async approveSceneScriptByRequester(
     jobId: string,
@@ -1204,15 +1231,37 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       contentApprovedBy: userId,
     });
 
+    // Render this scene's segment in the background.
+    const sceneIndex = job.currentSceneIndex ?? 0;
+    this._renderSceneSegment(job, sceneIndex).catch(async (err) => {
+      console.error("[Montage] scene render failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
+      });
+    });
+    return this._getJob(jobId);
+  }
+
+  /**
+   * Requester approves ALL scene videos at once ("Approve all"). Every scene's
+   * segment is concatenated into the single `baseVideoAssetId` the downstream
+   * pipeline consumes, then animation generation begins. (Individual scenes are
+   * revised in place beforehand via `requestVideoRevisionByRequester`.)
+   */
+  async approveBaseVideoByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+
+    // Concatenate every approved scene segment into the single base video.
+    let baseVideoAssetIdUpdate: { baseVideoAssetId: string } | Record<string, never> = {};
     try {
-      const taskIds = job.videoGenTaskIds ?? (job.videoGenTaskId ? [job.videoGenTaskId] : []);
-      if (taskIds.length === 0) {
-        await this._runVideoGeneration(job);
-      } else {
-        await this._runNextVideoExtension(job);
-      }
+      baseVideoAssetIdUpdate = { baseVideoAssetId: await this._concatMontageBaseVideo(job) };
     } catch (err) {
-      console.error("[SceneScriptApproval] Veo generation failed:", err);
+      console.error("[Montage] Base video concatenation failed:", err);
       return videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
@@ -1220,41 +1269,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       });
     }
 
-    return this._getJob(jobId);
-  }
-
-  /**
-   * Requester approves the generated scene video. If more scenes remain, the
-   * pipeline advances to the next scene's script gate (no generation yet).
-   * On the last scene it advances to animation generation.
-   */
-  async approveBaseVideoByRequester(
-    jobId: string,
-    userId: string
-  ): Promise<VideoGenerationJob> {
-    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
-    const scenePlan = sanitizeScenePlanDescriptions(
-      JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[]
-    );
-    const sceneIndex = job.currentSceneIndex ?? 0;
-    console.log(
-      `[approveBaseVideoByRequester BUILD-MARKER-V2] job=${jobId} sceneIndex=${sceneIndex} planLen=${scenePlan.length} -> ${
-        sceneIndex + 1 < scenePlan.length ? "AwaitingSceneScriptApproval(next scene)" : "GeneratingAnimations(last scene)"
-      }`
-    );
-
-    if (sceneIndex + 1 < scenePlan.length) {
-      return videoGenerationJobRepository.update(jobId, {
-        currentStep: VideoGenerationStep.AwaitingSceneScriptApproval,
-        currentSceneIndex: sceneIndex + 1,
-        videoApprovedBy: userId,
-      });
-    }
-
-    // Last scene approved → kick off animation generation.
+    // All scenes approved → kick off animation generation.
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingAnimations,
       videoApprovedBy: userId,
+      ...baseVideoAssetIdUpdate,
     });
 
     this._runAnimationGeneration(updated).catch(async (err) => {
@@ -1270,11 +1289,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /**
-   * Requester edits the current scene's script + images and resubmits, instead
-   * of approving the generated video. Regenerates only the current scene: the
-   * rejected scene's in-flight artifacts are dropped and the scene is generated
-   * again (scene 0 fresh, later scenes by re-extending from the prior approved
-   * scene). Earlier approved scenes are untouched.
+   * Requester edits ONE scene's script + assets and resubmits from the combined
+   * review. Re-renders only that scene's montage segment in place; every other
+   * scene's segment is left untouched. `sceneIndex` selects the scene (defaults
+   * to the job's currentSceneIndex for legacy callers).
    */
   async requestVideoRevisionByRequester(
     jobId: string,
@@ -1284,46 +1302,32 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       hookThai?: string;
       scriptThai?: string;
       captionThai?: string;
-    }
+    },
+    sceneIndex?: number
   ): Promise<VideoGenerationJob> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
     await this._persistSceneEdits(jobId, edits);
 
-    const taskIds = job.videoGenTaskIds ?? (job.videoGenTaskId ? [job.videoGenTaskId] : []);
-    const sceneIndex = job.currentSceneIndex ?? Math.max(taskIds.length - 1, 0);
+    const idx = Number.isInteger(sceneIndex) ? (sceneIndex as number) : job.currentSceneIndex ?? 0;
+    // Re-derive the camera move from the (edited) scene description so editing the
+    // script and re-rendering updates the motion to match the script's intent.
+    await this._reinferSceneMotion(jobId, idx);
 
-    // Drop the rejected scene's in-flight task + cumulative asset so the next
-    // generation targets the same scene index again.
-    const trimmedTaskIds = taskIds.slice(0, sceneIndex);
-    const trimmedAssetIds = (job.sceneVideoAssetIds ?? []).slice(0, sceneIndex);
-    const previousApprovedAsset =
-      sceneIndex > 0 ? trimmedAssetIds[sceneIndex - 1] ?? null : null;
-
+    // Keep ALL existing segments; only scene `idx` is replaced when it re-renders.
     const prepared = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      videoGenTaskIds: trimmedTaskIds.length > 0 ? trimmedTaskIds : null,
-      videoGenTaskId: trimmedTaskIds.length > 0 ? trimmedTaskIds[trimmedTaskIds.length - 1] : null,
-      sceneVideoAssetIds: trimmedAssetIds.length > 0 ? trimmedAssetIds : null,
-      baseVideoAssetId: previousApprovedAsset,
+      currentSceneIndex: idx,
       videoGenStatus: null,
       contentApprovedBy: userId,
     });
-
-    try {
-      if (sceneIndex === 0) {
-        await this._runVideoGeneration(prepared);
-      } else {
-        await this._runNextVideoExtension(prepared);
-      }
-    } catch (err) {
-      console.error("[VideoRevision] Veo regeneration failed:", err);
-      return videoGenerationJobRepository.update(jobId, {
+    this._renderSceneSegment(prepared, idx).catch(async (err) => {
+      console.error("[Montage] scene re-render failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
       });
-    }
-
+    });
     return this._getJob(jobId);
   }
 
@@ -1348,20 +1352,413 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   /** Requester reviews and approves the final composed videos, delivering the request. */
   async approveFinalVideoByRequester(
     jobId: string,
-    userId: string
+    userId: string,
+    subtitleLanguages?: ("th" | "en" | "zh")[],
+    selectedMotionTemplate?: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
 
-    const job = await this._getJob(jobId);
+    // Phase 7: approving the merged voice+music video no longer delivers the
+    // request. Instead, the requester's chosen subtitle languages + motion
+    // template are persisted and the styled/subtitle render begins (primary
+    // ratio first). Delivery happens once that is approved.
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingOverlay,
+      ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
+      ...(selectedMotionTemplate ? { selectedMotionTemplate } : {}),
+    });
+
+    this._runOverlayComposition(updated).catch(async (err) => {
+      console.error("[OverlayComposition] failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingOverlay,
+      });
+    });
+
+    return updated;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Phase 7 — subtitle + motion-graphic overlay step
+  //
+  // After the merged voice+music master is approved, a transparent Remotion
+  // overlay (captions in the selected languages + motion graphics) is rendered
+  // and composited ON TOP of the per-ratio masters (never baked into them). The
+  // primary ratio is produced first for review; the remaining channel ratios are
+  // generated on an explicit button; then the Travy EN+ZH clip is rendered
+  // automatically in the background. The masters in finalExport_* are left clean
+  // so every overlay render (incl. re-renders and Travy) starts from them.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /** Distribution ratios for the requester's own channels (excludes Travy). */
+  private _userRatios(platforms: Platform[]): VideoRatio[] {
+    const nonTravy = platforms.filter((p) => p !== Platform.TventApp);
+    return ffmpegService.getRequiredRatiosForPlatforms(
+      nonTravy.length > 0 ? nonTravy : platforms
+    );
+  }
+
+  private _masterAssetIdForRatio(job: VideoGenerationJob, ratio: VideoRatio): string | null {
+    switch (ratio) {
+      case "9:16": return job.finalExport_9_16_assetId;
+      case "16:9": return job.finalExport_16_9_assetId;
+      case "1:1": return job.finalExport_1_1_assetId;
+      case "4:5": return job.finalExport_4_5_assetId;
+      default: return null;
+    }
+  }
+
+  private _captionedFieldForRatio(ratio: VideoRatio): keyof UpdateVideoGenerationJobInput {
+    switch (ratio) {
+      case "9:16": return "captionedExport_9_16_assetId";
+      case "16:9": return "captionedExport_16_9_assetId";
+      case "1:1": return "captionedExport_1_1_assetId";
+      case "4:5": return "captionedExport_4_5_assetId";
+      default: return "captionedExport_9_16_assetId";
+    }
+  }
+
+  private _parseTimeline(job: VideoGenerationJob): TimedSegment[] {
+    const raw = job.subtitleTimeline ?? job.voiceTimestamps;
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as TimedSegment[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private _parseScenePlanForOverlay(job: VideoGenerationJob): ScenePlan[] {
+    const raw = job.approvedScenePlan ?? job.scenePlan;
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as ScenePlan[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Build the overlay timing inputs ONCE per render batch: generate the motion
+   * graphic specs (Claude) from the voice-time timeline, then shift BOTH the
+   * caption timeline and the specs by the music lead-in, because the merged
+   * master opens with a music-only lead-in (the voice is adelay'd) — so captions
+   * and graphics must start later to stay synced. The overlay duration is
+   * extended by the same lead-in to cover the whole master.
+   */
+  private async _buildOverlayInputs(job: VideoGenerationJob): Promise<{
+    timeline: TimedSegment[];
+    durationSeconds: number;
+    palette: Palette;
+  }> {
+    const leadIn = ffmpegService.MUSIC_LEAD_IN_SECONDS;
+    const voiceDur = job.voiceDurationSeconds ?? ffmpegService.DEFAULT_COMPOSE_DURATION_SECONDS;
+    const rawTimeline = this._parseTimeline(job);
+
+    // Palette for the template decor/accents, derived from profile + script.
+    const palette = await this._deriveOverlayPalette(job);
+
+    // The master opens with a music-only lead-in (the voice is adelay'd), so
+    // shift the caption timeline by the lead-in to stay synced with speech, and
+    // extend the render duration to cover the whole master.
+    const timeline = rawTimeline.map((s) => ({
+      ...s,
+      startSecond: s.startSecond + leadIn,
+      endSecond: s.endSecond + leadIn,
+    }));
+
+    return { timeline, durationSeconds: voiceDur + leadIn, palette };
+  }
+
+  /** Derive the decorative palette from the business profile + approved script. */
+  private async _deriveOverlayPalette(job: VideoGenerationJob): Promise<Palette> {
+    try {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const { businessProfileService } = await import("@/services/BusinessProfileService");
+      const req = await clipRequestRepository.findById(job.requestId);
+      const profile = req ? await businessProfileService.getProfile(req.userId) : null;
+      return await derivePalette({
+        businessName: profile?.businessName,
+        category: profile?.category,
+        scriptEnglish: job.approvedScriptEnglish ?? job.scriptEnglish,
+        scriptThai: job.approvedScriptThai ?? job.scriptThai,
+      });
+    } catch (err) {
+      console.error("[overlay] palette derivation failed, using default:", err);
+      return (await import("@/lib/ai/paletteService")).DEFAULT_PALETTE;
+    }
+  }
+
+  /**
+   * Render the transparent overlay for ONE ratio and composite it onto that
+   * ratio's clean master, returning the new captioned FinalClip asset id. Reused
+   * for the requester's channels (their selected languages) and for the Travy
+   * EN+ZH render. The master is never modified.
+   */
+  private async _renderCaptionedRatio(
+    job: VideoGenerationJob,
+    userId: string,
+    ratio: VideoRatio,
+    languages: ("th" | "en" | "zh")[],
+    inputs: Awaited<ReturnType<VideoGenerationService["_buildOverlayInputs"]>>
+  ): Promise<string> {
+    const masterAssetId = this._masterAssetIdForRatio(job, ratio);
+    if (!masterAssetId) throw new Error(`No merged master export for ratio ${ratio}`);
+    const master = await uploadedAssetRepository.findById(masterAssetId);
+    if (!master) throw new Error(`Master asset not found: ${masterAssetId}`);
+
+    // Single-pass styled render: the master plays inside the Remotion template
+    // (audio carried through), template frame/decor + subtitles on top, output
+    // as one opaque MP4 — no alpha compositing.
+    const outputKey = buildFinalClipKey(userId, job.requestId, ratio);
+    const result = await remotionService.renderTemplatedVideo({
+      masterUrl: master.storageUrl,
+      ratio,
+      durationSeconds: inputs.durationSeconds,
+      templateId: job.selectedMotionTemplate ?? "none",
+      palette: inputs.palette,
+      subtitleTimeline: inputs.timeline,
+      subtitleLanguages: languages.length > 0 ? languages : ["en", "zh"],
+      outputStorageKey: outputKey,
+    });
+
+    const scheduledDeletionAt = new Date();
+    scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
+    const asset = await uploadedAssetRepository.create({
+      requestId: job.requestId,
+      userId,
+      fileName: `styled_${ratio.replace(":", "-")}.mp4`,
+      assetType: AssetType.FinalClip,
+      fileSizeBytes: result.fileSizeBytes,
+      mimeType: "video/mp4",
+      storageKey: result.storageKey,
+      storageUrl: result.storageUrl,
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Uploaded,
+      scheduledDeletionAt,
+      videoRatio: ratio,
+    });
+    return asset.id;
+  }
+
+  /** Background: render the PRIMARY ratio captioned preview, then await review. */
+  private async _runOverlayComposition(job: VideoGenerationJob): Promise<void> {
     const { clipRequestRepository } = await import("@/repositories/index");
-    
-    // Mark request as Delivered
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const platforms = request.targetPlatforms ?? [];
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    const languages =
+      job.subtitleLanguages && job.subtitleLanguages.length > 0
+        ? job.subtitleLanguages
+        : (["en", "zh"] as ("th" | "en" | "zh")[]);
+
+    const inputs = await this._buildOverlayInputs(job);
+    const captionedId = await this._renderCaptionedRatio(
+      job,
+      request.userId,
+      primaryRatio,
+      languages,
+      inputs
+    );
+
+    const updates: UpdateVideoGenerationJobInput = {
+      currentStep: VideoGenerationStep.AwaitingOverlayApproval,
+    };
+    updates[this._captionedFieldForRatio(primaryRatio)] = captionedId;
+    await videoGenerationJobRepository.update(job.id, updates);
+  }
+
+  /** Requester re-renders the overlay (optionally changing subtitle languages). */
+  async regenerateOverlayByRequester(
+    jobId: string,
+    _userId: string,
+    subtitleLanguages?: ("th" | "en" | "zh")[]
+  ): Promise<VideoGenerationJob> {
+    void _userId;
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingOverlay,
+      ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
+    });
+
+    this._runOverlayComposition(updated).catch(async (err) => {
+      console.error("[OverlayComposition] regeneration failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingOverlay,
+      });
+    });
+
+    return updated;
+  }
+
+  /**
+   * Requester wants to CHANGE the template / subtitle languages: go back from
+   * the styled-video review to the merged-review (template + language) step and
+   * clear the generated styled clips, so re-approving re-renders with the new
+   * choices. Masters are kept.
+   */
+  async editSubtitleVideoByRequester(
+    jobId: string,
+    _userId: string
+  ): Promise<VideoGenerationJob> {
+    void _userId;
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.AwaitingFinalApproval,
+      captionedExport_9_16_assetId: null,
+      captionedExport_16_9_assetId: null,
+      captionedExport_1_1_assetId: null,
+      captionedExport_4_5_assetId: null,
+    });
+  }
+
+  /**
+   * Requester approves the subtitle + motion-graphic overlay. The previewed
+   * primary-ratio captioned clip becomes the delivered video. If more channel
+   * ratios remain, the job gates on AwaitingAdditionalRatios (an explicit
+   * generate button); otherwise it finalizes and the Travy render begins.
+   */
+  async approveOverlayByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    const job = await this._getJob(jobId);
+
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    const platforms = request?.targetPlatforms ?? [];
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    const remaining = this._userRatios(platforms).filter((r) => r !== primaryRatio);
+
+    if (remaining.length > 0) {
+      // More channel formats to produce — wait for the explicit button.
+      return videoGenerationJobRepository.update(jobId, {
+        currentStep: VideoGenerationStep.AwaitingAdditionalRatios,
+        finalApprovedBy: userId,
+      });
+    }
+
+    return this._finalizeAndStartTvent(job, userId);
+  }
+
+  /** Requester triggers generation of the remaining channels' aspect ratios. */
+  async generateAdditionalRatiosByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAdditionalRatios);
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
+      ...(userId ? { finalApprovedBy: userId } : {}),
+    });
+
+    this._runAdditionalRatiosOverlay(updated).catch(async (err) => {
+      console.error("[AdditionalRatiosOverlay] failed:", err);
+      await videoGenerationJobRepository.update(jobId, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: VideoGenerationStep.GeneratingAdditionalRatios,
+      });
+    });
+
+    return updated;
+  }
+
+  /** Background: render captioned clips for every remaining ratio, then Travy. */
+  private async _runAdditionalRatiosOverlay(job: VideoGenerationJob): Promise<void> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const platforms = request.targetPlatforms ?? [];
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    const remaining = this._userRatios(platforms).filter((r) => r !== primaryRatio);
+    const languages =
+      job.subtitleLanguages && job.subtitleLanguages.length > 0
+        ? job.subtitleLanguages
+        : (["en", "zh"] as ("th" | "en" | "zh")[]);
+
+    const inputs = await this._buildOverlayInputs(job);
+    const updates: UpdateVideoGenerationJobInput = {};
+    for (const ratio of remaining) {
+      const id = await this._renderCaptionedRatio(job, request.userId, ratio, languages, inputs);
+      updates[this._captionedFieldForRatio(ratio)] = id;
+    }
+    if (Object.keys(updates).length > 0) {
+      await videoGenerationJobRepository.update(job.id, updates);
+    }
+
+    const refreshed = await this._getJob(job.id);
+    await this._finalizeAndStartTvent(refreshed, refreshed.finalApprovedBy ?? "");
+  }
+
+  /**
+   * Mark the request Delivered, complete the job, and kick off the automatic
+   * Travy (EN+ZH) render in the background (non-cancellable). The job is Complete
+   * immediately; `tventVideoStatus` drives the Travy "generating" spinner until
+   * the clip is ready and viewable.
+   */
+  private async _finalizeAndStartTvent(
+    job: VideoGenerationJob,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    const { clipRequestRepository } = await import("@/repositories/index");
     const { RequestStatus } = await import("@/domain/enums/RequestStatus");
     await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
 
-    return videoGenerationJobRepository.update(jobId, {
+    const request = await clipRequestRepository.findById(job.requestId);
+    const platforms = request?.targetPlatforms ?? [];
+    const needsTvent = platforms.includes(Platform.TventApp);
+
+    const updated = await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.Complete,
-      finalApprovedBy: userId,
+      finalApprovedBy: userId || job.finalApprovedBy,
+      ...(needsTvent ? { tventVideoStatus: "generating" as const } : {}),
+    });
+
+    if (needsTvent) {
+      this._runTventVideoGeneration(updated).catch(async (err) => {
+        console.error("[TventVideoGeneration] failed:", err);
+        await videoGenerationJobRepository.update(job.id, { tventVideoStatus: "failed" });
+      });
+    }
+
+    return updated;
+  }
+
+  /** Background: render the Travy EN+ZH captioned clip onto the primary master. */
+  private async _runTventVideoGeneration(job: VideoGenerationJob): Promise<void> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const platforms = request.targetPlatforms ?? [];
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+
+    const inputs = await this._buildOverlayInputs(job);
+    const tventAssetId = await this._renderCaptionedRatio(
+      job,
+      request.userId,
+      primaryRatio,
+      ["en", "zh"],
+      inputs
+    );
+
+    await videoGenerationJobRepository.update(job.id, {
+      finalExport_tvent_assetId: tventAssetId,
+      tventVideoStatus: "ready",
     });
   }
 
@@ -1384,107 +1781,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const platforms = request.targetPlatforms ?? [];
     const targetRatios = ffmpegService.getRequiredRatiosForPlatforms(platforms);
 
-    // Resolve Phase 4 Remotion overlay clips (one per required ratio) so
-    // ffmpegService can composite + skip redundant subtitle burn-in.
+    // This step produces the un-captioned merged MASTERS only (cropped base
+    // video + voice + ducked music) for every required ratio. Subtitles and the
+    // motion-graphic overlay are added in the Phase-7 overlay step on top of
+    // these masters, and the Travy EN+ZH clip is rendered there too — so no
+    // captions, no overlay, and NO Travy export are produced here.
+    //
+    // Per the Phase-7 directive, the Gemini `detectProductCoordinates`
+    // smart-crop ("auto product positioning") has been REMOVED from the path —
+    // ratios are center-cropped (coordinates left undefined).
     const overlayStorageKeys: Partial<Record<ffmpegService.VideoRatio, string>> = {};
-    if (job.animatedOverlayAssetIds) {
-      await Promise.all(
-        Object.entries(job.animatedOverlayAssetIds).map(async ([ratio, assetId]) => {
-          const asset = await uploadedAssetRepository.findById(assetId);
-          if (asset) overlayStorageKeys[ratio as ffmpegService.VideoRatio] = asset.storageKey;
-        })
-      );
-    }
-
-    // Use pre-computed subtitle timeline from animation step if available; otherwise re-run alignment
-    let assSubtitlesContent: string | undefined = undefined;
-    let assSubtitlesContentTvent: string | undefined = undefined;
-    const subtitleLanguages = job.subtitleLanguages && job.subtitleLanguages.length > 0
-      ? job.subtitleLanguages
-      : (["en", "zh"] as ("th" | "en" | "zh")[]);
-    const needsTventExport = platforms.includes(Platform.TventApp);
-    // The 9:16 Remotion overlay's captions were rendered with `subtitleLanguages`
-    // (set above in _runAnimationGeneration) — only reuse it for the Tvent
-    // export if that exactly matches Tvent's fixed English+Chinese requirement.
-    const overlayCoversTventSubtitles =
-      !!overlayStorageKeys["9:16"] &&
-      subtitleLanguages.length === 2 &&
-      subtitleLanguages.includes("en") &&
-      subtitleLanguages.includes("zh");
-    try {
-      const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
-
-      if (job.subtitleTimeline) {
-        const segments = JSON.parse(job.subtitleTimeline);
-        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments, subtitleLanguages);
-        if (needsTventExport) {
-          assSubtitlesContentTvent = geminiSubtitlesService.generateAssSubtitles(segments, ["en", "zh"]);
-        }
-      } else {
-        const { AI_CONFIG, requireGeminiApiKey } = await import("@/config/aiTools");
-        const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
-        let scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
-        let scriptChinese = job.approvedScriptChinese ?? job.scriptChinese ?? "";
-
-        if (!scriptEnglish || !scriptChinese) {
-          const { GoogleGenAI } = await import("@google/genai");
-          const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
-          const res = await ai.models.generateContent({
-            model: AI_CONFIG.gemini.textModel,
-            contents: `Translate this Thai script into natural, spoken English and Simplified Chinese for social media subtitles: "${scriptThai}"
-Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
-            config: { responseMimeType: "application/json", temperature: 0.2 },
-          });
-          try {
-            const parsed = JSON.parse(res.text ?? "{}");
-            scriptEnglish = scriptEnglish || (parsed.english ?? "");
-            scriptChinese = scriptChinese || (parsed.chinese ?? "");
-          } catch {
-            /* keep whatever we already had */
-          }
-          await videoGenerationJobRepository.update(job.id, {
-            scriptEnglish,
-            approvedScriptEnglish: scriptEnglish,
-            scriptChinese,
-            approvedScriptChinese: scriptChinese,
-          });
-        }
-
-        const duration = request.durationSeconds || 15;
-        const segments = await geminiSubtitlesService.alignAudioWithScript({
-          audioUrl: audioAsset.storageUrl,
-          scriptThai,
-          scriptEnglish,
-          scriptChinese,
-          durationSeconds: duration,
-        });
-        assSubtitlesContent = geminiSubtitlesService.generateAssSubtitles(segments, subtitleLanguages);
-        if (needsTventExport) {
-          assSubtitlesContentTvent = geminiSubtitlesService.generateAssSubtitles(segments, ["en", "zh"]);
-        }
-      }
-    } catch (err) {
-      console.error("[FFmpeg] Subtitle preparation failed, falling back to word count:", err);
-    }
-
-    // Call Gemini coordinates detection for smart crop focus
-    let coords: ImageCoordinates | undefined = undefined;
-    try {
-      const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
-      const assets = await uploadedAssetRepository.findByRequestId(job.requestId);
-      const imageUrls = assets
-        .filter((a) => (a.assetType === AssetType.Image || a.assetType === AssetType.Video) && a.uploadStatus === AssetUploadStatus.Uploaded)
-        .map((a) => a.storageUrl).filter(Boolean);
-      
-      if (imageUrls.length > 0) {
-        const coordsList = await geminiSubtitlesService.detectProductCoordinates(imageUrls);
-        if (coordsList && coordsList[0]) {
-          coords = coordsList[0];
-        }
-      }
-    } catch (err) {
-      console.error("[FFmpeg] Coordinate focus detection failed, using default center:", err);
-    }
+    const coords: ImageCoordinates | undefined = undefined;
 
     const result = await ffmpegService.composeAndExport({
       videoStorageKey: videoAsset.storageKey,
@@ -1497,10 +1804,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       musicTrackId: job.selectedMusicTrack ?? undefined,
       coordinates: coords,
       targetRatios,
-      assSubtitlesContent,
-      assSubtitlesContentTvent,
       overlayStorageKeys,
-      overlayCoversTventSubtitles,
     });
 
     const scheduledDeletionAt = new Date();
@@ -1530,41 +1834,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       assetIds[ratio] = asset.id;
     }
 
-    // Dedicated Tvent App export: a separate asset if its EN+ZH subtitles
-    // differ from the general 9:16 export, otherwise the same 9:16 asset
-    // (it already carries EN+ZH subtitles).
-    let tventAssetId: string | null = null;
-    if (needsTventExport) {
-      const tventExportInfo = result.exports["tvent"];
-      if (tventExportInfo) {
-        const tventAsset = await uploadedAssetRepository.create({
-          requestId: job.requestId,
-          userId: request.userId,
-          fileName: "final_tvent.mp4",
-          assetType: AssetType.FinalClip,
-          fileSizeBytes: 0,
-          mimeType: "video/mp4",
-          storageKey: tventExportInfo.storageKey,
-          storageUrl: tventExportInfo.storageUrl,
-          thumbnailKey: "",
-          thumbnailUrl: "",
-          uploadStatus: AssetUploadStatus.Uploaded,
-          scheduledDeletionAt,
-          videoRatio: "9:16",
-        });
-        tventAssetId = tventAsset.id;
-      } else {
-        tventAssetId = assetIds["9:16"] ?? null;
-      }
-    }
-
+    // The Travy (Tvent) export is NO LONGER produced here — it is rendered with
+    // its EN+ZH overlay automatically in the Phase-7 background step after the
+    // overlay is approved (`_runTventVideoGeneration`). Leave it null for now.
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingFinalApproval,
       finalExport_9_16_assetId: assetIds["9:16"] ?? null,
       finalExport_16_9_assetId: assetIds["16:9"] ?? null,
       finalExport_1_1_assetId: assetIds["1:1"] ?? null,
       finalExport_4_5_assetId: assetIds["4:5"] ?? null,
-      finalExport_tvent_assetId: tventAssetId,
+      finalExport_tvent_assetId: null,
     });
   }
 
@@ -1577,6 +1856,28 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     return videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.Publishing,
       finalApprovedBy: staffId,
+    });
+  }
+
+  /**
+   * Requester wants to redo the audio merge: from the merged-video review
+   * (AwaitingFinalApproval) go back to the music/voice-merge step
+   * (AwaitingAnimationApproval) to pick a different track and re-compose. The
+   * stale final exports are cleared — they'll be regenerated on re-approval.
+   */
+  async reviseAudioMergeByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    void userId; // retained for caller-identity parity; not yet persisted
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.AwaitingAnimationApproval,
+      finalExport_9_16_assetId: null,
+      finalExport_16_9_assetId: null,
+      finalExport_1_1_assetId: null,
+      finalExport_4_5_assetId: null,
+      finalExport_tvent_assetId: null,
     });
   }
 
@@ -1858,45 +2159,24 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       case VideoGenerationStep.GeneratingBaseVideo: {
-        // Resume the FAILED scene, preserving earlier approved scenes. The
-        // failure can occur on any scene (scene 0 fresh, or a later extension),
-        // so we must NOT blindly regenerate scene 0 — that wipes already-approved
-        // scenes and leaves currentSceneIndex pointing past the regenerated
-        // scene, which silently skips a scene at the next approval. Mirror the
-        // revision flow: trim the failed scene's in-flight task/asset and
-        // regenerate only that scene, keeping currentSceneIndex aligned.
-        const taskIds = job.videoGenTaskIds ?? (job.videoGenTaskId ? [job.videoGenTaskId] : []);
-        const sceneIndex = job.currentSceneIndex ?? Math.max(taskIds.length - 1, 0);
-        const trimmedTaskIds = taskIds.slice(0, sceneIndex);
-        const trimmedAssetIds = (job.sceneVideoAssetIds ?? []).slice(0, sceneIndex);
-        const previousApprovedAsset =
-          sceneIndex > 0 ? trimmedAssetIds[sceneIndex - 1] ?? null : null;
-
+        // The batch render of all scenes failed somewhere; re-render the whole
+        // batch from a clean slate, then return to the combined review.
         const updated = await videoGenerationJobRepository.update(jobId, {
           currentStep: VideoGenerationStep.GeneratingBaseVideo,
-          currentSceneIndex: sceneIndex,
-          videoGenTaskId:
-            trimmedTaskIds.length > 0 ? trimmedTaskIds[trimmedTaskIds.length - 1] : null,
-          videoGenTaskIds: trimmedTaskIds.length > 0 ? trimmedTaskIds : null,
-          sceneVideoAssetIds: trimmedAssetIds.length > 0 ? trimmedAssetIds : null,
-          baseVideoAssetId: previousApprovedAsset,
+          currentSceneIndex: 0,
+          sceneVideoAssetIds: null,
+          baseVideoAssetId: null,
           videoGenStatus: null,
         });
-        try {
-          if (sceneIndex === 0) {
-            await this._runVideoGeneration(updated);
-          } else {
-            await this._runNextVideoExtension(updated);
-          }
-        } catch (err) {
-          console.error("Veo retry failed:", err);
-          return videoGenerationJobRepository.update(jobId, {
+        this._renderAllSceneSegments(updated).catch(async (err) => {
+          console.error("[Montage] batch retry render failed:", err);
+          await videoGenerationJobRepository.update(jobId, {
             status: VideoGenerationJobStatus.Failed,
             currentStep: VideoGenerationStep.Failed,
             failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
           });
-        }
-        return this._getJob(jobId);
+        });
+        return updated;
       }
 
       case VideoGenerationStep.GeneratingVoice: {
@@ -2009,25 +2289,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const req = await clipRequestRepository.findById(requestId);
     if (!req) throw new Error(`ClipRequest not found: ${requestId}`);
     return { userId: req.userId };
-  }
-
-  private async _getClipRequestImages(requestId: string): Promise<{ userId: string; imageUrls: string[]; primaryPlatform: Platform; durationSeconds: number }> {
-    const { clipRequestRepository } = await import("@/repositories/index");
-    const req = await clipRequestRepository.findById(requestId);
-    if (!req) throw new Error(`ClipRequest not found: ${requestId}`);
-
-    const assets = await uploadedAssetRepository.findByRequestId(requestId);
-    const imageUrls = assets
-      .filter((a) => a.assetType === AssetType.Image || a.assetType === AssetType.Video)
-      .filter((a) => a.uploadStatus === AssetUploadStatus.Uploaded)
-      .map((a) => a.storageUrl)
-      .filter(Boolean);
-
-    const primaryPlatform = req.targetPlatforms[0] ?? Platform.TventApp;
-    const durationSeconds = Number.isFinite(req.durationSeconds) && req.durationSeconds > 0
-      ? req.durationSeconds
-      : 15;
-    return { userId: req.userId, imageUrls, primaryPlatform, durationSeconds };
   }
 
   private async _moveAssetInSpaces(sourceKey: string, destKey: string): Promise<void> {

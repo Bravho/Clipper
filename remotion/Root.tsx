@@ -4,6 +4,8 @@ import { OverlayComposition } from "./OverlayComposition";
 import { DEFAULT_OVERLAY_PROPS, FPS, OverlayInputProps, RATIO_DIMENSIONS } from "./types";
 import { MontageScene } from "./MontageScene";
 import { DEFAULT_MONTAGE_SCENE_PROPS, MontageSceneInputProps } from "./montageTypes";
+import { TemplatedVideo } from "./TemplatedVideo";
+import { DEFAULT_TEMPLATED_VIDEO_PROPS, TemplatedVideoInputProps } from "./types";
 
 /**
  * Registers the "Overlay" composition used by
@@ -54,6 +56,33 @@ export const RemotionRoot: React.FC = () => {
             typedProps.durationSeconds > 0
               ? typedProps.durationSeconds
               : DEFAULT_MONTAGE_SCENE_PROPS.durationSeconds;
+          return {
+            width: dims.width,
+            height: dims.height,
+            durationInFrames: Math.max(1, Math.round(durationSeconds * FPS)),
+            fps: FPS,
+          };
+        }}
+      />
+
+      {/* Phase 7 — single-pass styled/captioned render: master video + template
+          frame/decor + subtitles, one opaque MP4 (audio carried through the
+          OffthreadVideo). Width/height/duration per-render from inputProps. */}
+      <Composition
+        id="TemplatedVideo"
+        component={TemplatedVideo as unknown as React.FC<Record<string, unknown>>}
+        durationInFrames={FPS * DEFAULT_TEMPLATED_VIDEO_PROPS.durationSeconds}
+        fps={FPS}
+        width={RATIO_DIMENSIONS["9:16"].width}
+        height={RATIO_DIMENSIONS["9:16"].height}
+        defaultProps={DEFAULT_TEMPLATED_VIDEO_PROPS as unknown as Record<string, unknown>}
+        calculateMetadata={async ({ props }: { props: Record<string, unknown> }) => {
+          const typedProps = props as unknown as TemplatedVideoInputProps;
+          const dims = RATIO_DIMENSIONS[typedProps.ratio] ?? RATIO_DIMENSIONS["9:16"];
+          const durationSeconds =
+            typedProps.durationSeconds > 0
+              ? typedProps.durationSeconds
+              : DEFAULT_TEMPLATED_VIDEO_PROPS.durationSeconds;
           return {
             width: dims.width,
             height: dims.height,

@@ -4,12 +4,23 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
+import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-import { AssetType } from "@/domain/enums/AssetType";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
-import { Platform, PLATFORM_LABELS, FORM_PLATFORMS } from "@/domain/enums/Platform";
+import { MOTION_TEMPLATES } from "@/config/motionTemplates";
+import { Platform, PLATFORM_LABELS, OPTIONAL_FORM_PLATFORMS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
+
+/** Short Thai label for an aspect ratio, e.g. "แนวตั้ง (9:16)". */
+function ratioLabel(ratio: string): string {
+  if (ratio === "9:16") return "แนวตั้ง (9:16)";
+  if (ratio === "16:9") return "แนวนอน (16:9)";
+  if (ratio === "1:1") return "จัตุรัส (1:1)";
+  if (ratio === "4:5") return "แนวตั้งแคบ (4:5)";
+  return ratio;
+}
+import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
@@ -67,6 +78,64 @@ function encodePcmToWav(chunks: Float32Array[], sampleRate: number): Blob {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+/** Small SVG preview of a template, mirroring the real render. */
+function TemplateThumb({ id }: { id: string }) {
+  return (
+    <svg viewBox="0 0 64 112" className="mx-auto mb-1.5 block h-28 w-16">
+      <defs>
+        <linearGradient id="tvScreen" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#3b4655" />
+          <stop offset="1" stopColor="#111827" />
+        </linearGradient>
+      </defs>
+
+      {id === "framed_cream" ? (
+        <>
+          <rect width="64" height="112" rx="8" fill="#f7ecda" />
+          <rect x="7" y="8" width="50" height="78" rx="7" fill="#ffffff" />
+          <rect x="10" y="11" width="44" height="72" rx="5" fill="url(#tvScreen)" />
+          <path d="M12 100 q4 -3.5 8 0 t8 0 t8 0" fill="none" stroke="#c98a3f" strokeWidth="1.5" strokeLinecap="round" opacity="0.85" />
+          <g stroke="#b4762f" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.85">
+            <path d="M40 104 q9 -5 16 -10" />
+            <path d="M45 101 q1 -4 -3 -6" />
+            <path d="M50 98 q1 -4 -3 -6" />
+          </g>
+          <rect x="15" y="74" width="34" height="5" rx="2.5" fill="#ffffff" opacity="0.92" />
+        </>
+      ) : id === "editorial" ? (
+        <>
+          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
+          <rect width="64" height="24" fill="#000" opacity="0.28" />
+          <rect y="82" width="64" height="30" fill="#000" opacity="0.35" />
+          <rect x="6" y="7" width="52" height="98" rx="6" fill="none" stroke="#ffffff" strokeWidth="1.3" opacity="0.85" />
+          <circle cx="13" cy="15" r="1.8" fill="#f5b301" />
+          <rect x="17" y="14" width="14" height="2" rx="1" fill="#f5b301" />
+          <rect x="12" y="94" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
+        </>
+      ) : id === "clean_frame" ? (
+        <>
+          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
+          <g stroke="#ffffff" strokeWidth="2" fill="none" strokeLinecap="round">
+            <path d="M9 20 V11 H18" />
+            <path d="M55 20 V11 H46" />
+            <path d="M9 84 V93 H18" />
+            <path d="M55 84 V93 H46" />
+          </g>
+          <rect x="27" y="15" width="10" height="2.5" rx="1.2" fill="#f5b301" />
+          <circle cx="14" cy="78" r="5" fill="none" stroke="#f5b301" strokeWidth="1.2" opacity="0.75" />
+          <circle cx="14" cy="78" r="9" fill="none" stroke="#f5b301" strokeWidth="1" opacity="0.4" />
+          <rect x="12" y="97" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
+        </>
+      ) : (
+        <>
+          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
+          <rect x="12" y="96" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
+        </>
+      )}
+    </svg>
+  );
+}
+
 interface Props {
   requestId: string;
   jobId: string;
@@ -77,6 +146,20 @@ interface Props {
   isAwaitingVoiceApproval?: boolean;
   isAwaitingAnimationApproval?: boolean;
   isAwaitingFinalApproval?: boolean;
+  /** Phase 7: reviewing the subtitle + motion-graphic captioned preview. */
+  isAwaitingOverlayApproval?: boolean;
+  /** Phase 7: gate to generate the remaining channels' aspect ratios. */
+  isAwaitingAdditionalRatios?: boolean;
+  /** Captioned primary-ratio preview shown at the overlay review step. */
+  overlayPreviewUrl?: string | null;
+  /** Subtitle languages saved on the job (seed the picker). */
+  savedSubtitleLanguages?: ("th" | "en" | "zh")[];
+  /** Motion template saved on the job (seed the template picker). */
+  savedTemplate?: string | null;
+  /** Background Travy render status: 'idle' | 'generating' | 'ready' | 'failed'. */
+  tventVideoStatus?: string | null;
+  /** Travy (EN+ZH) clip URL once its background render is ready. */
+  tventClipUrl?: string | null;
   /** Pipeline is in Failed state — recovery UI is rendered elsewhere, so hide the processing spinner. */
   isPipelineFailed?: boolean;
   /** Pipeline is generating the AI voiceover — show voice-specific processing text. */
@@ -85,8 +168,9 @@ interface Props {
   voiceRecordingAssetId?: string | null;
   animatedVideoUrl?: string | null;
   savedMusicTrack?: string | null;
-  savedSubtitleLanguages?: ("th" | "en" | "zh")[] | null;
   finalClips?: any[];
+  /** Aspect ratio of the primary distribution channel — the final review shows this ratio only. */
+  primaryRatio?: string | null;
   scenes: ScenePlan[];
   hookThai: string | null;
   hookEnglish: string | null;
@@ -96,7 +180,11 @@ interface Props {
   captionEnglish: string | null;
   captionChinese: string | null;
   sourceAssets?: UploadedAsset[];
+  /** Canonical, index-stable source media (images + clips) for montage edits. */
+  orderedAssets?: OrderedSourceAsset[];
   activeSceneIndex?: number;
+  /** All rendered per-scene segments for the combined review (Approve-all flow). */
+  sceneVideos?: { sceneNumber: number; sceneIndex: number; url: string; assetId: string }[];
 }
 
 type RecorderState = "idle" | "recording" | "recorded" | "converting" | "converted";
@@ -110,14 +198,22 @@ export function VideoApprovalPanel({
   isAwaitingVoiceApproval = false,
   isAwaitingAnimationApproval = false,
   isAwaitingFinalApproval = false,
+  isAwaitingOverlayApproval = false,
+  isAwaitingAdditionalRatios = false,
+  overlayPreviewUrl = null,
+  savedSubtitleLanguages,
+  savedTemplate = null,
+  tventVideoStatus = null,
+  tventClipUrl = null,
   isPipelineFailed = false,
   isGeneratingVoice = false,
   voiceRecordingUrl = null,
   voiceRecordingAssetId = null,
-  animatedVideoUrl = null,
+  // animatedVideoUrl is still accepted (page passes it) but no longer rendered
+  // here — the animation/graphic review moved to the final-approval step.
   savedMusicTrack = null,
-  savedSubtitleLanguages = null,
   finalClips = [],
+  primaryRatio = null,
   scenes,
   hookThai,
   hookEnglish,
@@ -126,8 +222,9 @@ export function VideoApprovalPanel({
   captionThai,
   captionEnglish,
   captionChinese,
-  sourceAssets = [],
+  orderedAssets = [],
   activeSceneIndex = 0,
+  sceneVideos = [],
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -139,11 +236,11 @@ export function VideoApprovalPanel({
   const [editScriptThai, setEditScriptThai] = useState(scriptThai ?? "");
   const [editCaptionThai, setEditCaptionThai] = useState(captionThai ?? "");
   const [editScenes, setEditScenes] = useState<ScenePlan[]>(scenes);
-  const safeActiveSceneIndex = Math.min(Math.max(activeSceneIndex, 0), Math.max(editScenes.length - 1, 0));
+  // Which scene the per-scene editor targets in the combined review. Defaults to
+  // the prop but becomes user-selectable via the per-scene "edit" buttons.
+  const [selectedSceneIndex, setSelectedSceneIndex] = useState(activeSceneIndex);
+  const safeActiveSceneIndex = Math.min(Math.max(selectedSceneIndex, 0), Math.max(editScenes.length - 1, 0));
   const activeEditScene = editScenes[safeActiveSceneIndex];
-  const sourceImageOptions = sourceAssets
-    .map((asset, sourceIndex) => ({ asset, sourceIndex }))
-    .filter(({ asset }) => asset.assetType === AssetType.Image);
 
   // Voice recorder state
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
@@ -164,18 +261,44 @@ export function VideoApprovalPanel({
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Requester approval states
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>([Platform.TventApp]);
-  const [selectedSubtitleLanguages, setSelectedSubtitleLanguages] = useState<("th" | "en" | "zh")[]>(
-    savedSubtitleLanguages && savedSubtitleLanguages.length > 0 ? savedSubtitleLanguages : ["en", "zh"]
-  );
+  // Distribution channels chosen at voice approval, in click order. The FIRST
+  // chosen channel is the PRIMARY — it sets the base video's aspect ratio.
+  // Travy App (Tvent) is always included (mandatory, locked) and is not counted
+  // as a primary click; its export adopts the primary's ratio.
+  const [channelOrder, setChannelOrder] = useState<Platform[]>([]);
+  const primaryChannel: Platform = channelOrder[0] ?? Platform.TventApp;
+  // Ratio derived from the in-panel channel picker (voice-approval step). Named
+  // distinctly from the `primaryRatio` PROP, which the page computes from the
+  // saved primary channel and is the source of truth at later steps where
+  // `channelOrder` is empty.
+  const primaryChannelRatio = PLATFORM_ASPECT_RATIOS[primaryChannel];
+  const toggleChannel = (p: Platform) =>
+    setChannelOrder((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+    );
+  // Phase 7 (deferred): subtitle-language selection lives with the caption
+  // pipeline. Removed from this step for now — exports carry no captions.
   const [voiceApproving, setVoiceApproving] = useState(false);
   const [voiceRecreating, setVoiceRecreating] = useState(false);
   const [displayedVoiceUrl, setDisplayedVoiceUrl] = useState<string | null>(voiceRecordingUrl);
   const [displayedVoiceAssetId, setDisplayedVoiceAssetId] = useState<string | null>(voiceRecordingAssetId);
   const [animationApproving, setAnimationApproving] = useState(false);
-  const [animationRegenerating, setAnimationRegenerating] = useState(false);
   const [finalApproving, setFinalApproving] = useState(false);
-  const [selectedExportRatio, setSelectedExportRatio] = useState<string>("9:16");
+  // Phase 7 — subtitle languages chosen at the merged-review step (seed from the
+  // job, default to Thai for the requester's own channels). Travy always EN+ZH.
+  const [subtitleLangs, setSubtitleLangs] = useState<("th" | "en" | "zh")[]>(
+    savedSubtitleLanguages && savedSubtitleLanguages.length > 0 ? savedSubtitleLanguages : ["th"]
+  );
+  const toggleSubtitleLang = (l: "th" | "en" | "zh") =>
+    setSubtitleLangs((prev) =>
+      prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]
+    );
+  const [overlayApproving, setOverlayApproving] = useState(false);
+  const [overlayRegenerating, setOverlayRegenerating] = useState(false);
+  const [additionalGenerating, setAdditionalGenerating] = useState(false);
+  const [editingSubtitle, setEditingSubtitle] = useState(false);
+  // Phase 7 — chosen motion template (default "none" = clean video + subtitles).
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(savedTemplate ?? "none");
 
   const voiceRecreatingRef = useRef(false);
   useEffect(() => { voiceRecreatingRef.current = voiceRecreating; }, [voiceRecreating]);
@@ -197,24 +320,6 @@ export function VideoApprovalPanel({
   const previewMusicRef = useRef<HTMLAudioElement | null>(null);
   const previewAudioCtxRef = useRef<AudioContext | null>(null);
 
-  const togglePlatform = (p: Platform) => {
-    if (p === Platform.TventApp) return; // TventApp is mandatory
-    setSelectedPlatforms((prev) =>
-      prev.includes(p) ? prev.filter((item) => item !== p) : [...prev, p]
-    );
-  };
-
-  const toggleSubtitleLanguage = (lang: "th" | "en" | "zh") => {
-    setSelectedSubtitleLanguages((prev) => {
-      if (prev.includes(lang)) {
-        // Keep at least one language selected
-        if (prev.length === 1) return prev;
-        return prev.filter((item) => item !== lang);
-      }
-      return [...prev, lang];
-    });
-  };
-
   const handleApproveVoice = async () => {
     setVoiceApproving(true);
     setError(null);
@@ -222,7 +327,11 @@ export function VideoApprovalPanel({
       const res = await fetch(`/api/requests/${requestId}/approve-voice`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId }),
+        // Primary channel first (sets the base ratio); Travy App always included.
+        body: JSON.stringify({
+          jobId,
+          targetPlatforms: [...channelOrder, Platform.TventApp],
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -318,9 +427,7 @@ export function VideoApprovalPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jobId,
-          targetPlatforms: selectedPlatforms,
           selectedMusicTrack,
-          subtitleLanguages: selectedSubtitleLanguages,
         }),
       });
       if (!res.ok) {
@@ -335,24 +442,28 @@ export function VideoApprovalPanel({
     }
   };
 
-  const handleRegenerateAnimation = async () => {
-    setAnimationRegenerating(true);
+  // Phase 7 (deferred): "regenerate animation" returns with the motion-graphics
+  // + subtitle step that follows the merged-video review.
+
+  const [audioRevising, setAudioRevising] = useState(false);
+  const handleReviseAudioMerge = async () => {
+    setAudioRevising(true);
     setError(null);
     try {
-      const res = await fetch(`/api/requests/${requestId}/regenerate-animation`, {
+      const res = await fetch(`/api/requests/${requestId}/revise-audio`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถสร้าง Animation ใหม่ได้");
+        throw new Error(body.error ?? "ไม่สามารถแก้ไขการรวมเสียงได้");
       }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {
-      setAnimationRegenerating(false);
+      setAudioRevising(false);
     }
   };
 
@@ -363,17 +474,106 @@ export function VideoApprovalPanel({
       const res = await fetch(`/api/requests/${requestId}/approve-final`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId }),
+        body: JSON.stringify({
+          jobId,
+          subtitleLanguages: subtitleLangs,
+          selectedMotionTemplate: selectedTemplate,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถส่งมอบวิดีโอสุดท้ายได้");
+        throw new Error(body.error ?? "ไม่สามารถดำเนินการขั้นตอนถัดไปได้");
       }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {
       setFinalApproving(false);
+    }
+  };
+
+  // Phase 7 — overlay (subtitle + motion graphic) review handlers.
+  const handleApproveOverlay = async () => {
+    setOverlayApproving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/approve-overlay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถอนุมัติซับไตเติ้ลและกราฟิกได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setOverlayApproving(false);
+    }
+  };
+
+  const handleRegenerateOverlay = async () => {
+    setOverlayRegenerating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/regenerate-overlay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, subtitleLanguages: subtitleLangs }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถสร้างซับไตเติ้ลใหม่ได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setOverlayRegenerating(false);
+    }
+  };
+
+  const handleEditSubtitleVideo = async () => {
+    setEditingSubtitle(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/edit-subtitle-video`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถย้อนกลับไปแก้ไขได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setEditingSubtitle(false);
+    }
+  };
+
+  const handleGenerateAdditionalRatios = async () => {
+    setAdditionalGenerating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/generate-additional-ratios`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถสร้างอัตราส่วนเพิ่มเติมได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setAdditionalGenerating(false);
     }
   };
   const previewMusicGainRef = useRef<GainNode | null>(null);
@@ -796,25 +996,40 @@ export function VideoApprovalPanel({
     setEditScenes((prev) => prev.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
   };
 
-  const getSceneImages = (scene: ScenePlan): number[] =>
-    Array.isArray(scene.imageIndexes) ? scene.imageIndexes.slice(0, 2) : [];
+  /** Even-split duration allocation, remainder on the last asset; min 1s each. */
+  const allocateDurations = (count: number, totalSeconds: number): number[] => {
+    if (count <= 0) return [];
+    const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : count;
+    const per = Math.max(1, Math.floor(total / count));
+    const arr = new Array<number>(count).fill(per);
+    const remainder = total - per * count;
+    if (remainder > 0) arr[count - 1] = per + remainder;
+    return arr;
+  };
 
-  const toggleSceneImage = (sceneIndex: number, sourceIndex: number) => {
+  const reallocateSceneAssets = (scene: ScenePlan): ScenePlan => {
+    if (!scene.assets || scene.assets.length === 0) return scene;
+    const durations = allocateDurations(scene.assets.length, scene.durationSeconds);
+    return { ...scene, assets: scene.assets.map((a, i) => ({ ...a, durationSeconds: durations[i] ?? 1 })) };
+  };
+
+  /** Persist montage asset edits for a scene during revision: keep scene.assets,
+   *  clear imageIndexes (legacy Veo morph rules stay dormant), resize the scene. */
+  const updateSceneAssets = (index: number, assets: MontageSceneAsset[]) => {
+    const total = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
+    updateScene(index, {
+      assets,
+      imageIndexes: [],
+      ...(total > 0 ? { durationSeconds: total } : {}),
+    });
+  };
+
+  /** Edit a scene's duration and redistribute it across its montage assets. */
+  const updateSceneDurationMontage = (index: number, seconds: number) => {
     setEditScenes((prev) =>
-      prev.map((scene, index) => {
-        if (index !== sceneIndex) return scene;
-
-        const current = getSceneImages(scene);
-        const imageIndexes = current.includes(sourceIndex)
-          ? current.filter((idx) => idx !== sourceIndex)
-          : [...current, sourceIndex].slice(0, 2);
-
-        return {
-          ...scene,
-          imageIndexes,
-          durationSeconds: imageIndexes.length === 2 ? 8 : scene.durationSeconds,
-        };
-      })
+      prev.map((scene, i) =>
+        i === index ? reallocateSceneAssets({ ...scene, durationSeconds: Math.max(1, seconds) }) : scene
+      )
     );
   };
 
@@ -852,6 +1067,8 @@ export function VideoApprovalPanel({
           hookThai: editHookThai,
           scriptThai: editScriptThai,
           captionThai: editCaptionThai,
+          // Re-render only the scene being edited; others are kept.
+          sceneIndex: safeActiveSceneIndex,
         }),
       });
       if (!res.ok) {
@@ -871,19 +1088,90 @@ export function VideoApprovalPanel({
       {/* Video card — hidden when shown before the base video exists
           (audio-first voice approval step) */}
       <Card className="mb-6">
-        {videoUrl && (
-          <>
-            <h2 className="mb-3 text-base font-semibold text-slate-900">
-              วิดีโอที่สร้างโดย Veo AI
-            </h2>
-            <video
-              src={videoUrl}
-              controls
-              playsInline
-              className="w-full rounded-lg bg-black"
-              style={{ maxHeight: 480 }}
-            />
-          </>
+        {/* Combined review: every scene's video, each revised individually,
+            then "Approve all" merges them into one. In revise mode only the
+            scene being edited is shown, to avoid confusing it with the others. */}
+        {isAwaitingApproval && sceneVideos.length > 0 ? (
+          mode === "review" ? (
+            <>
+              <h2 className="mb-1 text-base font-semibold text-slate-900">
+                ตรวจสอบวิดีโอแต่ละฉาก
+              </h2>
+              <p className="mb-4 text-sm text-slate-500">
+                ดูวิดีโอแต่ละฉากด้านล่าง แก้ไขทีละฉากได้ตามต้องการ เมื่อพอใจทุกฉากแล้วกด “อนุมัติทุกฉาก” เพื่อรวมเป็นวิดีโอเดียว
+              </p>
+              <div className="flex flex-col gap-4">
+                {sceneVideos.map((sv) => (
+                  <div key={sv.assetId} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-600">
+                        ฉาก {sv.sceneNumber}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedSceneIndex(sv.sceneIndex); setMode("revise"); setError(null); }}
+                        disabled={isSubmitting}
+                        className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        แก้ไขฉากนี้
+                      </button>
+                    </div>
+                    <video
+                      src={sv.url}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="w-full rounded-lg bg-black"
+                      style={{ maxHeight: 360 }}
+                    />
+                    {editScenes[sv.sceneIndex]?.visualDescriptionThai && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        {editScenes[sv.sceneIndex]?.visualDescriptionThai}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            // Revise mode — show ONLY the scene currently being edited.
+            (() => {
+              const sv = sceneVideos.find((v) => v.sceneIndex === safeActiveSceneIndex);
+              return (
+                <>
+                  <h2 className="mb-3 text-base font-semibold text-slate-900">
+                    กำลังแก้ไข ฉาก {safeActiveSceneIndex + 1}
+                  </h2>
+                  {sv && (
+                    <video
+                      key={sv.assetId}
+                      src={sv.url}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="w-full rounded-lg bg-black"
+                      style={{ maxHeight: 360 }}
+                    />
+                  )}
+                </>
+              );
+            })()
+          )
+        ) : (
+          videoUrl && (
+            <>
+              <h2 className="mb-3 text-base font-semibold text-slate-900">
+                วิดีโอฉากที่สร้างจากรูปและคลิปของคุณ
+              </h2>
+              <video
+                src={videoUrl}
+                controls
+                playsInline
+                className="w-full rounded-lg bg-black"
+                style={{ maxHeight: 480 }}
+              />
+            </>
+          )
         )}
 
         {isAwaitingApproval && (
@@ -895,19 +1183,26 @@ export function VideoApprovalPanel({
             )}
 
             {mode === "review" ? (
-              <div className="flex justify-end gap-3">
-                <button
-                  onClick={() => setMode("revise")}
-                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  ขอแก้ไขวีดิโอ
-                </button>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {sceneVideos.length === 0 && (
+                  <button
+                    onClick={() => setMode("revise")}
+                    className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    ขอแก้ไขวีดิโอ
+                  </button>
+                )}
                 <Button onClick={handleApprove} loading={isSubmitting} disabled={isSubmitting}>
-                  อนุมัติวีดิโอนี้
+                  {sceneVideos.length > 0 ? "อนุมัติทุกฉากและรวมวิดีโอ" : "อนุมัติวีดิโอนี้"}
                 </Button>
               </div>
             ) : (
-              <div className="flex justify-end gap-3">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                {sceneVideos.length > 0 && (
+                  <span className="mr-auto text-sm font-medium text-amber-700">
+                    กำลังแก้ไข ฉาก {safeActiveSceneIndex + 1}
+                  </span>
+                )}
                 <button
                   onClick={() => { setMode("review"); setError(null); }}
                   disabled={isSubmitting}
@@ -916,7 +1211,7 @@ export function VideoApprovalPanel({
                   ยกเลิก
                 </button>
                 <Button onClick={handleReviseSubmit} loading={isSubmitting} disabled={isSubmitting}>
-                  ส่งขอสร้างวีดิโอใหม่
+                  {sceneVideos.length > 0 ? "สร้างฉากนี้ใหม่" : "ส่งขอสร้างวีดิโอใหม่"}
                 </Button>
               </div>
             )}
@@ -983,7 +1278,7 @@ export function VideoApprovalPanel({
                   <p className="text-xs font-semibold text-blue-600 mb-1">เสียงพากย์ AI</p>
                   <audio
                     key={displayedVoiceAssetId ?? displayedVoiceUrl}
-                    src={`${displayedVoiceUrl}${displayedVoiceUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(displayedVoiceAssetId ?? displayedVoiceUrl)}`}
+                    src={displayedVoiceUrl}
                     controls
                     preload="metadata"
                     className="w-full"
@@ -992,6 +1287,58 @@ export function VideoApprovalPanel({
               ) : (
                 <p className="text-sm text-amber-600 mb-4">ไม่พบไฟล์เสียงพากย์ กรุณาสร้างเสียงใหม่</p>
               )}
+
+              <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  ช่องทางในการเผยแพร่
+                </p>
+                <p className="mb-3 text-xs text-slate-400">
+                  เลือกได้มากกว่าหนึ่งช่องทาง ช่องทางแรกที่เลือกคือช่องทางหลัก ระบบจะสร้างวิดีโอในอัตราส่วนของช่องทางหลัก (ช่องทางอื่นจะครอบตัดจากวิดีโอนี้)
+                </p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {/* Travy App — mandatory, locked, dark grey. Its ratio mirrors
+                      the primary channel's ratio. */}
+                  <div
+                    aria-disabled
+                    className="cursor-not-allowed rounded-md border border-slate-300 bg-slate-200 px-3 py-2 text-left text-sm text-slate-700"
+                  >
+                    <span className="block font-medium">
+                      {PLATFORM_LABELS[Platform.TventApp]}
+                    </span>
+                    <span className="block text-xs text-slate-500">
+                      {ratioLabel(primaryChannelRatio)} · ค่าเริ่มต้น
+                    </span>
+                  </div>
+
+                  {OPTIONAL_FORM_PLATFORMS.map((p) => {
+                    const isSelected = channelOrder.includes(p);
+                    const isPrimary = primaryChannel === p;
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => toggleChannel(p)}
+                        disabled={voiceRecreating || voiceApproving}
+                        className={`relative rounded-md border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                          isSelected
+                            ? "border-blue-500 bg-blue-50 text-blue-700"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-blue-300"
+                        }`}
+                      >
+                        {isPrimary && (
+                          <span className="absolute right-1.5 top-1.5 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                            หลัก
+                          </span>
+                        )}
+                        <span className="block font-medium">{PLATFORM_LABELS[p]}</span>
+                        <span className="block text-xs text-slate-400">
+                          {ratioLabel(PLATFORM_ASPECT_RATIOS[p])}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div className="flex gap-3 justify-end pt-2 border-t border-slate-100">
                 <Button
@@ -1010,22 +1357,11 @@ export function VideoApprovalPanel({
         {isAwaitingAnimationApproval && (
           <div className="mt-6 space-y-6">
             <Card className="border-purple-100 bg-purple-50/40">
-              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3.5: ตรวจสอบ Animation และ Graphic</h3>
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3.5: เลือกเพลงพื้นหลังและรวมเสียงเข้าในวีดิโอ</h3>
               <p className="text-sm text-slate-500 mb-4">
-                AI สร้าง animation และ graphic overlays ลงบนวิดีโอแล้ว — ตรวจสอบผลลัพธ์ด้านล่างและเลือกช่องทางเผยแพร่ก่อนอนุมัติ
+                เลือกเพลงประกอบสำหรับวิดีโอ แล้วกดอนุมัติเพื่อให้ระบบรวมเสียงพากย์ เพลงพื้นหลัง และวิดีโอเข้าด้วยกัน
+                ขั้นตอนตรวจสอบ Animation และ Graphic จะอยู่ในขั้นตอนถัดไป หลังจากรวมเสียงและวิดีโอเรียบร้อยแล้ว
               </p>
-
-              {animatedVideoUrl ? (
-                <div className="mb-5 flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[480px]">
-                  <video
-                    src={animatedVideoUrl}
-                    controls
-                    className="max-h-[460px] w-auto object-contain rounded"
-                  />
-                </div>
-              ) : (
-                <p className="text-sm text-amber-600 mb-4">ไม่พบวิดีโอ Animation กรุณาลองสร้างใหม่อีกครั้ง</p>
-              )}
 
               {/* Voice audio playback */}
               {displayedVoiceUrl && (
@@ -1033,7 +1369,7 @@ export function VideoApprovalPanel({
                   <p className="text-xs font-semibold text-purple-700 mb-1">เสียงพากย์ AI</p>
                   <audio
                     key={displayedVoiceAssetId ?? displayedVoiceUrl}
-                    src={`${displayedVoiceUrl}${displayedVoiceUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(displayedVoiceAssetId ?? displayedVoiceUrl)}`}
+                    src={displayedVoiceUrl}
                     controls
                     preload="metadata"
                     className="w-full"
@@ -1103,87 +1439,17 @@ export function VideoApprovalPanel({
                 )}
               </div>
 
-              {/* Distribution platforms */}
-              <div className="border-t border-slate-200/80 pt-4 mb-4">
-                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">เลือกช่องทางการเผยแพร่</p>
-                <p className="text-xs text-slate-400 mb-3">ระบบจะปรับขนาดวิดีโอ (FFmpeg) ตามช่องทางที่คุณเลือก</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {FORM_PLATFORMS.map((p) => {
-                    const isMandatory = p === Platform.TventApp;
-                    const isChecked = selectedPlatforms.includes(p) || isMandatory;
-                    return (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => togglePlatform(p)}
-                        className={[
-                          "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-all",
-                          isChecked
-                            ? "border-purple-500 bg-purple-50 text-purple-800 font-medium"
-                            : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
-                          isMandatory ? "opacity-80 cursor-not-allowed" : ""
-                        ].join(" ")}
-                      >
-                        <span className="flex-shrink-0 w-4.5 h-4.5 flex items-center justify-center rounded border border-slate-300 bg-white text-purple-600">
-                          {isChecked && "✓"}
-                        </span>
-                        <span className="truncate">{PLATFORM_LABELS[p]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="border-t border-slate-200/80 pt-4 mb-4">
-                <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">เลือกภาษาซับไตเติ้ล</p>
-                <p className="text-xs text-slate-400 mb-3">
-                  เลือกภาษาซับไตเติ้ลที่จะฝังในวิดีโอสำหรับการเผยแพร่ทั่วไป (เลือกได้มากกว่า 1 ภาษา)
-                  ส่วนวิดีโอสำหรับ Tvent App จะฝังซับไตเติ้ลภาษาอังกฤษและจีนเสมอ ไม่ว่าคุณจะเลือกอะไรไว้ที่นี่
-                </p>
-                <div className="grid grid-cols-3 gap-2 max-w-sm">
-                  {([
-                    { code: "th" as const, label: "ไทย" },
-                    { code: "en" as const, label: "English" },
-                    { code: "zh" as const, label: "中文" },
-                  ]).map(({ code, label }) => {
-                    const isChecked = selectedSubtitleLanguages.includes(code);
-                    return (
-                      <button
-                        key={code}
-                        type="button"
-                        onClick={() => toggleSubtitleLanguage(code)}
-                        className={[
-                          "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-all",
-                          isChecked
-                            ? "border-purple-500 bg-purple-50 text-purple-800 font-medium"
-                            : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
-                        ].join(" ")}
-                      >
-                        <span className="flex-shrink-0 w-4.5 h-4.5 flex items-center justify-center rounded border border-slate-300 bg-white text-purple-600">
-                          {isChecked && "✓"}
-                        </span>
-                        <span className="truncate">{label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              {/* Distribution channels are chosen at the voice-approval step. */}
+              {/* Phase 7 (deferred): subtitle-language picker removed — captions
+                  return with the Phase 7 caption/timeline pipeline. */}
 
               <div className="flex gap-3 justify-end pt-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={handleRegenerateAnimation}
-                  disabled={animationRegenerating || animationApproving}
-                  className="rounded-md border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                >
-                  {animationRegenerating ? "กำลังสร้างใหม่..." : "ขอสร้าง Animation ใหม่"}
-                </button>
                 <Button
                   onClick={handleApproveAnimation}
                   loading={animationApproving}
-                  disabled={animationRegenerating || animationApproving || selectedMusicTrack === null}
+                  disabled={animationApproving || selectedMusicTrack === null}
                 >
-                  อนุมัติและสร้างวิดีโอสุดท้าย →
+                  อนุมัติและรวมเสียงเข้าในวีดิโอ →
                 </Button>
               </div>
             </Card>
@@ -1194,68 +1460,113 @@ export function VideoApprovalPanel({
         {isAwaitingFinalApproval && (
           <div className="mt-6 space-y-6">
             <Card className="border-green-100 bg-green-50/30">
-              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนสุดท้าย: ตรวจสอบวิดีโอที่ตัดต่อเสร็จแล้ว</h3>
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ตรวจสอบวิดีโอที่รวมเสียงแล้ว</h3>
               <p className="text-sm text-slate-500 mb-4">
-                วิดีโอของคุณได้รับการฝังซับไตเติ้ลสองภาษา (ไทย/อังกฤษ) และจัดวางตำแหน่งสินค้าแบบกึ่งกลางเรียบร้อยแล้ว ตรวจสอบแต่ละขนาดได้ด้านล่าง:
+                วิดีโอของคุณรวมเสียงพากย์และเพลงพื้นหลัง (ปรับระดับให้เสียงพูดเด่นชัด) ตามอัตราส่วนของช่องทางหลักที่เลือกเรียบร้อยแล้ว ตรวจสอบได้ด้านล่าง ขั้นตอนถัดไปคือการเพิ่ม Motion Graphic และซับไตเติ้ล/คำบรรยาย
               </p>
 
               {finalClips.length > 0 ? (() => {
-                const activeClip = finalClips.find(c => c.videoRatio === selectedExportRatio) || finalClips[0];
+                // Aspect ratio is fixed by the PRIMARY distribution channel — no
+                // ratio selector. Show that clip (fallback to the first export).
+                const primaryClip = finalClips.find((c) => c.videoRatio === primaryRatio) || finalClips[0];
                 return (
                   <div className="space-y-4">
-                    {/* Ratio tabs */}
-                    <div className="flex flex-wrap gap-1.5 border-b border-slate-100 pb-3">
-                      {finalClips.map((clip) => {
-                        const ratio = clip.videoRatio;
-                        const isActive = selectedExportRatio === ratio;
-                        return (
-                          <button
-                            key={clip.id}
-                            type="button"
-                            onClick={() => setSelectedExportRatio(ratio)}
-                            className={[
-                              "px-3 py-1.5 rounded-full text-xs font-semibold transition-all border",
-                              isActive
-                                ? "bg-blue-600 text-white border-blue-600"
-                                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                            ].join(" ")}
-                          >
-                            ขนาด {ratio === "9:16" ? "แนวตั้ง (9:16)" : ratio === "16:9" ? "แนวนอน (16:9)" : ratio === "1:1" ? "จัตุรัส (1:1)" : `แนวตั้งแคบ (${ratio})`}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Preview video */}
+                    {/* Preview video at the primary channel's aspect ratio */}
                     <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[500px]">
                       <video
-                        key={activeClip.id}
-                        src={activeClip.storageUrl}
+                        key={primaryClip.id}
+                        src={primaryClip.storageUrl}
                         controls
                         className="max-h-[480px] w-auto object-contain rounded"
                       />
                     </div>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                      <div className="flex gap-2">
-                        {finalClips.map(clip => (
-                          <a
-                            key={clip.id}
-                            href={clip.storageUrl}
-                            download={`final_video_${clip.videoRatio.replace(":", "_")}.mp4`}
-                            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
-                          >
-                            ดาวน์โหลด ({clip.videoRatio})
-                          </a>
-                        ))}
+                    {/* Phase 7 — choose subtitle languages for YOUR channels.
+                        These seed the subtitle + motion-graphic step. (Travy
+                        always gets English + Chinese, handled automatically.) */}
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <p className="text-sm font-medium text-slate-800">เลือกภาษาซับไตเติ้ลสำหรับช่องทางของคุณ</p>
+                      <p className="text-xs text-slate-400 mt-0.5 mb-3">
+                        ใช้เป็นข้อมูลตั้งต้นในขั้นตอนเพิ่มซับไตเติ้ลและ Motion Graphic (ช่อง Travy จะมีซับไตเติ้ลอังกฤษ+จีนโดยอัตโนมัติ)
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { code: "th", label: "ไทย" },
+                          { code: "en", label: "อังกฤษ" },
+                          { code: "zh", label: "จีน" },
+                        ] as const).map(({ code, label }) => {
+                          const selected = subtitleLangs.includes(code);
+                          return (
+                            <button
+                              key={code}
+                              type="button"
+                              onClick={() => toggleSubtitleLang(code)}
+                              className={`rounded-md border px-3 py-1.5 text-sm font-medium transition ${
+                                selected
+                                  ? "border-green-300 bg-green-50 text-green-700"
+                                  : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                              }`}
+                            >
+                              {selected ? "✓ " : ""}{label}
+                            </button>
+                          );
+                        })}
                       </div>
-                      <Button
-                        onClick={handleApproveFinal}
-                        loading={finalApproving}
-                        disabled={finalApproving}
+                    </div>
+
+                    {/* Phase 7 — motion-graphic template picker (default None). */}
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <p className="text-sm font-medium text-slate-800">เลือกเทมเพลตกราฟิก (Motion Template)</p>
+                      <p className="text-xs text-slate-400 mt-0.5 mb-3">
+                        เลือกสไตล์กรอบและกราฟิกที่จะซ้อนบนวิดีโอ (ค่าเริ่มต้น: ไม่มีเทมเพลต — วิดีโอเต็มจอ + ซับไตเติ้ล)
+                      </p>
+                      <div className="flex gap-3 overflow-x-auto pb-1">
+                        {MOTION_TEMPLATES.map((tpl) => {
+                          const active = selectedTemplate === tpl.id;
+                          return (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              onClick={() => setSelectedTemplate(tpl.id)}
+                              className={`shrink-0 w-24 rounded-lg border p-2 text-left transition ${
+                                active
+                                  ? "border-green-400 ring-2 ring-green-200 bg-green-50"
+                                  : "border-slate-200 hover:bg-slate-50"
+                              }`}
+                            >
+                              <TemplateThumb id={tpl.id} />
+                              <p className="text-[11px] font-medium leading-tight text-slate-700">{tpl.name}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                      <a
+                        href={primaryClip.storageUrl}
+                        download={`final_video_${primaryClip.videoRatio.replace(":", "_")}.mp4`}
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
                       >
-                        อนุมัติและรับมอบวิดีโอ ✓
-                      </Button>
+                        ดาวน์โหลด ({primaryClip.videoRatio})
+                      </a>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={handleReviseAudioMerge}
+                          disabled={audioRevising || finalApproving}
+                          className="rounded-md border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                        >
+                          {audioRevising ? "กำลังย้อนกลับ..." : "แก้ไขการรวมเสียง"}
+                        </button>
+                        <Button
+                          onClick={handleApproveFinal}
+                          loading={finalApproving}
+                          disabled={finalApproving || audioRevising || subtitleLangs.length === 0}
+                        >
+                          อนุมัติและเพิ่มซับไตเติ้ล/Motion Graphic →
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1266,8 +1577,143 @@ export function VideoApprovalPanel({
           </div>
         )}
 
+        {/* Phase 7 — subtitle + motion-graphic overlay review (captioned preview) */}
+        {isAwaitingOverlayApproval && (
+          <div className="mt-6 space-y-6">
+            <Card className="border-green-100 bg-green-50/30">
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ตรวจสอบซับไตเติ้ลและ Motion Graphic</h3>
+              <p className="text-sm text-slate-500 mb-4">
+                เพิ่มซับไตเติ้ล (ภาษาที่เลือก) และ Motion Graphic ซ้อนบนวิดีโอที่รวมเสียงแล้ว ตรวจสอบตัวอย่างด้านล่าง หากพอใจให้กดอนุมัติเพื่อรวมเป็นวิดีโอสุดท้าย
+              </p>
+
+              {overlayPreviewUrl ? (
+                <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[500px]">
+                  <video
+                    key={overlayPreviewUrl}
+                    src={overlayPreviewUrl}
+                    controls
+                    className="max-h-[480px] w-auto object-contain rounded"
+                  />
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">กำลังเตรียมตัวอย่าง...</p>
+              )}
+
+              {/* Adjust subtitle languages and re-render if needed */}
+              <div className="mt-4 rounded-lg border border-slate-200 bg-white p-4">
+                <p className="text-sm font-medium text-slate-800">ภาษาซับไตเติ้ล</p>
+                <p className="text-xs text-slate-400 mt-0.5 mb-3">ปรับภาษาแล้วกด “สร้างใหม่” เพื่อเรนเดอร์ซับไตเติ้ลอีกครั้ง</p>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    { code: "th", label: "ไทย" },
+                    { code: "en", label: "อังกฤษ" },
+                    { code: "zh", label: "จีน" },
+                  ] as const).map(({ code, label }) => {
+                    const selected = subtitleLangs.includes(code);
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => toggleSubtitleLang(code)}
+                        className={`rounded-md border px-3 py-1.5 text-sm font-medium transition ${
+                          selected
+                            ? "border-green-300 bg-green-50 text-green-700"
+                            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+                        }`}
+                      >
+                        {selected ? "✓ " : ""}{label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={handleEditSubtitleVideo}
+                  disabled={editingSubtitle || overlayApproving || overlayRegenerating}
+                  className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {editingSubtitle ? "กำลังย้อนกลับ..." : "← แก้ไขเทมเพลต/ภาษา"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRegenerateOverlay}
+                  disabled={overlayRegenerating || overlayApproving || subtitleLangs.length === 0}
+                  className="rounded-md border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                >
+                  {overlayRegenerating ? "กำลังสร้างใหม่..." : "สร้างใหม่"}
+                </button>
+                <Button
+                  onClick={handleApproveOverlay}
+                  loading={overlayApproving}
+                  disabled={overlayApproving || overlayRegenerating || editingSubtitle || !overlayPreviewUrl}
+                >
+                  อนุมัติและรวมเป็นวิดีโอสุดท้าย →
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Phase 7 — gate to generate the remaining channels' aspect ratios */}
+        {isAwaitingAdditionalRatios && (
+          <div className="mt-6 space-y-6">
+            <Card className="border-blue-100 bg-blue-50/30">
+              <h3 className="text-base font-semibold text-slate-900 mb-2">สร้างอัตราส่วนสำหรับช่องทางอื่น</h3>
+              <p className="text-sm text-slate-500 mb-4">
+                วิดีโอช่องทางหลักพร้อมแล้ว กดปุ่มด้านล่างเพื่อสร้างวิดีโอ (พร้อมซับไตเติ้ลและ Motion Graphic) สำหรับช่องทางอื่นที่มีอัตราส่วนต่างกัน หลังจากนั้นระบบจะสร้างวิดีโอสำหรับช่อง Travy ให้อัตโนมัติ
+              </p>
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleGenerateAdditionalRatios}
+                  loading={additionalGenerating}
+                  disabled={additionalGenerating}
+                >
+                  สร้างอัตราส่วนช่องทางอื่น →
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Phase 7 — automatic Travy (EN+ZH) render status */}
+        {tventVideoStatus && tventVideoStatus !== "idle" && (
+          <Card className="mt-6 border-slate-100 bg-slate-50/60">
+            <h3 className="text-base font-semibold text-slate-900 mb-2">วิดีโอสำหรับช่อง Travy (อังกฤษ + จีน)</h3>
+            {tventVideoStatus === "generating" && (
+              <div className="flex items-center gap-3 text-sm text-slate-600">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
+                ระบบกำลังสร้างวิดีโอสำหรับช่อง Travy โดยอัตโนมัติ (ไม่สามารถยกเลิกได้) คุณสามารถดูได้เมื่อสร้างเสร็จ
+              </div>
+            )}
+            {tventVideoStatus === "ready" && (
+              tventClipUrl ? (
+                <div className="space-y-3">
+                  <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[420px]">
+                    <video src={tventClipUrl} controls className="max-h-[400px] w-auto object-contain rounded" />
+                  </div>
+                  <a
+                    href={tventClipUrl}
+                    download="final_tvent.mp4"
+                    className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                  >
+                    ดาวน์โหลดวิดีโอ Travy
+                  </a>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-400">วิดีโอ Travy พร้อมแล้ว</p>
+              )
+            )}
+            {tventVideoStatus === "failed" && (
+              <p className="text-sm text-red-600">การสร้างวิดีโอ Travy ล้มเหลว กรุณาติดต่อแอดมิน</p>
+            )}
+          </Card>
+        )}
+
         {/* Processing Indicator — hidden when the pipeline is failed (recovery UI is shown instead) */}
-        {!isPipelineFailed && !isAwaitingApproval && !isAwaitingVoiceRecording && !isAwaitingVoiceApproval && !isAwaitingAnimationApproval && !isAwaitingFinalApproval && (
+        {!isPipelineFailed && !isAwaitingApproval && !isAwaitingVoiceRecording && !isAwaitingVoiceApproval && !isAwaitingAnimationApproval && !isAwaitingFinalApproval && !isAwaitingOverlayApproval && !isAwaitingAdditionalRatios && (
           <Card className="mt-6 border-slate-100 bg-slate-50 p-5 flex flex-col items-center justify-center text-center">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600 mb-4" />
             {isGeneratingVoice ? (
@@ -1281,7 +1727,7 @@ export function VideoApprovalPanel({
               <>
                 <h4 className="text-sm font-semibold text-slate-800">กำลังประมวลผลวิดีโอของคุณ...</h4>
                 <p className="mt-1 text-xs text-slate-400 max-w-[280px]">
-                  AI กำลังถอดเสียงและจับคู่ซับไตเติ้ลสองภาษา (ไทยและอังกฤษ) พร้อมจัดตําแหน่งภาพสินค้าให้อัตโนมัติด้วย FFmpeg ขั้นตอนนี้ใช้เวลา 10-30 วินาที
+                  AI กำลังรวมเสียงพากย์และเพลงพื้นหลัง (ปรับระดับให้เสียงพูดเด่นชัด) เข้ากับวิดีโอตามอัตราส่วนของช่องทางหลักด้วย FFmpeg ขั้นตอนนี้ใช้เวลา 10-30 วินาที
                 </p>
               </>
             )}
@@ -1324,7 +1770,7 @@ export function VideoApprovalPanel({
             <p className="text-sm font-semibold text-amber-800">แก้ไขสคริปต์วิดีโอที่อนุมัติ</p>
             <p className="mt-0.5 text-sm text-amber-700">
               แก้ไขบทพูดและแผนฉากด้านล่าง จากนั้นคลิก{" "}
-              <strong>ส่งขอสร้างวีดิโอใหม่</strong> เพื่อให้ Veo AI สร้างวิดีโอใหม่
+              <strong>ส่งขอสร้างวีดิโอใหม่</strong> เพื่อเรนเดอร์วิดีโอฉากนี้จากรูปและคลิปใหม่อีกครั้ง
             </p>
           </div>
 
@@ -1360,11 +1806,10 @@ export function VideoApprovalPanel({
                       type="number"
                       min={1}
                       value={activeEditScene.durationSeconds}
-                      disabled={getSceneImages(activeEditScene).length === 2}
                       onChange={(e) =>
-                        updateScene(safeActiveSceneIndex, { durationSeconds: Number(e.target.value) || 1 })
+                        updateSceneDurationMontage(safeActiveSceneIndex, Number(e.target.value) || 1)
                       }
-                      className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 disabled:bg-slate-100 disabled:text-slate-400"
+                      className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600"
                     />
                     <span className="text-xs text-slate-400">seconds</span>
                   </div>
@@ -1374,48 +1819,12 @@ export function VideoApprovalPanel({
                     rows={3}
                     className={`${ta} text-sm text-slate-700`}
                   />
-                  {sourceImageOptions.length > 0 && (
-                    <div className="mt-3">
-                      <p className="mb-2 text-xs font-medium text-slate-500">
-                        Uploaded images for this scene (max 2)
-                      </p>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {sourceImageOptions.map(({ asset, sourceIndex }) => {
-                          const selected = getSceneImages(activeEditScene).includes(sourceIndex);
-                          const maxSelected = getSceneImages(activeEditScene).length >= 2 && !selected;
-                          const thumbSrc = asset.thumbnailUrl || asset.storageUrl;
-
-                          return (
-                            <button
-                              type="button"
-                              key={asset.id}
-                              disabled={maxSelected}
-                              onClick={() => toggleSceneImage(safeActiveSceneIndex, sourceIndex)}
-                              className={`overflow-hidden rounded-md border text-left transition ${
-                                selected
-                                  ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
-                                  : "border-slate-200 bg-white hover:border-blue-200"
-                              } disabled:cursor-not-allowed disabled:opacity-40`}
-                            >
-                              <div className="aspect-video bg-slate-100">
-                                <img src={thumbSrc} alt={asset.fileName} className="h-full w-full object-cover" />
-                              </div>
-                              <div className="px-2 py-1">
-                                <p className="truncate text-xs text-slate-600">
-                                  {selected ? "Selected" : "Image"} {sourceIndex + 1}
-                                </p>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {getSceneImages(activeEditScene).length === 2 && (
-                        <p className="mt-1 text-xs text-blue-600">
-                          Two images selected: scene time is fixed at 8 seconds for morphing.
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  <MontageSceneAssetsEditor
+                    orderedAssets={orderedAssets}
+                    assets={activeEditScene.assets ?? []}
+                    sceneDurationSeconds={activeEditScene.durationSeconds}
+                    onChange={(assets) => updateSceneAssets(safeActiveSceneIndex, assets)}
+                  />
                 </div>
               )}
             </div>

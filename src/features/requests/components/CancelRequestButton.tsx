@@ -36,6 +36,10 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
         const data = await res.json().catch(() => null);
         alert(data?.error ?? "ไม่สามารถยกเลิกคำขอได้ กรุณาลองใหม่อีกครั้ง");
       }
+    } catch {
+      // Network-level failure (e.g. the dev server restarted/was unreachable) —
+      // surface a friendly message instead of an unhandled "Failed to fetch".
+      alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
       setIsPending(false);
     }

@@ -70,14 +70,24 @@ function lowerThirdStyle(
               extrapolateRight: "clamp",
             })
           : 0;
+      // Slight overshoot scale-in for a punchy hook.
+      const pop = interpolate(
+        tMs,
+        [spec.startMs - FADE_MS, spec.startMs, spec.startMs + 120],
+        [0.82, 1.04, 1],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+      );
       return {
         ...base,
-        top: "50%",
+        top: "44%",
         left: 0,
         right: 0,
         textAlign: "center",
-        fontSize: 72 * scale,
-        transform: `translateY(calc(-50% + ${slideUp}px))`,
+        padding: `0 ${60 * scale}px`,
+        fontSize: 76 * scale,
+        letterSpacing: `${0.5 * scale}px`,
+        transform: `translateY(calc(-50% + ${slideUp}px)) scale(${pop})`,
+        transformOrigin: "center",
       };
     }
     case "lower_third": {
@@ -88,23 +98,39 @@ function lowerThirdStyle(
               extrapolateRight: "clamp",
             })
           : 0;
+      // Sit above the bottom subtitle stack (captions occupy ~100-340px), with
+      // an accent bar + pill so it reads as a designed graphic, not floating text.
       return {
         ...base,
-        bottom: 160 * scale,
+        bottom: 380 * scale,
         left: 80 * scale + slideX,
         fontSize: 52 * scale,
+        paddingLeft: `${22 * scale}px`,
+        paddingRight: `${26 * scale}px`,
+        paddingTop: `${10 * scale}px`,
+        paddingBottom: `${10 * scale}px`,
+        borderLeft: `${8 * scale}px solid #FFD700`,
+        borderRadius: `${10 * scale}px`,
+        background: "rgba(0,0,0,0.45)",
       };
     }
     case "cta_banner":
     default:
+      // Solid high-contrast pill, centered above the subtitle stack — reads as a
+      // call-to-action button rather than plain text.
       return {
         ...base,
-        bottom: 80 * scale,
-        left: 0,
-        right: 0,
+        bottom: 480 * scale,
+        left: "50%",
+        transform: "translateX(-50%)",
         textAlign: "center",
         fontSize: 58 * scale,
-        color: "#FFD700",
+        color: "#1A1A1A",
+        WebkitTextStroke: "0px",
+        textShadow: "none",
+        background: "#FFD700",
+        borderRadius: "999px",
+        padding: `${14 * scale}px ${40 * scale}px`,
       };
   }
 }

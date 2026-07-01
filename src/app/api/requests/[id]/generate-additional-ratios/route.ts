@@ -5,6 +5,11 @@ import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 
+/**
+ * Requester triggers generation of the remaining distribution channels' aspect
+ * ratios (Phase 7) after approving the primary captioned video. Runs before the
+ * automatic Travy render.
+ */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -35,28 +40,14 @@ export async function POST(
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
-  const ALLOWED_LANGS = ["th", "en", "zh"] as const;
-  const rawLangs = Array.isArray(body?.subtitleLanguages) ? body.subtitleLanguages : undefined;
-  const subtitleLanguages = rawLangs
-    ?.filter((l: unknown): l is "th" | "en" | "zh" =>
-      ALLOWED_LANGS.includes(l as (typeof ALLOWED_LANGS)[number])
-    );
-
-  const { isValidTemplateId } = await import("@/config/motionTemplates");
-  const selectedMotionTemplate = isValidTemplateId(body?.selectedMotionTemplate)
-    ? (body.selectedMotionTemplate as string)
-    : undefined;
-
   try {
-    const updated = await videoGenerationService.approveFinalVideoByRequester(
+    const updated = await videoGenerationService.generateAdditionalRatiosByRequester(
       jobId,
-      session.user.id,
-      subtitleLanguages && subtitleLanguages.length > 0 ? subtitleLanguages : undefined,
-      selectedMotionTemplate
+      session.user.id
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to approve final video.";
+    const message = err instanceof Error ? err.message : "Failed to generate additional ratios.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

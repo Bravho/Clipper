@@ -11,6 +11,8 @@ interface Props {
   failedAtStep: VideoGenerationStep | null;
   durationSeconds?: number;
   totalChannels?: number;
+  /** Phase 7 — background Travy render status, for live spinner polling. */
+  tventVideoStatus?: string | null;
 }
 
 /**
@@ -25,11 +27,13 @@ export function PipelineSection({
   failedAtStep,
   durationSeconds,
   totalChannels,
+  tventVideoStatus = null,
 }: Props) {
   const [videoGenStatus, setVideoGenStatus] = useState<"submitted" | "processing" | null>(null);
   const [videoGenLastPolledAt, setVideoGenLastPolledAt] = useState<Date | null>(null);
 
-  const isPolling = POLLING_STEPS.includes(currentStep);
+  const isPolling =
+    POLLING_STEPS.includes(currentStep) || tventVideoStatus === "generating";
 
   return (
     <>
@@ -45,6 +49,7 @@ export function PipelineSection({
         <PipelineStatusPoller
           requestId={requestId}
           currentStep={currentStep}
+          tventVideoStatus={tventVideoStatus}
           onVideoGenStatus={(status, polledAt) => {
             setVideoGenStatus(status);
             setVideoGenLastPolledAt(polledAt);

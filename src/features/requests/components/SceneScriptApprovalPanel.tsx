@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
-import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
-import { AssetType } from "@/domain/enums/AssetType";
+import type { OrderedSourceAsset } from "@/lib/sourceAssets";
+import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
 
 interface SceneScriptApprovalPanelProps {
   requestId: string;
@@ -19,18 +20,17 @@ interface SceneScriptApprovalPanelProps {
   activeSceneIndex: number;
   voiceRecordingUrl: string | null;
   voiceRecordingAssetId: string | null;
-  /** Latest generated (and previously approved) cumulative video, shown for context. */
+  /** Latest rendered scene segment, shown for context. */
   latestVideoUrl: string | null;
   latestVideoAssetId: string | null;
+  /** Retained for compatibility; the montage editor uses `orderedAssets`. */
   sourceAssets: UploadedAsset[];
+  /** Canonical, index-stable source media (images + clips). */
+  orderedAssets: OrderedSourceAsset[];
 }
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
-
-function getSceneImages(scene: ScenePlan): number[] {
-  return Array.isArray(scene.imageIndexes) ? scene.imageIndexes.slice(0, 2) : [];
-}
 
 export function SceneScriptApprovalPanel({
   requestId,
@@ -44,7 +44,7 @@ export function SceneScriptApprovalPanel({
   voiceRecordingAssetId,
   latestVideoUrl,
   latestVideoAssetId,
-  sourceAssets,
+  orderedAssets,
 }: SceneScriptApprovalPanelProps) {
   const router = useRouter();
   const [scenes, setScenes] = useState<ScenePlan[]>(initialScenes);
@@ -54,31 +54,20 @@ export function SceneScriptApprovalPanel({
   const safeIndex = Math.min(Math.max(activeSceneIndex, 0), Math.max(scenes.length - 1, 0));
   const activeScene = scenes[safeIndex];
 
-  const sourceImageOptions = sourceAssets
-    .map((asset, sourceIndex) => ({ asset, sourceIndex }))
-    .filter(({ asset }) => asset.assetType === AssetType.Image);
-
   const updateScene = (index: number, patch: Partial<ScenePlan>) => {
     setScenes((prev) => prev.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
   };
 
-  const toggleSceneImage = (sceneIndex: number, sourceIndex: number) => {
-    setScenes((prev) =>
-      prev.map((scene, index) => {
-        if (index !== sceneIndex) return scene;
-        const current = getSceneImages(scene);
-        const imageIndexes = current.includes(sourceIndex)
-          ? current.filter((i) => i !== sourceIndex)
-          : current.length >= 2
-            ? current
-            : [...current, sourceIndex];
-        return {
-          ...scene,
-          imageIndexes,
-          durationSeconds: imageIndexes.length === 2 ? 8 : scene.durationSeconds,
-        };
-      })
-    );
+  /** Persist montage asset edits: keep scene.assets and resize the scene to
+   *  the sum of its asset durations. imageIndexes is cleared so the legacy Veo
+   *  morph/duration rules stay dormant on the montage path. */
+  const updateSceneAssets = (index: number, assets: MontageSceneAsset[]) => {
+    const total = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
+    updateScene(index, {
+      assets,
+      imageIndexes: [],
+      ...(total > 0 ? { durationSeconds: total } : {}),
+    });
   };
 
   const handleApprove = async () => {
@@ -148,7 +137,7 @@ export function SceneScriptApprovalPanel({
           </p>
           <audio
             key={voiceRecordingAssetId ?? voiceRecordingUrl}
-            src={`${voiceRecordingUrl}${voiceRecordingUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(voiceRecordingAssetId ?? voiceRecordingUrl)}`}
+            src={voiceRecordingUrl}
             controls
             preload="metadata"
             className="w-full"
@@ -173,48 +162,12 @@ export function SceneScriptApprovalPanel({
           className={`${ta} text-sm text-slate-700`}
         />
 
-        {sourceImageOptions.length > 0 && (
-          <div className="mt-3">
-            <p className="mb-2 text-xs font-medium text-slate-500">
-              Uploaded images for this scene (max 2)
-            </p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {sourceImageOptions.map(({ asset, sourceIndex }) => {
-                const selected = getSceneImages(activeScene).includes(sourceIndex);
-                const maxSelected = getSceneImages(activeScene).length >= 2 && !selected;
-                const thumbSrc = asset.thumbnailUrl || asset.storageUrl;
-
-                return (
-                  <button
-                    type="button"
-                    key={asset.id}
-                    disabled={maxSelected}
-                    onClick={() => toggleSceneImage(safeIndex, sourceIndex)}
-                    className={`overflow-hidden rounded-md border text-left transition ${
-                      selected
-                        ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
-                        : "border-slate-200 bg-white hover:border-blue-200"
-                    } disabled:cursor-not-allowed disabled:opacity-40`}
-                  >
-                    <div className="aspect-video bg-slate-100">
-                      <img src={thumbSrc} alt={asset.fileName} className="h-full w-full object-cover" />
-                    </div>
-                    <div className="px-2 py-1">
-                      <p className="truncate text-xs text-slate-600">
-                        {selected ? "Selected" : "Image"} {sourceIndex + 1}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            {getSceneImages(activeScene).length === 2 && (
-              <p className="mt-1 text-xs text-blue-600">
-                Two images selected: scene time is fixed at 8 seconds for morphing.
-              </p>
-            )}
-          </div>
-        )}
+        <MontageSceneAssetsEditor
+          orderedAssets={orderedAssets}
+          assets={activeScene.assets ?? []}
+          sceneDurationSeconds={activeScene.durationSeconds}
+          onChange={(assets) => updateSceneAssets(safeIndex, assets)}
+        />
       </div>
 
       {error && (

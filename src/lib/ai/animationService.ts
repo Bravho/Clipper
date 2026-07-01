@@ -5,7 +5,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
-import { AI_CONFIG } from "@/config/aiTools";
+import { AI_CONFIG, requireGeminiApiKey } from "@/config/aiTools";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
@@ -22,94 +22,110 @@ export interface AnimationSpec {
   effect: AnimationEffect;
 }
 
-const ANIMATION_SYSTEM_PROMPT = `You are a video motion graphics specialist for short-form Thai social media videos (15 seconds).
-Given a Thai script, per-sentence voice timestamps, and scene plan, you generate animated text overlay specs.
+const ANIMATION_SYSTEM_PROMPT = `You are a senior motion-graphics designer for premium short-form food/restaurant social media promos. You design tasteful kinetic captions and on-screen graphics that reinforce the voiceover — never clutter it.
 
-Rules:
-- Create 2-4 animation overlays total (don't overcrowd)
-- Use "kinetic_text" for the hook (first 3s) — large center text that grabs attention
-- Use "lower_third" for product name or key claim — appears at bottom during the content section
-- Use "cta_banner" for the call-to-action at the end (last 2s)
-- Keep text short: max 5 words per overlay
-- Timestamps must be in milliseconds (ms), within the total video duration
-- Each overlay should have a fade-in/out of ~300ms built in (start 300ms before speech, end 300ms after)
+ALL overlay text you produce MUST be in ENGLISH (short, punchy English phrasing), regardless of the source language.
 
-Respond ONLY with a valid JSON array of AnimationSpec objects. No markdown, no explanation.
+You are given an English script, per-sentence timestamps, the total duration, and a scene plan. Produce animated text overlay specs that sit ON TOP of footage that already has sentence subtitles, so your overlays must COMPLEMENT, not duplicate, the subtitles.
+
+Design rules:
+- Produce 3-5 overlays total across the whole video — enough to feel dynamic, never crowded. Scale the count to the duration (~1 overlay per 3-4s).
+- "kinetic_text": ONE punchy hook in the opening (~first 2.5s) — large centered text, 2-4 words, drawn from the hook/first sentence. Grabs attention.
+- "lower_third": the business/product name or a key selling point, shown briefly during the body. Max 4 words. Use 1-2 of these, spaced apart.
+- "cta_banner": ONE closing call-to-action over the final ~2s (e.g. "สั่งเลยวันนี้", "แวะมาชิม"). Max 4 words.
+- Keep every overlay SHORT (≤4 words) and high-contrast-readable. Prefer real phrases from the script over invented copy.
+- Stagger timings so no two overlays of the same type overlap; align each roughly to the sentence it reinforces using the supplied timestamps.
+- Timestamps are in milliseconds, strictly within [0, total duration]. Each overlay carries its own ~300ms fade in/out (start ~300ms before the cue, end ~300ms after).
+- Choose an "effect" that suits the type: "fade_slide_up" for kinetic_text, "slide_in_left" for lower_third, "fade_in" for cta_banner (you may vary tastefully).
+
+Respond ONLY with a valid JSON array of AnimationSpec objects — no markdown fences, no prose. All "text" values MUST be English.
 Schema: [{ "startMs": number, "endMs": number, "type": "kinetic_text"|"lower_third"|"cta_banner", "text": "string", "effect": "fade_in"|"fade_slide_up"|"slide_in_left" }]`;
 
 export async function generateAnimationSpec(params: {
-  scriptThai: string;
+  scriptEnglish: string;
   timedSegments: TimedSegment[];
   scenePlan: ScenePlan[];
-  hookThai: string;
+  hookEnglish: string;
   durationSeconds: number;
 }): Promise<AnimationSpec[]> {
-  const { scriptThai, timedSegments, scenePlan, hookThai, durationSeconds } = params;
+  const { scriptEnglish, timedSegments, scenePlan, hookEnglish, durationSeconds } = params;
 
-  if (!AI_CONFIG.claude.apiKey) {
+  // Use Gemini (not Anthropic) — the rest of the pipeline already runs on
+  // Gemini, so this avoids a separate Anthropic billing/credit dependency that
+  // was 400-ing ("credit balance too low") and forcing the default specs.
+  let apiKey: string;
+  try {
+    apiKey = requireGeminiApiKey();
+  } catch {
     return _defaultAnimationSpec(timedSegments, durationSeconds);
   }
 
-  const userMessage = `Thai script: "${scriptThai}"
-Hook (first 3s): "${hookThai}"
+  const userMessage = `English script: "${scriptEnglish}"
+Hook (first 3s): "${hookEnglish}"
 Total duration: ${durationSeconds}s
 
-Voice timeline (per sentence):
-${timedSegments.map((s) => `  [${(s.startSecond * 1000).toFixed(0)}ms–${(s.endSecond * 1000).toFixed(0)}ms] "${s.textThai}"`).join("\n")}
+Voice timeline (per sentence, English):
+${timedSegments.map((s) => `  [${(s.startSecond * 1000).toFixed(0)}ms–${(s.endSecond * 1000).toFixed(0)}ms] "${s.textEnglish ?? s.textThai}"`).join("\n")}
 
 Scene plan:
 ${scenePlan.map((s) => `  Scene ${s.sceneNumber} (${s.durationSeconds}s): ${s.visualDescriptionThai}`).join("\n")}
 
-Generate animation overlay specs in JSON.`;
+Generate ENGLISH animation overlay specs in JSON.`;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": AI_CONFIG.claude.apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: AI_CONFIG.claude.model,
-        max_tokens: 1024,
-        system: ANIMATION_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userMessage }],
-      }),
+    const { GoogleGenAI } = await import("@google/genai");
+    const ai = new GoogleGenAI({ apiKey });
+    const res = await ai.models.generateContent({
+      model: AI_CONFIG.gemini.textModel,
+      contents: `${ANIMATION_SYSTEM_PROMPT}\n\n${userMessage}`,
+      config: { responseMimeType: "application/json", temperature: 0.5 },
     });
-
-    if (!res.ok) throw new Error(`Claude API error: ${res.status}`);
-    const data = await res.json();
-    const raw = data.content?.[0]?.text ?? "";
-    const specs = JSON.parse(raw) as AnimationSpec[];
-    return Array.isArray(specs) ? specs : _defaultAnimationSpec(timedSegments, durationSeconds);
+    const raw = res.text ?? "";
+    const specs = JSON.parse(stripJsonFences(raw)) as AnimationSpec[];
+    return Array.isArray(specs) && specs.length > 0
+      ? specs
+      : _defaultAnimationSpec(timedSegments, durationSeconds);
   } catch (err) {
-    console.error("[animationService] Claude API failed, using defaults:", err);
+    console.error("[animationService] Gemini failed, using defaults:", err);
     return _defaultAnimationSpec(timedSegments, durationSeconds);
   }
+}
+
+/**
+ * Strip a leading/trailing markdown code fence (```json … ```) before parsing,
+ * sometimes adds despite the "no markdown" instruction, before JSON.parse.
+ */
+function stripJsonFences(raw: string): string {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return (fenced ? fenced[1] : trimmed).trim();
 }
 
 function _defaultAnimationSpec(segments: TimedSegment[], durationSeconds: number): AnimationSpec[] {
   const specs: AnimationSpec[] = [];
   const totalMs = durationSeconds * 1000;
 
-  if (segments[0]) {
+  // English text (motion graphics are always English). Fall back to Thai only
+  // if an English translation is somehow missing.
+  const firstText = (segments[0]?.textEnglish ?? segments[0]?.textThai ?? "").split(" ").slice(0, 4).join(" ");
+  if (segments[0] && firstText) {
     specs.push({
       startMs: Math.max(0, segments[0].startSecond * 1000 - 300),
       endMs: Math.min(totalMs, segments[0].endSecond * 1000 + 300),
       type: "kinetic_text",
-      text: segments[0].textThai.split(" ").slice(0, 4).join(" "),
+      text: firstText,
       effect: "fade_slide_up",
     });
   }
 
   const lastSeg = segments[segments.length - 1];
-  if (lastSeg) {
+  const lastText = (lastSeg?.textEnglish ?? lastSeg?.textThai ?? "").split(" ").slice(0, 4).join(" ");
+  if (lastSeg && lastText) {
     specs.push({
       startMs: Math.max(0, lastSeg.startSecond * 1000 - 200),
       endMs: totalMs,
       type: "cta_banner",
-      text: lastSeg.textThai.split(" ").slice(0, 4).join(" "),
+      text: lastText,
       effect: "fade_in",
     });
   }

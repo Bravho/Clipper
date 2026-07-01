@@ -16,9 +16,12 @@ const LANG_STYLE: Record<
   "th" | "en" | "zh",
   { fontFamily: string; color: string; fontSize: number; bottom: number; field: keyof TimedSegment }
 > = {
-  th: { fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", color: "#FFFFFF", fontSize: 52, bottom: 300, field: "textThai" },
-  en: { fontFamily: "Arial, Helvetica, sans-serif", color: "#FFFFFF", fontSize: 48, bottom: 200, field: "textEnglish" },
-  zh: { fontFamily: "'Microsoft YaHei', 'Noto Sans SC', sans-serif", color: "#FFFF00", fontSize: 42, bottom: 100, field: "textChinese" },
+  // Large/bold, phone-first sizes (1080x1920 reference; scaled per ratio). The
+  // stacked bottom margins keep Thai > English > Chinese clear of each other and
+  // above the very bottom edge.
+  th: { fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", color: "#FFFFFF", fontSize: 76, bottom: 320, field: "textThai" },
+  en: { fontFamily: "Arial, Helvetica, sans-serif", color: "#FFFFFF", fontSize: 68, bottom: 200, field: "textEnglish" },
+  zh: { fontFamily: "'Microsoft YaHei', 'Noto Sans SC', sans-serif", color: "#FFFF00", fontSize: 62, bottom: 90, field: "textChinese" },
 };
 
 /**
@@ -41,6 +44,11 @@ export function CaptionOverlay({
   const active = subtitleTimeline.find((s) => t >= s.startSecond && t <= s.endSecond);
   if (!active) return null;
 
+  // Subtle pop-in as each caption appears (first ~150ms of the segment), so
+  // captions feel kinetic rather than hard-cutting on/off.
+  const appear = Math.min(1, Math.max(0, (t - active.startSecond) / 0.15));
+  const popScale = 0.96 + 0.04 * appear;
+
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
       {subtitleLanguages.map((lang) => {
@@ -56,17 +64,32 @@ export function CaptionOverlay({
               right: 0,
               bottom: style.bottom * scale,
               textAlign: "center",
-              fontFamily: style.fontFamily,
-              fontSize: style.fontSize * scale,
-              lineHeight: 1.25,
-              color: style.color,
-              fontWeight: 700,
-              WebkitTextStroke: `${4 * scale}px black`,
-              textShadow: "2px 2px 4px rgba(0,0,0,0.8)",
               padding: `0 ${40 * scale}px`,
+              opacity: appear,
+              transform: `scale(${popScale})`,
+              transformOrigin: "center bottom",
             }}
           >
-            {text}
+            <span
+              style={{
+                display: "inline-block",
+                fontFamily: style.fontFamily,
+                fontSize: style.fontSize * scale,
+                lineHeight: 1.25,
+                color: style.color,
+                fontWeight: 800,
+                WebkitTextStroke: `${6 * scale}px black`,
+                paintOrder: "stroke fill",
+                textShadow: "3px 3px 6px rgba(0,0,0,0.9)",
+                // Readability plate behind the text — keeps the now-larger
+                // captions legible over bright/busy footage.
+                background: "rgba(0,0,0,0.42)",
+                borderRadius: `${18 * scale}px`,
+                padding: `${10 * scale}px ${26 * scale}px`,
+              }}
+            >
+              {text}
+            </span>
           </div>
         );
       })}

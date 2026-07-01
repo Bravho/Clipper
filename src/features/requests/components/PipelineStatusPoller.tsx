@@ -7,26 +7,30 @@ import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerati
 interface Props {
   requestId: string;
   currentStep: VideoGenerationStep;
+  /** Phase 7 — when "generating", keep polling for the background Travy render
+   * even after the job is Complete, so the Travy clip appears without a manual
+   * reload. */
+  tventVideoStatus?: string | null;
   onVideoGenStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
 }
 
-// Veo video generation takes a few minutes; poll less aggressively to avoid
-// hammering the Veo API. All other async steps (GPT, FFmpeg) complete
-// within ~30s so 5s is appropriate there.
-const VIDEO_GEN_POLL_INTERVAL_MS = 30_000;
+// All async steps (montage render, GPT, FFmpeg) complete within ~30s–2min, and
+// the status endpoint just reads the job, so a 5s poll is fine everywhere. (The
+// old 30s interval was a Veo-era throttle; Veo is no longer on the path.)
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
-export function PipelineStatusPoller({ requestId, currentStep, onVideoGenStatus }: Props) {
+export function PipelineStatusPoller({ requestId, currentStep, tventVideoStatus, onVideoGenStatus }: Props) {
   const router = useRouter();
   const onVideoGenStatusRef = useRef(onVideoGenStatus);
 
   useEffect(() => { onVideoGenStatusRef.current = onVideoGenStatus; }, [onVideoGenStatus]);
 
   useEffect(() => {
-    if (!POLLING_STEPS.includes(currentStep)) return;
+    const tventGenerating = tventVideoStatus === "generating";
+    if (!POLLING_STEPS.includes(currentStep) && !tventGenerating) return;
 
     const isVideoGenStep = currentStep === VideoGenerationStep.GeneratingBaseVideo;
-    const intervalMs = isVideoGenStep ? VIDEO_GEN_POLL_INTERVAL_MS : DEFAULT_POLL_INTERVAL_MS;
+    const intervalMs = DEFAULT_POLL_INTERVAL_MS;
 
     const interval = setInterval(async () => {
       try {
@@ -52,13 +56,19 @@ export function PipelineStatusPoller({ requestId, currentStep, onVideoGenStatus 
         if (newStep && newStep !== currentStep) {
           router.refresh();
         }
+        // Phase 7 — the Travy render runs in the background while the job is
+        // already Complete (no step change), so also refresh when its status
+        // flips (generating → ready/failed) to reveal the finished clip.
+        if (tventGenerating && data.tventVideoStatus && data.tventVideoStatus !== "generating") {
+          router.refresh();
+        }
       } catch {
         // network error — try again next interval
       }
     }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [requestId, currentStep, router]);
+  }, [requestId, currentStep, tventVideoStatus, router]);
 
   return null;
 }

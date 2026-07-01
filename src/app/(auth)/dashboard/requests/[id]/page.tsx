@@ -13,6 +13,7 @@ import {
   videoGenerationJobRepository,
 } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
+import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
@@ -66,6 +67,20 @@ export default async function RequestDetailPage({
     ? assets.find((a) => a.id === pipelineJob.baseVideoAssetId) ?? null
     : null;
 
+  // All rendered per-scene segments, in scene order, for the combined review
+  // (each scene video is shown + revised individually before "Approve all").
+  const sceneVideos = (pipelineJob?.sceneVideoAssetIds ?? [])
+    .map((assetId, index) => {
+      if (!assetId) return null;
+      const asset = assets.find((a) => a.id === assetId);
+      if (!asset?.storageUrl) return null;
+      return { sceneNumber: index + 1, sceneIndex: index, url: asset.storageUrl, assetId: asset.id };
+    })
+    .filter(
+      (v): v is { sceneNumber: number; sceneIndex: number; url: string; assetId: string } =>
+        v !== null
+    );
+
   // Latest generated cumulative video, derived independently of the current
   // step. Prefer the most recent completed per-scene cumulative asset; fall
   // back to the active baseVideoAssetId. Used to show the previously approved
@@ -85,14 +100,56 @@ export default async function RequestDetailPage({
     ? assets.find((a) => a.id === pipelineJob.animatedVideoAssetId) ?? null
     : null;
 
-  const finalClips = assets.filter(
-    (a) => a.assetType === AssetType.FinalClip && a.uploadStatus === AssetUploadStatus.Uploaded
+  // Only the CURRENT job's exports — not every FinalClip ever produced for this
+  // request. Building from the job's finalExport_* ids (deduped) prevents stale
+  // clips from earlier compose runs (wrong ratios / silent older renders) from
+  // showing up in the review UI.
+  const finalExportAssetIds = Array.from(
+    new Set(
+      [
+        pipelineJob?.finalExport_9_16_assetId,
+        pipelineJob?.finalExport_16_9_assetId,
+        pipelineJob?.finalExport_1_1_assetId,
+        pipelineJob?.finalExport_4_5_assetId,
+        pipelineJob?.finalExport_tvent_assetId,
+      ].filter((id): id is string => !!id)
+    )
   );
+  const finalClips = finalExportAssetIds
+    .map((id) => assets.find((a) => a.id === id))
+    .filter(
+      (a): a is NonNullable<typeof a> =>
+        !!a &&
+        a.assetType === AssetType.FinalClip &&
+        a.uploadStatus === AssetUploadStatus.Uploaded
+    );
+
+  // The base + final review use the PRIMARY distribution channel's aspect ratio
+  // (targetPlatforms[0]); the final review shows only this ratio (no selector).
+  const primaryPlatform = (request.targetPlatforms?.[0] as Platform) ?? Platform.TventApp;
+  const primaryRatio = PLATFORM_ASPECT_RATIOS[primaryPlatform] ?? null;
+
+  // Phase 7 — captioned primary-ratio preview (overlay review step) + Travy clip.
+  const captionedPrimaryAssetId =
+    primaryRatio === "9:16" ? pipelineJob?.captionedExport_9_16_assetId
+    : primaryRatio === "16:9" ? pipelineJob?.captionedExport_16_9_assetId
+    : primaryRatio === "1:1" ? pipelineJob?.captionedExport_1_1_assetId
+    : primaryRatio === "4:5" ? pipelineJob?.captionedExport_4_5_assetId
+    : null;
+  const overlayPreviewUrl = captionedPrimaryAssetId
+    ? assets.find((a) => a.id === captionedPrimaryAssetId)?.storageUrl ?? null
+    : null;
+  const tventClipUrl = pipelineJob?.finalExport_tvent_assetId
+    ? assets.find((a) => a.id === pipelineJob.finalExport_tvent_assetId)?.storageUrl ?? null
+    : null;
   const sourceAssets = assets.filter(
     (a) =>
       a.uploadStatus === AssetUploadStatus.Uploaded &&
       (a.assetType === AssetType.Image || a.assetType === AssetType.Video)
   );
+  // Canonical, index-stable ordering (images + clips) shared by the montage
+  // scene panels and the renderer — index N is the same media everywhere.
+  const orderedSourceAssets = orderSourceAssets(assets);
   const sourceImageOptions = sourceAssets
     .map((asset, sourceIndex) => ({ asset, sourceIndex }))
     .filter(({ asset }) => asset.assetType === AssetType.Image)
@@ -324,6 +381,7 @@ export default async function RequestDetailPage({
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 totalChannels={request.targetPlatforms.length}
                 sourceAssets={sourceAssets}
+                orderedAssets={orderedSourceAssets}
                 activeSceneIndex={activeSceneIndex}
               />
             </>
@@ -353,6 +411,7 @@ export default async function RequestDetailPage({
                 latestVideoUrl={latestVideoAsset?.storageUrl ?? null}
                 latestVideoAssetId={latestVideoAsset?.id ?? null}
                 sourceAssets={sourceAssets}
+                orderedAssets={orderedSourceAssets}
               />
             </>
           );
@@ -366,6 +425,7 @@ export default async function RequestDetailPage({
               failedAtStep={pipelineJob.failedAtStep}
               durationSeconds={effectiveDurationSeconds}
               totalChannels={request.targetPlatforms.length}
+              tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
             />
 
             {!isFailed && isGeneratingSceneDesign && (
@@ -398,7 +458,6 @@ export default async function RequestDetailPage({
                 isGeneratingVoice={false}
                 animatedVideoUrl={animatedVideoAsset?.storageUrl ?? null}
                 savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
-                savedSubtitleLanguages={pipelineJob.subtitleLanguages ?? null}
                 isAwaitingFinalApproval={false}
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
@@ -412,6 +471,7 @@ export default async function RequestDetailPage({
                 captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
                 captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
                 sourceAssets={sourceAssets}
+                orderedAssets={orderedSourceAssets}
                 activeSceneIndex={activeSceneIndex}
               />
             )}
@@ -422,6 +482,7 @@ export default async function RequestDetailPage({
                 requestId={id}
                 jobId={pipelineJob.id}
                 videoUrl={baseVideoAsset.storageUrl}
+                sceneVideos={sceneVideos}
                 isAwaitingApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingVideoApproval
                 }
@@ -436,10 +497,21 @@ export default async function RequestDetailPage({
                 isGeneratingVoice={false}
                 animatedVideoUrl={animatedVideoAsset?.storageUrl ?? null}
                 savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
-                savedSubtitleLanguages={pipelineJob.subtitleLanguages ?? null}
+                primaryRatio={primaryRatio}
                 isAwaitingFinalApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingFinalApproval
                 }
+                isAwaitingOverlayApproval={
+                  pipelineJob.currentStep === VideoGenerationStep.AwaitingOverlayApproval
+                }
+                isAwaitingAdditionalRatios={
+                  pipelineJob.currentStep === VideoGenerationStep.AwaitingAdditionalRatios
+                }
+                overlayPreviewUrl={overlayPreviewUrl}
+                savedSubtitleLanguages={pipelineJob.subtitleLanguages}
+                savedTemplate={pipelineJob.selectedMotionTemplate ?? "none"}
+                tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
+                tventClipUrl={tventClipUrl}
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 finalClips={finalClips}
@@ -452,6 +524,7 @@ export default async function RequestDetailPage({
                 captionEnglish={pipelineJob.approvedCaptionEnglish ?? pipelineJob.captionEnglish}
                 captionChinese={pipelineJob.approvedCaptionChinese ?? pipelineJob.captionChinese}
                 sourceAssets={sourceAssets}
+                orderedAssets={orderedSourceAssets}
                 activeSceneIndex={activeSceneIndex}
               />
             )}

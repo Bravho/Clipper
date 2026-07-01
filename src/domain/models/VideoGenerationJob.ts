@@ -161,13 +161,42 @@ export interface VideoGenerationJob {
    */
   subtitleLanguages: ("th" | "en" | "zh")[];
 
-  // Step 4: Final exports
+  // Step 4: Final exports (merged voice+music masters, per ratio — NO captions).
+  // These are the un-captioned masters. The Phase-7 overlay step composites the
+  // subtitle/motion-graphic layer ON TOP of these into the captionedExport_*
+  // assets below, leaving the masters intact (so the Travy EN+ZH render and any
+  // overlay re-render always start from a clean master).
   finalExport_9_16_assetId: string | null;
   finalExport_16_9_assetId: string | null;
   finalExport_1_1_assetId: string | null;
   finalExport_4_5_assetId: string | null;
-  /** Tvent-specific 9:16 export, always with English + Chinese subtitles. */
+  /** Travy (Tvent) export, always with English + Chinese subtitles. Rendered
+   * automatically in the background after the overlay step is approved. */
   finalExport_tvent_assetId: string | null;
+
+  // Step 4.5: Captioned exports (Phase 7) — the delivered videos, = the merged
+  // master for that ratio with the selected-language subtitle + motion-graphic
+  // overlay composited on top. Null until the overlay step renders that ratio.
+  captionedExport_9_16_assetId?: string | null;
+  captionedExport_16_9_assetId?: string | null;
+  captionedExport_1_1_assetId?: string | null;
+  captionedExport_4_5_assetId?: string | null;
+
+  /**
+   * Status of the automatic background Travy (EN+ZH) render kicked off when the
+   * overlay step is approved. Drives the "generating Travy video" spinner; the
+   * Travy clip (finalExport_tvent_assetId) becomes viewable once "ready". The
+   * render cannot be cancelled by the requester. Absent/"idle" before approval.
+   */
+  tventVideoStatus?: "idle" | "generating" | "ready" | "failed" | null;
+
+  /**
+   * Motion-graphic template id (Phase 7) chosen by the requester at the
+   * merged-review step, applied when the styled/captioned video is rendered.
+   * "none" (default) = clean full-bleed video + subtitles only. See
+   * `src/config/motionTemplates.ts`.
+   */
+  selectedMotionTemplate?: string | null;
 
   failedAtStep: VideoGenerationStep | null;
 

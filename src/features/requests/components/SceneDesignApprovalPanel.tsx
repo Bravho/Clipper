@@ -3,10 +3,12 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
-import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
+import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { AssetType } from "@/domain/enums/AssetType";
 import { calcPipelineCost, PIPELINE_STEP_COSTS } from "@/config/credits";
+import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
 
 interface SceneDesignApprovalPanelProps {
   requestId: string;
@@ -19,6 +21,8 @@ interface SceneDesignApprovalPanelProps {
   voiceRecordingAssetId: string | null;
   totalChannels: number;
   sourceAssets: UploadedAsset[];
+  /** Canonical, index-stable source media (images + clips). */
+  orderedAssets: OrderedSourceAsset[];
   activeSceneIndex?: number;
 }
 
@@ -92,6 +96,38 @@ function scaleScenesToDuration(scenes: ScenePlan[], durationSeconds: number): Sc
   });
 }
 
+/** Even-split duration allocation, remainder on the last asset; min 1s each. */
+function allocateDurations(count: number, totalSeconds: number): number[] {
+  if (count <= 0) return [];
+  const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : count;
+  const per = Math.max(1, Math.floor(total / count));
+  const arr = new Array<number>(count).fill(per);
+  const remainder = total - per * count;
+  if (remainder > 0) arr[count - 1] = per + remainder;
+  return arr;
+}
+
+/** Redistribute a scene's duration across its montage assets (keeps the
+ *  per-asset durations summing to the scene length the user set). */
+function reallocateSceneAssets(scene: ScenePlan): ScenePlan {
+  if (!scene.assets || scene.assets.length === 0) return scene;
+  const durations = allocateDurations(scene.assets.length, scene.durationSeconds);
+  return {
+    ...scene,
+    assets: scene.assets.map((a, i) => ({ ...a, durationSeconds: durations[i] ?? 1 })),
+  };
+}
+
+/** On load, montage scenes (those carrying `assets`) drop `imageIndexes` so the
+ *  legacy Veo morph/duration rules stay dormant, and get assets resized. */
+function normalizeMontageScenes(scenes: ScenePlan[]): ScenePlan[] {
+  return scenes.map((scene) =>
+    scene.assets && scene.assets.length > 0
+      ? reallocateSceneAssets({ ...scene, imageIndexes: [] })
+      : scene
+  );
+}
+
 export function SceneDesignApprovalPanel({
   requestId,
   jobId,
@@ -103,13 +139,14 @@ export function SceneDesignApprovalPanel({
   voiceRecordingAssetId,
   totalChannels,
   sourceAssets,
+  orderedAssets,
   activeSceneIndex = 0,
 }: SceneDesignApprovalPanelProps) {
   const router = useRouter();
   const submittedDuration = clampDuration(voiceDurationSeconds ?? initialDurationSeconds);
   const [durationSeconds, setDurationSeconds] = useState(submittedDuration);
   const [scenes, setScenes] = useState<ScenePlan[]>(() =>
-    scaleScenesToDuration(initialScenes, submittedDuration)
+    normalizeMontageScenes(scaleScenesToDuration(initialScenes, submittedDuration))
   );
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,13 +156,6 @@ export function SceneDesignApprovalPanel({
     () => calcPipelineCost(durationSeconds, totalChannels),
     [durationSeconds, totalChannels]
   );
-  const sourceImageOptions = useMemo(
-    () =>
-      sourceAssets
-        .map((asset, sourceIndex) => ({ asset, sourceIndex }))
-        .filter(({ asset }) => asset.assetType === AssetType.Image),
-    [sourceAssets]
-  );
 
   const updateScene = (index: number, patch: Partial<ScenePlan>) => {
     setScenes((prev) => prev.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
@@ -134,36 +164,41 @@ export function SceneDesignApprovalPanel({
   const updateDuration = (value: number) => {
     const nextDuration = clampDuration(value);
     setDurationSeconds(nextDuration);
-    setScenes((prev) => scaleScenesToDuration(prev, nextDuration));
+    setScenes((prev) => scaleScenesToDuration(prev, nextDuration).map(reallocateSceneAssets));
   };
 
-  const toggleSceneImage = (sceneIndex: number, sourceIndex: number) => {
+  /** Edit a montage scene's per-scene duration and redistribute it across its
+   *  selected assets so the rendered scene length matches what's shown. */
+  const updateSceneDuration = (index: number, seconds: number) => {
     setScenes((prev) =>
-      prev.map((scene, index) => {
-        if (index !== sceneIndex) return scene;
-
-        const current = getInitialSceneImages(scene);
-        const imageIndexes = current.includes(sourceIndex)
-          ? current.filter((idx) => idx !== sourceIndex)
-          : [...current, sourceIndex].slice(0, 2);
-
-        return {
-          ...scene,
-          imageIndexes,
-          durationSeconds: imageIndexes.length === 2 ? 8 : scene.durationSeconds,
-        };
-      })
+      prev.map((scene, i) =>
+        i === index ? reallocateSceneAssets({ ...scene, durationSeconds: Math.max(1, seconds) }) : scene
+      )
     );
+  };
+
+  /** Persist montage asset edits: keep scene.assets, clear imageIndexes so the
+   *  legacy Veo morph rules stay dormant, and keep the scene length in sync. */
+  const updateSceneAssets = (index: number, assets: MontageSceneAsset[]) => {
+    const total = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
+    updateScene(index, {
+      assets,
+      imageIndexes: [],
+      ...(total > 0 ? { durationSeconds: total } : {}),
+    });
   };
 
   const handleApprove = async () => {
     setIsApproving(true);
     setError(null);
     try {
+      // Belt-and-suspenders: ensure every montage scene's per-asset durations
+      // sum to its scene length before the renderer consumes them.
+      const scenePlan = scenes.map(reallocateSceneAssets);
       const res = await fetch(`/api/requests/${requestId}/scene-design/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, scenePlan: scenes, durationSeconds }),
+        body: JSON.stringify({ jobId, scenePlan, durationSeconds }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -223,7 +258,7 @@ export function SceneDesignApprovalPanel({
             </p>
             <audio
               key={voiceRecordingAssetId ?? voiceRecordingUrl}
-              src={`${voiceRecordingUrl}${voiceRecordingUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(voiceRecordingAssetId ?? voiceRecordingUrl)}`}
+              src={voiceRecordingUrl}
               controls
               preload="metadata"
               className="w-full"
@@ -311,11 +346,8 @@ export function SceneDesignApprovalPanel({
                   type="number"
                   min={1}
                   value={scene.durationSeconds}
-                  disabled={getInitialSceneImages(scene).length === 2}
-                  onChange={(e) =>
-                    updateScene(sceneIndex, { durationSeconds: Number(e.target.value) || 1 })
-                  }
-                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 disabled:bg-slate-100 disabled:text-slate-400"
+                  onChange={(e) => updateSceneDuration(sceneIndex, Number(e.target.value) || 1)}
+                  className="w-20 rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600"
                 />
                 <span className="text-xs text-slate-400">seconds</span>
               </div>
@@ -327,48 +359,12 @@ export function SceneDesignApprovalPanel({
                 rows={3}
                 className={`${ta} text-sm text-slate-700`}
               />
-              {sourceImageOptions.length > 0 && (
-                <div className="mt-3">
-                  <p className="mb-2 text-xs font-medium text-slate-500">
-                    Uploaded images for this scene (max 2)
-                  </p>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {sourceImageOptions.map(({ asset, sourceIndex }) => {
-                      const selected = getInitialSceneImages(scene).includes(sourceIndex);
-                      const maxSelected = getInitialSceneImages(scene).length >= 2 && !selected;
-                      const thumbSrc = asset.thumbnailUrl || asset.storageUrl;
-
-                      return (
-                        <button
-                          type="button"
-                          key={asset.id}
-                          disabled={maxSelected}
-                          onClick={() => toggleSceneImage(sceneIndex, sourceIndex)}
-                          className={`overflow-hidden rounded-md border text-left transition ${
-                            selected
-                              ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
-                              : "border-slate-200 bg-white hover:border-blue-200"
-                          } disabled:cursor-not-allowed disabled:opacity-40`}
-                        >
-                          <div className="aspect-video bg-slate-100">
-                            <img src={thumbSrc} alt={asset.fileName} className="h-full w-full object-cover" />
-                          </div>
-                          <div className="px-2 py-1">
-                            <p className="truncate text-xs text-slate-600">
-                              {selected ? "Selected" : "Image"} {sourceIndex + 1}
-                            </p>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {getInitialSceneImages(scene).length === 2 && (
-                    <p className="mt-1 text-xs text-blue-600">
-                      Two images selected: scene time is fixed at 8 seconds for morphing.
-                    </p>
-                  )}
-                </div>
-              )}
+              <MontageSceneAssetsEditor
+                orderedAssets={orderedAssets}
+                assets={scene.assets ?? []}
+                sceneDurationSeconds={scene.durationSeconds}
+                onChange={(assets) => updateSceneAssets(sceneIndex, assets)}
+              />
             </div>
           ))}
         </div>

@@ -45,12 +45,17 @@ export interface ComposeVideoParams {
   targetRatios?: VideoRatio[];
   assSubtitlesContent?: string;
   /**
-   * When set, also render a dedicated 9:16 export for the Tvent App using
-   * this (always English + Chinese) subtitle content, separate from the
-   * general 9:16 export's `assSubtitlesContent`. Result is returned under
-   * the "tvent" key in `exports`.
+   * When set, also render a dedicated export for the Travy App using this
+   * (always English + Chinese) subtitle content, separate from the general
+   * export's `assSubtitlesContent`. Result is returned under the "tvent" key
+   * in `exports`. The export uses `tventRatio` (the primary channel's ratio).
    */
   assSubtitlesContentTvent?: string;
+  /**
+   * Aspect ratio for the dedicated Travy App export — the primary channel's
+   * ratio (so Travy matches the primary, not a forced 9:16). Defaults to "9:16".
+   */
+  tventRatio?: VideoRatio;
   /**
    * Phase 4 — Remotion-rendered transparent overlay clip (captions +
    * motion graphics) per ratio, keyed by `VideoRatio`. When present for a
@@ -99,66 +104,64 @@ async function uploadToSpaces(
   );
 }
 
+/** Fallback compose duration when the voice track can't be probed. */
+export const DEFAULT_COMPOSE_DURATION_SECONDS = 15;
+/** Background-music bed level (pre-ducking), 0..1. */
+export const MUSIC_BED_VOLUME = 0.3;
 /**
- * Builds standard SRT file if ASS content is not provided (fallback).
+ * Short music-only lead-in before the voiceover starts, so the clip opens with
+ * the background track for a beat before narration. The voice is delayed by
+ * this amount and the export duration is extended to match (no voice clipped).
  */
-async function buildBilingualSrt(
-  scriptThai: string,
-  scriptEnglish: string,
-  hookThai: string,
-  outputPath: string
-): Promise<void> {
-  const TOTAL_MS = 15_000;
-  const HOOK_MS = 3_000;
+export const MUSIC_LEAD_IN_SECONDS = 0.6;
 
-  const lines: string[] = [];
-  let index = 1;
+/**
+ * Clamp a probed audio/video duration to a sane positive value, falling back
+ * to {@link DEFAULT_COMPOSE_DURATION_SECONDS} when the probe failed (<= 0 / NaN).
+ */
+export function resolveComposeDuration(probedSeconds: number | undefined): number {
+  return probedSeconds !== undefined && Number.isFinite(probedSeconds) && probedSeconds > 0
+    ? probedSeconds
+    : DEFAULT_COMPOSE_DURATION_SECONDS;
+}
 
-  function msToSrtTime(ms: number): string {
-    const s = Math.floor(ms / 1000);
-    const m = Math.floor(s / 60);
-    const h = Math.floor(m / 60);
-    const ms2 = Math.floor(ms % 1000);
-    return `${String(h).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")},${String(ms2).padStart(3, "0")}`;
-  }
-
-  // Hook subtitle (0–3s)
-  lines.push(
-    `${index++}`,
-    `${msToSrtTime(0)} --> ${msToSrtTime(HOOK_MS)}`,
-    `${hookThai}`,
-    ``,
-    ``
-  );
-
-  const thaiWords = scriptThai.trim().split(/\s+/);
-  const engWords = scriptEnglish.trim().split(/\s+/);
-  const SEGMENTS = 3;
-  const segMs = (TOTAL_MS - HOOK_MS) / SEGMENTS;
-
-  for (let i = 0; i < SEGMENTS; i++) {
-    const thaiStart = Math.floor((thaiWords.length / SEGMENTS) * i);
-    const thaiEnd = Math.floor((thaiWords.length / SEGMENTS) * (i + 1));
-    const engStart = Math.floor((engWords.length / SEGMENTS) * i);
-    const engEnd = Math.floor((engWords.length / SEGMENTS) * (i + 1));
-
-    const startMs = HOOK_MS + segMs * i;
-    const endMs = HOOK_MS + segMs * (i + 1);
-
-    const thaiLine = thaiWords.slice(thaiStart, thaiEnd).join(" ");
-    const engLine = engWords.slice(engStart, engEnd).join(" ");
-
-    lines.push(
-      `${index++}`,
-      `${msToSrtTime(startMs)} --> ${msToSrtTime(endMs)}`,
-      `${thaiLine}`,
-      `${engLine}`,
-      ``,
-      ``
-    );
-  }
-
-  await fs.writeFile(outputPath, lines.join("\n"), "utf-8");
+/**
+ * Build the `filter_complex` audio chain that mixes a looping background-music
+ * bed under the voiceover with sidechain ducking, so the music drops under
+ * speech and recovers in the gaps.
+ *
+ * `durationSeconds` should be the MEASURED voice/video length (Phase 6) — the
+ * music is looped then trimmed to that length so it covers the whole clip
+ * instead of the old hardcoded 15s window. Returns the filter strings to be
+ * joined into `filter_complex`; the final mix is exposed as `[aout]`.
+ */
+export function buildMusicMixFilters(params: {
+  voiceInputIdx?: number;
+  musicInputIdx: number;
+  durationSeconds: number;
+  musicVolume?: number;
+  leadInSeconds?: number;
+}): string[] {
+  const voiceIdx = params.voiceInputIdx ?? 1;
+  const leadIn = params.leadInSeconds ?? MUSIC_LEAD_IN_SECONDS;
+  // The voice is delayed by the lead-in, so the looped music must cover the
+  // voice length PLUS the lead-in to run under the whole clip.
+  const totalDur = (resolveComposeDuration(params.durationSeconds) + leadIn).toFixed(3);
+  const leadMs = Math.round(leadIn * 1000);
+  const vol = params.musicVolume ?? MUSIC_BED_VOLUME;
+  return [
+    // Delay the (loudness-normalised) voice by the lead-in so the clip opens on
+    // music alone; the delayed copy also keys the sidechain, so ducking only
+    // kicks in once the voice actually starts.
+    `[${voiceIdx}:a]loudnorm=I=-16:LRA=11:TP=-1.5,adelay=${leadMs}:all=1,asplit=2[sc][voice]`,
+    `[${params.musicInputIdx}:a]aloop=-1:size=2147483647,atrim=0:${totalDur},asetpts=PTS-STARTPTS,volume=${vol}[music]`,
+    // Gentle, quick-recover ducking (Phase 6): a fast attack drops the music
+    // promptly when speech starts and a fast release (300ms) lets it return
+    // between sentences. ratio=4 keeps the bed clearly audible UNDER speech
+    // (was ratio=8, which dropped it too far) while narration stays on top.
+    `[music][sc]sidechaincompress=threshold=0.03:ratio=4:attack=20:release=300[music_ducked]`,
+    `[voice][music_ducked]amix=inputs=2:normalize=0,alimiter=limit=0.95:level=false[aout]`,
+  ];
 }
 
 /**
@@ -222,9 +225,11 @@ async function composeSingleRatio(params: {
   musicPath?: string;
   coordinates?: ImageCoordinates;
   overlayPath?: string;
+  durationSeconds?: number;
 }): Promise<void> {
   const { videoPath, audioPath, subsPath, isAss, ratio, outputPath, musicPath, coordinates, overlayPath } = params;
   const ffmpeg = AI_CONFIG.ffmpeg.path;
+  const composeDuration = resolveComposeDuration(params.durationSeconds);
 
   const cropAndScaleFilter = getSmartCropFilter(ratio, coordinates);
 
@@ -253,8 +258,16 @@ async function composeSingleRatio(params: {
     musicInputIdx = nextInput++;
   }
 
+  // With music we add a short music-only lead-in (the voice is delayed), which
+  // extends the clip by the lead-in. Freeze the base's last frame past the end
+  // so the (now-delayed) voice tail is never clipped by `-shortest`.
+  const hasMusic = musicInputIdx >= 0;
+  const leadIn = hasMusic ? MUSIC_LEAD_IN_SECONDS : 0;
+  const outputDuration = composeDuration + leadIn;
+
   const filters: string[] = [];
-  filters.push(`[0:v]${cropAndScaleFilter}${subtitleFilter}[base]`);
+  const videoTail = leadIn > 0 ? `,tpad=stop_mode=clone:stop_duration=${(leadIn + 1).toFixed(3)}` : "";
+  filters.push(`[0:v]${cropAndScaleFilter}${subtitleFilter}${videoTail}[base]`);
   let videoOut = "[base]";
 
   if (overlayInputIdx >= 0) {
@@ -265,10 +278,13 @@ async function composeSingleRatio(params: {
 
   let audioOut = "1:a";
   if (musicInputIdx >= 0) {
-    filters.push("[1:a]loudnorm=I=-16:LRA=11:TP=-1.5,asplit=2[sc][voice]");
-    filters.push(`[${musicInputIdx}:a]aloop=-1:size=2147483647,atrim=0:15,asetpts=PTS-STARTPTS,volume=0.3[music]`);
-    filters.push("[music][sc]sidechaincompress=threshold=0.02:ratio=8:attack=80:release=1500[music_ducked]");
-    filters.push("[voice][music_ducked]amix=inputs=2:normalize=0,alimiter=limit=0.95:level=false[aout]");
+    filters.push(
+      ...buildMusicMixFilters({
+        musicInputIdx,
+        durationSeconds: composeDuration,
+        leadInSeconds: leadIn,
+      })
+    );
     audioOut = "[aout]";
   }
 
@@ -280,7 +296,9 @@ async function composeSingleRatio(params: {
     "-c:a", "aac",
     "-ar", "48000",
     "-shortest",
-    "-t", "15",
+    // Cap to the measured voice length + music lead-in (Phase 6) instead of a
+    // hardcoded 15s — longer clips aren't truncated, shorter ones aren't padded.
+    "-t", outputDuration.toFixed(3),
     outputPath
   );
 
@@ -354,7 +372,7 @@ export async function renderOverlayPreview(params: {
 export async function concatVideos(
   inputStorageKeys: string[],
   outputStorageKey: string
-): Promise<{ storageKey: string; storageUrl: string }> {
+): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
   if (inputStorageKeys.length === 0) {
     throw new Error("concatVideos: at least one input storage key is required");
   }
@@ -365,7 +383,12 @@ export async function concatVideos(
       const single = path.join(tmpDir, "single.mp4");
       await downloadFromSpaces(inputStorageKeys[0], single);
       await uploadToSpaces(single, outputStorageKey);
-      return { storageKey: outputStorageKey, storageUrl: spacesPublicUrl(outputStorageKey) };
+      const { size } = await fs.stat(single);
+      return {
+        storageKey: outputStorageKey,
+        storageUrl: spacesPublicUrl(outputStorageKey),
+        fileSizeBytes: size,
+      };
     }
 
     const ffmpeg = AI_CONFIG.ffmpeg.path;
@@ -408,7 +431,190 @@ export async function concatVideos(
     }
 
     await uploadToSpaces(outPath, outputStorageKey);
-    return { storageKey: outputStorageKey, storageUrl: spacesPublicUrl(outputStorageKey) };
+    const { size } = await fs.stat(outPath);
+    return {
+      storageKey: outputStorageKey,
+      storageUrl: spacesPublicUrl(outputStorageKey),
+      fileSizeBytes: size,
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/** Probe a local media file's duration (seconds) via ffprobe. 0 on failure. */
+async function probeDurationSeconds(filePath: string): Promise<number> {
+  const ffmpeg = AI_CONFIG.ffmpeg.path ?? "ffmpeg";
+  const ffprobe = ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) =>
+    m.toLowerCase().endsWith(".exe") ? "ffprobe.exe" : "ffprobe"
+  );
+  try {
+    const { stdout } = await execFileAsync(ffprobe, [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+    const d = parseFloat(stdout.trim());
+    return Number.isFinite(d) && d > 0 ? d : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Phase 7 — composite a transparent subtitle/motion-graphic overlay ON TOP of an
+ * already-finished master clip (the merged voice+music export for one ratio),
+ * WITHOUT re-cropping or re-mixing. The master's video is the base layer and its
+ * audio is stream-copied through untouched (`-c:a copy`), so what ships is the
+ * exact master the requester approved, plus the captions/graphics on top.
+ *
+ * The overlay (`overlayStorageKey`) is the alpha-channel `.webm` produced by
+ * `remotionService.renderOverlay` at the SAME ratio's dimensions; `scale2ref`
+ * defensively matches it to the master frame in case of any off-by-pixel drift.
+ *
+ * Returns the stored captioned clip (a NEW key — the master is left intact).
+ */
+export async function overlayOnMaster(params: {
+  masterStorageKey: string;
+  overlayStorageKey: string;
+  outputStorageKey: string;
+}): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+  const { masterStorageKey, overlayStorageKey, outputStorageKey } = params;
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-overlay-"));
+  try {
+    const ffmpeg = AI_CONFIG.ffmpeg.path;
+    const masterPath = path.join(tmpDir, "master.mp4");
+    const overlayPath = path.join(tmpDir, "overlay.webm");
+    const outPath = path.join(tmpDir, "out.mp4");
+
+    await Promise.all([
+      downloadFromSpaces(masterStorageKey, masterPath),
+      downloadFromSpaces(overlayStorageKey, overlayPath),
+    ]);
+
+    await execFileAsync(ffmpeg, [
+      "-y",
+      "-i", masterPath,
+      "-i", overlayPath,
+      // Alpha-composite the transparent overlay onto the master. The overlay is
+      // rendered at the SAME ratio dimensions as the master, so no scaling is
+      // needed — we drop the old `scale2ref` hop (it was stripping the alpha
+      // plane, which made the overlay opaque and blacked out the video). We
+      // force the overlay into a packed-alpha format first so `overlay` honors
+      // its transparency.
+      "-filter_complex",
+      "[1:v]format=yuva420p[ov];[0:v][ov]overlay=format=auto:shortest=1[v]",
+      "-map", "[v]",
+      // Copy the master's audio (voice + ducked music) through untouched.
+      "-map", "0:a?",
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-preset", "veryfast",
+      "-c:a", "copy",
+      "-movflags", "+faststart",
+      outPath,
+    ]);
+
+    await uploadToSpaces(outPath, outputStorageKey);
+    const { size } = await fs.stat(outPath);
+    return {
+      storageKey: outputStorageKey,
+      storageUrl: spacesPublicUrl(outputStorageKey),
+      fileSizeBytes: size,
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Concatenate per-scene montage segments with a short cross-dissolve at each
+ * scene join (ffmpeg `xfade`), so scene boundaries dissolve like the within-scene
+ * cuts instead of hard-switching.
+ *
+ * `xfade` overlaps each join by `fadeSeconds`, which shortens the result by
+ * `fadeSeconds*(n-1)`. The downstream compose step muxes the voiceover with
+ * `-shortest`, and the animation/overlay duration is keyed off the measured
+ * voice length (NOT this base), so we freeze the final frame for a short pad to
+ * guarantee the base outlasts the voice — the voice is never clipped, and only
+ * the frozen frames beyond the voice (which compose drops) are added.
+ *
+ * Falls back to a hard-cut concat (`concatVideos`) if probing or the xfade
+ * filtergraph fails, so the pipeline always produces a base video.
+ */
+export async function concatVideosWithCrossfade(
+  inputStorageKeys: string[],
+  outputStorageKey: string,
+  fadeSeconds = 0.2
+): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+  if (inputStorageKeys.length <= 1) {
+    return concatVideos(inputStorageKeys, outputStorageKey);
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-xfade-"));
+  try {
+    const ffmpeg = AI_CONFIG.ffmpeg.path;
+    const inputPaths: string[] = [];
+    for (let i = 0; i < inputStorageKeys.length; i++) {
+      const dest = path.join(tmpDir, `in-${i}.mp4`);
+      await downloadFromSpaces(inputStorageKeys[i], dest);
+      inputPaths.push(dest);
+    }
+
+    const durations = await Promise.all(inputPaths.map((p) => probeDurationSeconds(p)));
+    if (durations.some((d) => d <= 0)) {
+      throw new Error("xfade concat: could not probe one or more segment durations");
+    }
+
+    // Never dissolve longer than half of the shortest segment.
+    const fade = Math.max(0.05, Math.min(fadeSeconds, ...durations.map((d) => d / 2)));
+
+    const inputArgs: string[] = [];
+    inputPaths.forEach((p) => inputArgs.push("-i", p));
+
+    // Chain xfade pairwise. offset for join k = (running accumulated duration) - fade.
+    const filters: string[] = [];
+    let prevLabel = "0:v";
+    let accDuration = durations[0];
+    for (let i = 1; i < inputPaths.length; i++) {
+      const offset = Math.max(0, accDuration - fade);
+      const outLabel = i === inputPaths.length - 1 ? "vxf" : `vx${i}`;
+      filters.push(
+        `[${prevLabel}][${i}:v]xfade=transition=fade:duration=${fade.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`
+      );
+      prevLabel = outLabel;
+      accDuration = accDuration + durations[i] - fade;
+    }
+    // Freeze the final frame so the base reliably outlasts the voiceover.
+    const padSeconds = fade * (inputPaths.length - 1) + 1;
+    filters.push(
+      `[${prevLabel}]tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(3)},format=yuv420p,fps=30[vout]`
+    );
+
+    const outPath = path.join(tmpDir, "xfade-out.mp4");
+    await execFileAsync(ffmpeg, [
+      "-y",
+      ...inputArgs,
+      "-filter_complex", filters.join(";"),
+      "-map", "[vout]",
+      "-c:v", "libx264",
+      "-pix_fmt", "yuv420p",
+      "-r", "30",
+      "-an",
+      outPath,
+    ]);
+
+    await uploadToSpaces(outPath, outputStorageKey);
+    const { size } = await fs.stat(outPath);
+    return {
+      storageKey: outputStorageKey,
+      storageUrl: spacesPublicUrl(outputStorageKey),
+      fileSizeBytes: size,
+    };
+  } catch (err) {
+    console.error("[ffmpeg] crossfade concat failed, falling back to hard-cut concat:", err);
+    return concatVideos(inputStorageKeys, outputStorageKey);
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
@@ -427,7 +633,6 @@ export async function composeAndExport(
   try {
     const videoPath = path.join(tmpDir, "base.mp4");
     const audioPath = path.join(tmpDir, "voice.wav");
-    const subsPath = params.assSubtitlesContent ? path.join(tmpDir, "subs.ass") : path.join(tmpDir, "subs.srt");
 
     const musicPath = params.musicTrackId
       ? path.join(process.cwd(), "public", "music", `${params.musicTrackId}.mp3`)
@@ -438,16 +643,17 @@ export async function composeAndExport(
       downloadFromSpaces(params.audioStorageKey, audioPath),
     ]);
 
-    // Build subtitle file (ASS or SRT)
+    // Phase 6: probe the real voice length so the export duration + music bed
+    // are dynamic (no hardcoded 15s window).
+    const composeDuration = resolveComposeDuration(await probeDurationSeconds(audioPath));
+
+    // Burned-in subtitles are deferred to Phase 7 (accurate timestamp/timeline
+    // alignment). For now we only burn captions if the caller explicitly passes
+    // ASS content; otherwise no subtitles are rendered.
+    let subsPath: string | undefined;
     if (params.assSubtitlesContent) {
+      subsPath = path.join(tmpDir, "subs.ass");
       await fs.writeFile(subsPath, params.assSubtitlesContent, "utf-8");
-    } else {
-      await buildBilingualSrt(
-        params.scriptThai,
-        params.scriptEnglish,
-        params.hookThai,
-        subsPath
-      );
     }
 
     const targetRatios = params.targetRatios ?? ["9:16", "16:9", "1:1", "4:5"];
@@ -479,6 +685,7 @@ export async function composeAndExport(
           musicPath,
           coordinates: params.coordinates,
           overlayPath: overlayPaths[ratio],
+          durationSeconds: composeDuration,
         });
 
         const storageKey = buildFinalClipKey(params.userId, params.requestId, ratio);
@@ -487,23 +694,24 @@ export async function composeAndExport(
       })
     );
 
-    // Dedicated Tvent App 9:16 export. If the 9:16 Remotion overlay already
-    // covers Tvent's fixed English+Chinese subtitle requirement
-    // (`overlayCoversTventSubtitles`), reuse that overlay instead of
-    // burning `assSubtitlesContentTvent` via ASS. Otherwise, only run an
-    // extra ASS-based pass when its subtitle content actually differs from
-    // the general 9:16 export — avoids a redundant FFmpeg pass when the
-    // requester also chose English + Chinese.
-    if (overlayPaths["9:16"] && params.overlayCoversTventSubtitles) {
+    // Dedicated Travy App export at the PRIMARY channel's ratio. If that ratio's
+    // Remotion overlay already covers Travy's fixed English+Chinese subtitle
+    // requirement (`overlayCoversTventSubtitles`), reuse that overlay instead of
+    // burning `assSubtitlesContentTvent` via ASS. Otherwise, only run an extra
+    // ASS-based pass when its subtitle content actually differs from the general
+    // export — avoids a redundant FFmpeg pass when the requester also chose EN+ZH.
+    const tventRatio: VideoRatio = params.tventRatio ?? "9:16";
+    if (overlayPaths[tventRatio] && params.overlayCoversTventSubtitles) {
       const outPath = path.join(tmpDir, "out-tvent.mp4");
       await composeSingleRatio({
         videoPath,
         audioPath,
-        ratio: "9:16",
+        ratio: tventRatio,
         outputPath: outPath,
         musicPath,
         coordinates: params.coordinates,
-        overlayPath: overlayPaths["9:16"],
+        overlayPath: overlayPaths[tventRatio],
+        durationSeconds: composeDuration,
       });
 
       const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");
@@ -522,12 +730,13 @@ export async function composeAndExport(
         audioPath,
         subsPath: tventSubsPath,
         isAss: true,
-        ratio: "9:16",
+        ratio: tventRatio,
         outputPath: outPath,
         musicPath,
         coordinates: params.coordinates,
-        // Don't reuse the general 9:16 overlay here — its captions may not
-        // be EN+ZH, and burning both ASS + overlay captions would duplicate text.
+        durationSeconds: composeDuration,
+        // Don't reuse the general overlay here — its captions may not be EN+ZH,
+        // and burning both ASS + overlay captions would duplicate text.
       });
 
       const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");
