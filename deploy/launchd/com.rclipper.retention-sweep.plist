@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily storage/data-retention sweep (scripts/retention-sweep.js).
+
+  START IN DRY-RUN. The ProgramArguments below pass the dry-run flag so nothing
+  is deleted until you have reviewed a run's output. To go live, remove the
+  dry-run flag string element and re-bootstrap the agent.
+
+  Install as a USER LaunchAgent:
+
+    cp deploy/launchd/com.rclipper.retention-sweep.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rclipper.retention-sweep.plist
+    launchctl enable gui/$(id -u)/com.rclipper.retention-sweep
+    launchctl kickstart -k gui/$(id -u)/com.rclipper.retention-sweep   # run once now
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rclipper.retention-sweep</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/admin/Projects/Video_Processor_RClipper/scripts/run-retention-sweep.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/admin/Projects/Video_Processor_RClipper</string>
+
+  <!-- Run every day at 03:30 local time. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/admin/Library/Logs/rclipper/retention-sweep.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/admin/Library/Logs/rclipper/retention-sweep.err.log</string>
+</dict>
+</plist>

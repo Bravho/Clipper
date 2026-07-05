@@ -13,6 +13,15 @@ declare global {
   var __mockVideoGenerationJobStore: Map<string, VideoGenerationJob> | undefined;
   // eslint-disable-next-line no-var
   var __mockVideoGenerationStepHistory: VideoGenerationStepHistoryEntry[] | undefined;
+  // eslint-disable-next-line no-var
+  var __mockRenderWorkerHeartbeats: Map<string, number> | undefined;
+}
+
+function getHeartbeats(): Map<string, number> {
+  if (!global.__mockRenderWorkerHeartbeats) {
+    global.__mockRenderWorkerHeartbeats = new Map();
+  }
+  return global.__mockRenderWorkerHeartbeats;
 }
 
 function getStore(): Map<string, VideoGenerationJob> {
@@ -99,5 +108,72 @@ export class MockVideoGenerationJobRepository
     return this.history
       .filter((entry) => entry.jobId === jobId)
       .map((entry) => ({ ...entry }));
+  }
+
+  // ── Render-queue seam (Mac Mini worker offload) ─────────────────────────────
+  // Heartbeats live in a process-global map so a worker and the web side (which
+  // construct separate instances) share liveness. Tests that never record a
+  // heartbeat see `isRenderWorkerAlive` → false, so heavy steps run inline
+  // exactly as before the seam existed.
+
+  async recordWorkerHeartbeat(workerId: string): Promise<void> {
+    getHeartbeats().set(workerId, Date.now());
+  }
+
+  async isRenderWorkerAlive(freshSeconds: number): Promise<boolean> {
+    const cutoff = Date.now() - freshSeconds * 1000;
+    for (const seen of getHeartbeats().values()) {
+      if (seen > cutoff) return true;
+    }
+    return false;
+  }
+
+  async claimNextQueuedRenderStep(
+    workerId: string,
+    staleClaimSeconds: number
+  ): Promise<VideoGenerationJob | null> {
+    const staleBefore = Date.now() - staleClaimSeconds * 1000;
+    const candidates = [...this.store.values()].filter((j) => {
+      if (j.renderState === "queued") return true;
+      if (j.renderState === "claimed") {
+        const keepAlive = (j.renderHeartbeatAt ?? j.claimedAt)?.getTime() ?? 0;
+        return keepAlive < staleBefore;
+      }
+      return false;
+    });
+    candidates.sort(
+      (a, b) => (a.claimedAt?.getTime() ?? 0) - (b.claimedAt?.getTime() ?? 0)
+    );
+    const next = candidates[0];
+    if (!next) return null;
+    const now = new Date();
+    const claimed: VideoGenerationJob = {
+      ...next,
+      renderState: "claimed",
+      claimedBy: workerId,
+      claimedAt: now,
+      renderHeartbeatAt: now,
+      updatedAt: now,
+    };
+    this.store.set(next.id, claimed);
+    return { ...claimed };
+  }
+
+  async touchRenderClaim(jobId: string): Promise<void> {
+    const job = this.store.get(jobId);
+    if (job && job.renderState === "claimed") {
+      this.store.set(jobId, { ...job, renderHeartbeatAt: new Date() });
+    }
+  }
+
+  async completeRenderClaim(jobId: string, state: "done" | "failed"): Promise<void> {
+    const job = this.store.get(jobId);
+    if (job) {
+      this.store.set(jobId, {
+        ...job,
+        renderState: state,
+        renderHeartbeatAt: new Date(),
+      });
+    }
   }
 }

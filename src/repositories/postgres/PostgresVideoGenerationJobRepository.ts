@@ -25,7 +25,8 @@ function serializeJobValue(key: string, value: unknown): unknown {
     key === "videoGenTaskIds" ||
     key === "sceneVideoAssetIds" ||
     key === "animatedOverlayAssetIds" ||
-    key === "publishingDrafts"
+    key === "publishingDrafts" ||
+    key === "renderPayload"
   ) {
     return value == null ? null : JSON.stringify(value);
   }
@@ -109,6 +110,15 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     voiceApprovedBy: (row.voice_approved_by as string) ?? null,
     animationApprovedBy: (row.animation_approved_by as string) ?? null,
     finalApprovedBy: (row.final_approved_by as string) ?? null,
+    renderState:
+      (row.render_state as "queued" | "claimed" | "done" | "failed") ?? null,
+    renderStep: (row.render_step as string) ?? null,
+    renderPayload: parseJsonField<Record<string, unknown> | null>(row.render_payload, null),
+    claimedBy: (row.claimed_by as string) ?? null,
+    claimedAt: row.claimed_at ? new Date(row.claimed_at as string) : null,
+    renderHeartbeatAt: row.render_heartbeat_at
+      ? new Date(row.render_heartbeat_at as string)
+      : null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -176,6 +186,12 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   voiceApprovedBy: "voice_approved_by",
   animationApprovedBy: "animation_approved_by",
   finalApprovedBy: "final_approved_by",
+  renderState: "render_state",
+  renderStep: "render_step",
+  renderPayload: "render_payload",
+  claimedBy: "claimed_by",
+  claimedAt: "claimed_at",
+  renderHeartbeatAt: "render_heartbeat_at",
 };
 
 export class PostgresVideoGenerationJobRepository
@@ -363,5 +379,75 @@ export class PostgresVideoGenerationJobRepository
       sceneIndex: nullableNumber(row.scene_index),
       createdAt: new Date(row.created_at as string),
     }));
+  }
+
+  // ── Render-queue seam (Mac Mini worker offload) ─────────────────────────────
+
+  async recordWorkerHeartbeat(workerId: string): Promise<void> {
+    await this.db.query(
+      `INSERT INTO render_worker_heartbeat (worker_id, last_seen_at)
+       VALUES ($1, NOW())
+       ON CONFLICT (worker_id) DO UPDATE SET last_seen_at = NOW()`,
+      [workerId]
+    );
+  }
+
+  async isRenderWorkerAlive(freshSeconds: number): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `SELECT 1 FROM render_worker_heartbeat
+        WHERE last_seen_at > NOW() - ($1 || ' seconds')::interval
+        LIMIT 1`,
+      [String(freshSeconds)]
+    );
+    return rows.length > 0;
+  }
+
+  async claimNextQueuedRenderStep(
+    workerId: string,
+    staleClaimSeconds: number
+  ): Promise<VideoGenerationJob | null> {
+    // Atomic claim: pick one queued job (or a claimed one whose keep-alive has
+    // gone stale — a crashed worker), skipping rows another worker has locked,
+    // and mark it claimed in the same statement.
+    const { rows } = await this.db.query(
+      `WITH next AS (
+         SELECT id FROM video_generation_jobs
+          WHERE render_state = 'queued'
+             OR (render_state = 'claimed'
+                 AND COALESCE(render_heartbeat_at, claimed_at)
+                     < NOW() - ($2 || ' seconds')::interval)
+          ORDER BY claimed_at NULLS FIRST, updated_at
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+       )
+       UPDATE video_generation_jobs j
+          SET render_state = 'claimed',
+              claimed_by = $1,
+              claimed_at = NOW(),
+              render_heartbeat_at = NOW()
+         FROM next
+        WHERE j.id = next.id
+       RETURNING j.*`,
+      [workerId, String(staleClaimSeconds)]
+    );
+    return rows[0] ? rowToJob(rows[0]) : null;
+  }
+
+  async touchRenderClaim(jobId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE video_generation_jobs
+          SET render_heartbeat_at = NOW()
+        WHERE id = $1 AND render_state = 'claimed'`,
+      [jobId]
+    );
+  }
+
+  async completeRenderClaim(jobId: string, state: "done" | "failed"): Promise<void> {
+    await this.db.query(
+      `UPDATE video_generation_jobs
+          SET render_state = $2, render_heartbeat_at = NOW()
+        WHERE id = $1`,
+      [jobId, state]
+    );
   }
 }

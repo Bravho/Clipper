@@ -40,6 +40,8 @@ import * as os from "os";
 import * as path from "path";
 import { AI_CONFIG } from "@/config/aiTools";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
+import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
+import { RENDER_QUEUE } from "@/config/renderQueue";
 
 const execFileAsync = promisify(execFile);
 
@@ -533,6 +535,114 @@ export class VideoGenerationService {
    * Used for a single-scene re-render (per-scene revision / retry); the other
    * scenes' segments are left untouched. Fire-and-forget.
    */
+  // ──────────────────────────────────────────────────────────────────────────
+  // Render-queue seam (Mac Mini worker offload)
+  //
+  // Every heavy compute step (montage render, animation/overlay render, FFmpeg
+  // composition, additional-ratios) is dispatched through `_dispatchHeavy`
+  // instead of being launched inline. If a Mac worker heartbeat is fresh, the
+  // step is ENQUEUED (one DB write) for the worker to claim; otherwise it runs
+  // INLINE exactly as before (the droplet fallback, so it never blocks when the
+  // Mac is offline). Either way the API route returns promptly and the existing
+  // pipeline-status poller is unchanged — `currentStep` is already a
+  // "Generating…" state when this is called.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  private async _dispatchHeavy(
+    job: VideoGenerationJob,
+    renderStep: RenderStep,
+    inlineFn: () => Promise<void>,
+    payload?: Record<string, unknown>
+  ): Promise<void> {
+    const onFail = async (err: unknown) => {
+      console.error(`[render:${renderStep}] failed:`, err);
+      await videoGenerationJobRepository.update(job.id, {
+        status: VideoGenerationJobStatus.Failed,
+        currentStep: VideoGenerationStep.Failed,
+        failedAtStep: RENDER_STEP_FAILED_AT[renderStep],
+      });
+    };
+
+    if (RENDER_QUEUE.enabled) {
+      try {
+        if (
+          await videoGenerationJobRepository.isRenderWorkerAlive(
+            RENDER_QUEUE.workerFreshSeconds
+          )
+        ) {
+          await videoGenerationJobRepository.update(job.id, {
+            renderState: "queued",
+            renderStep,
+            renderPayload: payload ?? null,
+            claimedBy: null,
+            claimedAt: null,
+            renderHeartbeatAt: null,
+          });
+          return;
+        }
+      } catch (err) {
+        // Never strand a job: if the liveness check or enqueue write fails,
+        // fall through and run the step inline.
+        console.error(`[render:${renderStep}] enqueue failed, running inline:`, err);
+      }
+    }
+
+    void inlineFn().catch(onFail);
+  }
+
+  /**
+   * Worker entrypoint: run ONE claimed render step by dispatching to the SAME
+   * private compute method the web server would have run inline — no compute is
+   * reimplemented. Throws on failure so the worker can mark the claim 'failed'
+   * (see `recordRenderStepFailure`).
+   */
+  async runQueuedRenderStep(job: VideoGenerationJob): Promise<void> {
+    const step = job.renderStep;
+    if (!isRenderStep(step)) {
+      throw new Error(`Job ${job.id} has no valid render step: ${String(step)}`);
+    }
+    switch (step) {
+      case RenderStep.MontageSceneSegment: {
+        const sceneIndex = Number(
+          (job.renderPayload as { sceneIndex?: unknown } | null)?.sceneIndex ??
+            job.currentSceneIndex ??
+            0
+        );
+        await this._renderSceneSegment(job, sceneIndex);
+        break;
+      }
+      case RenderStep.MontageAllSegments:
+        await this._renderAllSceneSegments(job);
+        break;
+      case RenderStep.AnimationGeneration:
+        await this._runAnimationGeneration(job);
+        break;
+      case RenderStep.FfmpegComposition:
+        await this._runFFmpegComposition(job);
+        break;
+      case RenderStep.OverlayComposition:
+        await this._runOverlayComposition(job);
+        break;
+      case RenderStep.AdditionalRatios:
+        await this._runAdditionalRatiosOverlay(job);
+        break;
+      default: {
+        const _exhaustive: never = step;
+        throw new Error(`Unhandled render step: ${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  /** Failure bookkeeping for a worker-run step (mirrors the inline `.catch`). */
+  async recordRenderStepFailure(job: VideoGenerationJob): Promise<void> {
+    const step = isRenderStep(job.renderStep) ? job.renderStep : null;
+    await videoGenerationJobRepository.update(job.id, {
+      status: VideoGenerationJobStatus.Failed,
+      currentStep: VideoGenerationStep.Failed,
+      failedAtStep: step ? RENDER_STEP_FAILED_AT[step] : VideoGenerationStep.Failed,
+    });
+  }
+
   private async _renderSceneSegment(job: VideoGenerationJob, sceneIndex: number): Promise<void> {
     const assetId = await this._renderSceneInto(job, sceneIndex);
     await videoGenerationJobRepository.update(job.id, {
@@ -669,14 +779,9 @@ export class VideoGenerationService {
       baseVideoAssetId: null,
       videoGenStatus: null,
     });
-    this._renderAllSceneSegments(prepared).catch(async (err) => {
-      console.error("[Montage] batch re-render failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-      });
-    });
+    await this._dispatchHeavy(prepared, RenderStep.MontageAllSegments, () =>
+      this._renderAllSceneSegments(prepared)
+    );
     return this._getJob(jobId);
   }
 
@@ -897,14 +1002,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
     });
 
-    this._runFFmpegComposition(updated).catch(async (err) => {
-      console.error("FFmpeg composition failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.ComposingFinalVideo,
-      });
-    });
+    await this._dispatchHeavy(updated, RenderStep.FfmpegComposition, () =>
+      this._runFFmpegComposition(updated)
+    );
 
     return updated;
   }
@@ -923,14 +1023,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       animatedOverlayAssetIds: null,
     });
 
-    this._runAnimationGeneration(updated).catch(async (err) => {
-      console.error("[AnimationGeneration] Regeneration failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingAnimations,
-      });
-    });
+    await this._dispatchHeavy(updated, RenderStep.AnimationGeneration, () =>
+      this._runAnimationGeneration(updated)
+    );
 
     return updated;
   }
@@ -1172,14 +1267,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
     });
-    this._renderAllSceneSegments(cleared).catch(async (err) => {
-      console.error("[Montage] batch scene render failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-      });
-    });
+    await this._dispatchHeavy(cleared, RenderStep.MontageAllSegments, () =>
+      this._renderAllSceneSegments(cleared)
+    );
     return this._getJob(jobId);
   }
 
@@ -1260,14 +1350,12 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     // Render this scene's segment in the background.
     const sceneIndex = job.currentSceneIndex ?? 0;
-    this._renderSceneSegment(job, sceneIndex).catch(async (err) => {
-      console.error("[Montage] scene render failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-      });
-    });
+    await this._dispatchHeavy(
+      job,
+      RenderStep.MontageSceneSegment,
+      () => this._renderSceneSegment(job, sceneIndex),
+      { sceneIndex }
+    );
     return this._getJob(jobId);
   }
 
@@ -1317,14 +1405,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ...baseVideoAssetIdUpdate,
     });
 
-    this._runAnimationGeneration(updated).catch(async (err) => {
-      console.error("[AnimationGeneration] Failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingAnimations,
-      });
-    });
+    await this._dispatchHeavy(updated, RenderStep.AnimationGeneration, () =>
+      this._runAnimationGeneration(updated)
+    );
 
     return this._getJob(jobId);
   }
@@ -1384,14 +1467,12 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       videoGenStatus: null,
       contentApprovedBy: userId,
     });
-    this._renderSceneSegment(prepared, idx).catch(async (err) => {
-      console.error("[Montage] scene re-render failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-      });
-    });
+    await this._dispatchHeavy(
+      prepared,
+      RenderStep.MontageSceneSegment,
+      () => this._renderSceneSegment(prepared, idx),
+      { sceneIndex: idx }
+    );
     return this._getJob(jobId);
   }
 
@@ -1432,14 +1513,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ...(selectedMotionTemplate ? { selectedMotionTemplate } : {}),
     });
 
-    this._runOverlayComposition(updated).catch(async (err) => {
-      console.error("[OverlayComposition] failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingOverlay,
-      });
-    });
+    await this._dispatchHeavy(updated, RenderStep.OverlayComposition, () =>
+      this._runOverlayComposition(updated)
+    );
 
     return updated;
   }
@@ -1691,14 +1767,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
     });
 
-    this._runOverlayComposition(updated).catch(async (err) => {
-      console.error("[OverlayComposition] regeneration failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingOverlay,
-      });
-    });
+    await this._dispatchHeavy(updated, RenderStep.OverlayComposition, () =>
+      this._runOverlayComposition(updated)
+    );
 
     return updated;
   }
@@ -1766,14 +1837,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ...(userId ? { finalApprovedBy: userId } : {}),
     });
 
-    this._runAdditionalRatiosOverlay(updated).catch(async (err) => {
-      console.error("[AdditionalRatiosOverlay] failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingAdditionalRatios,
-      });
-    });
+    await this._dispatchHeavy(updated, RenderStep.AdditionalRatios, () =>
+      this._runAdditionalRatiosOverlay(updated)
+    );
 
     return updated;
   }
@@ -2728,14 +2794,9 @@ Return ONLY valid JSON: an object keyed by the channel id, each value { "title":
           baseVideoAssetId: null,
           videoGenStatus: null,
         });
-        this._renderAllSceneSegments(updated).catch(async (err) => {
-          console.error("[Montage] batch retry render failed:", err);
-          await videoGenerationJobRepository.update(jobId, {
-            status: VideoGenerationJobStatus.Failed,
-            currentStep: VideoGenerationStep.Failed,
-            failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-          });
-        });
+        await this._dispatchHeavy(updated, RenderStep.MontageAllSegments, () =>
+          this._renderAllSceneSegments(updated)
+        );
         return updated;
       }
 
@@ -2780,14 +2841,9 @@ Return ONLY valid JSON: an object keyed by the channel id, each value { "title":
           animatedVideoAssetId: null,
           animatedOverlayAssetIds: null,
         });
-        this._runAnimationGeneration(updated).catch(async (err) => {
-          console.error("[AnimationGeneration] Retry failed:", err);
-          await videoGenerationJobRepository.update(jobId, {
-            status: VideoGenerationJobStatus.Failed,
-            currentStep: VideoGenerationStep.Failed,
-            failedAtStep: VideoGenerationStep.GeneratingAnimations,
-          });
-        });
+        await this._dispatchHeavy(updated, RenderStep.AnimationGeneration, () =>
+          this._runAnimationGeneration(updated)
+        );
         return updated;
       }
 
@@ -2799,14 +2855,9 @@ Return ONLY valid JSON: an object keyed by the channel id, each value { "title":
           finalExport_1_1_assetId: null,
           finalExport_4_5_assetId: null,
         });
-        this._runFFmpegComposition(updated).catch(async (err) => {
-          console.error("FFmpeg retry failed:", err);
-          await videoGenerationJobRepository.update(jobId, {
-            status: VideoGenerationJobStatus.Failed,
-            currentStep: VideoGenerationStep.Failed,
-            failedAtStep: VideoGenerationStep.ComposingFinalVideo,
-          });
-        });
+        await this._dispatchHeavy(updated, RenderStep.FfmpegComposition, () =>
+          this._runFFmpegComposition(updated)
+        );
         return updated;
       }
 

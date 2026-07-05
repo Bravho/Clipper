@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  RClipper render worker — restarts on crash/reboot, keeps the Mac awake
+  (via caffeinate in run-worker.sh). Install as a USER LaunchAgent:
+
+    cp deploy/launchd/com.rclipper.worker.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.rclipper.worker.plist
+    launchctl enable gui/$(id -u)/com.rclipper.worker
+    launchctl kickstart -k gui/$(id -u)/com.rclipper.worker   # start now
+
+  Paths below assume the repo at /Users/admin/Projects/Video_Processor_RClipper
+  and logs at ~/Library/Logs/rclipper — edit if yours differ.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.rclipper.worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/admin/Projects/Video_Processor_RClipper/scripts/run-worker.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/admin/Projects/Video_Processor_RClipper</string>
+
+  <!-- Start at load/login and restart automatically if it ever exits. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Back off so a crash-loop doesn't hammer the CPU. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/admin/Library/Logs/rclipper/worker.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/admin/Library/Logs/rclipper/worker.err.log</string>
+</dict>
+</plist>

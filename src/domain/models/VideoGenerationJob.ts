@@ -209,6 +209,22 @@ export interface VideoGenerationJob {
 
   failedAtStep: VideoGenerationStep | null;
 
+  // ── Render-queue seam (Mac Mini worker offload) ─────────────────────────────
+  // All optional/nullable and absent on legacy rows. When no worker is present
+  // these stay null and heavy steps run inline on the web server (unchanged).
+  /** null = nothing queued; otherwise the claim lifecycle state. */
+  renderState?: "queued" | "claimed" | "done" | "failed" | null;
+  /** Which heavy step is queued (see RenderStep). Null when not queued. */
+  renderStep?: string | null;
+  /** Optional JSON args for the queued step, e.g. { sceneIndex: 2 }. */
+  renderPayload?: Record<string, unknown> | null;
+  /** Worker id that claimed the step. */
+  claimedBy?: string | null;
+  /** When the step was claimed (stale-claim reclaim uses this). */
+  claimedAt?: Date | null;
+  /** Worker keep-alive while a long render runs (reclaim uses this first). */
+  renderHeartbeatAt?: Date | null;
+
   contentApprovedBy: string | null;
   videoApprovedBy: string | null;
   voiceApprovedBy: string | null;

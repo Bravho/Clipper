@@ -123,6 +123,23 @@ jest.mock("@/lib/ai/geminiSubtitlesService", () => ({
   generateAssSubtitles: (...args: unknown[]) => generateAssSubtitlesMock(...args),
   detectProductCoordinates: (...args: unknown[]) => detectProductCoordinatesMock(...args),
   alignAudioWithScript: (...args: unknown[]) => alignAudioWithScriptMock(...args),
+  // Identity pass-through: mirrors the real function's behaviour for the short
+  // segments used in these tests (no long-sentence splitting needed). Without
+  // this the overlay path's dynamic import got `undefined` → "not a function".
+  splitSegmentsForDisplay: (segments: unknown, _langs: unknown) => segments,
+}));
+
+// Mock DO Spaces so the overlay path's `probeAudioDurationSeconds` (a real
+// S3 GetObject) never hits the network. Without this it rejects only after the
+// AWS SDK's retry/timeout timers, which is non-deterministic and outruns the
+// microtask-based `flushBackground()` — leaving the captioned render un-awaited.
+// Rejecting instantly makes the caller's catch fire fast so the render proceeds.
+jest.mock("@/lib/spaces", () => ({
+  spacesClient: { send: jest.fn(async () => { throw new Error("spaces disabled in tests"); }) },
+  spacesPublicUrl: (key: string) => `https://cdn.example.com/${key}`,
+  spacesSignedUrl: async (key: string) => `https://cdn.example.com/signed/${key}`,
+  SPACES_BUCKET: "test-bucket",
+  SIGNED_URL_TTL_SECONDS: 3600,
 }));
 
 const mockGenerateSceneDesignFromScript = jest.fn(async (_params: unknown) => ({
@@ -522,8 +539,21 @@ describe("VideoGenerationService — Remotion overlay compositing (Phase 4)", ()
 
 // ── Phase 7: subtitle + motion-graphic overlay (composited on the masters) ──
 
-const flushBackground = async () => {
-  for (let i = 0; i < 12; i++) await new Promise((r) => setImmediate(r));
+// Drain the fire-and-forget background chains (overlay + Travy render). They
+// nest several `await import()` hops plus the mocked render and, crucially, a
+// real `fs.mkdtemp`/`fs.rm` inside the duration probe — so a fixed setImmediate
+// count races real fs I/O and flakes under parallel load. Instead we poll a
+// caller-supplied predicate against a wall-clock deadline, returning as soon as
+// the background work is observably done (or after the timeout as a backstop).
+const flushBackground = async (
+  until?: () => boolean | Promise<boolean>,
+  timeoutMs = 5000
+) => {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    await new Promise((r) => setTimeout(r, 5));
+    if (until && (await until())) return;
+  } while (Date.now() < deadline);
 };
 
 describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
@@ -644,7 +674,11 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
 
     const service = new VideoGenerationService();
     await service.approveFinalVideoByRequester(job.id, "user-001", ["th"]);
-    await flushBackground();
+    await flushBackground(
+      async () =>
+        (await mockJobRepo.findById(job.id))?.currentStep ===
+        VideoGenerationStep.AwaitingOverlayApproval
+    );
 
     // Only the primary ratio is rendered at this step, as ONE styled MP4.
     expect(renderTemplatedVideoMock).toHaveBeenCalledTimes(1);
@@ -692,7 +726,9 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     // Publishing drafts auto-filled for the user's channel (TikTok; Travy excluded).
     expect(afterApprove.publishingDrafts?.map((d) => d.platform)).toEqual([Platform.TikTok]);
 
-    await flushBackground();
+    await flushBackground(
+      async () => (await mockJobRepo.findById(job.id))?.tventVideoStatus === "ready"
+    );
 
     const updated = await mockJobRepo.findById(job.id);
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
@@ -761,13 +797,75 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(gated.finalExport_tvent_assetId).toBeNull();
 
     await service.generateAdditionalRatiosByRequester(job.id, "user-001");
-    await flushBackground();
+    await flushBackground(
+      async () => (await mockJobRepo.findById(job.id))?.tventVideoStatus === "ready"
+    );
 
     const updated = await mockJobRepo.findById(job.id);
     expect(updated?.captionedExport_16_9_assetId).toBeTruthy();
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
     expect(updated?.tventVideoStatus).toBe("ready");
     expect(updated?.finalExport_tvent_assetId).toBeTruthy();
+  });
+
+  // ── Render-queue seam: enqueue for a live Mac worker, else run inline ────────
+  it("enqueues the overlay render for a live worker instead of rendering inline", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const master = await createMaster(request.id, "9:16");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingFinalApproval,
+      { "9:16": master.id },
+      ["th"]
+    );
+
+    // A worker heartbeat is fresh → the heavy step must be QUEUED for it, not
+    // rendered on the web side. Cleaned up in `finally` so other tests (which
+    // rely on the inline fallback) still see no worker.
+    await mockJobRepo.recordWorkerHeartbeat("mac-test");
+    try {
+      const service = new VideoGenerationService();
+      await service.approveFinalVideoByRequester(job.id, "user-001", ["th"]);
+      // Give any (unexpected) inline render a chance to start before asserting.
+      await new Promise((r) => setTimeout(r, 20));
+
+      const updated = await mockJobRepo.findById(job.id);
+      expect(updated?.renderState).toBe("queued");
+      expect(updated?.renderStep).toBe("overlay_composition");
+      expect(updated?.currentStep).toBe(VideoGenerationStep.GeneratingOverlay);
+      // The web server did NOT render — that's the worker's job now.
+      expect(renderTemplatedVideoMock).not.toHaveBeenCalled();
+    } finally {
+      (global as { __mockRenderWorkerHeartbeats?: Map<string, number> }).__mockRenderWorkerHeartbeats =
+        new Map();
+    }
+  });
+
+  it("runs the overlay render inline when no worker heartbeat is present (fallback)", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const master = await createMaster(request.id, "9:16");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingFinalApproval,
+      { "9:16": master.id },
+      ["th"]
+    );
+
+    const service = new VideoGenerationService();
+    await service.approveFinalVideoByRequester(job.id, "user-001", ["th"]);
+    await flushBackground(
+      async () =>
+        (await mockJobRepo.findById(job.id))?.currentStep ===
+        VideoGenerationStep.AwaitingOverlayApproval
+    );
+
+    const updated = await mockJobRepo.findById(job.id);
+    // No worker → ran inline, so it rendered and advanced past GeneratingOverlay.
+    expect(updated?.renderState ?? null).not.toBe("queued");
+    expect(renderTemplatedVideoMock).toHaveBeenCalled();
+    expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingOverlayApproval);
   });
 });
 
