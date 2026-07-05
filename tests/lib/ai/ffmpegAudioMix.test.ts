@@ -45,23 +45,24 @@ describe("resolveComposeDuration", () => {
 });
 
 describe("buildMusicMixFilters", () => {
-  it("trims the looped music to the measured duration + lead-in (not a hardcoded 15s)", () => {
-    // leadIn 0 isolates the measured-duration logic.
-    const filters = buildMusicMixFilters({ musicInputIdx: 2, durationSeconds: 32.5, leadInSeconds: 0 });
+  it("trims the looped music to the full clip length (not a hardcoded 15s)", () => {
+    const filters = buildMusicMixFilters({ musicInputIdx: 2, totalDurationSeconds: 32.5, leadInSeconds: 0 });
     const musicLine = filters.find((f) => f.includes("aloop"))!;
     expect(musicLine).toContain("atrim=0:32.500");
     expect(musicLine).not.toContain("atrim=0:15");
     expect(musicLine).toContain(`volume=${MUSIC_BED_VOLUME}`);
   });
 
-  it("extends the music trim to cover the voice lead-in", () => {
-    const filters = buildMusicMixFilters({ musicInputIdx: 2, durationSeconds: 20, leadInSeconds: 0.6 });
+  it("trims the music to the FULL clip length regardless of the lead-in (music covers intro + ending)", () => {
+    // totalDurationSeconds is the whole clip (voice + intro + ending), so the
+    // lead-in is already included — it must NOT be added again.
+    const filters = buildMusicMixFilters({ musicInputIdx: 2, totalDurationSeconds: 20.6, leadInSeconds: 0.6 });
     const musicLine = filters.find((f) => f.includes("aloop"))!;
     expect(musicLine).toContain("atrim=0:20.600");
   });
 
   it("delays the voice (and its sidechain key) by the lead-in so the clip opens on music", () => {
-    const filters = buildMusicMixFilters({ musicInputIdx: 2, durationSeconds: 20, leadInSeconds: 0.6 });
+    const filters = buildMusicMixFilters({ musicInputIdx: 2, totalDurationSeconds: 20, leadInSeconds: 0.6 });
     // 0.6s = 600ms, applied to all channels before the asplit feeds [sc]+[voice].
     expect(filters[0]).toContain("adelay=600:all=1");
     expect(filters[0]).toContain("asplit=2[sc][voice]");
@@ -71,14 +72,14 @@ describe("buildMusicMixFilters", () => {
     const filters = buildMusicMixFilters({
       voiceInputIdx: 1,
       musicInputIdx: 3,
-      durationSeconds: 10,
+      totalDurationSeconds: 10,
     });
     expect(filters[0]).toContain("[1:a]loudnorm");
     expect(filters.some((f) => f.startsWith("[3:a]aloop"))).toBe(true);
   });
 
   it("ducks gently + quick-recover (fast attack/release, moderate ratio so the bed stays audible)", () => {
-    const filters = buildMusicMixFilters({ musicInputIdx: 2, durationSeconds: 20 });
+    const filters = buildMusicMixFilters({ musicInputIdx: 2, totalDurationSeconds: 20 });
     const duck = filters.find((f) => f.includes("sidechaincompress"))!;
     expect(duck).toContain("attack=20");
     expect(duck).toContain("release=300");
@@ -89,12 +90,12 @@ describe("buildMusicMixFilters", () => {
   });
 
   it("exposes the final mix on [aout]", () => {
-    const filters = buildMusicMixFilters({ musicInputIdx: 2, durationSeconds: 20 });
+    const filters = buildMusicMixFilters({ musicInputIdx: 2, totalDurationSeconds: 20 });
     expect(filters[filters.length - 1]).toContain("[aout]");
   });
 
   it("falls back to the default duration when given a bad value", () => {
-    const filters = buildMusicMixFilters({ musicInputIdx: 2, durationSeconds: 0, leadInSeconds: 0 });
+    const filters = buildMusicMixFilters({ musicInputIdx: 2, totalDurationSeconds: 0, leadInSeconds: 0 });
     const musicLine = filters.find((f) => f.includes("aloop"))!;
     expect(musicLine).toContain(`atrim=0:${DEFAULT_COMPOSE_DURATION_SECONDS.toFixed(3)}`);
   });

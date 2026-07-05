@@ -33,6 +33,24 @@ jest.mock("@/repositories/index", () => ({
   uploadedAssetRepository: new (require("@/repositories/mock/MockUploadedAssetRepository").MockUploadedAssetRepository)(new Map()),
   videoGenerationJobRepository: new (require("@/repositories/mock/MockVideoGenerationJobRepository").MockVideoGenerationJobRepository)(new Map()),
   videoPublishRecordRepository: new (require("@/repositories/mock/MockVideoPublishRecordRepository").MockVideoPublishRecordRepository)(new Map()),
+  publishingLinkRepository: new (require("@/repositories/mock/MockPublishingLinkRepository").MockPublishingLinkRepository)(new Map()),
+}));
+
+// ── Mock social publishing services (Phase 8 distribution-review) ────────────
+const tiktokUploadMock = jest.fn(async () => ({ platformVideoId: "tt1", platformUrl: "https://www.tiktok.com/@x/video/tt1" }));
+const youtubeUploadMock = jest.fn(async () => ({ platformVideoId: "yt1", platformUrl: "https://www.youtube.com/watch?v=yt1" }));
+const facebookUploadMock = jest.fn(async () => ({ platformVideoId: "fb1", platformUrl: "https://www.facebook.com/x/videos/fb1" }));
+const instagramUploadMock = jest.fn(async () => ({ platformVideoId: "ig1", platformUrl: "https://www.instagram.com/p/ig1" }));
+jest.mock("@/lib/social/tiktokService", () => ({ uploadVideo: (...a: unknown[]) => tiktokUploadMock(...(a as [])) }));
+jest.mock("@/lib/social/youtubeService", () => ({ uploadVideo: (...a: unknown[]) => youtubeUploadMock(...(a as [])) }));
+jest.mock("@/lib/social/facebookService", () => ({ uploadVideo: (...a: unknown[]) => facebookUploadMock(...(a as [])) }));
+jest.mock("@/lib/social/instagramService", () => ({ uploadVideo: (...a: unknown[]) => instagramUploadMock(...(a as [])) }));
+
+// ── Mock Gemini SDK so publishing-draft generation makes no network call ─────
+jest.mock("@google/genai", () => ({
+  GoogleGenAI: jest.fn().mockImplementation(() => ({
+    models: { generateContent: jest.fn(async () => ({ text: "{}" })) },
+  })),
 }));
 
 // ── Mock Veo client — capture the params it's called with ──────────────────
@@ -135,11 +153,13 @@ const {
   clipRequestRepository: mockClipRepo,
   uploadedAssetRepository: mockAssetRepo,
   videoGenerationJobRepository: mockJobRepo,
+  publishingLinkRepository: mockPublishingLinkRepo,
 } = jest.requireMock("@/repositories/index") as {
   clipRequestRepository: MockClipRequestRepository;
   uploadedAssetRepository: MockUploadedAssetRepository;
   videoGenerationJobRepository: MockVideoGenerationJobRepository;
   videoPublishRecordRepository: MockVideoPublishRecordRepository;
+  publishingLinkRepository: import("@/repositories/mock/MockPublishingLinkRepository").MockPublishingLinkRepository;
 };
 
 // Import the service AFTER the mocks are registered.
@@ -649,28 +669,41 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.captionedExport_9_16_assetId).toBeTruthy();
   });
 
-  it("approveOverlayByRequester (single ratio) delivers, then renders Travy EN+ZH in the background", async () => {
+  it("approveOverlayByRequester (single ratio, TH subs) lands on distribution-review, renders Travy EN+ZH in background, NOT yet delivered", async () => {
     const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
     const master = await createMaster(request.id, "9:16");
     getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
 
+    // TH-only subs → Travy cannot reuse; it renders a separate EN+ZH clip.
     const job = await createOverlayJob(
       request.id,
       VideoGenerationStep.AwaitingOverlayApproval,
-      { "9:16": master.id }
+      { "9:16": master.id },
+      ["th"]
     );
+    // The overlay preview was rendered before approval — set it so finalize sees it.
+    const captioned = await createMaster(request.id, "9:16");
+    await mockJobRepo.update(job.id, { captionedExport_9_16_assetId: captioned.id });
 
     const service = new VideoGenerationService();
-    await service.approveOverlayByRequester(job.id, "user-001");
+    const afterApprove = await service.approveOverlayByRequester(job.id, "user-001");
+    // Phase 8: lands on the distribution-review step, NOT Complete.
+    expect(afterApprove.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
+    // Publishing drafts auto-filled for the user's channel (TikTok; Travy excluded).
+    expect(afterApprove.publishingDrafts?.map((d) => d.platform)).toEqual([Platform.TikTok]);
+
     await flushBackground();
 
     const updated = await mockJobRepo.findById(job.id);
-    expect(updated?.currentStep).toBe(VideoGenerationStep.Complete);
+    expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
     expect(updated?.tventVideoStatus).toBe("ready");
     expect(updated?.finalExport_tvent_assetId).toBeTruthy();
 
-    const deliveredRequest = await mockClipRepo.findById(request.id);
-    expect(deliveredRequest?.status).toBe(RequestStatus.Delivered);
+    // NOT delivered until the requester confirms publishing — instead it is
+    // ScheduledForPublishing (an active status → shows under "in progress").
+    const req = await mockClipRepo.findById(request.id);
+    expect(req?.status).toBe(RequestStatus.ScheduledForPublishing);
+    expect(req?.status).not.toBe(RequestStatus.Delivered);
 
     // The Travy render uses EN+ZH regardless of the requester's choice.
     const tventCall = renderTemplatedVideoMock.mock.calls.find(
@@ -679,7 +712,32 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(tventCall).toBeTruthy();
   });
 
-  it("approveOverlayByRequester (multi-ratio) gates on AwaitingAdditionalRatios, then generates the rest before Travy", async () => {
+  it("Travy reuse: when subtitle languages are exactly {en,zh}, reuses the primary captioned export instead of re-rendering", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const master = await createMaster(request.id, "9:16");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingOverlayApproval,
+      { "9:16": master.id },
+      ["en", "zh"]
+    );
+    const captioned = await createMaster(request.id, "9:16");
+    await mockJobRepo.update(job.id, { captionedExport_9_16_assetId: captioned.id });
+
+    const service = new VideoGenerationService();
+    const updated = await service.approveOverlayByRequester(job.id, "user-001");
+
+    expect(updated.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
+    // Reused immediately — Travy points at the primary captioned export, ready now.
+    expect(updated.tventVideoStatus).toBe("ready");
+    expect(updated.finalExport_tvent_assetId).toBe(captioned.id);
+    // No separate Travy render was performed.
+    expect(renderTemplatedVideoMock).not.toHaveBeenCalled();
+  });
+
+  it("approveOverlayByRequester (multi-ratio) gates on AwaitingAdditionalRatios, then lands on distribution-review", async () => {
     const request = await createRequestWithPlatforms([
       Platform.TikTok,
       Platform.YouTube,
@@ -694,6 +752,8 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
       VideoGenerationStep.AwaitingOverlayApproval,
       { "9:16": master916.id, "16:9": master169.id }
     );
+    const captioned = await createMaster(request.id, "9:16");
+    await mockJobRepo.update(job.id, { captionedExport_9_16_assetId: captioned.id });
 
     const service = new VideoGenerationService();
     const gated = await service.approveOverlayByRequester(job.id, "user-001");
@@ -705,8 +765,202 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
 
     const updated = await mockJobRepo.findById(job.id);
     expect(updated?.captionedExport_16_9_assetId).toBeTruthy();
-    expect(updated?.currentStep).toBe(VideoGenerationStep.Complete);
+    expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
     expect(updated?.tventVideoStatus).toBe("ready");
     expect(updated?.finalExport_tvent_assetId).toBeTruthy();
+  });
+});
+
+describe("VideoGenerationService — Phase 8 distribution review + publishing", () => {
+  beforeEach(() => {
+    renderTemplatedVideoMock.mockClear();
+    getRequiredRatiosForPlatformsMock.mockReset();
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+    tiktokUploadMock.mockClear();
+    youtubeUploadMock.mockClear();
+    facebookUploadMock.mockClear();
+    instagramUploadMock.mockClear();
+    tiktokUploadMock.mockResolvedValue({ platformVideoId: "tt1", platformUrl: "https://www.tiktok.com/@x/video/tt1" });
+    youtubeUploadMock.mockResolvedValue({ platformVideoId: "yt1", platformUrl: "https://www.youtube.com/watch?v=yt1" });
+  });
+
+  async function createRequestWithPlatforms(platforms: Platform[]) {
+    const request = await mockClipRepo.create({
+      userId: "user-001",
+      title: "Phase8 Clip",
+      description: "desc",
+      targetAudience: "All",
+      targetPlatforms: platforms,
+      preferredStyle: "Dynamic",
+      preferredLanguage: "Thai",
+      durationSeconds: 15,
+    });
+    await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {});
+    return request;
+  }
+
+  async function createCaptioned(requestId: string, ratio: string) {
+    return mockAssetRepo.create({
+      requestId,
+      userId: "user-001",
+      fileName: `styled_${ratio.replace(":", "-")}.mp4`,
+      assetType: AssetType.FinalClip,
+      fileSizeBytes: 2048,
+      mimeType: "video/mp4",
+      storageKey: `styled_exports/${ratio.replace(":", "-")}.mp4`,
+      storageUrl: `https://cdn.example.com/styled_${ratio.replace(":", "-")}.mp4`,
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Uploaded,
+      scheduledDeletionAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+      videoRatio: ratio as any,
+    });
+  }
+
+  async function createReviewJob(
+    requestId: string,
+    captioned: Partial<Record<"9:16" | "16:9" | "1:1" | "4:5", string>>,
+    drafts: any[]
+  ) {
+    const job = await mockJobRepo.create({
+      requestId,
+      status: VideoGenerationJobStatus.Active,
+      currentStep: VideoGenerationStep.AwaitingDistributionReview,
+      currentSceneIndex: 0,
+      scenePlan: null,
+      scriptThai: "อร่อยมาก",
+      scriptEnglish: "Delicious",
+      scriptChinese: "好吃",
+      hookThai: "อร่อย",
+      hookEnglish: null,
+      captionThai: "แคปชั่น",
+      captionEnglish: null,
+      captionChinese: null,
+      approvedScenePlan: JSON.stringify(SCENE_PLAN),
+      approvedScriptThai: "อร่อยมาก",
+      approvedScriptEnglish: "Delicious",
+      approvedScriptChinese: "好吃",
+      approvedHookThai: "อร่อย",
+      approvedHookEnglish: null,
+      approvedCaptionThai: "แคปชั่น",
+      approvedCaptionEnglish: null,
+      approvedCaptionChinese: null,
+      ttsTaskId: null,
+      rvcVoiceModel: "",
+      voiceRecordingAssetId: "voice-1",
+      processedVoiceAssetId: "voice-1",
+      selectedMusicTrack: null,
+      voiceDurationSeconds: 12,
+      voiceTimestamps: JSON.stringify(TIMED_SEGMENTS),
+      videoGenTaskId: null,
+      videoGenTaskIds: null,
+      videoGenStatus: null,
+      videoGenLastPolledAt: null,
+      baseVideoAssetId: "base-1",
+      sceneVideoAssetIds: null,
+      subtitleTimeline: JSON.stringify(TIMED_SEGMENTS),
+      animationSpec: null,
+      animatedVideoAssetId: null,
+      animatedOverlayAssetIds: null,
+      subtitleLanguages: ["th"],
+      finalExport_9_16_assetId: null,
+      finalExport_16_9_assetId: null,
+      finalExport_1_1_assetId: null,
+      finalExport_4_5_assetId: null,
+      finalExport_tvent_assetId: null,
+      failedAtStep: null,
+      contentApprovedBy: "user-001",
+      videoApprovedBy: null,
+      voiceApprovedBy: null,
+      animationApprovedBy: null,
+      finalApprovedBy: "user-001",
+    });
+    await mockJobRepo.update(job.id, {
+      captionedExport_9_16_assetId: captioned["9:16"] ?? null,
+      captionedExport_16_9_assetId: captioned["16:9"] ?? null,
+      captionedExport_1_1_assetId: captioned["1:1"] ?? null,
+      captionedExport_4_5_assetId: captioned["4:5"] ?? null,
+      publishingDrafts: drafts,
+    });
+    return (await mockJobRepo.findById(job.id))!;
+  }
+
+  it("confirmPublishingByRequester posts every channel, records links, and completes/delivers", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const cap = await createCaptioned(request.id, "9:16");
+    const drafts = [
+      { platform: Platform.TikTok, title: "", caption: "อร่อย", hashtags: ["food"], status: "pending" },
+    ];
+    const job = await createReviewJob(request.id, { "9:16": cap.id }, drafts);
+
+    const service = new VideoGenerationService();
+    const updated = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
+
+    expect(tiktokUploadMock).toHaveBeenCalledTimes(1);
+    expect(tiktokUploadMock.mock.calls[0][0].videoStorageKey).toBe(cap.storageKey);
+    expect(updated.currentStep).toBe(VideoGenerationStep.Complete);
+    expect(updated.publishingDrafts?.[0].status).toBe("posted");
+    expect(updated.publishingDrafts?.[0].url).toContain("tiktok.com");
+
+    const req = await mockClipRepo.findById(request.id);
+    expect(req?.status).toBe(RequestStatus.Delivered);
+
+    const links = await mockPublishingLinkRepo.findByRequestId(request.id);
+    expect(links.some((l) => l.platform === Platform.TikTok)).toBe(true);
+  });
+
+  it("confirmPublishingByRequester surfaces a missing-ratio export as an error (no fallback) and stays on review", async () => {
+    // Instagram needs a 4:5 export; only 9:16 exists → error, no posting attempt.
+    const request = await createRequestWithPlatforms([Platform.Instagram, Platform.TventApp]);
+    const cap = await createCaptioned(request.id, "9:16");
+    const drafts = [
+      { platform: Platform.Instagram, title: "", caption: "อร่อย", hashtags: [], status: "pending" },
+    ];
+    const job = await createReviewJob(request.id, { "9:16": cap.id }, drafts);
+
+    const service = new VideoGenerationService();
+    const updated = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
+
+    expect(instagramUploadMock).not.toHaveBeenCalled();
+    expect(updated.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
+    expect(updated.publishingDrafts?.[0].status).toBe("failed");
+    expect(updated.publishingDrafts?.[0].error).toContain("4:5");
+    const req = await mockClipRepo.findById(request.id);
+    expect(req?.status).not.toBe(RequestStatus.Delivered);
+  });
+
+  it("on partial failure it stays on review; resubmit posts only the failed channel (no double-post)", async () => {
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16", "16:9"]);
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.YouTube, Platform.TventApp]);
+    const cap916 = await createCaptioned(request.id, "9:16"); // TikTok
+    const cap169 = await createCaptioned(request.id, "16:9"); // YouTube
+    const drafts = [
+      { platform: Platform.TikTok, title: "", caption: "tt", hashtags: [], status: "pending" },
+      { platform: Platform.YouTube, title: "yt", caption: "yt", hashtags: [], status: "pending" },
+    ];
+    const job = await createReviewJob(request.id, { "9:16": cap916.id, "16:9": cap169.id }, drafts);
+
+    // First attempt: YouTube fails.
+    youtubeUploadMock.mockRejectedValueOnce(new Error("YouTube token refresh failed: 401"));
+
+    const service = new VideoGenerationService();
+    const first = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
+
+    expect(tiktokUploadMock).toHaveBeenCalledTimes(1);
+    expect(first.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
+    const ttDraft1 = first.publishingDrafts?.find((d) => d.platform === Platform.TikTok);
+    const ytDraft1 = first.publishingDrafts?.find((d) => d.platform === Platform.YouTube);
+    expect(ttDraft1?.status).toBe("posted");
+    expect(ytDraft1?.status).toBe("failed");
+    expect(ytDraft1?.error).toContain("401");
+
+    // Resubmit: YouTube now succeeds; TikTok must NOT be posted again.
+    const second = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
+
+    expect(tiktokUploadMock).toHaveBeenCalledTimes(1); // still once — no double-post
+    expect(youtubeUploadMock).toHaveBeenCalledTimes(2); // retried
+    expect(second.currentStep).toBe(VideoGenerationStep.Complete);
+    const req = await mockClipRepo.findById(request.id);
+    expect(req?.status).toBe(RequestStatus.Delivered);
   });
 });

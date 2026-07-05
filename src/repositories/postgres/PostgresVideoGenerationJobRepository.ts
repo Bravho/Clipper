@@ -4,6 +4,7 @@ import {
   CreateVideoGenerationJobInput,
   UpdateVideoGenerationJobInput,
   VideoGenerationStepHistoryEntry,
+  ChannelPublishingDraft,
 } from "@/domain/models/VideoGenerationJob";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -23,7 +24,8 @@ function serializeJobValue(key: string, value: unknown): unknown {
   if (
     key === "videoGenTaskIds" ||
     key === "sceneVideoAssetIds" ||
-    key === "animatedOverlayAssetIds"
+    key === "animatedOverlayAssetIds" ||
+    key === "publishingDrafts"
   ) {
     return value == null ? null : JSON.stringify(value);
   }
@@ -93,6 +95,7 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     tventVideoStatus:
       (row.tvent_video_status as "idle" | "generating" | "ready" | "failed") ?? "idle",
     selectedMotionTemplate: (row.selected_motion_template as string) ?? "none",
+    publishingDrafts: parseJsonField<ChannelPublishingDraft[] | null>(row.publishing_drafts, null),
     subtitleLanguages: ((row.subtitle_languages as string[]) ?? ["en", "zh"]) as ("th" | "en" | "zh")[],
     subtitleTimeline: (row.subtitle_timeline as string) ?? null,
     animationSpec: (row.animation_spec as string) ?? null,
@@ -162,6 +165,7 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   "captionedExport_4_5_assetId": "captioned_export_4_5_asset_id",
   tventVideoStatus: "tvent_video_status",
   selectedMotionTemplate: "selected_motion_template",
+  publishingDrafts: "publishing_drafts",
   subtitleLanguages: "subtitle_languages",
   subtitleTimeline: "subtitle_timeline",
   animationSpec: "animation_spec",

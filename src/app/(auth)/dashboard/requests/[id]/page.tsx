@@ -13,7 +13,7 @@ import {
   videoGenerationJobRepository,
 } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
-import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
+import { Platform, PLATFORM_ASPECT_RATIOS, PLATFORM_LABELS } from "@/domain/enums/Platform";
 import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
@@ -28,6 +28,13 @@ import {
 } from "@/features/requests/components/SceneDesignApprovalPanel";
 import { SceneScriptApprovalPanel } from "@/features/requests/components/SceneScriptApprovalPanel";
 import { VideoApprovalPanel } from "@/features/requests/components/VideoApprovalPanel";
+import { DistributionReviewPanel } from "@/features/requests/components/DistributionReviewPanel";
+import { RetentionNoteText } from "@/features/requests/components/RetentionNoteText";
+import {
+  finalClipAvailabilityNote,
+  inactivityNote,
+  uploadedMaterialsNote,
+} from "@/lib/retentionNotes";
 import { AnalyzeButton } from "@/features/requests/components/AnalyzeButton";
 import { StoryboardView } from "@/features/requests/components/StoryboardView";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -229,6 +236,13 @@ export default async function RequestDetailPage({
             : view.statusPresentation.description}
         </p>
 
+        {/* Retention notes — inline text only (no email/popup) */}
+        <RetentionNoteText
+          note={finalClipAvailabilityNote(request)}
+          className="mt-2 font-medium"
+        />
+        <RetentionNoteText note={inactivityNote(request)} className="mt-2" />
+
         {/* Queue info — hide while awaiting AI approval */}
         {view.queueDisplay.show && pipelineJob?.currentStep !== VideoGenerationStep.AwaitingContentApproval && (
           <p className="mt-2 text-sm text-slate-500">{view.queueDisplay.message}</p>
@@ -315,6 +329,20 @@ export default async function RequestDetailPage({
           pipelineJob.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval;
         const isAwaitingSceneScriptApproval =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingSceneScriptApproval;
+        // Phase 8 — distribution-review step (auto-filled per-channel publish form).
+        const isAwaitingDistributionReview =
+          pipelineJob.currentStep === VideoGenerationStep.AwaitingDistributionReview;
+        // Steps where an async background job is genuinely in progress — drives the
+        // VideoApprovalPanel processing spinner (must NOT show at terminal/review
+        // states like Complete/Delivered/AwaitingDistributionReview).
+        const isProcessing = [
+          VideoGenerationStep.GeneratingVoice,
+          VideoGenerationStep.GeneratingBaseVideo,
+          VideoGenerationStep.GeneratingAnimations,
+          VideoGenerationStep.ComposingFinalVideo,
+          VideoGenerationStep.GeneratingOverlay,
+          VideoGenerationStep.GeneratingAdditionalRatios,
+        ].includes(pipelineJob.currentStep);
         const effectiveDurationSeconds = Math.round(
           pipelineJob.voiceDurationSeconds ?? request.durationSeconds
         );
@@ -476,13 +504,30 @@ export default async function RequestDetailPage({
               />
             )}
 
+            {/* Phase 8 — distribution review: auto-filled per-channel publish form */}
+            {!isFailed && isAwaitingDistributionReview && (
+              <DistributionReviewPanel
+                requestId={id}
+                jobId={pipelineJob.id}
+                initialDrafts={pipelineJob.publishingDrafts ?? []}
+                reviewedClipUrl={overlayPreviewUrl}
+                reviewedRatio={primaryRatio}
+                reviewedChannelLabels={(request.targetPlatforms ?? [])
+                  .filter((p) => p !== Platform.TventApp)
+                  .map((p) => PLATFORM_LABELS[p as Platform] ?? p)}
+                tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
+                tventClipUrl={tventClipUrl}
+              />
+            )}
+
             {/* Generated base video + script — shown once video generation completes */}
-            {!isFailed && !isAwaitingVoiceApproval && baseVideoAsset?.storageUrl && (
+            {!isFailed && !isAwaitingVoiceApproval && !isAwaitingDistributionReview && baseVideoAsset?.storageUrl && (
               <VideoApprovalPanel
                 requestId={id}
                 jobId={pipelineJob.id}
                 videoUrl={baseVideoAsset.storageUrl}
                 sceneVideos={sceneVideos}
+                isProcessing={isProcessing}
                 isAwaitingApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingVideoApproval
                 }
@@ -587,9 +632,7 @@ export default async function RequestDetailPage({
           Source Files
         </h2>
         <p className="mb-4 text-xs text-slate-500">
-          Uploaded source files are kept only for this request and are not
-          maintained as a reusable asset library. Raw uploads are scheduled for
-          deletion after 90 days under our storage policy.
+          {uploadedMaterialsNote().text}
         </p>
         {assets.filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted && (a.assetType === AssetType.Image || a.assetType === AssetType.Video)).length === 0 ? (
           <p className="text-sm text-slate-400">No source files attached.</p>
@@ -606,23 +649,32 @@ export default async function RequestDetailPage({
                   >
                     <div className="flex items-center gap-3">
                       {thumbSrc ? (
+                        // Cloud-stored poster (images, and videos uploaded after
+                        // thumbnail support). Prefer this whenever present.
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={thumbSrc}
                           alt={asset.fileName}
                           className="h-12 w-12 flex-shrink-0 rounded-md border border-slate-200 object-cover"
                         />
+                      ) : asset.assetType === AssetType.Video ? (
+                        // No stored poster (e.g. clips uploaded before thumbnail
+                        // support, or when extraction was unavailable): let the
+                        // browser render a real frame from the clip itself. The
+                        // `#t=0.5` media fragment seeks ~0.5s in to avoid a black
+                        // first frame; preload="metadata" keeps it cheap.
+                        <video
+                          src={`${asset.storageUrl}#t=0.5`}
+                          preload="metadata"
+                          muted
+                          playsInline
+                          className="h-12 w-12 flex-shrink-0 rounded-md border border-slate-200 object-cover bg-black"
+                        />
                       ) : (
                         <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-400">
-                          {asset.assetType === AssetType.Video ? (
-                            <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                              <path d="M4 5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3.5l4 3v-9l-4 3V7a2 2 0 0 0-2-2H4z" />
-                            </svg>
-                          ) : (
-                            <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                              <path d="M4 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H4zm0 2h16v8.59l-3.3-3.3a1 1 0 0 0-1.4 0L11 17.59l-2.3-2.3a1 1 0 0 0-1.4 0L4 18.59V6z" />
-                            </svg>
-                          )}
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                            <path d="M4 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H4zm0 2h16v8.59l-3.3-3.3a1 1 0 0 0-1.4 0L11 17.59l-2.3-2.3a1 1 0 0 0-1.4 0L4 18.59V6z" />
+                          </svg>
                         </div>
                       )}
                       <div>

@@ -36,14 +36,13 @@ export function PackageSelector({ creditBalance }: Props) {
             </svg>
           </div>
           <div>
-            <p className="text-sm font-semibold text-blue-800">AI Track — วิดีโอ AI · รูปภาพเท่านั้น</p>
-            <p className="text-xs text-blue-600 mt-0.5">AI สร้างวิดีโอให้อัตโนมัติ · ราคาขึ้นอยู่กับความยาวและช่องทาง</p>
+            <p className="text-sm font-semibold text-blue-800">AI Track — วิดีโอ AI · รูปภาพและคลิปวิดีโอ</p>
+            <p className="text-xs text-blue-600 mt-0.5">AI สร้างวิดีโอให้อัตโนมัติจากรูปและคลิปของคุณ · ราคาขึ้นอยู่กับความยาวและช่องทาง</p>
           </div>
         </div>
 
         <NewRequestForm
           creditBalance={creditBalance}
-          imageOnly
           creditCost={PIPELINE_STEP_COSTS.CONTENT_ANALYSIS}
           onCreditParamsChange={(d, p) => {
             setDurationSeconds(d);

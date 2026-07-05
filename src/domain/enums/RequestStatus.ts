@@ -30,6 +30,13 @@ export enum RequestStatus {
   OnHold = "on_hold",
   Rejected = "rejected",
   RevisionRequested = "revision_requested",
+  /**
+   * AutoCancelled: request had no activity for the inactivity window (30 days)
+   * and was automatically cancelled by the retention sweep. Its uploaded and
+   * processed media are deleted (thumbnails retained). Distinct from a
+   * user/staff-initiated cancellation.
+   */
+  AutoCancelled = "auto_cancelled",
 }
 
 /** Statuses where the request is actively progressing (not terminal, not draft). */
@@ -46,4 +53,5 @@ export const TERMINAL_STATUSES: RequestStatus[] = [
   RequestStatus.Published,
   RequestStatus.Delivered,
   RequestStatus.Rejected,
+  RequestStatus.AutoCancelled,
 ];

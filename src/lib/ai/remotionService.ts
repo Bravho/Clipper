@@ -1,8 +1,11 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
+import { AI_CONFIG } from "@/config/aiTools";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { AnimationSpec } from "@/lib/ai/animationService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
@@ -33,6 +36,33 @@ import { getRemotionBundle } from "@/lib/ai/remotionBundle";
  */
 
 const RENDER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per ratio — generous for headless Chromium cold starts
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Remux an MP4 in place so the `moov` atom sits at the FRONT (`+faststart`).
+ * Without this the browser cannot read the clip's total duration until it has
+ * buffered the whole file, so the player shows no total time / a stuck scrubber
+ * on first load. Stream-copy only (no re-encode). Best-effort: on any failure the
+ * original file is left untouched.
+ */
+async function faststartRemux(mp4Path: string): Promise<void> {
+  const ffmpeg = AI_CONFIG.ffmpeg.path ?? "ffmpeg";
+  const tmpOut = `${mp4Path}.faststart.mp4`;
+  try {
+    await execFileAsync(ffmpeg, [
+      "-y",
+      "-i", mp4Path,
+      "-c", "copy",
+      "-movflags", "+faststart",
+      tmpOut,
+    ]);
+    await fs.rename(tmpOut, mp4Path);
+  } catch (err) {
+    console.error("[remotion] faststart remux failed, using original output:", err);
+    await fs.rm(tmpOut, { force: true }).catch(() => {});
+  }
+}
 
 export interface RenderOverlayParams {
   ratio: VideoRatio;
@@ -185,6 +215,10 @@ export async function renderTemplatedVideo(
       inputProps,
       timeoutInMilliseconds: RENDER_TIMEOUT_MS,
     });
+
+    // Move the moov atom to the front so the player shows the total duration on
+    // first load (matching the montage/base-video card behavior).
+    await faststartRemux(outputPath);
 
     const data = await fs.readFile(outputPath);
     const bucket = process.env.DO_SPACES_BUCKET!;

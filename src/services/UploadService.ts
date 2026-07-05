@@ -28,7 +28,7 @@ import {
   buildRequestMatKey,
   buildThumbnailKey,
 } from "@/lib/spacesKeys";
-import { generateImageThumbnail } from "@/lib/thumbnails";
+import { generateImageThumbnail, generateVideoThumbnail, storePosterThumbnail } from "@/lib/thumbnails";
 import { AI_CONFIG } from "@/config/aiTools";
 
 const execFileAsync = promisify(execFile);
@@ -260,7 +260,17 @@ export class UploadService {
    * Thumbnail generation (image resize / video frame) must be handled separately
    * by a background worker — this method only reserves the key path.
    */
-  async confirmUpload(assetId: string, userId: string): Promise<UploadedAsset> {
+  async confirmUpload(
+    assetId: string,
+    userId: string,
+    /**
+     * Optional poster frame captured in the browser (a `data:image/*;base64,…`
+     * URL) for video clips. When present it's stored as the clip's thumbnail —
+     * no server ffmpeg needed. Falls back to server-side frame extraction when
+     * absent.
+     */
+    posterDataUrl?: string
+  ): Promise<UploadedAsset> {
     const asset = await uploadedAssetRepository.findById(assetId);
     if (!asset) throw new Error("Asset not found.");
     if (asset.userId !== userId) throw new Error("Access denied.");
@@ -341,10 +351,36 @@ export class UploadService {
           err
         );
       }
+    } else if (asset.assetType === AssetType.Video) {
+      // Store the clip's poster thumbnail. Prefer the browser-captured poster
+      // (no server ffmpeg dependency — this is why clips previously showed no
+      // thumbnail while images did); fall back to server-side frame extraction
+      // when the client didn't supply one. Non-fatal either way: keep the clip
+      // Uploaded even if the poster can't be produced.
+      try {
+        if (posterDataUrl) {
+          await storePosterThumbnail(posterDataUrl, thumbKey);
+        } else {
+          await generateVideoThumbnail(destKey, thumbKey);
+        }
+        thumbnailGenerated = true;
+      } catch (err) {
+        console.error(
+          `[UploadService] video thumbnail generation failed for "${asset.fileName}" (keeping clip without thumbnail):`,
+          err
+        );
+        // If the client poster failed, still try server-side extraction as a
+        // last resort before giving up.
+        if (posterDataUrl) {
+          try {
+            await generateVideoThumbnail(destKey, thumbKey);
+            thumbnailGenerated = true;
+          } catch (err2) {
+            console.error(`[UploadService] fallback ffmpeg poster also failed for "${asset.fileName}":`, err2);
+          }
+        }
+      }
     }
-    // Video thumbnails require ffmpeg — key is reserved but generation is deferred.
-    // TODO: Dispatch a background job here to call generateVideoThumbnail(destKey, thumbKey)
-    //   and then call updateThumbnail(assetId, thumbKey) once done.
 
     return uploadedAssetRepository.update(assetId, {
       storageKey: destKey,

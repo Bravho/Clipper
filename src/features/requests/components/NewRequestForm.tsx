@@ -77,6 +77,63 @@ function readVideoDuration(file: File): Promise<number> {
   });
 }
 
+/**
+ * Capture a poster frame from a local video File and return it as a JPEG data
+ * URL, so the pending-file grid shows the clip's actual content instead of a
+ * generic icon. Seeks slightly past the start to avoid a black first frame.
+ * Resolves null on any failure (unsupported codec, decode error) so the caller
+ * falls back to the placeholder icon. Object URL is always revoked.
+ */
+function generateVideoThumbnail(file: File): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const url = URL.createObjectURL(file);
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.muted = true;
+      video.playsInline = true;
+
+      let settled = false;
+      const finish = (result: string | null) => {
+        if (settled) return;
+        settled = true;
+        URL.revokeObjectURL(url);
+        resolve(result);
+      };
+
+      const capture = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth || 320;
+          canvas.height = video.videoHeight || 180;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return finish(null);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          finish(canvas.toDataURL("image/jpeg", 0.7));
+        } catch {
+          finish(null);
+        }
+      };
+
+      video.onloadeddata = () => {
+        video.onseeked = capture;
+        const target = Math.min(0.5, (Number.isFinite(video.duration) ? video.duration : 1) / 2);
+        try {
+          video.currentTime = target;
+        } catch {
+          capture();
+        }
+      };
+      video.onerror = () => finish(null);
+      // Safety net if metadata/seek never fires.
+      setTimeout(() => finish(null), 5000);
+      video.src = url;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 type SubmitPhase = "form" | "submitting";
 
 export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, onCreditParamsChange }: NewRequestFormProps) {
@@ -165,6 +222,23 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
 
     setPendingFiles((prev) => [...prev, ...newItems].slice(0, MAX_UPLOAD_COUNT));
 
+    // Generate previews for accepted files: images use an object URL; videos get
+    // an async poster-frame capture (data URL) so the grid shows real content.
+    for (const item of newItems) {
+      if (item.error) continue;
+      const isVideo = ACCEPTED_VIDEO_MIME_TYPES.includes(
+        item.file.type as (typeof ACCEPTED_VIDEO_MIME_TYPES)[number]
+      );
+      if (isVideo) {
+        void generateVideoThumbnail(item.file).then((thumb) => {
+          if (thumb) setPreviews((prev) => ({ ...prev, [item.id]: thumb }));
+        });
+      } else if (item.file.type.startsWith("image/")) {
+        const objUrl = URL.createObjectURL(item.file);
+        setPreviews((prev) => ({ ...prev, [item.id]: objUrl }));
+      }
+    }
+
     // Asynchronously verify each accepted video's duration (≤45s) and flag any
     // that are too long. The server re-checks with ffprobe at confirm time.
     for (const item of newItems) {
@@ -192,25 +266,31 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
     setPendingFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
-  // Generate/revoke thumbnail object URLs as the pending file list changes.
+  // Drop previews for removed files, revoking any blob: object URLs (image
+  // previews). Video thumbnails are data: URLs and need no revocation.
+  // Generation happens in addFiles, not here, so async video posters survive.
   useEffect(() => {
+    const ids = new Set(pendingFiles.map((f) => f.id));
     setPreviews((prev) => {
+      let changed = false;
       const next: Record<string, string> = {};
-      for (const item of pendingFiles) {
-        if (item.file.type.startsWith("image/")) {
-          next[item.id] = prev[item.id] ?? URL.createObjectURL(item.file);
+      for (const [id, url] of Object.entries(prev)) {
+        if (ids.has(id)) {
+          next[id] = url;
+        } else {
+          if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+          changed = true;
         }
       }
-      for (const [id, url] of Object.entries(prev)) {
-        if (!(id in next)) URL.revokeObjectURL(url);
-      }
-      return next;
+      return changed ? next : prev;
     });
   }, [pendingFiles]);
 
   useEffect(() => {
     return () => {
-      Object.values(previews).forEach((url) => URL.revokeObjectURL(url));
+      Object.values(previews).forEach((url) => {
+        if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+      });
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -295,10 +375,17 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
           continue;
         }
 
+        // Reuse the poster frame already captured for the preview grid (a
+        // data: URL for videos) so the clip's thumbnail is stored on cloud at
+        // upload — no dependency on server-side ffmpeg.
+        const poster = previews[item.id];
+        const posterDataUrl =
+          typeof poster === "string" && poster.startsWith("data:image/") ? poster : undefined;
+
         const confirmRes = await fetch(`/api/uploads/${requestId}/confirm`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ assetId }),
+          body: JSON.stringify({ assetId, posterDataUrl }),
         });
         if (!confirmRes.ok) {
           const body = await confirmRes.json().catch(() => ({}));
@@ -471,7 +558,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
           <p className="mt-1 text-xs text-slate-400">
             {imageOnly
               ? `รูปภาพเท่านั้น (JPEG, PNG, WebP, GIF) · สูงสุด ${MAX_IMAGE_SIZE_MB} MB ต่อไฟล์ · สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์`
-              : `รูปภาพสูงสุด ${MAX_IMAGE_SIZE_MB} MB · วิดีโอสูงสุด ${MAX_VIDEO_SIZE_MB} MB และยาวไม่เกิน ${MAX_CLIP_DURATION_SECONDS} วินาที · สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์ · รวมไม่เกิน ${MAX_UPLOAD_SIZE_MB} MB`}
+              : `รูปภาพสูงสุด ${MAX_IMAGE_SIZE_MB} MB · วิดีโอ MP4 สูงสุด ${MAX_VIDEO_SIZE_MB} MB และยาวไม่เกิน ${MAX_CLIP_DURATION_SECONDS} วินาที · สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์ · รวมไม่เกิน ${MAX_UPLOAD_SIZE_MB} MB`}
           </p>
           <input
             id="file-input"

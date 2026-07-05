@@ -235,8 +235,10 @@ async function createMontageJob(
     voiceRecordingAssetId: "voice-asset",
     processedVoiceAssetId: "voice-asset",
     selectedMusicTrack: null,
-    voiceDurationSeconds: 14,
-    voiceTimestamps: JSON.stringify([{ start: 0, end: 14, text: "สวัสดีค่ะ" }]),
+    // Kept below the montage plan's total (6 + 8 = 14s) so the auto-grow
+    // minimum gate (voice + short intro + ending) is satisfied by the plan.
+    voiceDurationSeconds: 12,
+    voiceTimestamps: JSON.stringify([{ start: 0, end: 12, text: "สวัสดีค่ะ" }]),
     videoGenTaskId: null,
     videoGenTaskIds: null,
     videoGenStatus: null,
@@ -513,6 +515,23 @@ describe("VideoGenerationService — montage engine (Phase 3)", () => {
     // Scene 2 → image index 1 → coords[1] centre (0.5, 0.5).
     expect(plan[1].assets![0].focusX).toBeCloseTo(0.5, 5);
     expect(plan[1].assets![0].focusY).toBeCloseTo(0.5, 5);
+  });
+
+  it("reopenSceneDesignByRequester returns to scene design and clears rendered segments (plan kept)", async () => {
+    const request = await createRequestWithImages(2);
+    const job = await createMontageJob(request.id, VideoGenerationStep.AwaitingVideoApproval, {
+      sceneVideoAssetIds: ["seg-a", "seg-b"],
+      baseVideoAssetId: "base-1",
+    });
+
+    const service = new VideoGenerationService();
+    const updated = await service.reopenSceneDesignByRequester(job.id, USER_ID);
+
+    expect(updated.currentStep).toBe(VideoGenerationStep.AwaitingSceneDesignApproval);
+    expect(updated.sceneVideoAssetIds).toBeNull();
+    expect(updated.baseVideoAssetId).toBeNull();
+    // Approved plan preserved so the scene-design panel reloads the current design.
+    expect(updated.approvedScenePlan).toBeTruthy();
   });
 });
 // end of montage Phase 3 suite

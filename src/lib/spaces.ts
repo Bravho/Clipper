@@ -1,4 +1,5 @@
-import { S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /**
  * DigitalOcean Spaces S3-compatible client.
@@ -44,4 +45,30 @@ export function spacesPublicUrl(key: string): string {
   const endpoint = process.env.DO_SPACES_ENDPOINT!;
   const bucket = process.env.DO_SPACES_BUCKET!;
   return `${endpoint}/${bucket}/${key}`;
+}
+
+/** Default lifetime for a presigned GET URL (1 hour). */
+export const SIGNED_URL_TTL_SECONDS = 60 * 60;
+
+/**
+ * Build a short-lived presigned GET URL for a private object.
+ *
+ * Use this for anything that should NOT be world-readable via a public URL —
+ * raw uploads (`request_mat/`), base renders (`ai_videos/`), and final
+ * deliverables served for the 7-day download window. Thumbnails remain public
+ * and should keep using `spacesPublicUrl`.
+ *
+ * NOTE: privatising these prefixes also requires uploading their objects with
+ * `ACL: "private"` (they are currently written with `ACL: "public-read"`, which
+ * keeps them publicly reachable regardless of the bucket policy).
+ */
+export async function spacesSignedUrl(
+  key: string,
+  ttlSeconds: number = SIGNED_URL_TTL_SECONDS
+): Promise<string> {
+  return getSignedUrl(
+    spacesClient,
+    new GetObjectCommand({ Bucket: SPACES_BUCKET, Key: key }),
+    { expiresIn: ttlSeconds }
+  );
 }

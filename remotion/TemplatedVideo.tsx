@@ -294,43 +294,76 @@ function EditorialFrame({ palette }: { palette: Palette }) {
 /* ── Subtitles — large, short-side scaled so 16:9 and 9:16 match ── */
 const LANG_STYLE: Record<
   "th" | "en" | "zh",
-  { fontFamily: string; color: string; fontSize: number; bottom: number; maxChars: number; field: keyof TimedSegment }
+  { fontFamily: string; color: string; fontSize: number; maxChars: number; field: keyof TimedSegment }
 > = {
-  th: { fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", color: "#FFFFFF", fontSize: 62, bottom: 350, maxChars: 26, field: "textThai" },
-  en: { fontFamily: "Arial, Helvetica, sans-serif", color: "#FFFFFF", fontSize: 52, bottom: 200, maxChars: 30, field: "textEnglish" },
-  zh: { fontFamily: "'Microsoft YaHei', 'Noto Sans SC', sans-serif", color: "#FFE066", fontSize: 50, bottom: 82, maxChars: 16, field: "textChinese" },
+  th: { fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", color: "#FFFFFF", fontSize: 62, maxChars: 26, field: "textThai" },
+  en: { fontFamily: "Arial, Helvetica, sans-serif", color: "#FFFFFF", fontSize: 52, maxChars: 30, field: "textEnglish" },
+  zh: { fontFamily: "'Microsoft YaHei', 'Noto Sans SC', sans-serif", color: "#FFE066", fontSize: 50, maxChars: 16, field: "textChinese" },
 };
+
+/** Distance of the whole caption stack from the bottom edge (1080-short-side ref). */
+const STACK_BOTTOM = 150;
+
+type SegmenterLike = { segment: (s: string) => Iterable<{ segment: string }> };
+const SegmenterCtor = (
+  Intl as unknown as {
+    Segmenter?: new (locale: string, opts: { granularity: "word" }) => SegmenterLike;
+  }
+).Segmenter;
+
+/**
+ * Word-segment a no-space script (Thai/Chinese) via the built-in
+ * `Intl.Segmenter` (ICU) so line breaks fall on real word boundaries instead of
+ * mid-word. Falls back to per-character when ICU word data is unavailable.
+ */
+function segmentNoSpaceWords(text: string): string[] {
+  if (SegmenterCtor) {
+    try {
+      const isThai = /[฀-๿]/.test(text);
+      const seg = new SegmenterCtor(isThai ? "th" : "zh", { granularity: "word" });
+      const units = Array.from(seg.segment(text), (s) => s.segment).filter((u) => u.length > 0);
+      if (units.length > 0) return units;
+    } catch {
+      /* fall through to char split */
+    }
+  }
+  return Array.from(text);
+}
+
+/** Split `units` into two lines balanced by character length (no mid-unit cut). */
+function balanceTwoLines(units: string[], joiner: string): string[] {
+  if (units.length < 2) return [units.join(joiner)];
+  const total = units.reduce((n, u) => n + u.length, 0) + joiner.length * (units.length - 1);
+  const target = Math.ceil(total / 2);
+  let acc = 0;
+  let best = 1;
+  let bestDiff = Infinity;
+  for (let i = 0; i < units.length - 1; i++) {
+    acc += units[i].length + joiner.length;
+    const diff = Math.abs(acc - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = i + 1;
+    }
+  }
+  return [units.slice(0, best).join(joiner), units.slice(best).join(joiner)];
+}
 
 /**
  * Split an over-long caption into up to two balanced lines so it reads as short,
- * tidy clauses instead of one very wide line. Space-separated text (English)
- * breaks on a word boundary nearest the middle; continuous scripts (Thai,
- * Chinese) split near the middle character.
+ * tidy clauses instead of one very wide line. Breaks on WORD boundaries for both
+ * space-separated text (English) and continuous scripts (Thai/Chinese, via
+ * `Intl.Segmenter`) — never mid-word.
  */
 function wrapCaption(text: string, maxChars: number): string[] {
   const trimmed = text.trim();
   if (trimmed.length <= maxChars) return [trimmed];
 
   if (/\s/.test(trimmed)) {
-    const words = trimmed.split(/\s+/);
-    if (words.length < 2) return [trimmed];
-    const target = Math.ceil(trimmed.length / 2);
-    let acc = 0;
-    let best = 1;
-    let bestDiff = Infinity;
-    for (let i = 0; i < words.length - 1; i++) {
-      acc += words[i].length + 1;
-      const diff = Math.abs(acc - target);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        best = i + 1;
-      }
-    }
-    return [words.slice(0, best).join(" "), words.slice(best).join(" ")];
+    return balanceTwoLines(trimmed.split(/\s+/).filter(Boolean), " ");
   }
 
-  const mid = Math.ceil(trimmed.length / 2);
-  return [trimmed.slice(0, mid), trimmed.slice(mid)];
+  return balanceTwoLines(segmentNoSpaceWords(trimmed), "");
 }
 
 function Subtitles({
@@ -347,30 +380,40 @@ function Subtitles({
 
   const appear = Math.min(1, Math.max(0, (t - active.startSecond) / 0.15));
 
+  // Stack the language lines in ONE bottom-anchored flex column so each line
+  // sits above the previous with a fixed gap — they can never overlap even when
+  // a cue wraps to two lines (the old code pinned each language at a fixed
+  // distance from the bottom and let it grow upward into the line above).
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
-      {subtitleLanguages.map((lang) => {
-        const style = LANG_STYLE[lang];
-        const text = active[style.field] as string | undefined;
-        if (!text) return null;
-        return (
-          <div
-            key={lang}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: style.bottom * scale,
-              textAlign: "center",
-              padding: `0 ${48 * scale}px`,
-              opacity: appear,
-              transform: `scale(${0.96 + 0.04 * appear})`,
-              transformOrigin: "center bottom",
-            }}
-          >
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: STACK_BOTTOM * scale,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: `${16 * scale}px`,
+          padding: `0 ${48 * scale}px`,
+          opacity: appear,
+          transform: `scale(${0.96 + 0.04 * appear})`,
+          transformOrigin: "center bottom",
+        }}
+      >
+        {subtitleLanguages.map((lang) => {
+          const style = LANG_STYLE[lang];
+          const text = active[style.field] as string | undefined;
+          if (!text) return null;
+          return (
             <span
+              key={lang}
               style={{
                 display: "inline-block",
+                maxWidth: "100%",
+                textAlign: "center",
                 fontFamily: style.fontFamily,
                 fontSize: style.fontSize * scale,
                 lineHeight: 1.22,
@@ -391,9 +434,9 @@ function Subtitles({
                 </React.Fragment>
               ))}
             </span>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </AbsoluteFill>
   );
 }

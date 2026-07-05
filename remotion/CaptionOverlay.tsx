@@ -14,15 +14,18 @@ import { OverlayInputProps, TimedSegment } from "./types";
  */
 const LANG_STYLE: Record<
   "th" | "en" | "zh",
-  { fontFamily: string; color: string; fontSize: number; bottom: number; field: keyof TimedSegment }
+  { fontFamily: string; color: string; fontSize: number; field: keyof TimedSegment }
 > = {
-  // Large/bold, phone-first sizes (1080x1920 reference; scaled per ratio). The
-  // stacked bottom margins keep Thai > English > Chinese clear of each other and
-  // above the very bottom edge.
-  th: { fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", color: "#FFFFFF", fontSize: 76, bottom: 320, field: "textThai" },
-  en: { fontFamily: "Arial, Helvetica, sans-serif", color: "#FFFFFF", fontSize: 68, bottom: 200, field: "textEnglish" },
-  zh: { fontFamily: "'Microsoft YaHei', 'Noto Sans SC', sans-serif", color: "#FFFF00", fontSize: 62, bottom: 90, field: "textChinese" },
+  // Large/bold, phone-first sizes (1080x1920 reference; scaled per ratio).
+  th: { fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", color: "#FFFFFF", fontSize: 72, field: "textThai" },
+  en: { fontFamily: "Arial, Helvetica, sans-serif", color: "#FFFFFF", fontSize: 64, field: "textEnglish" },
+  zh: { fontFamily: "'Microsoft YaHei', 'Noto Sans SC', sans-serif", color: "#FFFF00", fontSize: 58, field: "textChinese" },
 };
+
+/** Distance of the whole caption stack from the bottom edge (1080x1920 ref). */
+const STACK_BOTTOM = 150;
+/** Max wrapped lines per language line before clamping (safety net). */
+const MAX_LINES_PER_CUE = 2;
 
 /**
  * Renders the kinetic-captions overlay: for the currently active
@@ -49,30 +52,43 @@ export function CaptionOverlay({
   const appear = Math.min(1, Math.max(0, (t - active.startSecond) / 0.15));
   const popScale = 0.96 + 0.04 * appear;
 
+  // Stack the language lines in ONE bottom-anchored flex column: each line sits
+  // on top of the previous with a fixed gap, so blocks can never overlap even
+  // when a cue wraps to two lines (the old code anchored each language at a
+  // fixed distance from the bottom and let it grow upward into the line above).
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
-      {subtitleLanguages.map((lang) => {
-        const style = LANG_STYLE[lang];
-        const text = active[style.field] as string | undefined;
-        if (!text) return null;
-        return (
-          <div
-            key={lang}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: style.bottom * scale,
-              textAlign: "center",
-              padding: `0 ${40 * scale}px`,
-              opacity: appear,
-              transform: `scale(${popScale})`,
-              transformOrigin: "center bottom",
-            }}
-          >
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: STACK_BOTTOM * scale,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: `${16 * scale}px`,
+          padding: `0 ${40 * scale}px`,
+          opacity: appear,
+          transform: `scale(${popScale})`,
+          transformOrigin: "center bottom",
+        }}
+      >
+        {subtitleLanguages.map((lang) => {
+          const style = LANG_STYLE[lang];
+          const text = active[style.field] as string | undefined;
+          if (!text) return null;
+          return (
             <span
+              key={lang}
               style={{
-                display: "inline-block",
+                display: "-webkit-box",
+                WebkitBoxOrient: "vertical",
+                WebkitLineClamp: MAX_LINES_PER_CUE,
+                overflow: "hidden",
+                maxWidth: "100%",
+                textAlign: "center",
                 fontFamily: style.fontFamily,
                 fontSize: style.fontSize * scale,
                 lineHeight: 1.25,
@@ -81,8 +97,8 @@ export function CaptionOverlay({
                 WebkitTextStroke: `${6 * scale}px black`,
                 paintOrder: "stroke fill",
                 textShadow: "3px 3px 6px rgba(0,0,0,0.9)",
-                // Readability plate behind the text — keeps the now-larger
-                // captions legible over bright/busy footage.
+                // Readability plate behind the text — keeps the large captions
+                // legible over bright/busy footage.
                 background: "rgba(0,0,0,0.42)",
                 borderRadius: `${18 * scale}px`,
                 padding: `${10 * scale}px ${26 * scale}px`,
@@ -90,9 +106,9 @@ export function CaptionOverlay({
             >
               {text}
             </span>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </AbsoluteFill>
   );
 }

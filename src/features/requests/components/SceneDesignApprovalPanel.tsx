@@ -9,6 +9,7 @@ import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { AssetType } from "@/domain/enums/AssetType";
 import { calcPipelineCost, PIPELINE_STEP_COSTS } from "@/config/credits";
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
+import { assetPlaySeconds, minMontageTotalSeconds, sceneMontageSeconds } from "@/config/montage";
 
 interface SceneDesignApprovalPanelProps {
   requestId: string;
@@ -37,8 +38,20 @@ function clampDuration(value: number): number {
   );
 }
 
+/** True total video length = Σ per-asset on-screen seconds (trimmed clips
+ *  count their selected window), falling back to scene.durationSeconds. */
 function sceneTotal(scenes: ScenePlan[]): number {
-  return scenes.reduce((sum, scene) => sum + (Number(scene.durationSeconds) || 0), 0);
+  return scenes.reduce((sum, scene) => sum + sceneMontageSeconds(scene), 0);
+}
+
+/** A clip whose in/out window is set — its duration is pinned to that window. */
+function isTrimmedClip(a: MontageSceneAsset): boolean {
+  return (
+    a.kind === "clip" &&
+    Number.isFinite(a.trimStartSeconds) &&
+    Number.isFinite(a.trimEndSeconds) &&
+    (a.trimEndSeconds as number) > (a.trimStartSeconds as number)
+  );
 }
 
 function getInitialSceneImages(scene: ScenePlan): number[] {
@@ -107,15 +120,27 @@ function allocateDurations(count: number, totalSeconds: number): number[] {
   return arr;
 }
 
-/** Redistribute a scene's duration across its montage assets (keeps the
- *  per-asset durations summing to the scene length the user set). */
+/** Distribute a scene's target duration across its montage assets while
+ *  PRESERVING trimmed clips: a clip with an in/out window keeps that window as
+ *  its duration; only stills and untrimmed clips share the remaining budget.
+ *  If the pinned clips already exceed the target, the scene auto-grows and the
+ *  flexible assets fall back to their minimum. */
 function reallocateSceneAssets(scene: ScenePlan): ScenePlan {
   if (!scene.assets || scene.assets.length === 0) return scene;
-  const durations = allocateDurations(scene.assets.length, scene.durationSeconds);
-  return {
-    ...scene,
-    assets: scene.assets.map((a, i) => ({ ...a, durationSeconds: durations[i] ?? 1 })),
-  };
+
+  const pinned = scene.assets.map((a) => (isTrimmedClip(a) ? assetPlaySeconds(a) : null));
+  const pinnedTotal = pinned.reduce((sum: number, d) => sum + (d ?? 0), 0);
+  const flexCount = pinned.filter((d) => d == null).length;
+  const flexBudget = Math.max(flexCount, (Number(scene.durationSeconds) || 0) - pinnedTotal);
+  const flexDurations = allocateDurations(flexCount, flexBudget);
+
+  let c = 0;
+  const assets = scene.assets.map((a, i) => ({
+    ...a,
+    durationSeconds: pinned[i] ?? flexDurations[c++] ?? 1,
+  }));
+  const durationSeconds = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
+  return { ...scene, assets, durationSeconds };
 }
 
 /** On load, montage scenes (those carrying `assets`) drop `imageIndexes` so the
@@ -145,13 +170,41 @@ export function SceneDesignApprovalPanel({
   const router = useRouter();
   const submittedDuration = clampDuration(voiceDurationSeconds ?? initialDurationSeconds);
   const [durationSeconds, setDurationSeconds] = useState(submittedDuration);
-  const [scenes, setScenes] = useState<ScenePlan[]>(() =>
-    normalizeMontageScenes(scaleScenesToDuration(initialScenes, submittedDuration))
-  );
+  // Preserve the server-sized montage durations on load (they already cover the
+  // voice + short intro/ending). Only re-split each scene's assets; don't scale
+  // the total down to the raw voice length, which would trip the minimum gate.
+  const [scenes, setScenes] = useState<ScenePlan[]>(() => normalizeMontageScenes(initialScenes));
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const totalSceneSeconds = sceneTotal(scenes);
+  // The montage (stills + trimmed clips) must be long enough to cover the whole
+  // voiceover plus the short music intro and ending — otherwise narration would
+  // run past the picture. Total may exceed the voice length (auto-grow) freely.
+  const minTotalSeconds = minMontageTotalSeconds(voiceDurationSeconds ?? submittedDuration);
+  const meetsMinimum = totalSceneSeconds + 1e-6 >= minTotalSeconds;
+
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+
+  // Everything that must be fixed before the plan can be approved, as friendly
+  // Thai messages. Shown proactively so the requester knows what to adjust; the
+  // approve button stays clickable and re-checks these on click.
+  const blockers: string[] = [];
+  if (scenes.length === 0) {
+    blockers.push("ต้องมีอย่างน้อย 1 ฉาก");
+  }
+  const emptyScenes = scenes
+    .map((s, i) => ({ hasAssets: (s.assets?.length ?? 0) > 0, num: i + 1 }))
+    .filter((s) => !s.hasAssets)
+    .map((s) => s.num);
+  if (emptyScenes.length > 0) {
+    blockers.push(`ฉากที่ ${emptyScenes.join(", ")} ยังไม่ได้เลือกรูปหรือคลิป`);
+  }
+  if (!meetsMinimum) {
+    blockers.push(
+      `ความยาววิดีโอรวมตอนนี้ ${round1(totalSceneSeconds)} วินาที ต้องอย่างน้อย ${round1(minTotalSeconds)} วินาที เพื่อให้คลุมเสียงพากย์ทั้งหมด — เพิ่มความยาวฉาก หรือเลือกช่วงคลิปให้ยาวขึ้น`
+    );
+  }
   const costEstimate = useMemo(
     () => calcPipelineCost(durationSeconds, totalChannels),
     [durationSeconds, totalChannels]
@@ -180,7 +233,7 @@ export function SceneDesignApprovalPanel({
   /** Persist montage asset edits: keep scene.assets, clear imageIndexes so the
    *  legacy Veo morph rules stay dormant, and keep the scene length in sync. */
   const updateSceneAssets = (index: number, assets: MontageSceneAsset[]) => {
-    const total = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
+    const total = assets.reduce((sum, a) => sum + assetPlaySeconds(a), 0);
     updateScene(index, {
       assets,
       imageIndexes: [],
@@ -189,11 +242,18 @@ export function SceneDesignApprovalPanel({
   };
 
   const handleApprove = async () => {
+    if (blockers.length > 0) {
+      // Don't call the API — the notice above the button already lists exactly
+      // what to adjust (shown proactively whenever there are blockers).
+      setError("กรุณาปรับแก้รายการด้านล่างก่อนดำเนินการต่อ");
+      return;
+    }
     setIsApproving(true);
     setError(null);
     try {
-      // Belt-and-suspenders: ensure every montage scene's per-asset durations
-      // sum to its scene length before the renderer consumes them.
+      // Belt-and-suspenders: keep each montage scene's per-asset durations
+      // consistent (trimmed clips pinned, stills rebalanced) before the renderer
+      // and the server-side minimum check consume them.
       const scenePlan = scenes.map(reallocateSceneAssets);
       const res = await fetch(`/api/requests/${requestId}/scene-design/approve`, {
         method: "POST",
@@ -289,14 +349,20 @@ export function SceneDesignApprovalPanel({
           </h3>
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {sourceAssets.map((asset) => {
-              const thumbSrc = asset.thumbnailUrl || (asset.assetType === AssetType.Image ? asset.storageUrl : "");
+              const isVideo = asset.assetType === AssetType.Video;
+              // Prefer a generated poster; for images use the full image. Clips
+              // with no poster (uploaded before poster generation) show a static
+              // placeholder — NOT a live <video>, which would compete for the
+              // browser's limited video decoders. Run the poster backfill to
+              // replace the placeholder with a real frame.
+              const imgSrc = asset.thumbnailUrl || (!isVideo ? asset.storageUrl : "");
               return (
                 <li key={asset.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
                   <div className="flex aspect-square items-center justify-center bg-slate-50">
-                    {thumbSrc ? (
-                      <img src={thumbSrc} alt={asset.fileName} className="h-full w-full object-cover" />
+                    {imgSrc ? (
+                      <img src={imgSrc} alt={asset.fileName} className="h-full w-full object-cover" />
                     ) : (
-                      <div className="text-xs font-medium text-slate-400">VIDEO</div>
+                      <div className="text-xs font-medium text-slate-400">{isVideo ? "วิดีโอ" : "ไฟล์"}</div>
                     )}
                   </div>
                   <div className="px-2 py-1.5">
@@ -315,11 +381,11 @@ export function SceneDesignApprovalPanel({
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            แผนฉาก รวม {totalSceneSeconds} วินาที
+            แผนฉาก · ความยาววิดีโอรวม {Math.round(totalSceneSeconds * 10) / 10} วินาที
           </h3>
-          {totalSceneSeconds !== durationSeconds && (
+          {!meetsMinimum && (
             <span className="text-xs text-amber-600">
-              เวลารวมควรเท่ากับ {durationSeconds} วินาที
+              ต้องยาวอย่างน้อย {Math.round(minTotalSeconds * 10) / 10} วินาที (คลุมเสียงพากย์ทั้งหมด)
             </span>
           )}
         </div>
@@ -376,14 +442,26 @@ export function SceneDesignApprovalPanel({
         </div>
       )}
 
-      <div className="flex justify-end pb-2">
-        <Button
-          onClick={handleApprove}
-          loading={isApproving}
-          disabled={isApproving || scenes.length === 0 || totalSceneSeconds !== durationSeconds}
-        >
+      {blockers.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-800">
+            ปรับแก้ก่อนดำเนินการต่อ
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-700">
+            {blockers.map((b, i) => (
+              <li key={i}>{b}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex flex-col items-end gap-1 pb-2">
+        <Button onClick={handleApprove} loading={isApproving} disabled={isApproving}>
           อนุมัติแผนฉากและสร้างวิดีโอ →
         </Button>
+        {blockers.length > 0 && (
+          <p className="text-xs text-amber-600">ยังปรับแก้ได้ก่อนกดยืนยัน</p>
+        )}
       </div>
     </div>
   );

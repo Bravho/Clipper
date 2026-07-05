@@ -7,6 +7,7 @@ import { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { sanitizeStoryboard } from "@/lib/ai/storyboard";
+import { extractVideoFrames } from "@/lib/ai/videoFrames";
 
 export interface ChatGptContentOutput {
   scenePlan: ScenePlan[];
@@ -108,6 +109,7 @@ Requirements:
 - Script structure: [3s hook] + [10s main content] + [2s call-to-action].
 - Thai script: natural spoken Thai, about 40-50 words, fits comfortably within 15 seconds.
 - TTS-safe text only: use clear standard Thai words and spelling suitable for AI text-to-speech. Avoid English loanwords, abbreviations, slang, ambiguous spellings, numerals/symbols, and uncommon words that an AI voice could mispronounce. Write numbers and units as Thai words.
+- Natural, non-forceful tone (IMPORTANT for the voice-over): write the way a friendly local person actually speaks — warm, relaxed, sincere, and conversational. Do NOT use hard-sell or over-convincing advertising language, hype words, exaggerated superlatives ("ที่สุด", "ดีที่สุดในโลก", "ห้ามพลาด"), or pushy, insistent, commanding phrasing. Over-convincing, salesy wording makes the AI voice sound unnatural and forceful. Let the food and the place speak for themselves, and keep the call-to-action a soft, gentle invitation rather than a forceful command.
 - Target audience is for theme/style reference only. Do NOT mention, address, or reference the target audience in the spoken script.
 - Product accuracy: only reference products, items, and details that are visibly present in the uploaded images or clearly provided by the requester.
 - Do NOT create the final scene plan, hook field, or detailed visual design in this step (that happens later).
@@ -176,7 +178,8 @@ function buildUserPrompt(params: GenerateContentParams): string {
     `Target platforms: ${params.targetPlatforms.join(", ")}`,
     `Preferred style/tone: ${params.preferredStyle}`,
     `Duration: ${params.videoDurationSeconds ?? 15} seconds`,
-    `Number of uploaded images: ${params.imageUrls.length}`,
+    `Number of uploaded assets (images and/or video clips): ${params.imageUrls.length}`,
+    `Asset indexing: each uploaded asset is provided above, preceded by a text label "Uploaded asset index N" giving its zero-based index. Use exactly these labels as the indexes for imageIndexes / assetIndexes. A video clip may be shown as SEVERAL sampled frames under a single "Uploaded asset index N" label — treat all of those frames as the SAME asset index N (one asset), not as multiple assets.`,
   ];
 
   if (params.businessProfileContext) {
@@ -247,12 +250,13 @@ function extractStorageKey(url: string): string {
 }
 
 /**
- * Download an image from DO Spaces using the authenticated S3 client
- * (avoids 403 errors on non-public objects).
+ * Download an object from DO Spaces using the authenticated S3 client
+ * (avoids 403 errors on non-public objects). Returns the raw bytes plus the
+ * stored content type so callers can tell images from video clips.
  */
-async function downloadImageAsBase64(
+async function downloadObjectBuffer(
   url: string
-): Promise<{ data: string; mimeType: string }> {
+): Promise<{ buffer: Buffer; mimeType: string }> {
   const key = extractStorageKey(url);
   const bucket = process.env.DO_SPACES_BUCKET!;
   const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
@@ -260,9 +264,8 @@ async function downloadImageAsBase64(
   for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
     chunks.push(chunk);
   }
-  const buffer = Buffer.concat(chunks);
   return {
-    data: buffer.toString("base64"),
+    buffer: Buffer.concat(chunks),
     mimeType: res.ContentType ?? "image/jpeg",
   };
 }
@@ -285,18 +288,39 @@ export async function generateScenePlanAndScript(
 async function generateWithImages<T>(params: GenerateContentParams, prompt: string): Promise<T> {
   const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
 
-  // Download all images and encode as base64 inline parts
-  const imageParts = await Promise.all(
-    params.imageUrls.map(async (url) => {
-      const { data, mimeType } = await downloadImageAsBase64(url);
-      return { inlineData: { data, mimeType } };
-    })
-  );
+  // Build the multimodal request. `params.imageUrls` is in canonical asset
+  // order, so its position IS the zero-based asset index the model must use for
+  // imageIndexes/assetIndexes. Each asset is preceded by an explicit index
+  // label so the mapping survives even when a video clip contributes several
+  // sampled frames (i.e. more image parts than assets).
+  const contents: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [];
 
-  const contents = [
-    ...imageParts,
-    { text: prompt },
-  ];
+  for (let index = 0; index < params.imageUrls.length; index++) {
+    const url = params.imageUrls[index];
+    const { buffer, mimeType } = await downloadObjectBuffer(url);
+
+    if (mimeType.startsWith("video/")) {
+      // Send a few sampled frames instead of the whole clip (cheaper + avoids
+      // Gemini's inline size limit). Fall back to the raw clip only if frame
+      // extraction is unavailable, preserving the old behaviour in that case.
+      const frames = await extractVideoFrames(buffer);
+      contents.push({
+        text: `Uploaded asset index ${index} (video clip — ${
+          frames.length > 0 ? `${frames.length} sampled frame(s) of the same clip` : "clip"
+        }):`,
+      });
+      if (frames.length > 0) {
+        for (const f of frames) contents.push({ inlineData: { data: f.data, mimeType: f.mimeType } });
+      } else {
+        contents.push({ inlineData: { data: buffer.toString("base64"), mimeType } });
+      }
+    } else {
+      contents.push({ text: `Uploaded asset index ${index} (image):` });
+      contents.push({ inlineData: { data: buffer.toString("base64"), mimeType } });
+    }
+  }
+
+  contents.push({ text: prompt });
 
   const response = await ai.models.generateContent({
     model: AI_CONFIG.gemini.visionModel,

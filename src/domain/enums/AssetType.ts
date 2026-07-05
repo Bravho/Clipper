@@ -35,13 +35,10 @@ export enum AssetUploadStatus {
   Deleted = "deleted",     // Removed per 90-day retention policy
 }
 
-/** Accepted MIME types for video uploads. */
-export const ACCEPTED_VIDEO_MIME_TYPES = [
-  "video/mp4",
-  "video/quicktime",  // .mov
-  "video/x-msvideo",  // .avi
-  "video/webm",
-] as const;
+/** Accepted MIME types for video uploads. MP4 only — the montage renderer and
+ *  FFmpeg concat expect a consistent H.264/MP4 source, and browsers reliably
+ *  decode MP4 for the in-form thumbnail + trim-bar preview. */
+export const ACCEPTED_VIDEO_MIME_TYPES = ["video/mp4"] as const;
 
 /** Accepted MIME types for image uploads. */
 export const ACCEPTED_IMAGE_MIME_TYPES = [
@@ -62,11 +59,16 @@ export const MAX_UPLOAD_COUNT = 5;
 /** Maximum file size for image uploads: 8 MB */
 export const MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024;
 
-/** Maximum file size for video uploads: 80 MB */
-export const MAX_VIDEO_SIZE_BYTES = 80 * 1024 * 1024;
-
 /** Maximum overall upload size accepted by the upload service: 500 MB */
 export const MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024;
+
+/**
+ * Maximum file size for a single video upload. Set equal to the per-request
+ * total so the 500 MB aggregate cap is the real constraint — a requester can
+ * spend their whole budget on one longer/higher-quality clip or spread it
+ * across several. (Clip length is still bounded by MAX_CLIP_DURATION_SECONDS.)
+ */
+export const MAX_VIDEO_SIZE_BYTES = MAX_UPLOAD_SIZE_BYTES;
 
 /**
  * Maximum duration for a single uploaded video clip: 45 seconds.

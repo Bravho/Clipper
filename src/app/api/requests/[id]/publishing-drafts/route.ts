@@ -4,8 +4,13 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
+import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
 
-export async function POST(
+/**
+ * Phase 8 — persist requester edits to the per-channel publishing drafts on the
+ * distribution-review step (no posting). Used to autosave edits before confirm.
+ */
+export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -26,8 +31,9 @@ export async function POST(
 
   const body = await request.json().catch(() => null);
   const jobId = body?.jobId;
-  if (!jobId) {
-    return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
+  const drafts = body?.drafts as ChannelPublishingDraft[] | undefined;
+  if (!jobId || !Array.isArray(drafts)) {
+    return NextResponse.json({ error: "Missing jobId or drafts." }, { status: 400 });
   }
 
   const job = await videoGenerationJobRepository.findById(jobId);
@@ -35,30 +41,15 @@ export async function POST(
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
-  const ALLOWED_LANGS = ["th", "en", "zh"] as const;
-  const MAX_SUBTITLE_LANGS = 2; // at most two languages shown on screen at once
-  const rawLangs = Array.isArray(body?.subtitleLanguages) ? body.subtitleLanguages : undefined;
-  const subtitleLanguages = rawLangs
-    ?.filter((l: unknown): l is "th" | "en" | "zh" =>
-      ALLOWED_LANGS.includes(l as (typeof ALLOWED_LANGS)[number])
-    )
-    .slice(0, MAX_SUBTITLE_LANGS);
-
-  const { isValidTemplateId } = await import("@/config/motionTemplates");
-  const selectedMotionTemplate = isValidTemplateId(body?.selectedMotionTemplate)
-    ? (body.selectedMotionTemplate as string)
-    : undefined;
-
   try {
-    const updated = await videoGenerationService.approveFinalVideoByRequester(
+    const updated = await videoGenerationService.savePublishingDraftsByRequester(
       jobId,
       session.user.id,
-      subtitleLanguages && subtitleLanguages.length > 0 ? subtitleLanguages : undefined,
-      selectedMotionTemplate
+      drafts
     );
-    return NextResponse.json({ currentStep: updated.currentStep });
+    return NextResponse.json({ publishingDrafts: updated.publishingDrafts ?? [] });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to approve final video.";
+    const message = err instanceof Error ? err.message : "Failed to save drafts.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

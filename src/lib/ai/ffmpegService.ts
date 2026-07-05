@@ -130,30 +130,37 @@ export function resolveComposeDuration(probedSeconds: number | undefined): numbe
  * bed under the voiceover with sidechain ducking, so the music drops under
  * speech and recovers in the gaps.
  *
- * `durationSeconds` should be the MEASURED voice/video length (Phase 6) — the
- * music is looped then trimmed to that length so it covers the whole clip
- * instead of the old hardcoded 15s window. Returns the filter strings to be
- * joined into `filter_complex`; the final mix is exposed as `[aout]`.
+ * `totalDurationSeconds` is the WHOLE CLIP length (the full base-video length —
+ * voice + music intro + trailing ending), NOT just the voice length. The music
+ * is looped then trimmed to cover the entire clip, so the background track keeps
+ * playing under the music-only intro AND the ending after narration stops — the
+ * voice itself can be (and usually is) shorter than the clip. Returns the filter
+ * strings to be joined into `filter_complex`; the final mix is exposed as `[aout]`.
  */
 export function buildMusicMixFilters(params: {
   voiceInputIdx?: number;
   musicInputIdx: number;
-  durationSeconds: number;
+  totalDurationSeconds: number;
   musicVolume?: number;
   leadInSeconds?: number;
 }): string[] {
   const voiceIdx = params.voiceInputIdx ?? 1;
   const leadIn = params.leadInSeconds ?? MUSIC_LEAD_IN_SECONDS;
-  // The voice is delayed by the lead-in, so the looped music must cover the
-  // voice length PLUS the lead-in to run under the whole clip.
-  const totalDur = (resolveComposeDuration(params.durationSeconds) + leadIn).toFixed(3);
+  // The music covers the ENTIRE clip (intro + narration + trailing ending), so
+  // it is looped then trimmed to the full clip length.
+  const totalDur = resolveComposeDuration(params.totalDurationSeconds).toFixed(3);
   const leadMs = Math.round(leadIn * 1000);
   const vol = params.musicVolume ?? MUSIC_BED_VOLUME;
   return [
     // Delay the (loudness-normalised) voice by the lead-in so the clip opens on
     // music alone; the delayed copy also keys the sidechain, so ducking only
-    // kicks in once the voice actually starts.
-    `[${voiceIdx}:a]loudnorm=I=-16:LRA=11:TP=-1.5,adelay=${leadMs}:all=1,asplit=2[sc][voice]`,
+    // kicks in once the voice actually starts. Pad the voice with trailing
+    // silence to the full clip length BEFORE the split so (a) the sidechain key
+    // runs the whole clip — otherwise `sidechaincompress` ends with the voice and
+    // the music (and thus the mix) would be truncated to the narration, cutting
+    // off the music-only ending — and (b) once the voice stops, its silent tail
+    // lets the music recover to full level under the ending.
+    `[${voiceIdx}:a]loudnorm=I=-16:LRA=11:TP=-1.5,adelay=${leadMs}:all=1,apad=whole_dur=${totalDur},asplit=2[sc][voice]`,
     `[${params.musicInputIdx}:a]aloop=-1:size=2147483647,atrim=0:${totalDur},asetpts=PTS-STARTPTS,volume=${vol}[music]`,
     // Gentle, quick-recover ducking (Phase 6): a fast attack drops the music
     // promptly when speech starts and a fast release (300ms) lets it return
@@ -164,46 +171,53 @@ export function buildMusicMixFilters(params: {
   ];
 }
 
+/** Canonical output pixel dimensions per export ratio. */
+const RATIO_OUTPUT_DIMENSIONS: Record<VideoRatio, { w: number; h: number }> = {
+  "9:16": { w: 1080, h: 1920 },
+  "16:9": { w: 1920, h: 1080 },
+  "1:1": { w: 1080, h: 1080 },
+  "4:5": { w: 1080, h: 1350 },
+};
+
 /**
- * Calculates smart crop parameters for cropping a widescreen 1920x1080 video.
+ * Build a resolution-INDEPENDENT crop+scale filter for one export ratio.
+ *
+ * The montage base video is rendered directly at the PRIMARY channel's aspect
+ * ratio (e.g. 1080x1920 for a 9:16 primary) — it is NOT a 1920x1080 widescreen
+ * master. The old implementation hardcoded a 1920x1080 source, so it re-cropped
+ * an already-correctly-framed portrait base as if it were landscape, producing
+ * the wrong proportions / a visibly mis-cropped merged preview.
+ *
+ * Instead we express the crop against the ACTUAL input dimensions (`iw`/`ih`):
+ * center-crop the largest region matching the target aspect ratio, then scale to
+ * the ratio's canonical size. When the input already matches the target ratio
+ * (the common case — primary ratio === base ratio) the crop is the full frame
+ * (a no-op), so the merged preview keeps the exact framing the requester saw in
+ * the base video. Only genuinely different target ratios are cropped.
+ *
+ * `coords` (optional, 0..1000 normalized product box) steers the horizontal crop
+ * position toward the subject; without it the crop is centered.
  */
 function getSmartCropFilter(ratio: VideoRatio, coords?: ImageCoordinates): string {
-  const W_base = 1920;
-  const H_base = 1080;
+  const { w: OW, h: OH } = RATIO_OUTPUT_DIMENSIONS[ratio];
 
-  // Compute product center coordinate in pixels
-  let xCenter = W_base / 2; // 960
+  // Largest sub-rectangle of the input matching the target aspect ratio.
+  const cropW = `min(iw,ih*${OW}/${OH})`;
+  const cropH = `min(ih,iw*${OH}/${OW})`;
+
+  // Horizontal position: centered, or steered toward the detected subject.
+  let xExpr = "(iw-ow)/2";
   if (coords && coords.xmin != null && coords.xmax != null) {
-    const normCenter = (coords.xmin + coords.xmax) / 2; // 0 to 1000
-    xCenter = (normCenter / 1000) * W_base;
+    const cx = ((coords.xmin + coords.xmax) / 2) / 1000; // 0..1
+    xExpr = `max(0,min(iw-ow,iw*${cx.toFixed(4)}-ow/2))`;
   }
 
-  if (ratio === "9:16") {
-    const W_crop = Math.round(H_base * (9 / 16)); // 607.5 -> 608
-    const H_crop = H_base; // 1080
-    let xStart = Math.round(xCenter - W_crop / 2);
-    xStart = Math.max(0, Math.min(W_base - W_crop, xStart)); // Clamp between 0 and 1312
-    return `crop=${W_crop}:${H_crop}:${xStart}:0,scale=1080:1920`;
-  }
-
-  if (ratio === "1:1") {
-    const W_crop = H_base; // 1080
-    const H_crop = H_base; // 1080
-    let xStart = Math.round(xCenter - W_crop / 2);
-    xStart = Math.max(0, Math.min(W_base - W_crop, xStart)); // Clamp between 0 and 840
-    return `crop=${W_crop}:${H_crop}:${xStart}:0`;
-  }
-
-  if (ratio === "4:5") {
-    const W_crop = Math.round(H_base * (4 / 5)); // 864
-    const H_crop = H_base; // 1080
-    let xStart = Math.round(xCenter - W_crop / 2);
-    xStart = Math.max(0, Math.min(W_base - W_crop, xStart)); // Clamp between 0 and 1056
-    return `crop=${W_crop}:${H_crop}:${xStart}:0,scale=1080:1350`;
-  }
-
-  // 16:9 - No cropping needed
-  return "scale=1920:1080";
+  // Single-quote each expression so the commas inside min()/max() are treated as
+  // literals by FFmpeg's filtergraph parser (not option separators).
+  return (
+    `crop=w='${cropW}':h='${cropH}':x='${xExpr}':y='(ih-oh)/2',` +
+    `scale=${OW}:${OH},setsar=1`
+  );
 }
 
 /**
@@ -225,11 +239,15 @@ async function composeSingleRatio(params: {
   musicPath?: string;
   coordinates?: ImageCoordinates;
   overlayPath?: string;
-  durationSeconds?: number;
+  /** Measured length of the voiceover track (seconds). */
+  voiceDurationSeconds?: number;
+  /** Measured length of the base montage video (seconds). */
+  videoDurationSeconds?: number;
 }): Promise<void> {
   const { videoPath, audioPath, subsPath, isAss, ratio, outputPath, musicPath, coordinates, overlayPath } = params;
   const ffmpeg = AI_CONFIG.ffmpeg.path;
-  const composeDuration = resolveComposeDuration(params.durationSeconds);
+  const voiceDuration = resolveComposeDuration(params.voiceDurationSeconds);
+  const videoDuration = resolveComposeDuration(params.videoDurationSeconds);
 
   const cropAndScaleFilter = getSmartCropFilter(ratio, coordinates);
 
@@ -258,15 +276,25 @@ async function composeSingleRatio(params: {
     musicInputIdx = nextInput++;
   }
 
-  // With music we add a short music-only lead-in (the voice is delayed), which
-  // extends the clip by the lead-in. Freeze the base's last frame past the end
-  // so the (now-delayed) voice tail is never clipped by `-shortest`.
+  // With music we add a short music-only lead-in (the voice is delayed by it).
   const hasMusic = musicInputIdx >= 0;
   const leadIn = hasMusic ? MUSIC_LEAD_IN_SECONDS : 0;
-  const outputDuration = composeDuration + leadIn;
+
+  // The merged clip runs for the FULL base-video length (the montage is sized to
+  // cover the voiceover plus its intro + trailing ending). The voiceover — which
+  // is normally SHORTER than the video — plays over it (delayed by the lead-in)
+  // and the background music fills the whole clip, so the opening and the ending
+  // keep their music-only beats and narration is never clipped. We still guard
+  // against a base that is somehow shorter than the delayed voice by taking the
+  // max, so the voice tail is never cut.
+  const outputDuration = Math.max(videoDuration, voiceDuration + leadIn);
 
   const filters: string[] = [];
-  const videoTail = leadIn > 0 ? `,tpad=stop_mode=clone:stop_duration=${(leadIn + 1).toFixed(3)}` : "";
+  // Freeze the base's final frame just past the target length so the clip always
+  // reaches `outputDuration` (covers rounding + any short base); `-t` trims the
+  // surplus. When the base already outlasts the target this is a harmless nudge.
+  const padSeconds = Math.max(0, outputDuration - videoDuration) + 0.5;
+  const videoTail = `,tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(3)}`;
   filters.push(`[0:v]${cropAndScaleFilter}${subtitleFilter}${videoTail}[base]`);
   let videoOut = "[base]";
 
@@ -281,10 +309,16 @@ async function composeSingleRatio(params: {
     filters.push(
       ...buildMusicMixFilters({
         musicInputIdx,
-        durationSeconds: composeDuration,
+        totalDurationSeconds: outputDuration,
         leadInSeconds: leadIn,
       })
     );
+    audioOut = "[aout]";
+  } else {
+    // No music: pad the (shorter) voiceover with trailing silence so it spans the
+    // whole clip — otherwise the video would run to `outputDuration` with the
+    // audio stream ending early.
+    filters.push(`[1:a]apad=whole_dur=${outputDuration.toFixed(3)}[aout]`);
     audioOut = "[aout]";
   }
 
@@ -295,9 +329,9 @@ async function composeSingleRatio(params: {
     "-c:v", "libx264",
     "-c:a", "aac",
     "-ar", "48000",
-    "-shortest",
-    // Cap to the measured voice length + music lead-in (Phase 6) instead of a
-    // hardcoded 15s — longer clips aren't truncated, shorter ones aren't padded.
+    // Run for the full base-video length (NOT the voice length). No `-shortest`:
+    // the video + padded/looped audio are both sized to `outputDuration`, and
+    // `-t` bounds the (otherwise frozen/looped) tails to exactly that length.
     "-t", outputDuration.toFixed(3),
     outputPath
   );
@@ -643,9 +677,13 @@ export async function composeAndExport(
       downloadFromSpaces(params.audioStorageKey, audioPath),
     ]);
 
-    // Phase 6: probe the real voice length so the export duration + music bed
-    // are dynamic (no hardcoded 15s window).
-    const composeDuration = resolveComposeDuration(await probeDurationSeconds(audioPath));
+    // Probe the real voice length AND the base video length. The export runs for
+    // the full base-video length (the montage covers the voiceover + intro +
+    // ending); the voiceover is usually shorter and plays over it.
+    const [voiceDuration, videoDuration] = await Promise.all([
+      probeDurationSeconds(audioPath),
+      probeDurationSeconds(videoPath),
+    ]);
 
     // Burned-in subtitles are deferred to Phase 7 (accurate timestamp/timeline
     // alignment). For now we only burn captions if the caller explicitly passes
@@ -685,7 +723,8 @@ export async function composeAndExport(
           musicPath,
           coordinates: params.coordinates,
           overlayPath: overlayPaths[ratio],
-          durationSeconds: composeDuration,
+          voiceDurationSeconds: voiceDuration,
+          videoDurationSeconds: videoDuration,
         });
 
         const storageKey = buildFinalClipKey(params.userId, params.requestId, ratio);
@@ -711,7 +750,8 @@ export async function composeAndExport(
         musicPath,
         coordinates: params.coordinates,
         overlayPath: overlayPaths[tventRatio],
-        durationSeconds: composeDuration,
+        voiceDurationSeconds: voiceDuration,
+        videoDurationSeconds: videoDuration,
       });
 
       const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");
@@ -734,7 +774,8 @@ export async function composeAndExport(
         outputPath: outPath,
         musicPath,
         coordinates: params.coordinates,
-        durationSeconds: composeDuration,
+        voiceDurationSeconds: voiceDuration,
+        videoDurationSeconds: videoDuration,
         // Don't reuse the general overlay here — its captions may not be EN+ZH,
         // and burning both ASS + overlay captions would duplicate text.
       });

@@ -18,9 +18,15 @@ import { derivePalette, type Palette } from "@/lib/ai/paletteService";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import { orderSourceAssets, type OrderedSourceAsset } from "@/lib/sourceAssets";
 import { buildSceneMontageAssets, inferMotionFromText, toRenderAssetSpecs } from "@/lib/ai/montagePlan";
-import { DEFAULT_MONTAGE_TRANSITION, isMontageTransition } from "@/config/montage";
+import {
+  DEFAULT_MONTAGE_TRANSITION,
+  isMontageTransition,
+  minMontageTotalSeconds,
+  sceneMontageSeconds,
+} from "@/config/montage";
 import { buildAiVideoKey, buildFinalClipKey } from "@/lib/spacesKeys";
-import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput } from "@/domain/models/VideoGenerationJob";
+import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
+import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import type { ImageCoordinates } from "@/lib/ai/geminiSubtitlesService";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
@@ -1001,7 +1007,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // Fix the concrete per-scene asset list now (motion presets + per-asset
     // durations snapped to the scene length) so the renderer and the approval
     // panels share one index-aligned plan.
-    const sceneDurations = this._allocateSceneDurations(output.scenePlan, durationSeconds);
+    // Size the montage to cover the voice PLUS the short music intro + ending,
+    // so the default (pre-edit) plan already clears the minimum-length gate the
+    // requester is held to at approval. Trimming clips can only grow it further.
+    const montageTargetSeconds = minMontageTotalSeconds(job.voiceDurationSeconds ?? durationSeconds);
+    const sceneDurations = this._allocateSceneDurations(output.scenePlan, montageTargetSeconds);
     const scenePlanToPersist: ScenePlan[] = output.scenePlan.map((scene, i) => {
       const sceneDuration =
         Number.isFinite(sceneDurations[i]) && sceneDurations[i] > 0
@@ -1124,10 +1134,27 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const durationSeconds = clampPipelineDurationSeconds(
       job.voiceDurationSeconds ?? approved.durationSeconds
     );
-    const scenePlan = normalizeScenePlanToDuration(
-      sanitizeScenePlanDescriptions(JSON.parse(approved.scenePlan) as ScenePlan[]),
-      durationSeconds
+    const parsedScenePlan = sanitizeScenePlanDescriptions(
+      JSON.parse(approved.scenePlan) as ScenePlan[]
     );
+    // Montage scenes carry authoritative per-asset durations (trimmed clips play
+    // their selected window; stills their allocated hold) and may auto-grow past
+    // the voice length, so they are NOT re-normalized to the target. Legacy Veo
+    // scenes (no `assets`) still get scaled to the target duration.
+    const isMontage = parsedScenePlan.some((s) => Array.isArray(s.assets) && s.assets.length > 0);
+    const scenePlan = isMontage
+      ? parsedScenePlan
+      : normalizeScenePlanToDuration(parsedScenePlan, durationSeconds);
+
+    if (isMontage) {
+      const totalSeconds = scenePlan.reduce((sum, s) => sum + sceneMontageSeconds(s), 0);
+      const minSeconds = minMontageTotalSeconds(job.voiceDurationSeconds ?? durationSeconds);
+      if (totalSeconds + 1e-6 < minSeconds) {
+        throw new Error(
+          `ความยาววิดีโอรวม (${Math.round(totalSeconds * 10) / 10} วินาที) ต้องอย่างน้อย ${Math.round(minSeconds * 10) / 10} วินาที เพื่อให้คลุมเสียงพากย์ทั้งหมด`
+        );
+      }
+    }
 
     const { clipRequestRepository } = await import("@/repositories/index");
     await clipRequestRepository.update(job.requestId, { durationSeconds });
@@ -1256,6 +1283,20 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
+    // Guard the auto-grow minimum once more before merging: per-scene revisions
+    // could have trimmed the montage below the voice length since scene-design
+    // approval. (Legacy Veo jobs without `assets` are unaffected.)
+    const approvedPlan = JSON.parse(job.approvedScenePlan ?? "[]") as ScenePlan[];
+    if (approvedPlan.some((s) => Array.isArray(s.assets) && s.assets.length > 0)) {
+      const totalSeconds = approvedPlan.reduce((sum, s) => sum + sceneMontageSeconds(s), 0);
+      const minSeconds = minMontageTotalSeconds(job.voiceDurationSeconds ?? undefined);
+      if (totalSeconds + 1e-6 < minSeconds) {
+        throw new Error(
+          `ความยาววิดีโอรวม (${Math.round(totalSeconds * 10) / 10} วินาที) ต้องอย่างน้อย ${Math.round(minSeconds * 10) / 10} วินาที เพื่อให้คลุมเสียงพากย์ทั้งหมด`
+        );
+      }
+    }
+
     // Concatenate every approved scene segment into the single base video.
     let baseVideoAssetIdUpdate: { baseVideoAssetId: string } | Record<string, never> = {};
     try {
@@ -1286,6 +1327,29 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     });
 
     return this._getJob(jobId);
+  }
+
+  /**
+   * Send the requester back from the combined scene-video review to the
+   * scene-design step to edit the whole plan (assets, order, durations, scripts)
+   * — not just one scene. The approved plan is kept so the scene-design panel
+   * loads their current design; the rendered per-scene segments and base video
+   * are cleared and will be re-rendered when they re-approve the (possibly
+   * edited) scene design.
+   */
+  async reopenSceneDesignByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
+      currentSceneIndex: 0,
+      contentApprovedBy: userId,
+      videoGenStatus: null,
+      sceneVideoAssetIds: null,
+      baseVideoAssetId: null,
+    });
   }
 
   /**
@@ -1410,6 +1474,22 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
   }
 
+  private _captionedAssetIdForRatio(job: VideoGenerationJob, ratio: VideoRatio): string | null {
+    switch (ratio) {
+      case "9:16": return job.captionedExport_9_16_assetId ?? null;
+      case "16:9": return job.captionedExport_16_9_assetId ?? null;
+      case "1:1": return job.captionedExport_1_1_assetId ?? null;
+      case "4:5": return job.captionedExport_4_5_assetId ?? null;
+      default: return null;
+    }
+  }
+
+  /** True when the subtitle languages are exactly {en, zh} (order-insensitive). */
+  private _isEnZhOnly(languages: ("th" | "en" | "zh")[] | null | undefined): boolean {
+    const set = new Set(languages ?? []);
+    return set.size === 2 && set.has("en") && set.has("zh");
+  }
+
   private _captionedFieldForRatio(ratio: VideoRatio): keyof UpdateVideoGenerationJobInput {
     switch (ratio) {
       case "9:16": return "captionedExport_9_16_assetId";
@@ -1462,10 +1542,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // Palette for the template decor/accents, derived from profile + script.
     const palette = await this._deriveOverlayPalette(job);
 
+    // Break long sentences into short display cues BEFORE shifting/rendering, so
+    // captions don't wrap into many lines and overlap the stacked language above.
+    const languages =
+      job.subtitleLanguages && job.subtitleLanguages.length > 0
+        ? job.subtitleLanguages
+        : (["en", "zh"] as ("th" | "en" | "zh")[]);
+    const { splitSegmentsForDisplay } = await import("@/lib/ai/geminiSubtitlesService");
+    const displayTimeline = splitSegmentsForDisplay(rawTimeline, languages);
+
     // The master opens with a music-only lead-in (the voice is adelay'd), so
     // shift the caption timeline by the lead-in to stay synced with speech, and
     // extend the render duration to cover the whole master.
-    const timeline = rawTimeline.map((s) => ({
+    const timeline = displayTimeline.map((s) => ({
       ...s,
       startSecond: s.startSecond + leadIn,
       endSecond: s.endSecond + leadIn,
@@ -1511,6 +1600,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const master = await uploadedAssetRepository.findById(masterAssetId);
     if (!master) throw new Error(`Master asset not found: ${masterAssetId}`);
 
+    // The captioned render must run for the FULL merged-master length, not just
+    // the voice window — otherwise the styled clip is shorter than the master the
+    // requester approved (the Remotion composition frame count is duration*FPS,
+    // so a short duration truncates the master playing inside it). Probe the
+    // master's real duration and render for at least that long.
+    let masterDuration = 0;
+    try {
+      masterDuration = await probeAudioDurationSeconds(master.storageKey);
+    } catch (err) {
+      console.error("[overlay] failed to probe master duration, using timeline length:", err);
+    }
+    const renderDuration = Math.max(inputs.durationSeconds, masterDuration);
+
     // Single-pass styled render: the master plays inside the Remotion template
     // (audio carried through), template frame/decor + subtitles on top, output
     // as one opaque MP4 — no alpha compositing.
@@ -1518,7 +1620,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const result = await remotionService.renderTemplatedVideo({
       masterUrl: master.storageUrl,
       ratio,
-      durationSeconds: inputs.durationSeconds,
+      durationSeconds: renderDuration,
       templateId: job.selectedMotionTemplate ?? "none",
       palette: inputs.palette,
       subtitleTimeline: inputs.timeline,
@@ -1705,30 +1807,62 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /**
-   * Mark the request Delivered, complete the job, and kick off the automatic
-   * Travy (EN+ZH) render in the background (non-cancellable). The job is Complete
-   * immediately; `tventVideoStatus` drives the Travy "generating" spinner until
-   * the clip is ready and viewable.
+   * Phase 8: land the job on the DISTRIBUTION-REVIEW step (NOT Complete). The
+   * captioned videos for every selected channel are ready, so this:
+   *   1. auto-fills a per-channel publishing draft (title/caption/hashtags) via
+   *      Gemini, tailored to each channel's fields;
+   *   2. starts the automatic Travy (EN+ZH) render in the BACKGROUND — UNLESS
+   *      the requester's subtitle languages are exactly {en, zh}, in which case
+   *      the primary captioned export IS already an EN+ZH clip at the Travy
+   *      (= primary) ratio and is REUSED as the Travy export immediately (no
+   *      duplicate render). Leaving the page never stops the render.
+   * The request is NOT marked Delivered here — that happens only when the
+   * requester confirms publishing (`confirmPublishingByRequester`).
    */
   private async _finalizeAndStartTvent(
     job: VideoGenerationJob,
     userId: string
   ): Promise<VideoGenerationJob> {
     const { clipRequestRepository } = await import("@/repositories/index");
-    const { RequestStatus } = await import("@/domain/enums/RequestStatus");
-    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
-
     const request = await clipRequestRepository.findById(job.requestId);
     const platforms = request?.targetPlatforms ?? [];
     const needsTvent = platforms.includes(Platform.TventApp);
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
 
-    const updated = await videoGenerationJobRepository.update(job.id, {
-      currentStep: VideoGenerationStep.Complete,
+    // Editing is complete and publishing is queued — mark the REQUEST accordingly
+    // so it stays under "in progress" (ScheduledForPublishing is an active status)
+    // and is NOT shown as Delivered until the requester confirms publishing.
+    const { RequestStatus } = await import("@/domain/enums/RequestStatus");
+    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.ScheduledForPublishing);
+
+    // Auto-fill per-channel publishing drafts (Gemini; fail-open to the caption).
+    const publishingDrafts = await this._generatePublishingDrafts(job, platforms);
+
+    // Travy EN+ZH reuse: when the requester's own subtitle languages are exactly
+    // {en, zh}, the primary captioned export already matches what the Travy clip
+    // would be (EN+ZH at the primary ratio, which Travy uses) — reuse it instead
+    // of rendering a duplicate. Otherwise render Travy separately in background.
+    const captionedPrimaryId = this._captionedAssetIdForRatio(job, primaryRatio);
+    const canReuseForTvent =
+      needsTvent && this._isEnZhOnly(job.subtitleLanguages) && !!captionedPrimaryId;
+
+    const updates: UpdateVideoGenerationJobInput = {
+      currentStep: VideoGenerationStep.AwaitingDistributionReview,
       finalApprovedBy: userId || job.finalApprovedBy,
-      ...(needsTvent ? { tventVideoStatus: "generating" as const } : {}),
-    });
-
+      publishingDrafts,
+    };
     if (needsTvent) {
+      if (canReuseForTvent) {
+        updates.finalExport_tvent_assetId = captionedPrimaryId;
+        updates.tventVideoStatus = "ready";
+      } else {
+        updates.tventVideoStatus = "generating";
+      }
+    }
+
+    const updated = await videoGenerationJobRepository.update(job.id, updates);
+
+    if (needsTvent && !canReuseForTvent) {
       this._runTventVideoGeneration(updated).catch(async (err) => {
         console.error("[TventVideoGeneration] failed:", err);
         await videoGenerationJobRepository.update(job.id, { tventVideoStatus: "failed" });
@@ -1760,6 +1894,432 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       finalExport_tvent_assetId: tventAssetId,
       tventVideoStatus: "ready",
     });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Phase 8 — distribution review + publishing
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Auto-fill a per-channel publishing draft (title/caption/hashtags, tailored
+   * to each channel's fields — see `src/config/publishFields.ts`) from the
+   * approved script + business profile via Gemini. Fail-open: on any Gemini
+   * error it falls back to the approved caption/script. Excludes Travy
+   * (background-only) and CDN (internal). Preserves any prior draft the
+   * requester already posted/edited, so a re-finalize is idempotent.
+   */
+  private async _generatePublishingDrafts(
+    job: VideoGenerationJob,
+    platforms: Platform[]
+  ): Promise<ChannelPublishingDraft[]> {
+    const channels = platforms.filter((p) => isPublishablePlatform(p));
+    if (channels.length === 0) return job.publishingDrafts ?? [];
+
+    const existing = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
+
+    const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
+    const scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
+    const captionThai = job.approvedCaptionThai ?? job.captionThai ?? "";
+
+    let businessName = "";
+    let category = "";
+    try {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const { businessProfileService } = await import("@/services/BusinessProfileService");
+      const req = await clipRequestRepository.findById(job.requestId);
+      const profile = req ? await businessProfileService.getProfile(req.userId) : null;
+      businessName = profile?.businessName ?? "";
+      category = profile?.category ?? "";
+    } catch {
+      /* fail-open — drafts still get a caption/script fallback below */
+    }
+
+    // Tailored copy per channel via Gemini (fail-open to fallback below).
+    let generated: Record<string, { title?: string; caption?: string; hashtags?: string[] }> = {};
+    try {
+      const { requireGeminiApiKey, AI_CONFIG } = await import("@/config/aiTools");
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
+      const channelSpec = channels
+        .map((p) => {
+          const cfg = getPublishFieldConfig(p);
+          return `- ${p}: ${cfg.hasTitle ? "title, " : ""}caption, hashtags`;
+        })
+        .join("\n");
+      const res = await ai.models.generateContent({
+        model: AI_CONFIG.gemini.textModel,
+        contents: `You are a social media marketer for a local business${
+          businessName ? ` called "${businessName}"` : ""
+        }${category ? ` (${category})` : ""}.
+Write short, engaging promotional copy in Thai for a short promo video, tailored to EACH channel below.
+Video Thai script: "${scriptThai}"
+English gist: "${scriptEnglish}"
+Existing Thai caption idea: "${captionThai}"
+
+Channels and their fields:
+${channelSpec}
+
+Rules:
+- YouTube "title": <= 70 chars, catchy. Channels without a title should return an empty "title".
+- "caption": platform-appropriate length (TikTok/Instagram short & punchy; Facebook slightly longer; YouTube = a description with a short call to action).
+- "hashtags": 4-8 relevant hashtags WITHOUT the leading '#', mixing Thai + English where natural.
+Return ONLY valid JSON: an object keyed by the channel id, each value { "title": "", "caption": "", "hashtags": [] }.`,
+        config: { responseMimeType: "application/json", temperature: 0.7 },
+      });
+      const parsed = JSON.parse(res.text ?? "{}");
+      if (parsed && typeof parsed === "object") generated = parsed;
+    } catch (err) {
+      console.error("[publishingDrafts] Gemini draft generation failed, using fallback:", err);
+    }
+
+    const fallbackHashtags = [businessName, category]
+      .filter(Boolean)
+      .map((s) => s.replace(/\s+/g, ""))
+      .filter(Boolean);
+
+    return channels.map((platform) => {
+      const prior = existing.get(platform);
+      // Never overwrite a channel that already posted successfully.
+      if (prior && prior.status === "posted") return prior;
+
+      const g = generated[platform] ?? {};
+      const cfg = getPublishFieldConfig(platform);
+      const genHashtags = Array.isArray(g.hashtags)
+        ? g.hashtags.map((h) => String(h).replace(/^#/, "").trim()).filter(Boolean)
+        : [];
+      return {
+        platform,
+        title: cfg.hasTitle ? (prior?.title || g.title || businessName || "").slice(0, 100) : "",
+        caption: prior?.caption || g.caption || captionThai || scriptThai,
+        hashtags:
+          prior?.hashtags && prior.hashtags.length > 0
+            ? prior.hashtags
+            : genHashtags.length > 0
+              ? genHashtags
+              : fallbackHashtags,
+        status: prior?.status ?? "pending",
+        url: prior?.url ?? null,
+        error: prior?.error ?? null,
+      };
+    });
+  }
+
+  /** Persist edited publishing drafts on the review step (no posting). */
+  async savePublishingDraftsByRequester(
+    jobId: string,
+    _userId: string,
+    drafts: ChannelPublishingDraft[]
+  ): Promise<VideoGenerationJob> {
+    void _userId;
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingDistributionReview);
+    const job = await this._getJob(jobId);
+    const stored = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
+    const merged: ChannelPublishingDraft[] = drafts.map((d) => {
+      const prior = stored.get(d.platform);
+      return {
+        platform: d.platform,
+        title: d.title ?? prior?.title ?? "",
+        caption: d.caption ?? prior?.caption ?? "",
+        hashtags: Array.isArray(d.hashtags) ? d.hashtags : prior?.hashtags ?? [],
+        // Editing copy never changes a channel's posting outcome.
+        status: prior?.status ?? "pending",
+        url: prior?.url ?? null,
+        error: prior?.error ?? null,
+      };
+    });
+    return videoGenerationJobRepository.update(jobId, { publishingDrafts: merged });
+  }
+
+  /**
+   * Requester confirms publishing on the distribution-review step. Posts each
+   * not-yet-posted channel to its social platform using that channel's captioned
+   * export (matching the channel's aspect ratio — NO fallback: a missing export
+   * is surfaced as an error so the requester can regenerate that ratio). Records
+   * a PublishingLink per success and persists per-channel status/url/error on the
+   * drafts.
+   *
+   * Only when EVERY channel is "posted" does the request advance to Complete +
+   * Delivered. Any failure keeps the job on AwaitingDistributionReview with the
+   * error causes recorded, so the requester can fix them (e.g. missing API keys)
+   * and click resubmit — already-posted channels are SKIPPED so they are never
+   * double-posted.
+   */
+  async confirmPublishingByRequester(
+    jobId: string,
+    userId: string,
+    editedDrafts?: ChannelPublishingDraft[]
+  ): Promise<VideoGenerationJob> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingDistributionReview);
+    const job = await this._getJob(jobId);
+
+    const { clipRequestRepository, publishingLinkRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    // Merge any edits over the stored drafts (edited copy wins; posted channels
+    // keep their prior status/url so they are not retried/double-posted).
+    const stored = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
+    const source =
+      editedDrafts && editedDrafts.length > 0 ? editedDrafts : job.publishingDrafts ?? [];
+    const drafts: ChannelPublishingDraft[] = source.map((d) => {
+      const prior = stored.get(d.platform);
+      const alreadyPosted = prior?.status === "posted";
+      return {
+        platform: d.platform,
+        title: d.title ?? prior?.title ?? "",
+        caption: d.caption ?? prior?.caption ?? "",
+        hashtags: Array.isArray(d.hashtags) ? d.hashtags : prior?.hashtags ?? [],
+        status: alreadyPosted ? "posted" : "pending",
+        url: alreadyPosted ? prior?.url ?? null : null,
+        error: null,
+      };
+    });
+
+    // Post each not-yet-posted channel; collect per-channel outcomes.
+    const results: ChannelPublishingDraft[] = [];
+    for (const draft of drafts) {
+      if (draft.status === "posted") {
+        results.push(draft);
+        continue;
+      }
+      const platform = draft.platform as Platform;
+      try {
+        const url = await this._postToChannel(job, platform, draft);
+        await publishingLinkRepository.create({
+          requestId: job.requestId,
+          platform,
+          url,
+          publishedAt: new Date(),
+        });
+        results.push({ ...draft, status: "posted", url, error: null });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Publishing failed";
+        console.error(`[publishing] ${platform} failed:`, message);
+        results.push({ ...draft, status: "failed", url: null, error: message });
+      }
+    }
+
+    const allPosted = results.length > 0 && results.every((d) => d.status === "posted");
+
+    if (!allPosted) {
+      // Stay on the review step with per-channel error causes for the requester
+      // to fix before resubmitting.
+      return videoGenerationJobRepository.update(jobId, { publishingDrafts: results });
+    }
+
+    // Every channel posted — mark delivered + complete.
+    const { RequestStatus } = await import("@/domain/enums/RequestStatus");
+    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
+    return videoGenerationJobRepository.update(jobId, {
+      publishingDrafts: results,
+      currentStep: VideoGenerationStep.Complete,
+      finalApprovedBy: userId || job.finalApprovedBy,
+    });
+  }
+
+  /**
+   * Phase 8 — moderate + publish a SINGLE distribution channel.
+   *
+   * Each channel is published on its own from the distribution-review step. The
+   * flow is: (1) Gemini screens this channel's caption/title/hashtags together
+   * with a few sampled frames of the exact captioned export that would be posted
+   * (see `contentModerationService`); (2) if the moderator REJECTS the content,
+   * nothing is posted and no job state changes — the caller shows the rejection
+   * reason and the requester is NOT allowed to edit-and-retry that channel;
+   * (3) if approved, only this one channel is posted, its draft is merged back
+   * into the stored drafts, and the request is marked Complete/Delivered only
+   * once every publishable channel has been posted.
+   */
+  async moderateAndPublishChannel(
+    jobId: string,
+    userId: string,
+    platform: Platform,
+    editedDraft?: Partial<ChannelPublishingDraft>
+  ): Promise<{
+    approved: boolean;
+    reason?: string | null;
+    violations?: string[];
+    currentStep?: VideoGenerationStep;
+    publishingDrafts?: ChannelPublishingDraft[];
+  }> {
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingDistributionReview);
+    const job = await this._getJob(jobId);
+
+    const { clipRequestRepository, publishingLinkRepository } = await import(
+      "@/repositories/index"
+    );
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const stored = job.publishingDrafts ?? [];
+    const prior = stored.find((d) => d.platform === platform);
+    if (!prior) {
+      throw new Error(`ไม่พบข้อมูลการเผยแพร่สำหรับช่องทาง ${platform}`);
+    }
+    // Already posted → idempotent no-op (return current state).
+    if (prior.status === "posted") {
+      return {
+        approved: true,
+        currentStep: job.currentStep,
+        publishingDrafts: stored,
+      };
+    }
+
+    // The exact captioned export this channel would post — moderate ITS frames.
+    const ratio = this._montageCanvasRatio(platform);
+    const assetId = this._captionedAssetIdForRatio(job, ratio);
+    const asset = assetId ? await uploadedAssetRepository.findById(assetId) : null;
+
+    const draft: ChannelPublishingDraft = {
+      platform,
+      title: editedDraft?.title ?? prior.title ?? "",
+      caption: editedDraft?.caption ?? prior.caption ?? "",
+      hashtags: Array.isArray(editedDraft?.hashtags)
+        ? (editedDraft!.hashtags as string[])
+        : prior.hashtags ?? [],
+      status: "pending",
+      url: null,
+      error: null,
+    };
+
+    // (1) Gemini content-safety gate.
+    const { moderatePublishingContent } = await import(
+      "@/lib/ai/contentModerationService"
+    );
+    const { PLATFORM_LABELS } = await import("@/domain/enums/Platform");
+    const moderation = await moderatePublishingContent({
+      videoStorageKey: asset?.storageKey ?? null,
+      platformLabel: PLATFORM_LABELS[platform] ?? String(platform),
+      title: draft.title,
+      caption: draft.caption,
+      hashtags: draft.hashtags,
+    });
+
+    // (2) Rejected → block. No posting, no state change, no correction allowed.
+    if (!moderation.approved) {
+      return {
+        approved: false,
+        reason: moderation.reason,
+        violations: moderation.violations,
+      };
+    }
+
+    // (3) Approved → post just this channel and merge the result back.
+    let posted: ChannelPublishingDraft;
+    try {
+      const url = await this._postToChannel(job, platform, draft);
+      await publishingLinkRepository.create({
+        requestId: job.requestId,
+        platform,
+        url,
+        publishedAt: new Date(),
+      });
+      posted = { ...draft, status: "posted", url, error: null };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Publishing failed";
+      console.error(`[publishing] ${platform} failed:`, message);
+      posted = { ...draft, status: "failed", url: null, error: message };
+    }
+
+    const mergedDrafts = stored.map((d) => (d.platform === platform ? posted : d));
+
+    // Complete the request only once every publishable channel has been posted.
+    const publishableDrafts = mergedDrafts.filter((d) =>
+      isPublishablePlatform(d.platform as Platform)
+    );
+    const allPosted =
+      publishableDrafts.length > 0 &&
+      publishableDrafts.every((d) => d.status === "posted");
+
+    if (!allPosted) {
+      const updated = await videoGenerationJobRepository.update(jobId, {
+        publishingDrafts: mergedDrafts,
+      });
+      return {
+        approved: true,
+        currentStep: updated.currentStep,
+        publishingDrafts: updated.publishingDrafts ?? mergedDrafts,
+      };
+    }
+
+    const { RequestStatus } = await import("@/domain/enums/RequestStatus");
+    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      publishingDrafts: mergedDrafts,
+      currentStep: VideoGenerationStep.Complete,
+      finalApprovedBy: userId || job.finalApprovedBy,
+    });
+    return {
+      approved: true,
+      currentStep: updated.currentStep,
+      publishingDrafts: updated.publishingDrafts ?? mergedDrafts,
+    };
+  }
+
+  /**
+   * Post ONE channel's captioned export to its social platform. Uses the
+   * channel's ratio-matching captioned export (NO fallback — a missing export
+   * throws so the requester can generate that ratio first). Returns the public
+   * post URL. Social credentials come from `AI_CONFIG.social` (dummy/blank keys
+   * simply make the platform API call fail, which is surfaced to the requester).
+   */
+  private async _postToChannel(
+    job: VideoGenerationJob,
+    platform: Platform,
+    draft: ChannelPublishingDraft
+  ): Promise<string> {
+    const ratio = this._montageCanvasRatio(platform);
+    const assetId = this._captionedAssetIdForRatio(job, ratio);
+    if (!assetId) {
+      throw new Error(
+        `ยังไม่มีวิดีโอสัดส่วน ${ratio} สำหรับช่องทางนี้ — กรุณาสร้างอัตราส่วนให้ครบก่อนเผยแพร่`
+      );
+    }
+    const asset = await uploadedAssetRepository.findById(assetId);
+    if (!asset) throw new Error(`Captioned export asset not found: ${assetId}`);
+
+    const hashtagLine = (draft.hashtags ?? []).map((h) => `#${h}`).join(" ");
+    const caption = [draft.caption, hashtagLine].filter(Boolean).join("\n\n");
+    const title = draft.title || (draft.caption ?? "").slice(0, 70) || "Promo";
+
+    switch (platform) {
+      case Platform.TikTok: {
+        const tiktok = await import("@/lib/social/tiktokService");
+        const r = await tiktok.uploadVideo({
+          videoStorageKey: asset.storageKey,
+          title,
+          description: caption,
+        });
+        return r.platformUrl;
+      }
+      case Platform.YouTube: {
+        const youtube = await import("@/lib/social/youtubeService");
+        const r = await youtube.uploadVideo({
+          videoStorageKey: asset.storageKey,
+          title,
+          description: caption,
+        });
+        return r.platformUrl;
+      }
+      case Platform.Facebook: {
+        const facebook = await import("@/lib/social/facebookService");
+        const r = await facebook.uploadVideo({
+          videoStorageKey: asset.storageKey,
+          description: caption,
+        });
+        return r.platformUrl;
+      }
+      case Platform.Instagram: {
+        const instagram = await import("@/lib/social/instagramService");
+        const r = await instagram.uploadVideo({
+          videoStorageKey: asset.storageKey,
+          caption,
+        });
+        return r.platformUrl;
+      }
+      default:
+        throw new Error(`Publishing not supported for channel: ${platform}`);
+    }
   }
 
   private async _runFFmpegComposition(job: VideoGenerationJob): Promise<void> {

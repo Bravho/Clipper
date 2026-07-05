@@ -2,21 +2,24 @@
 
 import type { MontageSceneAsset } from "@/domain/models/VideoGenerationJob";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
-import { MOTION_PRESETS, type MotionPreset } from "@/config/montage";
+import { MOTION_PRESETS, type MotionPreset, assetPlaySeconds } from "@/config/montage";
+import { ClipTrimBar } from "@/features/requests/components/ClipTrimBar";
 
 /**
- * Shared montage scene-asset editor (Phase 3 UI).
+ * Shared montage scene-asset editor.
  *
  * Lets the requester choose which of their uploaded photos/clips a scene draws
- * from (in order), pick a Ken-Burns motion preset per asset, and set trim for
- * clips — writing the canonical `MontageSceneAsset[]` the montage renderer
- * consumes. Every asset is referenced by its index in the canonical ordered
- * source list (`OrderedSourceAsset.index`), so the same index resolves to the
- * same media in the storyboard, the scene plan, and the renderer.
+ * from (in order), pick a Ken-Burns motion preset per asset, and — for clips —
+ * set the in/out points on a playable, draggable {@link ClipTrimBar}. Every
+ * asset is referenced by its index in the canonical ordered source list
+ * (`OrderedSourceAsset.index`), so the same index resolves to the same media in
+ * the storyboard, the scene plan, and the renderer.
  *
- * Per-asset durations are auto-distributed across the scene's selected assets
- * from `sceneDurationSeconds` (the scene-level duration stays the source of
- * truth), so selecting/removing media keeps the scene length intact.
+ * Duration model: a trimmed CLIP's on-screen play time is its selected window
+ * (out − in); stills keep their allocated duration. The scene total is the sum
+ * of per-asset durations and AUTO-GROWS as clips are trimmed longer — the
+ * editor never redistributes existing durations, so dragging one clip never
+ * silently changes another asset's length.
  */
 
 const MOTION_LABELS: Record<MotionPreset, string> = {
@@ -27,6 +30,29 @@ const MOTION_LABELS: Record<MotionPreset, string> = {
   static: "นิ่ง",
 };
 
+const VIDEO_URL_RE = /\.(mp4|mov|webm|avi|m4v)(?:[?#]|$)/i;
+
+/**
+ * Thumbnail for one source asset. Always renders as a lightweight <img> using
+ * the generated poster (images and clips both get a poster JPEG at upload).
+ * For a clip uploaded before poster generation — whose `thumbnailUrl` falls
+ * back to the raw .mp4 — it shows a static "คลิป" placeholder rather than a live
+ * <video>: many concurrent <video> elements exhaust the browser's video
+ * decoders and stall the scene's ClipTrimBar preview. (Run the poster backfill
+ * to replace the placeholder with a real frame.)
+ */
+function AssetThumb({ src }: { src: OrderedSourceAsset }) {
+  const hasPoster = !!src.thumbnailUrl && !VIDEO_URL_RE.test(src.thumbnailUrl);
+  if (hasPoster) {
+    return <img src={src.thumbnailUrl} alt={src.fileName} className="h-full w-full object-cover" />;
+  }
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-slate-100 text-[10px] font-medium text-slate-400">
+      {src.kind === "clip" ? "คลิป" : "รูป"}
+    </div>
+  );
+}
+
 interface MontageSceneAssetsEditorProps {
   orderedAssets: OrderedSourceAsset[];
   assets: MontageSceneAsset[];
@@ -34,15 +60,16 @@ interface MontageSceneAssetsEditorProps {
   onChange: (assets: MontageSceneAsset[]) => void;
 }
 
-/** Even-split duration allocation, remainder on the last asset; min 1s each. */
-function allocateDurations(count: number, totalSeconds: number): number[] {
-  if (count <= 0) return [];
-  const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : count;
-  const per = Math.max(1, Math.floor(total / count));
-  const arr = new Array<number>(count).fill(per);
-  const remainder = total - per * count;
-  if (remainder > 0) arr[count - 1] = per + remainder;
-  return arr;
+/** Sensible default on-screen seconds for a newly added asset (even share of
+ *  the scene's current baseline; min 1s). Only applied to the new asset — never
+ *  to existing ones — so it can't disturb durations already set. */
+function defaultAssetDuration(count: number, baseline: number): number {
+  const total = Number.isFinite(baseline) && baseline > 0 ? baseline : count;
+  return Math.max(1, Math.round(total / Math.max(1, count)));
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 export function MontageSceneAssetsEditor({
@@ -53,28 +80,36 @@ export function MontageSceneAssetsEditor({
 }: MontageSceneAssetsEditorProps) {
   const selectedIndexes = assets.map((a) => a.assetIndex);
 
-  /** Re-distribute scene duration across the current asset list and emit. */
-  const emit = (next: MontageSceneAsset[]) => {
-    const durations = allocateDurations(next.length, sceneDurationSeconds);
-    onChange(next.map((a, i) => ({ ...a, durationSeconds: durations[i] ?? 1 })));
-  };
-
   const toggleAsset = (src: OrderedSourceAsset) => {
     const exists = selectedIndexes.includes(src.index);
     if (exists) {
-      emit(assets.filter((a) => a.assetIndex !== src.index));
+      // Removing an asset leaves the others' durations untouched.
+      onChange(assets.filter((a) => a.assetIndex !== src.index));
     } else {
-      emit([
+      onChange([
         ...assets,
-        { assetIndex: src.index, kind: src.kind, motion: "ken_burns_in", durationSeconds: 0 },
+        {
+          assetIndex: src.index,
+          kind: src.kind,
+          motion: "ken_burns_in",
+          durationSeconds: defaultAssetDuration(assets.length + 1, sceneDurationSeconds),
+        },
       ]);
     }
   };
 
   const updateAsset = (assetIndex: number, patch: Partial<MontageSceneAsset>) => {
-    onChange(
-      assets.map((a) => (a.assetIndex === assetIndex ? { ...a, ...patch } : a))
-    );
+    onChange(assets.map((a) => (a.assetIndex === assetIndex ? { ...a, ...patch } : a)));
+  };
+
+  /** A clip's trim window IS its on-screen play time, so update both together. */
+  const handleTrimChange = (assetIndex: number, trim: { start: number; end: number }) => {
+    const durationSeconds = Math.max(0.1, round2(trim.end - trim.start));
+    updateAsset(assetIndex, {
+      trimStartSeconds: round2(trim.start),
+      trimEndSeconds: round2(trim.end),
+      durationSeconds,
+    });
   };
 
   const move = (from: number, dir: -1 | 1) => {
@@ -82,13 +117,11 @@ export function MontageSceneAssetsEditor({
     if (to < 0 || to >= assets.length) return;
     const next = [...assets];
     [next[from], next[to]] = [next[to], next[from]];
-    emit(next);
+    onChange(next);
   };
 
   if (orderedAssets.length === 0) {
-    return (
-      <p className="mt-3 text-xs text-slate-400">ยังไม่มีไฟล์ต้นฉบับสำหรับฉากนี้</p>
-    );
+    return <p className="mt-3 text-xs text-slate-400">ยังไม่มีไฟล์ต้นฉบับสำหรับฉากนี้</p>;
   }
 
   return (
@@ -113,13 +146,7 @@ export function MontageSceneAssetsEditor({
               }`}
             >
               <div className="aspect-video bg-slate-100">
-                {src.thumbnailUrl ? (
-                  <img src={src.thumbnailUrl} alt={src.fileName} className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-xs font-medium text-slate-400">
-                    {src.kind === "clip" ? "CLIP" : "IMG"}
-                  </div>
-                )}
+                <AssetThumb src={src} />
               </div>
               <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] font-semibold text-white">
                 {src.kind === "clip" ? "คลิป" : "รูป"}
@@ -134,109 +161,89 @@ export function MontageSceneAssetsEditor({
         })}
       </div>
 
-      {/* Ordered selection with per-asset motion + clip trim */}
+      {/* Ordered selection with per-asset motion + clip trim bar */}
       {assets.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2">
           {assets.map((asset, i) => {
             const src = orderedAssets[asset.assetIndex];
             if (!src) return null;
+            const isClip = src.kind === "clip";
             return (
               <div
                 key={`${asset.assetIndex}-${i}`}
-                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2"
+                className="rounded-lg border border-slate-200 bg-white p-2"
               >
-                <div className="h-12 w-16 flex-shrink-0 overflow-hidden rounded bg-slate-100">
-                  {src.thumbnailUrl ? (
-                    <img src={src.thumbnailUrl} alt={src.fileName} className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[10px] text-slate-400">
-                      {src.kind === "clip" ? "CLIP" : "IMG"}
-                    </div>
-                  )}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium text-slate-600">
-                    {i + 1}. {src.kind === "clip" ? "คลิป" : "รูป"} · {asset.durationSeconds} วินาที
-                  </p>
-                  <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <label className="text-[11px] text-slate-500">การเคลื่อนไหว</label>
-                    <select
-                      value={asset.motion}
-                      onChange={(e) => updateAsset(asset.assetIndex, { motion: e.target.value as MotionPreset })}
-                      className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-700"
-                    >
-                      {MOTION_PRESETS.map((preset) => (
-                        <option key={preset} value={preset}>
-                          {MOTION_LABELS[preset]}
-                        </option>
-                      ))}
-                    </select>
-
-                    {src.kind === "clip" && (
-                      <span className="flex items-center gap-1 text-[11px] text-slate-500">
-                        ตัดคลิป
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.5}
-                          value={asset.trimStartSeconds ?? ""}
-                          placeholder="เริ่ม"
-                          onChange={(e) =>
-                            updateAsset(asset.assetIndex, {
-                              trimStartSeconds: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)),
-                            })
-                          }
-                          className="w-14 rounded border border-slate-200 bg-white px-1 py-0.5 text-xs"
-                        />
-                        –
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.5}
-                          value={asset.trimEndSeconds ?? ""}
-                          placeholder="จบ"
-                          onChange={(e) =>
-                            updateAsset(asset.assetIndex, {
-                              trimEndSeconds: e.target.value === "" ? undefined : Math.max(0, Number(e.target.value)),
-                            })
-                          }
-                          className="w-14 rounded border border-slate-200 bg-white px-1 py-0.5 text-xs"
-                        />
-                        วิ
-                      </span>
-                    )}
+                <div className="flex items-center gap-3">
+                  <div className="h-12 w-16 flex-shrink-0 overflow-hidden rounded bg-slate-100">
+                    <AssetThumb src={src} />
                   </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-slate-600">
+                      {i + 1}. {isClip ? "คลิป" : "รูป"} · {round2(assetPlaySeconds(asset))} วินาที
+                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <label className="text-[11px] text-slate-500">การเคลื่อนไหว</label>
+                      <select
+                        value={asset.motion}
+                        onChange={(e) =>
+                          updateAsset(asset.assetIndex, { motion: e.target.value as MotionPreset })
+                        }
+                        className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-700"
+                        disabled={isClip}
+                        title={isClip ? "คลิปจะเล่นตามที่ถ่ายมา" : undefined}
+                      >
+                        {MOTION_PRESETS.map((preset) => (
+                          <option key={preset} value={preset}>
+                            {MOTION_LABELS[preset]}
+                          </option>
+                        ))}
+                      </select>
+                      {isClip && (
+                        <span className="text-[11px] text-slate-400">ลากที่แถบด้านล่างเพื่อตัดคลิป</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-shrink-0 flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => move(i, -1)}
+                      disabled={i === 0}
+                      className="rounded border border-slate-200 px-1.5 text-xs text-slate-500 disabled:opacity-30"
+                      aria-label="ย้ายขึ้น"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => move(i, 1)}
+                      disabled={i === assets.length - 1}
+                      className="rounded border border-slate-200 px-1.5 text-xs text-slate-500 disabled:opacity-30"
+                      aria-label="ย้ายลง"
+                    >
+                      ↓
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleAsset(src)}
+                    className="flex-shrink-0 rounded border border-red-200 px-2 py-1 text-xs text-red-500 hover:bg-red-50"
+                    aria-label="นำออก"
+                  >
+                    ✕
+                  </button>
                 </div>
 
-                <div className="flex flex-shrink-0 flex-col gap-1">
-                  <button
-                    type="button"
-                    onClick={() => move(i, -1)}
-                    disabled={i === 0}
-                    className="rounded border border-slate-200 px-1.5 text-xs text-slate-500 disabled:opacity-30"
-                    aria-label="ย้ายขึ้น"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => move(i, 1)}
-                    disabled={i === assets.length - 1}
-                    className="rounded border border-slate-200 px-1.5 text-xs text-slate-500 disabled:opacity-30"
-                    aria-label="ย้ายลง"
-                  >
-                    ↓
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => toggleAsset(src)}
-                  className="flex-shrink-0 rounded border border-red-200 px-2 py-1 text-xs text-red-500 hover:bg-red-50"
-                  aria-label="นำออก"
-                >
-                  ✕
-                </button>
+                {isClip && (
+                  <ClipTrimBar
+                    url={src.url}
+                    trimStartSeconds={asset.trimStartSeconds}
+                    trimEndSeconds={asset.trimEndSeconds}
+                    playSeconds={asset.durationSeconds}
+                    onChange={(trim) => handleTrimChange(asset.assetIndex, trim)}
+                  />
+                )}
               </div>
             );
           })}

@@ -136,6 +136,12 @@ const STATUS_PRESENTATION: Record<RequestStatus, StatusPresentation> = {
     description: "มีการขอให้แก้ไขเนื้อหาก่อนดำเนินการต่อ",
     badgeVariant: "yellow",
   },
+  [RequestStatus.AutoCancelled]: {
+    label: "ยกเลิกอัตโนมัติ",
+    description:
+      "คำขอนี้ไม่มีการเคลื่อนไหวเกิน 30 วัน จึงถูกยกเลิกอัตโนมัติ ไฟล์ที่อัพโหลดและไฟล์ที่ประมวลผลถูกลบแล้ว",
+    badgeVariant: "red",
+  },
 };
 
 // ─── Service ─────────────────────────────────────────────────────────────────

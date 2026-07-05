@@ -44,7 +44,7 @@ export async function POST(
     return NextResponse.json({ error: "Request not found." }, { status: 404 });
   }
 
-  let body: { assetId?: unknown };
+  let body: { assetId?: unknown; posterDataUrl?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -56,8 +56,20 @@ export async function POST(
     return NextResponse.json({ error: "Missing required field: assetId (string)." }, { status: 400 });
   }
 
+  // Optional browser-captured video poster. Accept only a base64 image data URL,
+  // and cap the size (~1.5 MB) so a malformed/oversized payload can't be abused;
+  // an over-limit or malformed value is simply ignored (server falls back to
+  // ffmpeg extraction).
+  const MAX_POSTER_CHARS = 1_500_000;
+  const posterDataUrl =
+    typeof body.posterDataUrl === "string" &&
+    body.posterDataUrl.startsWith("data:image/") &&
+    body.posterDataUrl.length <= MAX_POSTER_CHARS
+      ? body.posterDataUrl
+      : undefined;
+
   try {
-    const asset = await uploadService.confirmUpload(assetId, session.user.id);
+    const asset = await uploadService.confirmUpload(assetId, session.user.id, posterDataUrl);
     return NextResponse.json({ asset }, { status: 200 });
   } catch (err) {
     // Business-rule rejections (e.g. clip too long) → 422, not 500.

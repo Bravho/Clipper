@@ -5,6 +5,13 @@ import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 
+/**
+ * POST /api/requests/[id]/scene-design/reopen
+ *
+ * Requester-only. From the combined scene-video review (AwaitingVideoApproval),
+ * go back to the scene-design step to edit the whole plan. The approved plan is
+ * kept; rendered segments are cleared and re-rendered on the next approval.
+ */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -12,11 +19,8 @@ export async function POST(
   const { id } = await params;
   const session = await getServerSession(authOptions);
 
-  if (!session?.user) {
+  if (!session?.user || session.user.role !== Role.Requester) {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
-  }
-  if (session.user.role !== Role.Requester) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
   const clipRequest = await clipRequestRepository.findById(id);
@@ -35,30 +39,14 @@ export async function POST(
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
-  const ALLOWED_LANGS = ["th", "en", "zh"] as const;
-  const MAX_SUBTITLE_LANGS = 2; // at most two languages shown on screen at once
-  const rawLangs = Array.isArray(body?.subtitleLanguages) ? body.subtitleLanguages : undefined;
-  const subtitleLanguages = rawLangs
-    ?.filter((l: unknown): l is "th" | "en" | "zh" =>
-      ALLOWED_LANGS.includes(l as (typeof ALLOWED_LANGS)[number])
-    )
-    .slice(0, MAX_SUBTITLE_LANGS);
-
-  const { isValidTemplateId } = await import("@/config/motionTemplates");
-  const selectedMotionTemplate = isValidTemplateId(body?.selectedMotionTemplate)
-    ? (body.selectedMotionTemplate as string)
-    : undefined;
-
   try {
-    const updated = await videoGenerationService.approveFinalVideoByRequester(
+    const updated = await videoGenerationService.reopenSceneDesignByRequester(
       jobId,
-      session.user.id,
-      subtitleLanguages && subtitleLanguages.length > 0 ? subtitleLanguages : undefined,
-      selectedMotionTemplate
+      session.user.id
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to approve final video.";
+    const message = err instanceof Error ? err.message : "Failed to reopen scene design.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

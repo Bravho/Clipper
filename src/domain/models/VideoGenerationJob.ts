@@ -198,6 +198,15 @@ export interface VideoGenerationJob {
    */
   selectedMotionTemplate?: string | null;
 
+  /**
+   * Phase 8 — per-channel publishing drafts shown on the distribution-review
+   * step. Auto-filled by Gemini from the approved script + business profile,
+   * editable by the requester, then used to post to each channel on confirm.
+   * Each entry also carries the posting result (status/url/error) once the
+   * requester confirms. Null until the review step is reached.
+   */
+  publishingDrafts?: ChannelPublishingDraft[] | null;
+
   failedAtStep: VideoGenerationStep | null;
 
   contentApprovedBy: string | null;
@@ -208,6 +217,24 @@ export interface VideoGenerationJob {
 
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * One channel's publishing details on the distribution-review step. `platform`
+ * is the Platform enum value (e.g. "tiktok"). `hashtags` are stored without the
+ * leading '#'. Posting fields are filled when the requester confirms publishing.
+ */
+export interface ChannelPublishingDraft {
+  platform: string;
+  title: string;
+  caption: string;
+  hashtags: string[];
+  /** Posting outcome, set on confirm. Absent/"pending" before publishing. */
+  status?: "pending" | "posted" | "failed";
+  /** Public URL of the published post, when posting succeeded. */
+  url?: string | null;
+  /** Error message when posting failed. */
+  error?: string | null;
 }
 
 export type CreateVideoGenerationJobInput = Omit<
