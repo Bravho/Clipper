@@ -21,7 +21,11 @@ function ratioLabel(ratio: string): string {
   return ratio;
 }
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
-import { assetPlaySeconds } from "@/config/montage";
+import {
+  assetPlaySeconds,
+  estimateSuggestedVoiceSeconds,
+  VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS,
+} from "@/config/montage";
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
@@ -288,6 +292,63 @@ export function VideoApprovalPanel({
   const [voiceRecreating, setVoiceRecreating] = useState(false);
   const [displayedVoiceUrl, setDisplayedVoiceUrl] = useState<string | null>(voiceRecordingUrl);
   const [displayedVoiceAssetId, setDisplayedVoiceAssetId] = useState<string | null>(voiceRecordingAssetId);
+
+  // First voice step — suggested MAX voiceover length, estimated from the
+  // uploaded media (each still ≈ a few seconds, each clip its real footage), and
+  // the measured length of the generated voice. Both are probed client-side from
+  // media metadata (the model stores no clip duration). When the voice runs more
+  // than VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS beyond the suggestion, approval
+  // is blocked so the pictures aren't forced to stretch/blank far past comfort.
+  const [clipSecondsTotal, setClipSecondsTotal] = useState<number | null>(null);
+  const [voiceSeconds, setVoiceSeconds] = useState<number | null>(null);
+  const imageCount = orderedAssets.filter((a) => a.kind === "image").length;
+  const suggestedVoiceSeconds =
+    clipSecondsTotal == null
+      ? null
+      : estimateSuggestedVoiceSeconds({ imageCount, clipSecondsTotal });
+  const voiceTooLong =
+    suggestedVoiceSeconds != null &&
+    voiceSeconds != null &&
+    voiceSeconds > suggestedVoiceSeconds + VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS;
+
+  // Probe the uploaded clips' real durations once, at the voice-approval step.
+  useEffect(() => {
+    if (!isAwaitingVoiceApproval) return;
+    const clips = orderedAssets.filter((a) => a.kind === "clip");
+    if (clips.length === 0) {
+      setClipSecondsTotal(0);
+      return;
+    }
+    let cancelled = false;
+    let done = 0;
+    let sum = 0;
+    const els: HTMLVideoElement[] = [];
+    const cleanup = (v: HTMLVideoElement) => {
+      v.removeAttribute("src");
+      try { v.load(); } catch { /* ignore */ }
+    };
+    const finish = (v: HTMLVideoElement, d: number) => {
+      if (cancelled) return;
+      if (Number.isFinite(d) && d > 0) sum += d;
+      done += 1;
+      if (done === clips.length) setClipSecondsTotal(sum);
+      cleanup(v);
+    };
+    clips.forEach((c) => {
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.muted = true;
+      v.onloadedmetadata = () => finish(v, v.duration);
+      v.onerror = () => finish(v, 0);
+      v.src = c.url;
+      els.push(v);
+    });
+    return () => {
+      cancelled = true;
+      els.forEach(cleanup);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAwaitingVoiceApproval, orderedAssets]);
   const [animationApproving, setAnimationApproving] = useState(false);
   const [finalApproving, setFinalApproving] = useState(false);
   // Phase 7 — subtitle languages chosen at the merged-review step (seed from the
@@ -364,6 +425,7 @@ export function VideoApprovalPanel({
     const previousAssetId = displayedVoiceAssetId;
 
     setVoiceRecreating(true);
+    setVoiceSeconds(null); // re-measured once the new voice loads
     setError(null);
     try {
       // Persist any script edits first — the server reads approvedScriptThai
@@ -1319,11 +1381,52 @@ export function VideoApprovalPanel({
                     src={displayedVoiceUrl}
                     controls
                     preload="metadata"
+                    onLoadedMetadata={(e) => {
+                      const d = (e.target as HTMLAudioElement).duration;
+                      if (Number.isFinite(d) && d > 0) setVoiceSeconds(d);
+                    }}
                     className="w-full"
                   />
                 </div>
               ) : (
                 <p className="text-sm text-amber-600 mb-4">ไม่พบไฟล์เสียงพากย์ กรุณาสร้างเสียงใหม่</p>
+              )}
+
+              {/* Suggested max length (from uploaded media) + gate. A voice that
+                  overshoots by more than the tolerance can't be approved — the
+                  requester shortens the script and regenerates. */}
+              {suggestedVoiceSeconds != null && suggestedVoiceSeconds > 0 && (
+                <div
+                  className={`mb-4 rounded-lg border p-3 ${
+                    voiceTooLong ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      ความยาวเสียงพากย์ที่แนะนำ
+                    </p>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700 tabular-nums">
+                      ≈ {Math.round(suggestedVoiceSeconds)} วินาที
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    ประเมินจากไฟล์ที่อัปโหลด (รูปภาพนับ 5 วินาที/รูป และคลิปนับตามความยาวจริง)
+                    {voiceSeconds != null && (
+                      <>
+                        {" "}— เสียงพากย์ปัจจุบัน{" "}
+                        <span className={`font-semibold ${voiceTooLong ? "text-red-600" : "text-slate-700"}`}>
+                          {Math.round(voiceSeconds)} วินาที
+                        </span>
+                      </>
+                    )}
+                  </p>
+                  {voiceTooLong && (
+                    <p className="mt-2 text-xs font-medium text-red-700">
+                      เสียงพากย์ยาวเกินกว่าที่แนะนำมากกว่า {VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS} วินาที —
+                      กรุณาแก้บทพูดให้สั้นลงแล้วกด “สร้างเสียงพากย์ใหม่” ก่อนอนุมัติ
+                    </p>
+                  )}
+                </div>
               )}
 
               <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4">
@@ -1382,7 +1485,7 @@ export function VideoApprovalPanel({
                 <Button
                   onClick={handleApproveVoice}
                   loading={voiceApproving}
-                  disabled={voiceRecreating || voiceApproving}
+                  disabled={voiceRecreating || voiceApproving || voiceTooLong}
                 >
                   อนุมัติเสียงพากย์
                 </Button>

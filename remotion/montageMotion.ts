@@ -65,6 +65,33 @@ function round(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
 
+/**
+ * Slowest a clip may be played to fill a scene slot longer than its footage.
+ * 0.6 ≈ at most a 1.67× stretch — enough to absorb a few seconds of shortfall
+ * without looking like obvious slow-motion. Beyond this the clip plays at the
+ * cap and any residual is covered by the cross-dissolve / a black tail rather
+ * than a long frozen frame.
+ */
+export const MIN_CLIP_PLAYBACK_RATE = 0.6;
+
+/**
+ * Playback rate for a clip whose scene slot is longer than its available
+ * footage: slow it down (rate < 1) to fill the slot instead of freezing the
+ * last frame, clamped so the slow-motion never gets extreme. Returns 1 (normal
+ * speed) when the footage length is unknown/invalid or already ≥ the slot (in
+ * which case the renderer simply trims the surplus via `endAt`).
+ */
+export function computeClipPlaybackRate(
+  footageSeconds: number,
+  slotSeconds: number,
+  minRate: number = MIN_CLIP_PLAYBACK_RATE
+): number {
+  if (!Number.isFinite(footageSeconds) || footageSeconds <= 0) return 1;
+  if (!Number.isFinite(slotSeconds) || slotSeconds <= 0) return 1;
+  if (slotSeconds <= footageSeconds) return 1;
+  return clamp(footageSeconds / slotSeconds, minRate, 1);
+}
+
 export interface AssetFrameRange {
   index: number;
   from: number;

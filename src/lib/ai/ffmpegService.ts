@@ -290,12 +290,24 @@ async function composeSingleRatio(params: {
   const outputDuration = Math.max(videoDuration, voiceDuration + leadIn);
 
   const filters: string[] = [];
-  // Freeze the base's final frame just past the target length so the clip always
-  // reaches `outputDuration` (covers rounding + any short base); `-t` trims the
-  // surplus. When the base already outlasts the target this is a harmless nudge.
-  const padSeconds = Math.max(0, outputDuration - videoDuration) + 0.5;
-  const videoTail = `,tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(3)}`;
-  filters.push(`[0:v]${cropAndScaleFilter}${subtitleFilter}${videoTail}[base]`);
+  // How much longer the audio (voice + music intro) runs than the picture. When
+  // the montage can't fully cover the voiceover, this leftover period has no
+  // picture to show.
+  const pictureDeficit = Math.max(0, outputDuration - videoDuration);
+  // Previously the base's final frame was FROZEN (cloned) to fill the leftover,
+  // which looked like the video had stalled. Instead: pad the genuine
+  // picture-less leftover with BLACK frames (audio keeps playing over black), and
+  // only clone a tiny 0.5s to absorb frame-rounding when the picture already
+  // covers the voice. `-t` trims any surplus to exactly `outputDuration`.
+  const videoTail =
+    pictureDeficit > 0.05
+      ? `,tpad=stop_mode=add:color=black:stop_duration=${(pictureDeficit + 0.5).toFixed(3)}`
+      : `,tpad=stop_mode=clone:stop_duration=0.5`;
+  // Burn subtitles AFTER the black tail is appended so captions timed into the
+  // picture-less leftover render over the black too (the voiceover keeps playing
+  // there). Mid-montage black frames are already part of [0:v], so they get
+  // captions regardless of order.
+  filters.push(`[0:v]${cropAndScaleFilter}${videoTail}${subtitleFilter}[base]`);
   let videoOut = "[base]";
 
   if (overlayInputIdx >= 0) {
@@ -476,6 +488,18 @@ export async function concatVideos(
   }
 }
 
+/**
+ * Probe a media source's duration in seconds via ffprobe. Accepts a local file
+ * path OR a remote URL (ffprobe reads the container header only, so this is cheap
+ * even for a large clip on DO Spaces). Returns 0 on any failure so callers can
+ * fall back gracefully. Exported for the montage render, which pins every clip's
+ * footage window so the renderer can black out (instead of freeze) once a clip
+ * runs out of footage.
+ */
+export async function probeMediaDurationSeconds(input: string): Promise<number> {
+  return probeDurationSeconds(input);
+}
+
 /** Probe a local media file's duration (seconds) via ffprobe. 0 on failure. */
 async function probeDurationSeconds(filePath: string): Promise<number> {
   const ffmpeg = AI_CONFIG.ffmpeg.path ?? "ffmpeg";
@@ -620,8 +644,12 @@ export async function concatVideosWithCrossfade(
       prevLabel = outLabel;
       accDuration = accDuration + durations[i] - fade;
     }
-    // Freeze the final frame so the base reliably outlasts the voiceover.
-    const padSeconds = fade * (inputPaths.length - 1) + 1;
+    // Restore only the length the xfade overlaps removed (`fade*(n-1)`) plus a
+    // tiny safety margin — NOT a full extra second. Over-padding here froze the
+    // last scene's final frame for ~1s+; keeping the base at its true montage
+    // length lets the compose step cover any voice-vs-picture shortfall with a
+    // black tail (audio continues) instead of a long frozen frame.
+    const padSeconds = fade * (inputPaths.length - 1) + 0.2;
     filters.push(
       `[${prevLabel}]tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(3)},format=yuv420p,fps=30[vout]`
     );

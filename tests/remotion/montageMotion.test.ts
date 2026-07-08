@@ -2,8 +2,10 @@ import {
   allocateAssetFrames,
   buildKenBurnsTransform,
   clamp,
+  computeClipPlaybackRate,
   getKenBurnsKeyframes,
   lerp,
+  MIN_CLIP_PLAYBACK_RATE,
 } from "../../remotion/montageMotion";
 
 describe("montageMotion — clamp/lerp", () => {
@@ -17,6 +19,29 @@ describe("montageMotion — clamp/lerp", () => {
     expect(lerp(0, 10, 0)).toBe(0);
     expect(lerp(0, 10, 1)).toBe(10);
     expect(lerp(0, 10, 0.5)).toBe(5);
+  });
+});
+
+describe("montageMotion — computeClipPlaybackRate", () => {
+  it("plays at normal speed when the clip already fills (or exceeds) its slot", () => {
+    expect(computeClipPlaybackRate(6, 6)).toBe(1);
+    expect(computeClipPlaybackRate(8, 6)).toBe(1); // longer than slot → trimmed via endAt
+  });
+
+  it("slows the clip to exactly fill a slightly longer slot", () => {
+    // 4s of footage over a 5s slot → 0.8x (slower), filling the whole slot.
+    expect(computeClipPlaybackRate(4, 5)).toBeCloseTo(0.8, 5);
+  });
+
+  it("clamps the slowdown so it never becomes extreme slow-motion", () => {
+    // 2s over 10s would need 0.2x; clamp holds it at the floor.
+    expect(computeClipPlaybackRate(2, 10)).toBe(MIN_CLIP_PLAYBACK_RATE);
+  });
+
+  it("returns normal speed when footage length is unknown/invalid", () => {
+    expect(computeClipPlaybackRate(0, 5)).toBe(1);
+    expect(computeClipPlaybackRate(NaN, 5)).toBe(1);
+    expect(computeClipPlaybackRate(4, 0)).toBe(1);
   });
 });
 

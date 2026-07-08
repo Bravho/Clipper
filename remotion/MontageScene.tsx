@@ -8,7 +8,12 @@ import {
   useVideoConfig,
 } from "remotion";
 import { MontageAsset, MontageSceneInputProps, MontageTransition } from "./montageTypes";
-import { allocateAssetFrames, buildKenBurnsTransform, clamp } from "./montageMotion";
+import {
+  allocateAssetFrames,
+  buildKenBurnsTransform,
+  clamp,
+  computeClipPlaybackRate,
+} from "./montageMotion";
 
 const TRANSITION_DURATION_SECONDS = 0.2;
 
@@ -101,20 +106,48 @@ function AssetLayer({
     transformOrigin: `${focusX}% ${focusY}%`,
   };
 
+  // When a clip's scene slot is longer than its selected footage, slow the clip
+  // down (playbackRate < 1) so it fills the slot instead of playing out and then
+  // holding a frozen last frame. Only possible when the footage window is known
+  // (a trimmed clip); otherwise it plays at normal speed and any shortfall is
+  // covered by the cross-dissolve / the compose step's black tail.
+  const clipFootageSeconds =
+    asset.kind === "clip" &&
+    asset.trimEndSeconds != null &&
+    asset.trimEndSeconds > (asset.trimStartSeconds ?? 0)
+      ? asset.trimEndSeconds - (asset.trimStartSeconds ?? 0)
+      : 0;
+  const clipPlaybackRate = computeClipPlaybackRate(
+    clipFootageSeconds,
+    durationInFrames / fps
+  );
+
+  // Once the (possibly slowed) clip has played all its footage, there is nothing
+  // left to show. Rather than freezing the last frame, render NOTHING so the
+  // scene's black background shows through — a black scene, over which the voice
+  // and music (muxed later at compose) keep playing. `coveredFrames` is how many
+  // timeline frames the footage fills at the current playback rate.
+  const clipExhausted =
+    clipFootageSeconds > 0 &&
+    frame >= (clipFootageSeconds * fps) / clipPlaybackRate;
+
   return (
     <AbsoluteFill style={{ opacity, transform: entranceTransform || undefined, overflow: "hidden" }}>
       {asset.kind === "clip" ? (
-        <OffthreadVideo
-          src={asset.url}
-          startFrom={Math.max(0, Math.round((asset.trimStartSeconds ?? 0) * fps))}
-          endAt={
-            asset.trimEndSeconds != null
-              ? Math.round(asset.trimEndSeconds * fps)
-              : undefined
-          }
-          muted
-          style={mediaStyle}
-        />
+        clipExhausted ? null : (
+          <OffthreadVideo
+            src={asset.url}
+            startFrom={Math.max(0, Math.round((asset.trimStartSeconds ?? 0) * fps))}
+            endAt={
+              asset.trimEndSeconds != null
+                ? Math.round(asset.trimEndSeconds * fps)
+                : undefined
+            }
+            playbackRate={clipPlaybackRate}
+            muted
+            style={mediaStyle}
+          />
+        )
       ) : (
         <Img src={asset.url} style={mediaStyle} />
       )}

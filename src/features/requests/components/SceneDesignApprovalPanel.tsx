@@ -9,7 +9,13 @@ import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { AssetType } from "@/domain/enums/AssetType";
 import { calcPipelineCost, PIPELINE_STEP_COSTS } from "@/config/credits";
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
-import { assetPlaySeconds, minMontageTotalSeconds, sceneMontageSeconds } from "@/config/montage";
+import {
+  assetPlaySeconds,
+  MAX_VOICE_OVER_SHORTAGE_SECONDS,
+  minMontageTotalSeconds,
+  sceneMontageSeconds,
+  voiceOverShortageSeconds,
+} from "@/config/montage";
 
 interface SceneDesignApprovalPanelProps {
   requestId: string;
@@ -52,61 +58,6 @@ function isTrimmedClip(a: MontageSceneAsset): boolean {
     Number.isFinite(a.trimEndSeconds) &&
     (a.trimEndSeconds as number) > (a.trimStartSeconds as number)
   );
-}
-
-function getInitialSceneImages(scene: ScenePlan): number[] {
-  return Array.isArray(scene.imageIndexes) ? scene.imageIndexes.slice(0, 2) : [];
-}
-
-function scaleScenesToDuration(scenes: ScenePlan[], durationSeconds: number): ScenePlan[] {
-  if (scenes.length === 0) return scenes;
-
-  const fixedDurations: number[] = scenes.map((scene) =>
-    getInitialSceneImages(scene).length === 2 ? 8 : 0
-  );
-  const fixedTotal = fixedDurations.reduce((sum, duration) => sum + duration, 0);
-  const flexibleIndexes = scenes
-    .map((scene, index) => ({ scene, index }))
-    .filter(({ scene }) => getInitialSceneImages(scene).length !== 2)
-    .map(({ index }) => index);
-  const flexibleTarget = Math.max(flexibleIndexes.length, durationSeconds - fixedTotal);
-
-  if (flexibleIndexes.length === 0) {
-    return scenes.map((scene) => ({
-      ...scene,
-      durationSeconds: getInitialSceneImages(scene).length === 2 ? 8 : scene.durationSeconds,
-    }));
-  }
-
-  const currentTotal = flexibleIndexes.reduce(
-    (sum, index) => sum + (Number(scenes[index].durationSeconds) || 0),
-    0
-  );
-  if (currentTotal <= 0) {
-    const equal = Math.max(1, Math.round(flexibleTarget / flexibleIndexes.length));
-    return scenes.map((scene) => ({
-      ...scene,
-      durationSeconds: getInitialSceneImages(scene).length === 2 ? 8 : equal,
-    }));
-  }
-
-  let remaining = flexibleTarget;
-  return scenes.map((scene, index) => {
-    if (getInitialSceneImages(scene).length === 2) {
-      return { ...scene, durationSeconds: 8 };
-    }
-
-    if (index === flexibleIndexes[flexibleIndexes.length - 1]) {
-      return { ...scene, durationSeconds: Math.max(1, remaining) };
-    }
-
-    const nextDuration = Math.max(
-      1,
-      Math.round(((Number(scene.durationSeconds) || 0) / currentTotal) * flexibleTarget)
-    );
-    remaining -= nextDuration;
-    return { ...scene, durationSeconds: nextDuration };
-  });
 }
 
 /** Even-split duration allocation, remainder on the last asset; min 1s each. */
@@ -168,23 +119,50 @@ export function SceneDesignApprovalPanel({
   activeSceneIndex = 0,
 }: SceneDesignApprovalPanelProps) {
   const router = useRouter();
-  const submittedDuration = clampDuration(voiceDurationSeconds ?? initialDurationSeconds);
-  const [durationSeconds, setDurationSeconds] = useState(submittedDuration);
   // Preserve the server-sized montage durations on load (they already cover the
-  // voice + short intro/ending). Only re-split each scene's assets; don't scale
-  // the total down to the raw voice length, which would trip the minimum gate.
+  // voice + short intro/ending). Only re-split each scene's assets.
   const [scenes, setScenes] = useState<ScenePlan[]>(() => normalizeMontageScenes(initialScenes));
+  const [scriptDraft, setScriptDraft] = useState<string>(scriptThai ?? "");
   const [isApproving, setIsApproving] = useState(false);
+  const [isRegenVoice, setIsRegenVoice] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const totalSceneSeconds = sceneTotal(scenes);
-  // The montage (stills + trimmed clips) must be long enough to cover the whole
-  // voiceover plus the short music intro and ending — otherwise narration would
-  // run past the picture. Total may exceed the voice length (auto-grow) freely.
-  const minTotalSeconds = minMontageTotalSeconds(voiceDurationSeconds ?? submittedDuration);
-  const meetsMinimum = totalSceneSeconds + 1e-6 >= minTotalSeconds;
-
   const round1 = (n: number) => Math.round(n * 10) / 10;
+
+  // The rendered video length IS the sum of the scenes — there is no separate
+  // "length" knob. It updates live as scene durations / clip trims change.
+  const totalSceneSeconds = sceneTotal(scenes);
+
+  // The montage (stills + trimmed clips) must be long enough to cover the whole
+  // voiceover plus the short music intro and ending. Because every duration
+  // input is whole seconds, present (and gate on) the ceiling of the fractional
+  // floor so the target is actually reachable — e.g. voice 27.0s → floor 28.6s
+  // → shown target 29s. The true-floor check keeps a tiny epsilon.
+  const minTotalSeconds = minMontageTotalSeconds(voiceDurationSeconds ?? initialDurationSeconds);
+  const requiredWholeSeconds = Math.ceil(minTotalSeconds - 1e-6);
+  const meetsMinimum = totalSceneSeconds + 1e-6 >= minTotalSeconds;
+  const deficitSeconds = Math.max(0, requiredWholeSeconds - totalSceneSeconds);
+  // How much longer the picture runs than the voice needs — a mild "trailing
+  // silence" hint (advisory only, never blocks approval).
+  const overBySeconds = Math.max(0, totalSceneSeconds - minTotalSeconds);
+
+  // How much LONGER the voiceover runs than the total picture. Up to
+  // MAX_VOICE_OVER_SHORTAGE_SECONDS is tolerated (the leftover is filled with a
+  // black scene while the voice + music keep playing); beyond it, merging is
+  // hard-blocked — the requester must lengthen the scenes or regenerate a
+  // shorter voiceover, otherwise the clip would end on a long black gap.
+  const shortageSeconds = voiceOverShortageSeconds(totalSceneSeconds, voiceDurationSeconds);
+  const mergeBlocked = shortageSeconds > MAX_VOICE_OVER_SHORTAGE_SECONDS;
+
+  // Credit estimate + the value we submit both follow the true montage length,
+  // so cost and what actually renders never disagree.
+  const submitDurationSeconds = clampDuration(Math.ceil(totalSceneSeconds));
+  const scriptDirty = scriptDraft.trim() !== (scriptThai ?? "").trim();
+
+  const costEstimate = useMemo(
+    () => calcPipelineCost(submitDurationSeconds, totalChannels),
+    [submitDurationSeconds, totalChannels]
+  );
 
   // Everything that must be fixed before the plan can be approved, as friendly
   // Thai messages. Shown proactively so the requester knows what to adjust; the
@@ -200,24 +178,19 @@ export function SceneDesignApprovalPanel({
   if (emptyScenes.length > 0) {
     blockers.push(`ฉากที่ ${emptyScenes.join(", ")} ยังไม่ได้เลือกรูปหรือคลิป`);
   }
-  if (!meetsMinimum) {
+  // A small shortage (voice slightly longer than the picture) is allowed — the
+  // leftover becomes a short black scene under the voice. A LARGE shortage is a
+  // hard blocker: the requester must add scene/clip length or regenerate a
+  // shorter voiceover before the clips can be merged.
+  if (mergeBlocked) {
     blockers.push(
-      `ความยาววิดีโอรวมตอนนี้ ${round1(totalSceneSeconds)} วินาที ต้องอย่างน้อย ${round1(minTotalSeconds)} วินาที เพื่อให้คลุมเสียงพากย์ทั้งหมด — เพิ่มความยาวฉาก หรือเลือกช่วงคลิปให้ยาวขึ้น`
+      `เสียงพากย์ยาวกว่าวิดีโอประมาณ ${round1(shortageSeconds)} วินาที (เกิน ${MAX_VOICE_OVER_SHORTAGE_SECONDS} วินาที) — ` +
+        `กรุณาเพิ่มความยาวฉาก/คลิป หรือกด “สร้างเสียงพากย์ใหม่” ให้บทพูดสั้นลง ก่อนรวมคลิป`
     );
   }
-  const costEstimate = useMemo(
-    () => calcPipelineCost(durationSeconds, totalChannels),
-    [durationSeconds, totalChannels]
-  );
 
   const updateScene = (index: number, patch: Partial<ScenePlan>) => {
     setScenes((prev) => prev.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
-  };
-
-  const updateDuration = (value: number) => {
-    const nextDuration = clampDuration(value);
-    setDurationSeconds(nextDuration);
-    setScenes((prev) => scaleScenesToDuration(prev, nextDuration).map(reallocateSceneAssets));
   };
 
   /** Edit a montage scene's per-scene duration and redistribute it across its
@@ -241,10 +214,27 @@ export function SceneDesignApprovalPanel({
     });
   };
 
+  /** One-click fix for the coverage gate: add the whole-second shortfall to a
+   *  scene that CONTAINS A STILL, so the extra time animates (Ken Burns) rather
+   *  than freezing a clip's final frame. Prefers the last still-bearing scene;
+   *  falls back to the last scene when none has a still. */
+  const autoExtendToCover = () => {
+    if (scenes.length === 0 || deficitSeconds <= 0) return;
+    const hasStill = (s: ScenePlan) =>
+      (s.assets ?? []).some((a) => a.kind === "image");
+    let targetIndex = scenes.length - 1;
+    for (let i = scenes.length - 1; i >= 0; i--) {
+      if (hasStill(scenes[i])) {
+        targetIndex = i;
+        break;
+      }
+    }
+    const current = Number(scenes[targetIndex].durationSeconds) || 0;
+    updateSceneDuration(targetIndex, current + Math.ceil(deficitSeconds));
+  };
+
   const handleApprove = async () => {
     if (blockers.length > 0) {
-      // Don't call the API — the notice above the button already lists exactly
-      // what to adjust (shown proactively whenever there are blockers).
       setError("กรุณาปรับแก้รายการด้านล่างก่อนดำเนินการต่อ");
       return;
     }
@@ -253,12 +243,12 @@ export function SceneDesignApprovalPanel({
     try {
       // Belt-and-suspenders: keep each montage scene's per-asset durations
       // consistent (trimmed clips pinned, stills rebalanced) before the renderer
-      // and the server-side minimum check consume them.
+      // consumes them.
       const scenePlan = scenes.map(reallocateSceneAssets);
       const res = await fetch(`/api/requests/${requestId}/scene-design/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, scenePlan, durationSeconds }),
+        body: JSON.stringify({ jobId, scenePlan, durationSeconds: submitDurationSeconds }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -271,6 +261,46 @@ export function SceneDesignApprovalPanel({
     }
   };
 
+  /** Redo the voiceover. Optionally save the edited script first (so the new
+   *  audio speaks the new words). This steps the pipeline back to the voice
+   *  stage; the scene plan is rebuilt once the new voice is approved. */
+  const handleRegenerateVoice = async (opts?: { saveScript?: boolean }) => {
+    const confirmMsg =
+      "สร้างเสียงพากย์ใหม่เพื่อฟังผลลัพธ์? ระบบจะพากลับไปขั้นตอนเสียงพากย์ และออกแบบแผนฉากใหม่จากความยาวเสียงที่ได้";
+    if (typeof window !== "undefined" && !window.confirm(confirmMsg)) return;
+
+    setIsRegenVoice(true);
+    setError(null);
+    try {
+      if (opts?.saveScript) {
+        const patch = await fetch(`/api/requests/${requestId}/script`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId, scriptThai: scriptDraft }),
+        });
+        if (!patch.ok) {
+          const body = await patch.json().catch(() => ({}));
+          throw new Error(body.error ?? "ไม่สามารถบันทึกบทพูดได้");
+        }
+      }
+      const res = await fetch(`/api/requests/${requestId}/voice/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถสร้างเสียงพากย์ใหม่ได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+      setIsRegenVoice(false);
+    }
+  };
+
+  const busy = isApproving || isRegenVoice;
+
   return (
     <div className="mb-6 flex flex-col gap-4">
       <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
@@ -281,41 +311,105 @@ export function SceneDesignApprovalPanel({
         </p>
       </div>
 
-      {scriptThai && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            บทพูดที่ใช้เป็นฐานในการออกแบบ
-          </h3>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{scriptThai}</p>
-        </div>
-      )}
+      {/* Editable Thai script. De-coupled from the voice: edit freely; when you
+          want to hear the result, click "สร้างเสียงพากย์ใหม่" (by the player). */}
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          บทพูด (แก้ไขได้)
+        </h3>
+        <textarea
+          value={scriptDraft}
+          onChange={(e) => setScriptDraft(e.target.value)}
+          rows={4}
+          disabled={busy}
+          className={`${ta} text-sm leading-relaxed text-slate-700`}
+          placeholder="บทพูดสำหรับเสียงพากย์"
+        />
+        {scriptDirty && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <p className="text-xs text-amber-700">
+              แก้บทพูดแล้ว — กด “สร้างเสียงพากย์ใหม่” ด้านล่างเพื่อฟังผลลัพธ์ใหม่
+            </p>
+            <Button
+              variant="secondary"
+              onClick={() => setScriptDraft(scriptThai ?? "")}
+              disabled={busy}
+            >
+              ยกเลิกการแก้ไข
+            </Button>
+          </div>
+        )}
+      </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-5">
-        <div className="mb-2 flex items-center justify-between">
-          <label className="text-sm font-medium text-slate-700">ความยาววิดีโอ</label>
-          <span className="rounded-full bg-blue-600 px-3 py-0.5 text-sm font-bold text-white tabular-nums">
-            {durationSeconds} วินาที
+        <div className="mb-1 flex items-center justify-between">
+          <label className="text-sm font-medium text-slate-700">ความยาววิดีโอรวม</label>
+          <span
+            className={`rounded-full px-3 py-0.5 text-sm font-bold text-white tabular-nums ${
+              meetsMinimum ? "bg-blue-600" : "bg-amber-500"
+            }`}
+          >
+            {round1(totalSceneSeconds)} วินาที
           </span>
         </div>
-        <input
-          type="range"
-          min={PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS}
-          max={PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS}
-          step={1}
-          value={durationSeconds}
-          onChange={(e) => updateDuration(Number(e.target.value))}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-200 accent-blue-600"
-        />
-        <div className="mt-1 flex justify-between text-xs text-slate-400">
-          <span>{PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS} วินาที</span>
-          <span>{PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS} วินาที</span>
-        </div>
+        <p className="text-xs text-slate-500">
+          คำนวณอัตโนมัติจากผลรวมความยาวของทุกฉากด้านล่าง — ปรับความยาวได้ที่แต่ละฉาก หรือด้วยการเลือกช่วงคลิป
+        </p>
+        {voiceDurationSeconds ? (
+          <p className="mt-1 text-xs text-slate-500">
+            ต้องคลุมเสียงพากย์ {voiceDurationSeconds.toFixed(1)} วินาที — อย่างน้อย{" "}
+            <span className="font-semibold text-slate-600">{requiredWholeSeconds} วินาที</span>
+          </p>
+        ) : null}
+
+        {!meetsMinimum && (
+          <div
+            className={`mt-3 flex flex-wrap items-center gap-3 rounded-lg border p-3 ${
+              mergeBlocked ? "border-red-300 bg-red-50" : "border-amber-200 bg-amber-50"
+            }`}
+          >
+            <p className={`text-xs ${mergeBlocked ? "text-red-700" : "text-amber-700"}`}>
+              {mergeBlocked
+                ? `เสียงพากย์ยาวกว่าวิดีโอประมาณ ${round1(shortageSeconds)} วินาที (เกิน ${MAX_VOICE_OVER_SHORTAGE_SECONDS} วินาที) — ` +
+                  `ยังรวมคลิปไม่ได้ กรุณาเพิ่มความยาวฉาก/คลิป หรือกด “สร้างเสียงพากย์ใหม่” ให้บทพูดสั้นลง`
+                : `คำแนะนำ: เสียงพากย์ยาวกว่าความยาววิดีโอรวมประมาณ ${round1(deficitSeconds)} วินาที — ` +
+                  `แนะนำให้เพิ่มความยาวฉาก/คลิป หรือแก้บทพูดให้สั้นลงแล้วกด “สร้างเสียงพากย์ใหม่” ` +
+                  `(หากไม่ปรับ ช่วงท้ายที่ไม่มีภาพจะเป็นฉากสีดำโดยเสียงพากย์ยังเล่นต่อ)`}
+            </p>
+            <Button
+              variant="secondary"
+              onClick={autoExtendToCover}
+              disabled={busy}
+              className="ml-auto"
+            >
+              เพิ่มให้อัตโนมัติ
+            </Button>
+          </div>
+        )}
+        {meetsMinimum && overBySeconds > 2 && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">
+              คำแนะนำ: ความยาววิดีโอมากกว่าเสียงพากย์ประมาณ {round1(overBySeconds)} วินาที —
+              หากไม่ต้องการช่วงท้ายที่ไม่มีเสียง ให้ลดความยาวฉาก/คลิป
+            </p>
+          </div>
+        )}
 
         {voiceRecordingUrl && (
           <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              เสียงพากย์ที่อนุมัติ
-            </p>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                เสียงพากย์ที่อนุมัติ
+              </p>
+              <Button
+                variant="secondary"
+                onClick={() => handleRegenerateVoice({ saveScript: scriptDirty })}
+                loading={isRegenVoice}
+                disabled={busy}
+              >
+                สร้างเสียงพากย์ใหม่
+              </Button>
+            </div>
             <audio
               key={voiceRecordingAssetId ?? voiceRecordingUrl}
               src={voiceRecordingUrl}
@@ -331,7 +425,7 @@ export function SceneDesignApprovalPanel({
             <div>
               <p className="text-sm font-medium text-blue-800">ประมาณการเครดิตตามความยาวนี้</p>
               <p className="mt-0.5 text-xs text-blue-600">
-                คำนวณจาก {durationSeconds} วินาที และ {totalChannels} ช่องทางเผยแพร่
+                คำนวณจาก {submitDurationSeconds} วินาที และ {totalChannels} ช่องทางเผยแพร่
               </p>
             </div>
             <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-right">
@@ -350,11 +444,6 @@ export function SceneDesignApprovalPanel({
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {sourceAssets.map((asset) => {
               const isVideo = asset.assetType === AssetType.Video;
-              // Prefer a generated poster; for images use the full image. Clips
-              // with no poster (uploaded before poster generation) show a static
-              // placeholder — NOT a live <video>, which would compete for the
-              // browser's limited video decoders. Run the poster backfill to
-              // replace the placeholder with a real frame.
               const imgSrc = asset.thumbnailUrl || (!isVideo ? asset.storageUrl : "");
               return (
                 <li key={asset.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
@@ -381,11 +470,11 @@ export function SceneDesignApprovalPanel({
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            แผนฉาก · ความยาววิดีโอรวม {Math.round(totalSceneSeconds * 10) / 10} วินาที
+            แผนฉาก · ความยาววิดีโอรวม {round1(totalSceneSeconds)} วินาที
           </h3>
           {!meetsMinimum && (
             <span className="text-xs text-amber-600">
-              ต้องยาวอย่างน้อย {Math.round(minTotalSeconds * 10) / 10} วินาที (คลุมเสียงพากย์ทั้งหมด)
+              แนะนำ ≥ {requiredWholeSeconds} วินาที เพื่อคลุมเสียงพากย์
             </span>
           )}
         </div>
@@ -456,12 +545,16 @@ export function SceneDesignApprovalPanel({
       )}
 
       <div className="flex flex-col items-end gap-1 pb-2">
-        <Button onClick={handleApprove} loading={isApproving} disabled={isApproving}>
+        <Button onClick={handleApprove} loading={isApproving} disabled={busy || mergeBlocked}>
           อนุมัติแผนฉากและสร้างวิดีโอ →
         </Button>
-        {blockers.length > 0 && (
+        {mergeBlocked ? (
+          <p className="text-xs text-red-600">
+            ต้องแก้ปัญหาเสียงพากย์ยาวเกินไปก่อน จึงจะรวมคลิปได้
+          </p>
+        ) : blockers.length > 0 ? (
           <p className="text-xs text-amber-600">ยังปรับแก้ได้ก่อนกดยืนยัน</p>
-        )}
+        ) : null}
       </div>
     </div>
   );

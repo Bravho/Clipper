@@ -480,6 +480,33 @@ export class VideoGenerationService {
         ? scene.assets
         : buildSceneMontageAssets(scene, ordered, sceneDuration);
     const renderAssets = toRenderAssetSpecs(sceneAssets, ordered);
+
+    // Pin every clip's footage window before rendering. A clip the requester
+    // never trimmed has no known end, so the renderer couldn't tell when its
+    // footage ran out and would hold a frozen last frame. Probe the real
+    // duration (ffprobe reads only the header) and set trimEnd to it, so the
+    // renderer instead goes BLACK once the footage is spent (the voice + music,
+    // muxed later, keep playing over the black). Probe failures leave the clip
+    // as-is — it simply falls back to the prior behavior.
+    await Promise.all(
+      renderAssets.map(async (a) => {
+        if (a.kind !== "clip") return;
+        const hasWindow =
+          Number.isFinite(a.trimEndSeconds) &&
+          (a.trimEndSeconds as number) > (a.trimStartSeconds ?? 0);
+        if (hasWindow) return;
+        try {
+          const dur = await ffmpegService.probeMediaDurationSeconds(a.url);
+          if (dur > 0) {
+            a.trimStartSeconds = a.trimStartSeconds ?? 0;
+            a.trimEndSeconds = dur;
+          }
+        } catch {
+          /* leave unset — falls back to prior (non-black-out) behavior */
+        }
+      })
+    );
+
     const totalDuration =
       renderAssets.reduce((sum, a) => sum + a.durationSeconds, 0) || sceneDuration;
 
@@ -919,8 +946,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     void _userId; // retained for caller-identity parity; not yet persisted
     const job = await this._getJob(jobId);
     const isFailedPipeline = job.currentStep === VideoGenerationStep.Failed;
+    // The requester can also redo the voice from the later scene-design gate
+    // (e.g. after editing the script). That steps the pipeline back to the voice
+    // stage; the existing scene plan/segments were sized to the OLD voice length.
+    const fromSceneDesign =
+      job.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval;
 
-    if (job.currentStep !== VideoGenerationStep.AwaitingVoiceApproval && !isFailedPipeline) {
+    if (
+      job.currentStep !== VideoGenerationStep.AwaitingVoiceApproval &&
+      !fromSceneDesign &&
+      !isFailedPipeline
+    ) {
       throw new Error(
         `Expected pipeline step ${VideoGenerationStep.AwaitingVoiceApproval} but job is at ${job.currentStep}`
       );
@@ -934,6 +970,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       processedVoiceAssetId: null,
       ttsTaskId: null,
       rvcVoiceModel: "",
+      // Coming back from scene-design: drop the stale plan + rendered segments so
+      // a fresh scene design is generated once the new voice is approved.
+      ...(fromSceneDesign
+        ? {
+            approvedScenePlan: null,
+            sceneVideoAssetIds: null,
+            baseVideoAssetId: null,
+            currentSceneIndex: 0,
+          }
+        : {}),
     });
 
     this._runIAppTtsGeneration(updated).catch(async (err) => {
@@ -1241,15 +1287,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ? parsedScenePlan
       : normalizeScenePlanToDuration(parsedScenePlan, durationSeconds);
 
-    if (isMontage) {
-      const totalSeconds = scenePlan.reduce((sum, s) => sum + sceneMontageSeconds(s), 0);
-      const minSeconds = minMontageTotalSeconds(job.voiceDurationSeconds ?? durationSeconds);
-      if (totalSeconds + 1e-6 < minSeconds) {
-        throw new Error(
-          `ความยาววิดีโอรวม (${Math.round(totalSeconds * 10) / 10} วินาที) ต้องอย่างน้อย ${Math.round(minSeconds * 10) / 10} วินาที เพื่อให้คลุมเสียงพากย์ทั้งหมด`
-        );
-      }
-    }
+    // Coverage (montage total vs voice length) is a RECOMMENDATION, not a hard
+    // gate — the requester is advised in the UI, but may approve a shorter
+    // montage. The final compose step pads the video (freezes the last frame) to
+    // cover any remaining narration, so a shortfall degrades quality but never
+    // cuts the voiceover off.
 
     const { clipRequestRepository } = await import("@/repositories/index");
     await clipRequestRepository.update(job.requestId, { durationSeconds });

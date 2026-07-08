@@ -1,10 +1,54 @@
 import {
   assetPlaySeconds,
+  estimateSuggestedVoiceSeconds,
   minMontageTotalSeconds,
   sceneMontageSeconds,
+  voiceOverShortageSeconds,
   MONTAGE_INTRO_SECONDS,
   MONTAGE_ENDING_SECONDS,
+  SUGGESTED_SECONDS_PER_IMAGE,
 } from "@/config/montage";
+
+describe("estimateSuggestedVoiceSeconds", () => {
+  it("sums real clip footage plus a fixed hold per image", () => {
+    expect(
+      estimateSuggestedVoiceSeconds({ imageCount: 5, clipSecondsTotal: 15 })
+    ).toBe(15 + 5 * SUGGESTED_SECONDS_PER_IMAGE);
+  });
+
+  it("counts images only when there is no clip footage", () => {
+    expect(estimateSuggestedVoiceSeconds({ imageCount: 3, clipSecondsTotal: 0 })).toBe(
+      3 * SUGGESTED_SECONDS_PER_IMAGE
+    );
+  });
+
+  it("returns 0 when there is no usable media", () => {
+    expect(estimateSuggestedVoiceSeconds({ imageCount: 0, clipSecondsTotal: 0 })).toBe(0);
+  });
+
+  it("ignores negative / non-finite inputs", () => {
+    expect(estimateSuggestedVoiceSeconds({ imageCount: -2, clipSecondsTotal: -4 })).toBe(0);
+    expect(
+      estimateSuggestedVoiceSeconds({ imageCount: NaN, clipSecondsTotal: 10 })
+    ).toBe(10);
+  });
+});
+
+describe("voiceOverShortageSeconds", () => {
+  it("is 0 when the picture already covers the voice", () => {
+    expect(voiceOverShortageSeconds(30, 25)).toBe(0);
+    expect(voiceOverShortageSeconds(30, 30)).toBe(0);
+  });
+
+  it("returns how much longer the voice runs than the picture", () => {
+    expect(voiceOverShortageSeconds(20, 31)).toBe(11);
+  });
+
+  it("treats missing voice/picture as 0", () => {
+    expect(voiceOverShortageSeconds(20, null)).toBe(0);
+    expect(voiceOverShortageSeconds(0, 12)).toBe(12);
+  });
+});
 
 describe("assetPlaySeconds", () => {
   it("returns a trimmed clip's selected window (out - in)", () => {

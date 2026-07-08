@@ -5,6 +5,11 @@ import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import {
+  MAX_VOICE_OVER_SHORTAGE_SECONDS,
+  sceneMontageSeconds,
+  voiceOverShortageSeconds,
+} from "@/config/montage";
 
 export async function POST(
   request: Request,
@@ -38,6 +43,24 @@ export async function POST(
   const job = await videoGenerationJobRepository.findById(jobId);
   if (!job || job.requestId !== id) {
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
+  }
+
+  // Server-side merge gate: reject when the voiceover runs more than
+  // MAX_VOICE_OVER_SHORTAGE_SECONDS longer than the total montage picture. A
+  // smaller shortage is allowed (its leftover renders as a black scene under the
+  // voice); a larger one must be fixed by lengthening scenes or regenerating a
+  // shorter voiceover before the clips can be merged.
+  const totalSceneSeconds = scenePlan.reduce((sum, s) => sum + sceneMontageSeconds(s), 0);
+  const shortageSeconds = voiceOverShortageSeconds(totalSceneSeconds, job.voiceDurationSeconds);
+  if (shortageSeconds > MAX_VOICE_OVER_SHORTAGE_SECONDS) {
+    return NextResponse.json(
+      {
+        error:
+          `เสียงพากย์ยาวกว่าวิดีโอประมาณ ${Math.round(shortageSeconds)} วินาที (เกิน ${MAX_VOICE_OVER_SHORTAGE_SECONDS} วินาที) — ` +
+          `กรุณาเพิ่มความยาวฉาก/คลิป หรือสร้างเสียงพากย์ใหม่ให้สั้นลงก่อนรวมคลิป`,
+      },
+      { status: 422 }
+    );
   }
 
   try {

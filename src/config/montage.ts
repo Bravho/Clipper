@@ -102,6 +102,66 @@ export function minMontageTotalSeconds(voiceDurationSeconds: number | null | und
 }
 
 /**
+ * How much LONGER the voiceover may run than the total montage picture before
+ * the merge is hard-blocked. Up to this much shortage is tolerated: the leftover
+ * (picture-less) period is filled with a black scene while the voice + music keep
+ * playing. Beyond it, the frozen/black tail would dominate the clip, so the
+ * requester is required to lengthen the scenes or regenerate a shorter voiceover.
+ */
+export const MAX_VOICE_OVER_SHORTAGE_SECONDS = 10;
+
+/**
+ * Seconds each uploaded still is assumed to hold on screen when estimating a
+ * suggested voiceover length before any scene plan exists (the first voice
+ * step). Clips are counted at their real footage length instead.
+ */
+export const SUGGESTED_SECONDS_PER_IMAGE = 5;
+
+/**
+ * Grace beyond the suggested voiceover length before the first voice step blocks
+ * approval. A voice up to this much longer than {@link estimateSuggestedVoiceSeconds}
+ * is allowed (the extra is absorbed by slower clips / a short black tail); longer
+ * than this and the requester must shorten the script and regenerate.
+ */
+export const VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS = 10;
+
+/**
+ * Estimate a suggested MAXIMUM voiceover length from the uploaded source media,
+ * before any scene plan exists. Clips contribute their real footage length; each
+ * still contributes {@link SUGGESTED_SECONDS_PER_IMAGE}. This is the length the
+ * pictures can comfortably cover, so a voiceover near or below it needs little to
+ * no filler. Returns 0 when there is no usable media.
+ */
+export function estimateSuggestedVoiceSeconds(params: {
+  imageCount: number;
+  clipSecondsTotal: number;
+}): number {
+  const images =
+    Number.isFinite(params.imageCount) && params.imageCount > 0 ? Math.floor(params.imageCount) : 0;
+  const clips =
+    Number.isFinite(params.clipSecondsTotal) && params.clipSecondsTotal > 0
+      ? params.clipSecondsTotal
+      : 0;
+  return clips + images * SUGGESTED_SECONDS_PER_IMAGE;
+}
+
+/**
+ * How much the voiceover exceeds the total montage picture length (0 when the
+ * picture already covers the voice). Used by the scene-design merge gate.
+ */
+export function voiceOverShortageSeconds(
+  totalSceneSeconds: number,
+  voiceDurationSeconds: number | null | undefined
+): number {
+  const voice =
+    Number.isFinite(voiceDurationSeconds) && (voiceDurationSeconds as number) > 0
+      ? (voiceDurationSeconds as number)
+      : 0;
+  const picture = Number.isFinite(totalSceneSeconds) && totalSceneSeconds > 0 ? totalSceneSeconds : 0;
+  return Math.max(0, voice - picture);
+}
+
+/**
  * On-screen seconds a single montage asset occupies. For a trimmed clip this is
  * its selected window (out − in); otherwise its explicit `durationSeconds`.
  * Used by the editor and the approval gate so a clip's play time follows its
