@@ -45,6 +45,8 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     discountBaht: parseFloat((row.discount_baht as string) ?? "0"),
     amountPaidBaht: parseFloat((row.amount_paid_baht as string) ?? "0"),
     revisionCount: (row.revision_count as number) ?? 0,
+    downloadUnlocked: (row.download_unlocked as boolean) ?? false,
+    isTrialRequest: (row.is_trial_request as boolean) ?? false,
     submittedAt: row.submitted_at
       ? new Date(row.submitted_at as string)
       : null,
@@ -85,6 +87,8 @@ const STATUS_EXTRA_COLS: Record<string, string> = {
   discountBaht: "discount_baht",
   amountPaidBaht: "amount_paid_baht",
   revisionCount: "revision_count",
+  downloadUnlocked: "download_unlocked",
+  isTrialRequest: "is_trial_request",
 };
 
 export class PostgresClipRequestRepository
@@ -307,6 +311,8 @@ export class PostgresClipRequestRepository
         | "discountBaht"
         | "amountPaidBaht"
         | "revisionCount"
+        | "downloadUnlocked"
+        | "isTrialRequest"
       >
     >
   ): Promise<ClipRequest> {

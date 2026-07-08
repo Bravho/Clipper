@@ -110,25 +110,33 @@ export class ClipRequestService {
       throw new Error("Rights confirmation is required to submit.");
     }
 
-    const canAfford = await creditService.hasEnoughCredits(
-      userId,
-      CREDITS_CONFIG.REQUEST_COST_CREDITS
-    );
-    if (!canAfford) {
-      throw new Error(
-        `Insufficient credits. You need ${CREDITS_CONFIG.REQUEST_COST_CREDITS} credits to submit a request.`
+    // Trial model: a user's FIRST request generates for free (preview only) —
+    // it is not charged at submission, and its clean download stays locked until
+    // the user pays via unlockDownload(). Every subsequent request is charged at
+    // submission and its download is unlocked immediately.
+    const isTrial = await this.isFirstRequest(userId);
+
+    if (!isTrial) {
+      const canAfford = await creditService.hasEnoughCredits(
+        userId,
+        CREDITS_CONFIG.REQUEST_COST_CREDITS
+      );
+      if (!canAfford) {
+        throw new Error(
+          `Insufficient credits. You need ${CREDITS_CONFIG.REQUEST_COST_CREDITS} credits to submit a request.`
+        );
+      }
+
+      // Deduct credits
+      // TODO: PostgreSQL — wrap this and the status update in a DB transaction
+      //   to prevent partial state if either operation fails.
+      await creditService.deductCredits(
+        userId,
+        CREDITS_CONFIG.REQUEST_COST_CREDITS,
+        `Clip request: ${existing.title}`,
+        requestId
       );
     }
-
-    // Deduct credits
-    // TODO: PostgreSQL — wrap this and the status update in a DB transaction
-    //   to prevent partial state if either operation fails.
-    await creditService.deductCredits(
-      userId,
-      CREDITS_CONFIG.REQUEST_COST_CREDITS,
-      `Clip request: ${existing.title}`,
-      requestId
-    );
 
     const now = new Date();
     const queuePos = await this.estimateQueuePosition();
@@ -143,6 +151,10 @@ export class ClipRequestService {
         queuePosition: queuePos,
         creditConfirmed: true,
         rightsConfirmed: true,
+        isTrialRequest: isTrial,
+        // Paid-at-submit requests are immediately downloadable; the free trial
+        // request is not until unlockDownload() is paid.
+        downloadUnlocked: !isTrial,
       }
     );
 
@@ -371,6 +383,54 @@ export class ClipRequestService {
     });
 
     return updated;
+  }
+
+  /**
+   * True when the user has never submitted a request before — i.e. the request
+   * they are submitting now is their free trial (first) request.
+   *
+   * A request counts as "submitted" once it has a submittedAt timestamp, so
+   * draft-only requests do not consume the free trial.
+   */
+  async isFirstRequest(userId: string): Promise<boolean> {
+    const all = await clipRequestRepository.findByUserId(userId);
+    return all.every((r) => r.submittedAt === null);
+  }
+
+  /**
+   * Unlock the clean download for a request by paying the request price.
+   *
+   * Used for the free trial (first) request, whose download is locked after a
+   * free generation. Idempotent: if already unlocked, it charges nothing.
+   *
+   * Throws "Insufficient credits" (checked before any deduction) so the caller
+   * can prompt a top-up.
+   */
+  async unlockDownload(requestId: string, userId: string): Promise<ClipRequest> {
+    const existing = await this.getOwnedRequest(requestId, userId);
+
+    if (existing.downloadUnlocked) {
+      return existing; // already paid / unlocked — no double charge
+    }
+
+    const price = CREDITS_CONFIG.REQUEST_COST_CREDITS;
+    const canAfford = await creditService.hasEnoughCredits(userId, price);
+    if (!canAfford) {
+      throw new Error(
+        `Insufficient credits. You need ${price} credits to unlock the download.`
+      );
+    }
+
+    await creditService.deductCredits(
+      userId,
+      price,
+      `Unlock download: ${existing.title}`,
+      requestId
+    );
+
+    return clipRequestRepository.updateStatus(requestId, existing.status, {
+      downloadUnlocked: true,
+    });
   }
 
   /**

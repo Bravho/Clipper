@@ -24,7 +24,7 @@ import {
   validateTotalUploadSize,
   validateClipDuration,
 } from "@/features/requests/validation/clipRequestSchema";
-import { CREDITS_CONFIG, PIPELINE_STEP_COSTS, calcPipelineCost } from "@/config/credits";
+import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
 import { ROUTES, requestDetailPath } from "@/config/routes";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
@@ -316,7 +316,7 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
 
     if (creditBalance < COST) {
       setSubmitError(
-        `คุณต้องการ ${COST} เครดิตสำหรับขั้นตอนแรก แต่ปัจจุบันมีเพียง ${creditBalance} เครดิต`
+        `คุณต้องการ ${COST} เครดิตสำหรับค่าบริการครั้งเดียว แต่ปัจจุบันมีเพียง ${creditBalance} เครดิต`
       );
       return;
     }
@@ -465,10 +465,10 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
       {insufficientCredits && (
         <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4">
           <p className="text-sm font-medium text-yellow-800">
-            คุณต้องการ {COST} เครดิตสำหรับขั้นตอนแรก ปัจจุบันมีเพียง {creditBalance} เครดิต
+            คุณต้องการ {COST} เครดิตสำหรับค่าบริการครั้งเดียว ปัจจุบันมีเพียง {creditBalance} เครดิต
           </p>
           <p className="mt-1 text-sm text-yellow-700">
-            กรุณาติดต่อฝ่ายสนับสนุนหากต้องการเครดิตเพิ่มเติม
+            กรุณาเติมเครดิตด้วย PromptPay ที่หน้าเครดิต
           </p>
         </div>
       )}
@@ -625,41 +625,37 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
           ก่อนส่งคำขอ
         </legend>
 
-        {/* Credit cost reminder */}
-        {(() => {
-          const estimate = calcPipelineCost(
-            typeof watchedDuration === "number" && !isNaN(watchedDuration)
-              ? watchedDuration
-              : PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
-            (watchedPlatforms as Platform[]).length || PIPELINE_STEP_COSTS.RESIZE_FREE_CHANNELS
-          );
-          return (
-            <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50 p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-blue-800">
-                    ขั้นตอนแรกใช้ {COST} เครดิต
-                  </p>
-                  <p className="mt-0.5 text-sm text-blue-700">
-                    เครดิตปัจจุบัน: {creditBalance} เครดิต · หลังขั้นตอนแรก: {creditBalance - COST} เครดิต
-                  </p>
-                  <p className="mt-0.5 text-xs text-blue-600">
-                    เครดิตขั้นตอนถัดไปจะถูกหักเมื่อแต่ละขั้นตอนเริ่มทำงาน
-                  </p>
-                </div>
-                <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-right">
-                  <p className="text-xs text-slate-400">ประมาณการรวม</p>
-                  <p className="text-lg font-bold text-blue-700 tabular-nums">{estimate.total}</p>
-                  <p className="text-xs text-slate-400">เครดิต</p>
-                </div>
-              </div>
+        {/* One-time charge reminder — a request is a single flat fee, not per-step. */}
+        <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-blue-800">
+                ค่าบริการครั้งเดียว {COST} เครดิต · ครอบคลุมทุกขั้นตอน
+              </p>
+              <p className="mt-0.5 text-sm text-blue-700">
+                เครดิตปัจจุบัน: {creditBalance} เครดิต · คงเหลือหลังชำระ:{" "}
+                {creditBalance - COST} เครดิต
+              </p>
+              {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
+                <p className="mt-0.5 text-xs text-blue-600">
+                  <span className="line-through">
+                    ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
+                  </span>{" "}
+                  ฿{COST} ราคาเปิดตัว (ลด 50%) · ไม่มีค่าใช้จ่ายรายขั้นตอนเพิ่มเติม
+                </p>
+              )}
             </div>
-          );
-        })()}
+            <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-right">
+              <p className="text-xs text-slate-400">ชำระครั้งเดียว</p>
+              <p className="text-lg font-bold text-blue-700 tabular-nums">{COST}</p>
+              <p className="text-xs text-slate-400">เครดิต</p>
+            </div>
+          </div>
+        </div>
 
         <div className="flex flex-col gap-4">
           <Checkbox
-            label={`ฉันเข้าใจว่าขั้นตอนแรกจะใช้ ${COST} เครดิต และขั้นตอนถัดไปจะถูกหักเครดิตตามอัตราจริงเมื่อแต่ละขั้นตอนเริ่มทำงาน`}
+            label={`ฉันเข้าใจว่าการส่งคำขอนี้จะใช้ ${COST} เครดิต แบบชำระครั้งเดียว ครอบคลุมทุกขั้นตอนการผลิต`}
             {...register("creditConfirmed")}
             error={errors.creditConfirmed?.message}
           />

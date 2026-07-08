@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { aspectRatioClass } from "@/lib/aspectRatio";
 
 /**
  * Playable, draggable clip-trim bar for the scene editor.
@@ -27,6 +28,10 @@ export interface ClipTrimBarProps {
   trimEndSeconds?: number;
   /** Current on-screen play seconds; seeds the out handle when trims are unset. */
   playSeconds?: number;
+  /** Aspect ratio of the user's selected primary distribution channel (e.g.
+   *  "9:16" for TikTok, "16:9" for YouTube). The preview is framed to this so it
+   *  matches how the clip will appear in the final channel-shaped video. */
+  aspectRatio?: string | null;
   onChange: (trim: { start: number; end: number }) => void;
 }
 
@@ -43,6 +48,7 @@ export function ClipTrimBar({
   trimStartSeconds,
   trimEndSeconds,
   playSeconds,
+  aspectRatio,
   onChange,
 }: ClipTrimBarProps) {
   const previewRef = useRef<HTMLVideoElement | null>(null);
@@ -230,23 +236,31 @@ export function ClipTrimBar({
 
   return (
     <div className="mt-2 w-full">
-      <video
-        ref={previewRef}
-        src={url}
-        muted
-        playsInline
-        preload="metadata"
-        onLoadedMetadata={handleLoadedMetadata}
-        onTimeUpdate={handleTimeUpdate}
-        onEnded={() => {
-          const el = previewRef.current;
-          if (el) {
-            el.currentTime = start;
-            void el.play();
-          }
-        }}
-        className="mb-2 max-h-40 w-full rounded-md bg-black object-contain"
-      />
+      {/* Preview framed to the selected primary channel's aspect ratio, so the
+          clip is shown cropped exactly as it will appear in the final video. */}
+      <div className="mb-2 flex justify-center">
+        <div
+          className={`${aspectRatioClass(aspectRatio)} h-60 max-w-full overflow-hidden rounded-md bg-black`}
+        >
+          <video
+            ref={previewRef}
+            src={url}
+            muted
+            playsInline
+            preload="metadata"
+            onLoadedMetadata={handleLoadedMetadata}
+            onTimeUpdate={handleTimeUpdate}
+            onEnded={() => {
+              const el = previewRef.current;
+              if (el) {
+                el.currentTime = start;
+                void el.play();
+              }
+            }}
+            className="h-full w-full object-cover"
+          />
+        </div>
+      </div>
 
       {duration == null ? (
         <p className="text-[11px] text-slate-400">กำลังโหลดคลิป…</p>

@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { AssetType } from "@/domain/enums/AssetType";
-import { calcPipelineCost, PIPELINE_STEP_COSTS } from "@/config/credits";
+import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
 import {
   assetPlaySeconds,
@@ -27,6 +27,9 @@ interface SceneDesignApprovalPanelProps {
   voiceRecordingUrl: string | null;
   voiceRecordingAssetId: string | null;
   totalChannels: number;
+  /** Aspect ratio of the primary distribution channel (e.g. "9:16"). Scene-clip
+   *  previews are shaped to this so they match how the final video will look. */
+  primaryAspectRatio: string | null;
   sourceAssets: UploadedAsset[];
   /** Canonical, index-stable source media (images + clips). */
   orderedAssets: OrderedSourceAsset[];
@@ -114,6 +117,7 @@ export function SceneDesignApprovalPanel({
   voiceRecordingUrl,
   voiceRecordingAssetId,
   totalChannels,
+  primaryAspectRatio,
   sourceAssets,
   orderedAssets,
   activeSceneIndex = 0,
@@ -154,15 +158,10 @@ export function SceneDesignApprovalPanel({
   const shortageSeconds = voiceOverShortageSeconds(totalSceneSeconds, voiceDurationSeconds);
   const mergeBlocked = shortageSeconds > MAX_VOICE_OVER_SHORTAGE_SECONDS;
 
-  // Credit estimate + the value we submit both follow the true montage length,
-  // so cost and what actually renders never disagree.
+  // The submitted montage length follows the true scene length so what renders
+  // matches. Length no longer affects price — a request is a single flat fee.
   const submitDurationSeconds = clampDuration(Math.ceil(totalSceneSeconds));
   const scriptDirty = scriptDraft.trim() !== (scriptThai ?? "").trim();
-
-  const costEstimate = useMemo(
-    () => calcPipelineCost(submitDurationSeconds, totalChannels),
-    [submitDurationSeconds, totalChannels]
-  );
 
   // Everything that must be fixed before the plan can be approved, as friendly
   // Thai messages. Shown proactively so the requester knows what to adjust; the
@@ -420,17 +419,21 @@ export function SceneDesignApprovalPanel({
           </div>
         )}
 
-        <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
+        <div className="mt-4 rounded-lg border border-green-100 bg-green-50 p-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-blue-800">ประมาณการเครดิตตามความยาวนี้</p>
-              <p className="mt-0.5 text-xs text-blue-600">
-                คำนวณจาก {submitDurationSeconds} วินาที และ {totalChannels} ช่องทางเผยแพร่
+              <p className="text-sm font-medium text-green-800">
+                ความยาวนี้ไม่มีค่าใช้จ่ายเพิ่มเติม
+              </p>
+              <p className="mt-0.5 text-xs text-green-700">
+                ความยาว {submitDurationSeconds} วินาที · ครอบคลุมด้วยค่าบริการครั้งเดียวแล้ว
               </p>
             </div>
-            <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-right">
-              <p className="text-lg font-bold text-blue-700 tabular-nums">{costEstimate.total}</p>
-              <p className="text-xs text-slate-400">เครดิต</p>
+            <div className="rounded-lg border border-green-200 bg-white px-3 py-2 text-right">
+              <p className="text-lg font-bold text-green-700 tabular-nums">
+                {CREDITS_CONFIG.REQUEST_COST_CREDITS}
+              </p>
+              <p className="text-xs text-slate-400">เครดิต (ครั้งเดียว)</p>
             </div>
           </div>
         </div>
@@ -518,6 +521,7 @@ export function SceneDesignApprovalPanel({
                 orderedAssets={orderedAssets}
                 assets={scene.assets ?? []}
                 sceneDurationSeconds={scene.durationSeconds}
+                aspectRatio={primaryAspectRatio}
                 onChange={(assets) => updateSceneAssets(sceneIndex, assets)}
               />
             </div>

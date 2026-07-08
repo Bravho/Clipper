@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { NewRequestForm } from "./NewRequestForm";
 import { ProductionPipeline } from "./ProductionPipeline";
-import { AI_TRACK_BASE_COST, PIPELINE_STEP_COSTS } from "@/config/credits";
+import { CREDITS_CONFIG } from "@/config/credits";
 
 interface Props {
   creditBalance: number;
@@ -11,12 +11,10 @@ interface Props {
 
 export function PackageSelector({ creditBalance }: Props) {
   const [selected, setSelected] = useState<"ai" | "editor" | null>(null);
-  const [durationSeconds, setDurationSeconds] = useState<number>(
-    PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS
-  );
-  const [platformCount, setPlatformCount] = useState<number>(
-    PIPELINE_STEP_COSTS.RESIZE_FREE_CHANNELS
-  );
+  // Duration / channels are creative preferences only — they no longer affect
+  // the price (a request is a single flat charge). Kept for the pipeline display.
+  const [durationSeconds, setDurationSeconds] = useState<number>(15);
+  const [platformCount, setPlatformCount] = useState<number>(2);
 
   if (selected === "ai") {
     return (
@@ -37,13 +35,12 @@ export function PackageSelector({ creditBalance }: Props) {
           </div>
           <div>
             <p className="text-sm font-semibold text-blue-800">AI Track — วิดีโอ AI · รูปภาพและคลิปวิดีโอ</p>
-            <p className="text-xs text-blue-600 mt-0.5">AI สร้างวิดีโอให้อัตโนมัติจากรูปและคลิปของคุณ · ราคาขึ้นอยู่กับความยาวและช่องทาง</p>
+            <p className="text-xs text-blue-600 mt-0.5">AI สร้างวิดีโอให้อัตโนมัติจากรูปและคลิปของคุณ · ราคาเดียว ครบทุกขั้นตอน</p>
           </div>
         </div>
 
         <NewRequestForm
           creditBalance={creditBalance}
-          creditCost={PIPELINE_STEP_COSTS.CONTENT_ANALYSIS}
           onCreditParamsChange={(d, p) => {
             setDurationSeconds(d);
             setPlatformCount(p);
@@ -97,10 +94,23 @@ export function PackageSelector({ creditBalance }: Props) {
           </ul>
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-xs text-slate-500">เริ่มต้นที่</span>
-              <span className="ml-1 text-2xl font-bold text-slate-900">{AI_TRACK_BASE_COST}</span>
+              <span className="text-xs text-slate-500">ราคาเดียว</span>
+              <span className="ml-1 text-2xl font-bold text-slate-900">
+                {CREDITS_CONFIG.REQUEST_COST_CREDITS}
+              </span>
               <span className="ml-1 text-sm text-slate-400">เครดิต</span>
-              <p className="text-xs text-slate-400 mt-0.5">สำหรับวิดีโอ {PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS} วินาที 2 ช่องทาง</p>
+              {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE ? (
+                <p className="text-xs text-slate-400 mt-0.5">
+                  <span className="line-through">
+                    ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
+                  </span>{" "}
+                  <span className="font-medium text-green-600">
+                    ฿{CREDITS_CONFIG.REQUEST_COST_CREDITS} ราคาเปิดตัว · ครบทุกขั้นตอน
+                  </span>
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400 mt-0.5">ครอบคลุมทุกขั้นตอน</p>
+              )}
             </div>
             <span className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
               เริ่มด้วย AI →

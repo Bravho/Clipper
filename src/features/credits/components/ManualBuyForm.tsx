@@ -8,19 +8,19 @@ import { Button } from "@/components/ui/Button";
 
 export function ManualBuyForm() {
   const router = useRouter();
-  const [creditsAmount, setCreditsAmount] = useState<string>("50");
-  const [pricePaidBaht, setPricePaidBaht] = useState<string>("500");
+  const [creditsAmount, setCreditsAmount] = useState<string>("49");
+  const [pricePaidBaht, setPricePaidBaht] = useState<string>("49");
   const [reference, setReference] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Automatically estimate price based on standard 10 THB / credit
+  // 1 credit = 1 THB
   const handleCreditsChange = (val: string) => {
     setCreditsAmount(val);
     const parsed = parseInt(val, 10);
     if (!isNaN(parsed) && parsed > 0) {
-      setPricePaidBaht((parsed * 10).toString());
+      setPricePaidBaht(parsed.toString());
     }
   };
 
@@ -64,7 +64,7 @@ export function ManualBuyForm() {
         แจ้งโอนเงินเพื่อซื้อเครดิต (ซื้อแบบแมนนวล)
       </h2>
       <p className="mb-4 text-xs text-slate-500">
-        ทำการโอนเงินไปยังบัญชีธนาคารของบริษัท จากนั้นกรอกข้อมูลการโอนเงินด้านล่างเพื่อรับเครดิตทันที (1 เครดิต = 10 บาท)
+        ทำการโอนเงินไปยังบัญชีธนาคารของบริษัท จากนั้นกรอกข้อมูลการโอนเงินด้านล่างเพื่อรับเครดิตทันที (1 เครดิต = 1 บาท)
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-4">

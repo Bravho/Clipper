@@ -1,12 +1,11 @@
 "use client";
 
-import {
-  calcPipelineCost,
-  PIPELINE_PHASES,
-  PIPELINE_STEP_COSTS,
-  type PipelineCostBreakdown,
-} from "@/config/credits";
+import { CREDITS_CONFIG, PIPELINE_PHASES } from "@/config/credits";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
+
+/** Fallbacks for display only — duration/channels no longer affect the price. */
+const DEFAULT_DURATION_SECONDS = 15;
+const DEFAULT_CHANNELS = 2;
 
 // Steps where the AI work is done but staff review is pending.
 // The phase shows as "awaiting review" (amber) rather than "in progress" (blue).
@@ -46,35 +45,6 @@ const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
   [VideoGenerationStep.ProcessingVoice]:            2,
 };
 
-// NOTE: cost breakdown field names (step2/step3) retain their original
-// internal meaning (step2 = video gen, step3 = voice/music) from
-// calcPipelineCost, but the displayed phase order is now audio-first
-// (phase 2 = voice, phase 3 = video) — so the mapping is swapped here.
-function stepCredit(phaseId: number, costs: PipelineCostBreakdown): string {
-  switch (phaseId) {
-    case 1: return `${costs.step1} เครดิต`;
-    case 2: return `${costs.step3} เครดิต`;
-    case 3: return `${costs.step2} เครดิต`;
-    case 4: return `${costs.step4} เครดิต`;
-    case 5: return costs.extraChannels > 0 ? `${costs.step5} เครดิต` : "ไม่มีค่าเพิ่ม";
-    default: return "";
-  }
-}
-
-function stepHint(phaseId: number, costs: PipelineCostBreakdown, duration: number): string {
-  switch (phaseId) {
-    case 1: return "10 เครดิต คงที่";
-    case 2: return `7/วิ × ${duration}วิ`;
-    case 3: return `10/วิ × ${duration}วิ`;
-    case 4: return `3/วิ × ${duration}วิ`;
-    case 5:
-      return costs.extraChannels > 0
-        ? `30 × ${costs.extraChannels} ช่องทางเพิ่ม`
-        : `${PIPELINE_STEP_COSTS.RESIZE_FREE_CHANNELS} ช่องทางแรกไม่มีค่าใช้จ่าย`;
-    default: return "";
-  }
-}
-
 interface Props {
   currentStep?: VideoGenerationStep;
   failedAtStep?: VideoGenerationStep | null;
@@ -87,13 +57,11 @@ interface Props {
 export function ProductionPipeline({
   currentStep,
   failedAtStep,
-  durationSeconds = PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
-  totalChannels = PIPELINE_STEP_COSTS.RESIZE_FREE_CHANNELS,
+  durationSeconds = DEFAULT_DURATION_SECONDS,
+  totalChannels = DEFAULT_CHANNELS,
   videoGenStatus,
   videoGenLastPolledAt,
 }: Props) {
-  const costs = calcPipelineCost(durationSeconds, totalChannels);
-
   const isFailed = currentStep === VideoGenerationStep.Failed;
   const failedPhase = isFailed && failedAtStep ? (STEP_TO_PHASE[failedAtStep] ?? 0) : 0;
   const activePhase = currentStep && !isFailed ? (STEP_TO_PHASE[currentStep] ?? 0) : 0;
@@ -243,12 +211,10 @@ export function ProductionPipeline({
                       )}
                     </p>
                   )}
-                  <p className="mt-0.5 text-xs text-slate-400 italic">
-                    {stepHint(phase.id, costs, durationSeconds)}
-                  </p>
                 </div>
+                {/* Every step is covered by the single one-time fee. */}
                 <span
-                  className={`ml-4 mt-0.5 flex-shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                  className={`ml-4 mt-0.5 flex-shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${
                     isCompleted
                       ? "bg-green-50 text-green-600"
                       : isFailedPhase
@@ -257,12 +223,10 @@ export function ProductionPipeline({
                       ? "bg-blue-100 text-blue-700"
                       : isAwaitingReview
                       ? "bg-amber-50 text-amber-700"
-                      : isPending
-                      ? "bg-slate-100 text-slate-400"
-                      : "bg-blue-50 text-blue-700"
+                      : "bg-slate-50 text-slate-400"
                   }`}
                 >
-                  {stepCredit(phase.id, costs)}
+                  รวมในค่าบริการ
                 </span>
               </div>
             </li>
@@ -270,20 +234,26 @@ export function ProductionPipeline({
         })}
       </ol>
 
-      {/* Subtotal + rework + total */}
-      <div className="mt-1 space-y-1.5 border-t border-slate-100 pt-3">
-        <div className="flex items-center justify-between text-xs text-slate-500">
-          <span>ค่าใช้จ่ายฐาน</span>
-          <span>{costs.base} เครดิต</span>
+      {/* One-time charge — all steps above are included in a single fee. */}
+      <div className="mt-1 border-t border-slate-100 pt-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-slate-500">
+            ค่าบริการครั้งเดียว · ครอบคลุมทุกขั้นตอน
+          </span>
+          <span className="text-sm font-bold text-blue-700">
+            {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
+          </span>
         </div>
-        <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>สำรองแก้ไข ({PIPELINE_STEP_COSTS.REWORK_BUFFER_PERCENT}%)</span>
-          <span>+{costs.rework} เครดิต</span>
-        </div>
-        <div className="flex items-center justify-between border-t border-slate-100 pt-1.5">
-          <span className="text-sm text-slate-500">ประมาณการรวม</span>
-          <span className="text-sm font-bold text-blue-700">{costs.total} เครดิต</span>
-        </div>
+        {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
+          <p className="mt-1 text-right text-xs text-slate-400">
+            <span className="line-through">
+              ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
+            </span>{" "}
+            <span className="font-medium text-green-600">
+              ฿{CREDITS_CONFIG.REQUEST_COST_CREDITS} ราคาเปิดตัว (ลด 50%)
+            </span>
+          </p>
+        )}
       </div>
     </div>
   );

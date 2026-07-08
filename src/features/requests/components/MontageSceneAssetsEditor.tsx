@@ -57,6 +57,8 @@ interface MontageSceneAssetsEditorProps {
   orderedAssets: OrderedSourceAsset[];
   assets: MontageSceneAsset[];
   sceneDurationSeconds: number;
+  /** Primary distribution channel ratio (e.g. "9:16") — shapes clip previews. */
+  aspectRatio?: string | null;
   onChange: (assets: MontageSceneAsset[]) => void;
 }
 
@@ -76,6 +78,7 @@ export function MontageSceneAssetsEditor({
   orderedAssets,
   assets,
   sceneDurationSeconds,
+  aspectRatio,
   onChange,
 }: MontageSceneAssetsEditorProps) {
   const selectedIndexes = assets.map((a) => a.assetIndex);
@@ -241,6 +244,7 @@ export function MontageSceneAssetsEditor({
                     trimStartSeconds={asset.trimStartSeconds}
                     trimEndSeconds={asset.trimEndSeconds}
                     playSeconds={asset.durationSeconds}
+                    aspectRatio={aspectRatio}
                     onChange={(trim) => handleTrimChange(asset.assetIndex, trim)}
                   />
                 )}

@@ -13,4 +13,6 @@ export enum TransactionType {
   AdminCredit = "admin_credit",
   AdminDebit = "admin_debit",
   DiscountApplied = "discount_applied",
+  /** Credits added by a confirmed PromptPay top-up via the payment gateway. */
+  TopUp = "top_up",
 }

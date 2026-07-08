@@ -116,6 +116,8 @@ export interface IClipRequestRepository {
         | "discountBaht"
         | "amountPaidBaht"
         | "revisionCount"
+        | "downloadUnlocked"
+        | "isTrialRequest"
       >
     >
   ): Promise<ClipRequest>;

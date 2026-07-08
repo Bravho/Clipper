@@ -92,8 +92,14 @@ describe("CreditService via MockCreditWalletRepository", () => {
     expect(transactions[0].amount).toBe(CREDITS_CONFIG.SIGNUP_BONUS_CREDITS);
   });
 
-  it("signup bonus is 30 credits per config", () => {
-    expect(CREDITS_CONFIG.SIGNUP_BONUS_CREDITS).toBe(30);
+  it("no free signup credits at launch", () => {
+    expect(CREDITS_CONFIG.SIGNUP_BONUS_CREDITS).toBe(0);
+  });
+
+  it("request costs 49 credits (launch) and 1 credit = 1 baht", () => {
+    expect(CREDITS_CONFIG.REQUEST_COST_CREDITS).toBe(49);
+    expect(CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS).toBe(98);
+    expect(CREDITS_CONFIG.CREDIT_TO_BAHT_VALUE).toBe(1);
   });
 
   it("findByUserId returns only transactions for the given user", async () => {

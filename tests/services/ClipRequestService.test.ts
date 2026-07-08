@@ -157,7 +157,7 @@ describe("ClipRequestService — insufficient credits guard", () => {
 
     const wallet = await walletRepo.create({
       userId: "poor-user",
-      balance: 5, // less than 10
+      balance: 5, // less than the request cost
       initialCreditsGranted: true,
     });
 
@@ -172,7 +172,7 @@ describe("ClipRequestService — insufficient credits guard", () => {
 
     const wallet = await walletRepo.create({
       userId: "rich-user",
-      balance: 30,
+      balance: COST + 50, // comfortably above the request cost
       initialCreditsGranted: true,
     });
 
@@ -243,6 +243,61 @@ describe("ClipRequestService — draft deletion", () => {
     const found = await requestRepo.findById(req.id);
     expect(found?.status !== RequestStatus.Draft).toBe(true);
     // The service guard would throw: "Only Draft requests can be deleted."
+  });
+});
+
+describe("Trial / pay-to-download entitlement (repo-level)", () => {
+  it("new requests default to download-locked and non-trial", async () => {
+    const { requestRepo } = makeIsolatedDeps();
+    const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    expect(req.downloadUnlocked ?? false).toBe(false);
+    expect(req.isTrialRequest ?? false).toBe(false);
+  });
+
+  it("a paid (non-trial) submission is created download-unlocked", async () => {
+    const { requestRepo } = makeIsolatedDeps();
+    const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    const submitted = await requestRepo.updateStatus(req.id, RequestStatus.Submitted, {
+      submittedAt: new Date(),
+      isTrialRequest: false,
+      downloadUnlocked: true,
+    });
+    expect(submitted.downloadUnlocked).toBe(true);
+    expect(submitted.isTrialRequest).toBe(false);
+  });
+
+  it("a trial submission stays locked until unlocked", async () => {
+    const { requestRepo } = makeIsolatedDeps();
+    const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+
+    const trial = await requestRepo.updateStatus(req.id, RequestStatus.Submitted, {
+      submittedAt: new Date(),
+      isTrialRequest: true,
+      downloadUnlocked: false,
+    });
+    expect(trial.isTrialRequest).toBe(true);
+    expect(trial.downloadUnlocked).toBe(false);
+
+    // unlockDownload() effect: flip the flag
+    const unlocked = await requestRepo.updateStatus(req.id, trial.status, {
+      downloadUnlocked: true,
+    });
+    expect(unlocked.downloadUnlocked).toBe(true);
+  });
+
+  it("isFirstRequest is true only until a request has been submitted", async () => {
+    const { requestRepo } = makeIsolatedDeps();
+    // Mirrors ClipRequestService.isFirstRequest: every request has null submittedAt.
+    await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    let all = await requestRepo.findByUserId("u-1");
+    expect(all.every((r) => r.submittedAt === null)).toBe(true);
+
+    const [first] = all;
+    await requestRepo.updateStatus(first.id, RequestStatus.Submitted, {
+      submittedAt: new Date(),
+    });
+    all = await requestRepo.findByUserId("u-1");
+    expect(all.every((r) => r.submittedAt === null)).toBe(false);
   });
 });
 

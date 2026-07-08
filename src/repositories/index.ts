@@ -33,9 +33,12 @@ export const emailVerificationTokenRepository = new PostgresEmailVerificationTok
 // ── New Repositories — PostgreSQL ────────────────────────────────────────────
 import { PostgresBusinessProfileRepository } from "./postgres/PostgresBusinessProfileRepository";
 import { PostgresCreditPurchaseLogRepository } from "./postgres/PostgresCreditPurchaseLogRepository";
+import { PostgresPaymentIntentRepository } from "./postgres/PostgresPaymentIntentRepository";
 
 export const businessProfileRepository = new PostgresBusinessProfileRepository();
 export const creditPurchaseLogRepository = new PostgresCreditPurchaseLogRepository();
+// PromptPay top-up intents (GB Prime Pay). Requires migration 007.
+export const paymentIntentRepository = new PostgresPaymentIntentRepository();
 
 // ── Phase 2B — PostgreSQL ────────────────────────────────────────────────────
 // Clip requests, their status history, and uploaded assets now persist to

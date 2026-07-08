@@ -92,6 +92,32 @@ export interface ClipRequest {
   /** Number of revision requests the requester has made after delivery. */
   revisionCount: number;
 
+  // ── Trial / pay-to-download entitlement ────────────────────────────────────
+
+  /**
+   * True when the requester is entitled to download the clean (non-watermarked)
+   * final master for this request.
+   *
+   * Trial model:
+   * - A user's FIRST request generates for free but is `downloadUnlocked = false`
+   *   (preview only). Paying the request price unlocks it.
+   * - Every subsequent request is charged at submission, so it is created
+   *   `downloadUnlocked = true`.
+   *
+   * Defaults to false. Persisted as `download_unlocked BOOLEAN NOT NULL DEFAULT false`.
+   * Optional in the type only so legacy object literals compile; repositories
+   * always populate it. Read it as `!!request.downloadUnlocked`.
+   */
+  downloadUnlocked?: boolean;
+
+  /**
+   * True when this request was the user's free trial (first) request — i.e. it
+   * was NOT charged at submission. Used to decide the paywall copy and to know an
+   * unlock payment is still owed. Defaults to false. Optional in the type only so
+   * legacy object literals compile; repositories always populate it.
+   */
+  isTrialRequest?: boolean;
+
   // Timestamps
   submittedAt: Date | null;
   createdAt: Date;

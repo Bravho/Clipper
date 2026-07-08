@@ -70,6 +70,14 @@ export class CreditService {
     }
 
     const bonus = CREDITS_CONFIG.SIGNUP_BONUS_CREDITS;
+
+    // No free credits at launch (bonus = 0): mark granted so we don't re-check
+    // on every signup, but skip the balance change and ledger noise.
+    if (bonus <= 0) {
+      await creditWalletRepository.markInitialCreditsGranted(wallet.id);
+      return { ...wallet, initialCreditsGranted: true };
+    }
+
     const updated = await creditWalletRepository.updateBalance(
       wallet.id,
       wallet.balance + bonus
@@ -132,6 +140,65 @@ export class CreditService {
         amount: creditsAmount,
         type: TransactionType.AdminCredit,
         description: `Manual package top-up: ${creditsAmount} credits. Ref: ${reference}`,
+        referenceId: null,
+      });
+
+      await client.query("COMMIT");
+      return updatedWallet;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Credit a wallet from a confirmed gateway top-up (e.g. PromptPay via GB Prime Pay).
+   *
+   * Wraps the purchase log, wallet increment, and ledger entry in a single DB
+   * transaction. Records a TopUp ledger entry (distinct from manual AdminCredit).
+   * `reference` should be the gateway/payment-intent reference for traceability.
+   *
+   * Idempotency for re-delivered webhooks is enforced by PaymentService (it checks
+   * the intent status before calling this), so this method just performs the credit.
+   */
+  async creditTopup(
+    userId: string,
+    creditsAmount: number,
+    pricePaidBaht: number,
+    reference: string
+  ): Promise<CreditWallet> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      await creditPurchaseLogRepository.create({
+        userId,
+        creditsAdded: creditsAmount,
+        amountBaht: pricePaidBaht,
+        transactionRef: reference,
+      });
+
+      let wallet = await creditWalletRepository.findByUserId(userId);
+      if (!wallet) {
+        wallet = await creditWalletRepository.create({
+          userId,
+          balance: 0,
+          initialCreditsGranted: false,
+        });
+      }
+
+      const updatedWallet = await creditWalletRepository.updateBalance(
+        wallet.id,
+        wallet.balance + creditsAmount
+      );
+
+      await creditTransactionRepository.create({
+        userId,
+        amount: creditsAmount,
+        type: TransactionType.TopUp,
+        description: `PromptPay top-up: ${creditsAmount} credits (฿${pricePaidBaht}). Ref: ${reference}`,
         referenceId: null,
       });
 

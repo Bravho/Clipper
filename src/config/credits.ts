@@ -1,9 +1,54 @@
+/**
+ * Credit / pricing configuration.
+ *
+ * Credit unit: **1 credit = 1 THB** (฿). Top-ups are 1:1 — pay ฿100, get 100 credits.
+ *
+ * Launch pricing: the full list price of a request is 99 credits (฿99). During the
+ * launch window a 50% "founding member" discount applies, so the effective charge
+ * is 49 credits (฿49). No free signup credits are granted at launch.
+ *
+ * `REQUEST_COST_CREDITS` is the *effective* price charged at submission and is what
+ * the rest of the app reads. Toggle `LAUNCH_DISCOUNT_ACTIVE` to end the promotion
+ * and charge the full price.
+ */
 export const CREDITS_CONFIG = {
-  SIGNUP_BONUS_CREDITS: 30,
-  REQUEST_COST_CREDITS: 10,
-  CREDIT_TO_BAHT_VALUE: 10,
+  /** No free credits granted on signup at launch. */
+  SIGNUP_BONUS_CREDITS: 0,
+  /** Full (pre-discount) list price of one request, in credits (= ฿). */
+  REQUEST_FULL_PRICE_CREDITS: 98,
+  /** Discounted launch price of one request, in credits (= ฿). */
+  REQUEST_LAUNCH_PRICE_CREDITS: 49,
+  /** When true, requests are charged the launch price; otherwise the full price. */
+  LAUNCH_DISCOUNT_ACTIVE: true,
+  /** Effective price charged at submission. Derived from the flag above. */
+  get REQUEST_COST_CREDITS(): number {
+    return this.LAUNCH_DISCOUNT_ACTIVE
+      ? this.REQUEST_LAUNCH_PRICE_CREDITS
+      : this.REQUEST_FULL_PRICE_CREDITS;
+  },
+  /** 1 credit == 1 baht. */
+  CREDIT_TO_BAHT_VALUE: 1,
 } as const;
 
+/**
+ * Prepaid top-up bundles offered at checkout / first-step top-up.
+ * `credits === baht` (1:1). Bundling amortises any per-transaction gateway minimum
+ * and reduces how often a user has to scan a PromptPay QR.
+ */
+export const TOPUP_BUNDLES = [
+  { credits: 49, baht: 49, label: "1 คลิป" },
+  { credits: 99, baht: 99, label: "2 คลิป" },
+  { credits: 249, baht: 249, label: "5 คลิป" },
+  { credits: 499, baht: 499, label: "10 คลิป", popular: true },
+  { credits: 990, baht: 990, label: "20 คลิป" },
+] as const;
+
+/**
+ * @deprecated Per-step / per-second pipeline pricing is retired. Requests are now
+ * charged a single flat price (`CREDITS_CONFIG.REQUEST_COST_CREDITS`) at submission,
+ * because no AI video generation runs in the current process. Kept only for
+ * historical reference; nothing charges from this model. Do not use for new work.
+ */
 export const PIPELINE_STEP_COSTS = {
   CONTENT_ANALYSIS: 10,
   VIDEO_GEN_PER_SECOND: 10,

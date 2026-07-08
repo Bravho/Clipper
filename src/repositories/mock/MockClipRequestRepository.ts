@@ -164,6 +164,8 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       discountBaht: 0,
       amountPaidBaht: 0,
       revisionCount: 0,
+      downloadUnlocked: false,
+      isTrialRequest: false,
       submittedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -223,6 +225,8 @@ export class MockClipRequestRepository implements IClipRequestRepository {
         | "creditsUsed"
         | "discountBaht"
         | "amountPaidBaht"
+        | "downloadUnlocked"
+        | "isTrialRequest"
       >
     >
   ): Promise<ClipRequest> {

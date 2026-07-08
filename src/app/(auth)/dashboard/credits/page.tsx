@@ -9,6 +9,7 @@ import { CREDITS_CONFIG } from "@/config/credits";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { ManualBuyForm } from "@/features/credits/components/ManualBuyForm";
+import { PromptPayTopup } from "@/features/credits/components/PromptPayTopup";
 
 
 export const metadata: Metadata = { title: "Credits — RClipper" };
@@ -20,6 +21,7 @@ const TRANSACTION_LABELS: Record<TransactionType, string> = {
   [TransactionType.AdminCredit]: "Credit Grant",
   [TransactionType.AdminDebit]: "Credit Deduction",
   [TransactionType.DiscountApplied]: "Discount Applied",
+  [TransactionType.TopUp]: "PromptPay Top-up",
 };
 
 const TRANSACTION_VARIANTS: Record<
@@ -32,6 +34,7 @@ const TRANSACTION_VARIANTS: Record<
   [TransactionType.AdminCredit]: "blue",
   [TransactionType.AdminDebit]: "red",
   [TransactionType.DiscountApplied]: "blue",
+  [TransactionType.TopUp]: "green",
 };
 
 export default async function CreditsPage() {
@@ -67,12 +70,23 @@ export default async function CreditsPage() {
               {balance} credit{balance !== 1 ? "s" : ""} available
             </p>
             <p className="text-sm text-slate-500">
-              Each around-10-seconds clip request costs{" "}
-              {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits.
+              Each clip request costs {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits
+              {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
+                <>
+                  {" "}
+                  <span className="text-slate-400 line-through">
+                    ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
+                  </span>{" "}
+                  <span className="font-medium text-green-700">
+                    ฿{CREDITS_CONFIG.REQUEST_COST_CREDITS} launch price (50% off)
+                  </span>
+                </>
+              )}
+              . 1 credit = ฿1.
             </p>
             {!canAfford && (
               <p className="mt-1 text-sm font-medium text-yellow-700">
-                Insufficient credits for a new request. Please contact support.
+                Insufficient credits — top up with PromptPay below to submit a request.
               </p>
             )}
           </div>
@@ -94,21 +108,28 @@ export default async function CreditsPage() {
         <h2 className="mb-3 text-sm font-semibold text-slate-900">How credits work</h2>
         <ul className="flex flex-col gap-2 text-sm text-slate-600">
           <li className="flex items-start gap-2">
-            <span className="text-green-500 font-bold mt-0.5">+</span>
-            New accounts receive {CREDITS_CONFIG.SIGNUP_BONUS_CREDITS} free credits on signup.
+            <span className="text-blue-500 font-bold mt-0.5">i</span>
+            1 credit = ฿1. Top up any amount instantly with PromptPay.
           </li>
           <li className="flex items-start gap-2">
             <span className="text-red-500 font-bold mt-0.5">−</span>
-            Each clip request (around 10 seconds) costs{" "}
-            {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits.
+            Each clip request costs {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits
+            {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE
+              ? ` (launch price — 50% off ฿${CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}).`
+              : "."}
           </li>
           <li className="flex items-start gap-2">
-            <span className="text-blue-500 font-bold mt-0.5">i</span>
-            If you need more credits, please contact our support team.
+            <span className="text-green-500 font-bold mt-0.5">+</span>
+            Your first video is free to preview — pay {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits to download it.
           </li>
         </ul>
       </Card>
 
+      <div className="mb-6">
+        <PromptPayTopup />
+      </div>
+
+      {/* Manual bank-transfer fallback for users who prefer not to use QR. */}
       <div className="mb-8">
         <ManualBuyForm />
       </div>

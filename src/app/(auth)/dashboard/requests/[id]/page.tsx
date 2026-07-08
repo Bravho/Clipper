@@ -18,6 +18,8 @@ import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DeliveryLinks } from "@/features/requests/components/DeliveryLinks";
+import { UnlockDownloadPanel } from "@/features/requests/components/UnlockDownloadPanel";
+import { CREDITS_CONFIG } from "@/config/credits";
 import { RequestTimeline } from "@/features/requests/components/RequestTimeline";
 import { PipelineSection } from "@/features/requests/components/PipelineSection";
 import { PipelineFailurePanel } from "@/features/requests/components/PipelineFailurePanel";
@@ -408,6 +410,7 @@ export default async function RequestDetailPage({
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 totalChannels={request.targetPlatforms.length}
+                primaryAspectRatio={primaryRatio}
                 sourceAssets={sourceAssets}
                 orderedAssets={orderedSourceAssets}
                 activeSceneIndex={activeSceneIndex}
@@ -590,6 +593,20 @@ export default async function RequestDetailPage({
           </>
         );
       })()}
+
+      {/* Pay-to-download / trial paywall — shown once final masters exist */}
+      {finalClips.length > 0 && (
+        <UnlockDownloadPanel
+          requestId={request.id}
+          locked={!request.downloadUnlocked}
+          isTrial={!!request.isTrialRequest}
+          price={CREDITS_CONFIG.REQUEST_COST_CREDITS}
+          clips={finalClips.map((c, i) => ({
+            id: c.id,
+            label: `วิดีโอฉบับสมบูรณ์ ${i + 1}`,
+          }))}
+        />
+      )}
 
       {/* Delivery links */}
       {(isTerminal || publishingLinks.length > 0) && (
