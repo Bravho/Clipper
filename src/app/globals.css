@@ -10,6 +10,12 @@
 
   body {
     @apply bg-slate-50 text-slate-900;
+    /* Respect device safe areas (notch / home indicator) when installed as a
+       PWA or run inside the Capacitor WebView with viewport-fit=cover. */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
 
   *,

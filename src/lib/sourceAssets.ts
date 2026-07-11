@@ -19,6 +19,8 @@ export interface OrderedSourceAsset {
   thumbnailUrl: string;
   kind: "image" | "clip";
   fileName: string;
+  /** Real clip length (seconds) probed at upload; null for images / unknown. */
+  durationSeconds?: number | null;
 }
 
 /**
@@ -49,6 +51,7 @@ export function orderSourceAssets(assets: UploadedAsset[]): OrderedSourceAsset[]
       thumbnailUrl: a.thumbnailUrl || a.storageUrl,
       kind: a.assetType === AssetType.Video ? "clip" : "image",
       fileName: a.fileName,
+      durationSeconds: a.durationSeconds ?? null,
     }));
 }
 

@@ -23,6 +23,8 @@ function rowToAsset(row: Record<string, unknown>): UploadedAsset {
     thumbnailKey: (row.thumbnail_key as string) ?? "",
     thumbnailUrl: (row.thumbnail_url as string) ?? "",
     uploadStatus: row.upload_status as AssetUploadStatus,
+    // NUMERIC comes back as a string — coerce to a real number (or null).
+    durationSeconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
     videoRatio: (row.video_ratio as UploadedAsset["videoRatio"]) ?? null,
     scheduledDeletionAt: new Date(row.scheduled_deletion_at as string),
     createdAt: new Date(row.created_at as string),
@@ -57,8 +59,8 @@ export class PostgresUploadedAssetRepository
          request_id, user_id, file_name, asset_type,
          file_size_bytes, mime_type, storage_key, storage_url,
          thumbnail_key, thumbnail_url, upload_status,
-         video_ratio, scheduled_deletion_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         video_ratio, duration_seconds, scheduled_deletion_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         input.requestId,
@@ -73,6 +75,7 @@ export class PostgresUploadedAssetRepository
         input.thumbnailUrl,
         input.uploadStatus,
         input.videoRatio ?? null,
+        input.durationSeconds ?? null,
         input.scheduledDeletionAt,
       ]
     );
@@ -90,6 +93,7 @@ export class PostgresUploadedAssetRepository
       thumbnailUrl: "thumbnail_url",
       uploadStatus: "upload_status",
       videoRatio: "video_ratio",
+      durationSeconds: "duration_seconds",
     };
 
     const sets: string[] = [];

@@ -16,6 +16,8 @@ export enum RenderStep {
   MontageSceneSegment = "montage_scene_segment",
   /** Render every scene segment sequentially (`_renderAllSceneSegments`). */
   MontageAllSegments = "montage_all_segments",
+  /** Merge approved scene segments into the base video (`_runMontageMerge`). */
+  MontageMerge = "montage_merge",
   /** Remotion animation/overlay generation (`_runAnimationGeneration`). */
   AnimationGeneration = "animation_generation",
   /** FFmpeg composition + multi-ratio export (`_runFFmpegComposition`). */
@@ -35,6 +37,7 @@ export enum RenderStep {
 export const RENDER_STEP_FAILED_AT: Record<RenderStep, VideoGenerationStep> = {
   [RenderStep.MontageSceneSegment]: VideoGenerationStep.GeneratingBaseVideo,
   [RenderStep.MontageAllSegments]: VideoGenerationStep.GeneratingBaseVideo,
+  [RenderStep.MontageMerge]: VideoGenerationStep.GeneratingBaseVideo,
   [RenderStep.AnimationGeneration]: VideoGenerationStep.GeneratingAnimations,
   [RenderStep.FfmpegComposition]: VideoGenerationStep.ComposingFinalVideo,
   [RenderStep.OverlayComposition]: VideoGenerationStep.GeneratingOverlay,

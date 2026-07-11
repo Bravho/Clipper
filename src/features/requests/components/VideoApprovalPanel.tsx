@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerationJob";
+import type { MontageSceneAsset, ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -24,6 +24,8 @@ import { MontageSceneAssetsEditor } from "@/features/requests/components/Montage
 import {
   assetPlaySeconds,
   estimateSuggestedVoiceSeconds,
+  estimateStoryboardTotalRange,
+  suggestVoiceDurationRange,
   VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS,
 } from "@/config/montage";
 
@@ -181,6 +183,9 @@ interface Props {
   /** Aspect ratio of the primary distribution channel — the final review shows this ratio only. */
   primaryRatio?: string | null;
   scenes: ScenePlan[];
+  /** Approved Stage-1 rough storyboard — used to estimate the total video length
+   *  (and a suggested voice length) at the pre-video voice-approval step. */
+  storyboard?: StoryboardScene[];
   hookThai: string | null;
   hookEnglish: string | null;
   scriptThai: string | null;
@@ -233,6 +238,7 @@ export function VideoApprovalPanel({
   captionEnglish,
   captionChinese,
   orderedAssets = [],
+  storyboard = [],
   activeSceneIndex = 0,
   sceneVideos = [],
 }: Props) {
@@ -306,10 +312,28 @@ export function VideoApprovalPanel({
     clipSecondsTotal == null
       ? null
       : estimateSuggestedVoiceSeconds({ imageCount, clipSecondsTotal });
+
+  // Estimated total video length (a range) taken from the approved rough
+  // storyboard — the same estimate shown above the player. The suggested
+  // speaking-voice length is derived from it and is always SHORTER than the
+  // video so the narration comfortably fits inside the picture. Falls back to
+  // the media-based suggestion for older jobs with no storyboard.
+  const orderedByIndex = new Map(orderedAssets.map((a) => [a.index, a]));
+  const estimatedVideoRange = estimateStoryboardTotalRange(
+    storyboard.map((s) => (s.assetIndexes ?? []).map((idx) => orderedByIndex.get(idx)))
+  );
+  const hasStoryboardEstimate = estimatedVideoRange.maxSeconds > 0;
+  const suggestedVoiceRange = suggestVoiceDurationRange(estimatedVideoRange);
+  // Cap the acceptable voice length: it must fit within the longest estimated
+  // video length (plus the usual estimate tolerance). Use the storyboard-based
+  // ceiling when available, else the legacy media-based one.
+  const voiceCapSeconds = hasStoryboardEstimate
+    ? estimatedVideoRange.maxSeconds
+    : suggestedVoiceSeconds;
   const voiceTooLong =
-    suggestedVoiceSeconds != null &&
+    voiceCapSeconds != null &&
     voiceSeconds != null &&
-    voiceSeconds > suggestedVoiceSeconds + VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS;
+    voiceSeconds > voiceCapSeconds + VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS;
 
   // Probe the uploaded clips' real durations once, at the voice-approval step.
   useEffect(() => {
@@ -1392,10 +1416,13 @@ export function VideoApprovalPanel({
                 <p className="text-sm text-amber-600 mb-4">ไม่พบไฟล์เสียงพากย์ กรุณาสร้างเสียงใหม่</p>
               )}
 
-              {/* Suggested max length (from uploaded media) + gate. A voice that
-                  overshoots by more than the tolerance can't be approved — the
-                  requester shortens the script and regenerates. */}
-              {suggestedVoiceSeconds != null && suggestedVoiceSeconds > 0 && (
+              {/* Estimated total video length (from the approved storyboard) and a
+                  suggested voice length that is always SHORTER than the video, so
+                  the narration fits inside the picture. A voice that overshoots the
+                  video by more than the tolerance can't be approved — the requester
+                  shortens the script and regenerates. Falls back to the media-based
+                  estimate for older jobs without a storyboard. */}
+              {hasStoryboardEstimate ? (
                 <div
                   className={`mb-4 rounded-lg border p-3 ${
                     voiceTooLong ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
@@ -1403,14 +1430,24 @@ export function VideoApprovalPanel({
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      ความยาวเสียงพากย์ที่แนะนำ
+                      ความยาววิดีโอโดยประมาณ
                     </p>
                     <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700 tabular-nums">
-                      ≈ {Math.round(suggestedVoiceSeconds)} วินาที
+                      ≈ {estimatedVideoRange.minSeconds}-{estimatedVideoRange.maxSeconds} วินาที
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    ประเมินจากไฟล์ที่อัปโหลด (รูปภาพนับ 5 วินาที/รูป และคลิปนับตามความยาวจริง)
+                  {suggestedVoiceRange.maxSeconds > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                        ความยาวเสียงพากย์ที่แนะนำ
+                      </p>
+                      <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700 tabular-nums">
+                        ≈ {suggestedVoiceRange.minSeconds}-{suggestedVoiceRange.maxSeconds} วินาที
+                      </span>
+                    </div>
+                  )}
+                  <p className="mt-1.5 text-xs text-slate-500">
+                    เสียงพากย์ที่แนะนำจะสั้นกว่าความยาววิดีโอโดยประมาณ เพื่อให้เสียงพูดพอดีกับภาพ
                     {voiceSeconds != null && (
                       <>
                         {" "}— เสียงพากย์ปัจจุบัน{" "}
@@ -1422,11 +1459,46 @@ export function VideoApprovalPanel({
                   </p>
                   {voiceTooLong && (
                     <p className="mt-2 text-xs font-medium text-red-700">
-                      เสียงพากย์ยาวเกินกว่าที่แนะนำมากกว่า {VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS} วินาที —
+                      เสียงพากย์ยาวเกินกว่าความยาววิดีโอโดยประมาณมากกว่า {VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS} วินาที —
                       กรุณาแก้บทพูดให้สั้นลงแล้วกด “สร้างเสียงพากย์ใหม่” ก่อนอนุมัติ
                     </p>
                   )}
                 </div>
+              ) : (
+                suggestedVoiceSeconds != null &&
+                suggestedVoiceSeconds > 0 && (
+                  <div
+                    className={`mb-4 rounded-lg border p-3 ${
+                      voiceTooLong ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        ความยาวเสียงพากย์ที่แนะนำ
+                      </p>
+                      <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700 tabular-nums">
+                        ≈ {Math.round(suggestedVoiceSeconds)} วินาที
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      ประเมินจากไฟล์ที่อัปโหลด (รูปภาพนับ 5 วินาที/รูป และคลิปนับตามความยาวจริง)
+                      {voiceSeconds != null && (
+                        <>
+                          {" "}— เสียงพากย์ปัจจุบัน{" "}
+                          <span className={`font-semibold ${voiceTooLong ? "text-red-600" : "text-slate-700"}`}>
+                            {Math.round(voiceSeconds)} วินาที
+                          </span>
+                        </>
+                      )}
+                    </p>
+                    {voiceTooLong && (
+                      <p className="mt-2 text-xs font-medium text-red-700">
+                        เสียงพากย์ยาวเกินกว่าที่แนะนำมากกว่า {VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS} วินาที —
+                        กรุณาแก้บทพูดให้สั้นลงแล้วกด “สร้างเสียงพากย์ใหม่” ก่อนอนุมัติ
+                      </p>
+                    )}
+                  </div>
+                )
               )}
 
               <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4">

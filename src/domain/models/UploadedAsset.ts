@@ -47,6 +47,15 @@ export interface UploadedAsset {
   uploadStatus: AssetUploadStatus;
 
   /**
+   * Real playback duration in seconds — only meaningful for video clips. Probed
+   * server-side with ffprobe at the upload-confirmation step (the same probe that
+   * enforces MAX_CLIP_DURATION_SECONDS) and persisted here so downstream steps —
+   * e.g. the storyboard/voice length estimate — use a clip's true length instead
+   * of a flat per-asset guess. Null for images or when the probe was unavailable.
+   */
+  durationSeconds?: number | null;
+
+  /**
    * Video aspect ratio — only set for FinalClip assets.
    * Null for all other asset types.
    */
@@ -65,5 +74,5 @@ export type CreateUploadedAssetInput = Omit<
 >;
 
 export type UpdateUploadedAssetInput = Partial<
-  Pick<UploadedAsset, "storageKey" | "storageUrl" | "thumbnailKey" | "thumbnailUrl" | "uploadStatus" | "videoRatio">
+  Pick<UploadedAsset, "storageKey" | "storageUrl" | "thumbnailKey" | "thumbnailUrl" | "uploadStatus" | "videoRatio" | "durationSeconds">
 >;

@@ -47,6 +47,7 @@ export async function POST(
   try {
     const scriptOutput = await generateSpeakingScript({
       imageUrls,
+      title: clipRequest.title,
       description: clipRequest.description,
       targetAudience: clipRequest.targetAudience,
       targetPlatforms: clipRequest.targetPlatforms,

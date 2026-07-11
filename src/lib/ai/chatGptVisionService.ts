@@ -42,6 +42,8 @@ export interface SceneDesignOutput {
 
 export interface GenerateContentParams {
   imageUrls: string[];
+  /** Requester-provided clip title (ชื่อคลิป). May contain the place/shop name. */
+  title?: string;
   description: string;
   targetAudience: string;
   targetPlatforms: Platform[];
@@ -110,6 +112,7 @@ Requirements:
 - Thai script: natural spoken Thai, about 40-50 words, fits comfortably within 15 seconds.
 - TTS-safe text only: use clear standard Thai words and spelling suitable for AI text-to-speech. Avoid English loanwords, abbreviations, slang, ambiguous spellings, numerals/symbols, and uncommon words that an AI voice could mispronounce. Write numbers and units as Thai words.
 - Natural, non-forceful tone (IMPORTANT for the voice-over): write the way a friendly local person actually speaks — warm, relaxed, sincere, and conversational. Do NOT use hard-sell or over-convincing advertising language, hype words, exaggerated superlatives ("ที่สุด", "ดีที่สุดในโลก", "ห้ามพลาด"), or pushy, insistent, commanding phrasing. Over-convincing, salesy wording makes the AI voice sound unnatural and forceful. Let the food and the place speak for themselves, and keep the call-to-action a soft, gentle invitation rather than a forceful command.
+- Place name (IMPORTANT): If the requester provided a specific place, shop, restaurant, cafe, or venue name in the clip title (ชื่อคลิป) or clip description (รายละเอียดคลิป), you MUST naturally include that place name in the spoken script — for example in the hook or the call-to-action — so the voice-over actually says the name. Keep it natural, and make sure it stays TTS-safe (spell it in clear Thai). If no place name was provided by the requester, do NOT invent one.
 - Target audience is for theme/style reference only. Do NOT mention, address, or reference the target audience in the spoken script.
 - Product accuracy: only reference products, items, and details that are visibly present in the uploaded images or clearly provided by the requester.
 - Do NOT create the final scene plan, hook field, or detailed visual design in this step (that happens later).
@@ -173,7 +176,12 @@ Schema:
 
 function buildUserPrompt(params: GenerateContentParams): string {
   const promptParts = [
-    `Video description: ${params.description}`,
+    ...(params.title && params.title.trim()
+      ? [
+          `Clip title (ชื่อคลิป, provided by the requester — may contain the place/shop/venue name to say in the script): ${params.title}`,
+        ]
+      : []),
+    `Video description (รายละเอียดคลิป, provided by the requester — may contain the place/shop/venue name to say in the script): ${params.description}`,
     `Target audience (for theme/style reference only — do not include in script or scene content): ${params.targetAudience}`,
     `Target platforms: ${params.targetPlatforms.join(", ")}`,
     `Preferred style/tone: ${params.preferredStyle}`,

@@ -72,6 +72,7 @@ export async function POST(
 
     const job = await videoGenerationService.initializePipeline(id, session.user.id, {
       imageUrls,
+      title: submitted.title,
       description: submitted.description,
       targetAudience: submitted.targetAudience,
       targetPlatforms: submitted.targetPlatforms,

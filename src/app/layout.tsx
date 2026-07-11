@@ -1,10 +1,11 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import SessionProvider from "./providers";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
+import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 import { initEditorSeedData } from "@/seed/editorSeedData";
 import "./globals.css";
 
@@ -19,12 +20,30 @@ export const metadata: Metadata = {
     template: "%s | RClipper",
   },
   description:
-    "Video editing marketplace สำหรับธุรกิจท่องเที่ยวและร้านอาหารในไทย — ทำคลิปเร็ว ราคาถูกด้วย AI หรือเลือก editor ที่เข้าใจ algorithm และตลาดต่างชาติ พร้อม distribution ผ่าน Tvent",
-  icons: {
-    icon: "/logo.png",
-    shortcut: "/logo.png",
-    apple: "/logo.png",
+    "Video editing marketplace สำหรับธุรกิจท่องเที่ยวและร้านอาหารในไทย — ทำคลิปเร็ว ราคาถูกด้วย AI หรือเลือก editor ที่เข้าใจ algorithm และตลาดต่างชาติ พร้อม distribution ผ่าน Travy",
+  manifest: "/manifest.webmanifest",
+  applicationName: "RClipper",
+  appleWebApp: {
+    capable: true,
+    title: "RClipper",
+    statusBarStyle: "black-translucent",
   },
+  icons: {
+    icon: [
+      { url: "/icons/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/favicon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    shortcut: "/logo.png",
+    apple: "/icons/apple-touch-icon.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0f172a",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default async function RootLayout({
@@ -38,6 +57,7 @@ export default async function RootLayout({
     <html lang="th" className={inter.className}>
       <body className="flex min-h-screen flex-col">
         <SessionProvider session={session}>
+          <ServiceWorkerRegister />
           <Navbar />
           <main className="flex-1">{children}</main>
           <Footer />

@@ -1,13 +1,23 @@
 import {
   assetPlaySeconds,
   estimateSuggestedVoiceSeconds,
+  estimateAssetDurationRange,
+  estimateSceneDurationRange,
+  estimateStoryboardTotalRange,
+  suggestVoiceDurationRange,
   minMontageTotalSeconds,
   sceneMontageSeconds,
   voiceOverShortageSeconds,
   MONTAGE_INTRO_SECONDS,
   MONTAGE_ENDING_SECONDS,
   SUGGESTED_SECONDS_PER_IMAGE,
+  ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN,
+  ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX,
 } from "@/config/montage";
+import { MAX_CLIP_DURATION_SECONDS } from "@/domain/enums/AssetType";
+
+const IMG = { kind: "image" as const };
+const clip = (durationSeconds: number | null) => ({ kind: "clip" as const, durationSeconds });
 
 describe("estimateSuggestedVoiceSeconds", () => {
   it("sums real clip footage plus a fixed hold per image", () => {
@@ -31,6 +41,98 @@ describe("estimateSuggestedVoiceSeconds", () => {
     expect(
       estimateSuggestedVoiceSeconds({ imageCount: NaN, clipSecondsTotal: 10 })
     ).toBe(10);
+  });
+});
+
+describe("estimateAssetDurationRange", () => {
+  it("gives an image the flat 3–5s hold", () => {
+    expect(estimateAssetDurationRange(IMG)).toEqual({
+      minSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN,
+      maxSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX,
+    });
+  });
+
+  it("gives a clip its real (max) length as a fixed point range, rounded", () => {
+    expect(estimateAssetDurationRange(clip(12))).toEqual({ minSeconds: 12, maxSeconds: 12 });
+    expect(estimateAssetDurationRange(clip(8.4))).toEqual({ minSeconds: 8, maxSeconds: 8 });
+  });
+
+  it("caps a clip's length at MAX_CLIP_DURATION_SECONDS", () => {
+    expect(estimateAssetDurationRange(clip(999))).toEqual({
+      minSeconds: MAX_CLIP_DURATION_SECONDS,
+      maxSeconds: MAX_CLIP_DURATION_SECONDS,
+    });
+  });
+
+  it("falls back to the flat estimate for a clip with unknown length", () => {
+    expect(estimateAssetDurationRange(clip(null))).toEqual({
+      minSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN,
+      maxSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX,
+    });
+    expect(estimateAssetDurationRange(clip(0))).toEqual({
+      minSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN,
+      maxSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX,
+    });
+  });
+
+  it("contributes nothing for a missing asset", () => {
+    expect(estimateAssetDurationRange(undefined)).toEqual({ minSeconds: 0, maxSeconds: 0 });
+    expect(estimateAssetDurationRange(null)).toEqual({ minSeconds: 0, maxSeconds: 0 });
+  });
+});
+
+describe("estimateSceneDurationRange", () => {
+  it("sums images (flat) and clips (real length) in a scene", () => {
+    // one image (3–5s) + one 12s clip → 15–17s
+    expect(estimateSceneDurationRange([IMG, clip(12)])).toEqual({
+      minSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN + 12,
+      maxSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX + 12,
+    });
+  });
+
+  it("returns a zeroed range for an empty scene", () => {
+    expect(estimateSceneDurationRange([])).toEqual({ minSeconds: 0, maxSeconds: 0 });
+  });
+});
+
+describe("estimateStoryboardTotalRange", () => {
+  it("sums the per-scene ranges across the storyboard", () => {
+    // scene A: 1 image (3–5); scene B: 1 image + 1 clip(10) (13–15); scene C: 1 clip(6) (6)
+    expect(
+      estimateStoryboardTotalRange([[IMG], [IMG, clip(10)], [clip(6)]])
+    ).toEqual({
+      minSeconds: 3 + (3 + 10) + 6,
+      maxSeconds: 5 + (5 + 10) + 6,
+    });
+  });
+
+  it("is a zeroed range when there are no scenes", () => {
+    expect(estimateStoryboardTotalRange([])).toEqual({ minSeconds: 0, maxSeconds: 0 });
+  });
+});
+
+describe("suggestVoiceDurationRange", () => {
+  it("suggests a range strictly shorter than the total video's lower bound", () => {
+    const total = estimateStoryboardTotalRange([[IMG], [IMG, clip(10)], [clip(6)]]); // { min: 22, max: 26 }
+    const voice = suggestVoiceDurationRange(total);
+    expect(voice.maxSeconds).toBeLessThan(total.minSeconds);
+    expect(voice.minSeconds).toBeLessThanOrEqual(voice.maxSeconds);
+    expect(voice.minSeconds).toBeGreaterThanOrEqual(1);
+  });
+
+  it("leaves headroom for the music intro and ending tail below the total's lower bound", () => {
+    const total = { minSeconds: 12, maxSeconds: 20 };
+    const voice = suggestVoiceDurationRange(total);
+    expect(voice.maxSeconds).toBe(
+      Math.round(12 - (MONTAGE_INTRO_SECONDS + MONTAGE_ENDING_SECONDS))
+    );
+  });
+
+  it("returns a zeroed range when the total estimate is empty", () => {
+    expect(suggestVoiceDurationRange({ minSeconds: 0, maxSeconds: 0 })).toEqual({
+      minSeconds: 0,
+      maxSeconds: 0,
+    });
   });
 });
 

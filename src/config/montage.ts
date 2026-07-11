@@ -17,6 +17,8 @@
  * MAX_CLIP_DURATION_SECONDS and MAX_UPLOAD_SIZE_BYTES.
  */
 
+import { MAX_CLIP_DURATION_SECONDS } from "@/domain/enums/AssetType";
+
 /** Per-asset camera motion applied to stills (and optionally clips). */
 export type MotionPreset =
   | "ken_burns_in"
@@ -143,6 +145,120 @@ export function estimateSuggestedVoiceSeconds(params: {
       ? params.clipSecondsTotal
       : 0;
   return clips + images * SUGGESTED_SECONDS_PER_IMAGE;
+}
+
+/**
+ * Pre-voice on-screen estimate for a single storyboard asset (still or clip),
+ * shown as a RANGE while the rough storyboard is being reviewed — before any real
+ * per-asset timing exists. The upper bound aligns with
+ * {@link SUGGESTED_SECONDS_PER_IMAGE} (the comfortable hold for a still).
+ */
+export const ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN = 3;
+export const ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX = SUGGESTED_SECONDS_PER_IMAGE; // 5
+
+/** A rough duration estimate expressed as an inclusive [min, max] second range. */
+export interface DurationRange {
+  minSeconds: number;
+  maxSeconds: number;
+}
+
+/**
+ * Minimal asset shape needed to estimate on-screen time: its kind and, for a
+ * clip, its real probed length. Both {@link OrderedSourceAsset} and the
+ * storyboard thumbnail shape are assignable to this.
+ */
+export interface EstimateAsset {
+  kind: "image" | "clip";
+  /** Real clip length (seconds); ignored for images, may be null/absent. */
+  durationSeconds?: number | null;
+}
+
+/**
+ * Estimated on-screen duration range for a SINGLE asset:
+ *  - Image → a flat {@link ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN}–
+ *    {@link ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX}s hold.
+ *  - Clip with a known length → its real (max) length as a fixed point range,
+ *    capped at {@link MAX_CLIP_DURATION_SECONDS}.
+ *  - Clip with an unknown length → falls back to the flat image estimate.
+ * A missing/invalid asset contributes nothing (a zeroed range).
+ */
+export function estimateAssetDurationRange(
+  asset: EstimateAsset | null | undefined
+): DurationRange {
+  if (!asset) return { minSeconds: 0, maxSeconds: 0 };
+  if (asset.kind === "clip") {
+    const d = Number(asset.durationSeconds);
+    if (Number.isFinite(d) && d > 0) {
+      const secs = Math.max(1, Math.round(Math.min(d, MAX_CLIP_DURATION_SECONDS)));
+      return { minSeconds: secs, maxSeconds: secs };
+    }
+  }
+  return {
+    minSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN,
+    maxSeconds: ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX,
+  };
+}
+
+/**
+ * Estimated on-screen duration range for one storyboard scene, summing
+ * {@link estimateAssetDurationRange} over the photos/clips it draws from.
+ * Returns a zeroed range for an empty scene.
+ */
+export function estimateSceneDurationRange(
+  assets: Array<EstimateAsset | null | undefined>
+): DurationRange {
+  return (Array.isArray(assets) ? assets : []).reduce<DurationRange>(
+    (acc, a) => {
+      const r = estimateAssetDurationRange(a);
+      return {
+        minSeconds: acc.minSeconds + r.minSeconds,
+        maxSeconds: acc.maxSeconds + r.maxSeconds,
+      };
+    },
+    { minSeconds: 0, maxSeconds: 0 }
+  );
+}
+
+/**
+ * Estimated total video length range, summing {@link estimateSceneDurationRange}
+ * over every storyboard scene (pass each scene's resolved asset list). Returns a
+ * zeroed range when there are no scenes/assets.
+ */
+export function estimateStoryboardTotalRange(
+  scenes: Array<Array<EstimateAsset | null | undefined>>
+): DurationRange {
+  return (Array.isArray(scenes) ? scenes : []).reduce<DurationRange>(
+    (acc, sceneAssets) => {
+      const r = estimateSceneDurationRange(sceneAssets);
+      return {
+        minSeconds: acc.minSeconds + r.minSeconds,
+        maxSeconds: acc.maxSeconds + r.maxSeconds,
+      };
+    },
+    { minSeconds: 0, maxSeconds: 0 }
+  );
+}
+
+/**
+ * Suggested speaking-voice length range for the voice step, derived from the
+ * estimated total video length. The voiceover must fit inside the picture with a
+ * short music intro and ending tail, so the suggestion is always SHORTER than the
+ * total: its maximum sits {@link MONTAGE_INTRO_SECONDS} + {@link MONTAGE_ENDING_SECONDS}
+ * below the total's LOWER bound (guaranteeing the voice fits even the shortest
+ * estimate). Returns a zeroed range when there is no usable estimate.
+ */
+export function suggestVoiceDurationRange(total: DurationRange): DurationRange {
+  const totalMin =
+    total && Number.isFinite(total.minSeconds) && total.minSeconds > 0 ? total.minSeconds : 0;
+  if (totalMin <= 0) return { minSeconds: 0, maxSeconds: 0 };
+  const headroom = MONTAGE_INTRO_SECONDS + MONTAGE_ENDING_SECONDS; // 1.6s
+  let maxSeconds = Math.max(1, Math.round(totalMin - headroom));
+  // Guarantee the suggestion is STRICTLY shorter than the total (the floor above
+  // can otherwise tie a tiny total). Too small to suggest anything → no range.
+  if (maxSeconds >= totalMin) maxSeconds = totalMin - 1;
+  if (maxSeconds < 1) return { minSeconds: 0, maxSeconds: 0 };
+  const minSeconds = Math.max(1, Math.round(maxSeconds * 0.7));
+  return { minSeconds: Math.min(minSeconds, maxSeconds), maxSeconds };
 }
 
 /**

@@ -284,16 +284,20 @@ export class UploadService {
     // download error) fail OPEN — we log and allow the upload rather than block
     // legitimate uploads on an infra hiccup; the client-side check is the
     // first line of defence and over-long clips remain rare.
+    //
+    // The probed length is also PERSISTED on the asset below (durationSeconds),
+    // so downstream steps use a clip's true length in the storyboard/voice
+    // estimate rather than a flat per-asset guess.
+    let clipDurationSeconds: number | null = null;
     if (asset.assetType === AssetType.Video) {
-      let durationSeconds: number | null = null;
       try {
-        durationSeconds = await this.probeVideoDurationSeconds(asset.storageKey);
+        clipDurationSeconds = await this.probeVideoDurationSeconds(asset.storageKey);
       } catch (err) {
         console.error("[UploadService] clip duration probe failed (allowing upload):", err);
       }
 
-      if (durationSeconds !== null) {
-        const durationError = validateClipDuration(durationSeconds);
+      if (clipDurationSeconds !== null) {
+        const durationError = validateClipDuration(clipDurationSeconds);
         if (durationError) {
           // Drop the rejected tmp object and mark the record Failed so the
           // request isn't left with a dangling pending asset.
@@ -388,6 +392,8 @@ export class UploadService {
       thumbnailKey: thumbnailGenerated ? thumbKey : "",
       thumbnailUrl: thumbnailGenerated ? spacesPublicUrl(thumbKey) : "",
       uploadStatus: AssetUploadStatus.Uploaded,
+      // Persist the probed clip length (null for images / failed probe).
+      durationSeconds: clipDurationSeconds,
     });
   }
 

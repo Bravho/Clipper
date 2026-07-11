@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RClipper</string>
+    <string name="title_activity_main">RClipper</string>
+    <string name="package_name">com.rclipper.app</string>
+    <string name="custom_url_scheme">com.rclipper.app</string>
+</resources>

@@ -11,6 +11,35 @@ import { ImageCoordinates } from "./geminiSubtitlesService";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Summarise a child_process/execFile rejection for logging. A process killed by
+ * a signal (SIGKILL from the OOM killer, SIGTERM from a memory cap, etc.) dies
+ * with EMPTY stderr, so the raw error is useless — `signal`/`code`/`killed` are
+ * the only clues to why it died. Surfacing them turns "stderr: ''" into an
+ * actionable diagnosis (e.g. "signal=SIGKILL" ⇒ out of memory).
+ */
+function describeExecError(err: unknown): string {
+  const e = err as {
+    message?: string;
+    code?: number | string;
+    signal?: string;
+    killed?: boolean;
+    stderr?: string;
+  };
+  const parts = [
+    e?.signal ? `signal=${e.signal}` : null,
+    e?.code != null ? `code=${e.code}` : null,
+    e?.killed ? "killed=true" : null,
+    e?.signal === "SIGKILL"
+      ? "(process was killed — almost always out of memory; move this render to a machine with more RAM)"
+      : null,
+  ].filter(Boolean);
+  const tail = (e?.stderr ?? "").trim().split("\n").slice(-4).join(" | ");
+  return `${e?.message ?? String(err)}${parts.length ? " [" + parts.join(" ") + "]" : ""}${
+    tail ? " stderr: " + tail : " stderr: <empty — see signal above>"
+  }`;
+}
+
 export type VideoRatio = "9:16" | "16:9" | "1:1" | "4:5";
 
 export function getRequiredRatiosForPlatforms(platforms: string[]): VideoRatio[] {
@@ -464,16 +493,22 @@ export async function concatVideos(
       ]);
     } catch (err) {
       // Fall back to re-encode if stream copy fails (mismatched codecs/params).
-      console.error("[ffmpeg] concat -c copy failed, falling back to re-encode:", err);
-      await execFileAsync(ffmpeg, [
-        "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", listFile,
-        "-c:v", "libx264",
-        "-c:a", "aac",
-        outPath,
-      ]);
+      console.error("[ffmpeg] concat -c copy failed, falling back to re-encode:", describeExecError(err));
+      try {
+        await execFileAsync(ffmpeg, [
+          "-y",
+          "-f", "concat",
+          "-safe", "0",
+          "-i", listFile,
+          "-c:v", "libx264",
+          "-c:a", "aac",
+          outPath,
+        ]);
+      } catch (err2) {
+        const detail = describeExecError(err2);
+        console.error("[ffmpeg] concat re-encode failed:", detail);
+        throw new Error(`ffmpeg concat re-encode failed: ${detail}`);
+      }
     }
 
     await uploadToSpaces(outPath, outputStorageKey);
@@ -675,7 +710,7 @@ export async function concatVideosWithCrossfade(
       fileSizeBytes: size,
     };
   } catch (err) {
-    console.error("[ffmpeg] crossfade concat failed, falling back to hard-cut concat:", err);
+    console.error("[ffmpeg] crossfade concat failed, falling back to hard-cut concat:", describeExecError(err));
     return concatVideos(inputStorageKeys, outputStorageKey);
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });

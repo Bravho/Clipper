@@ -177,6 +177,7 @@ export default async function RequestDetailPage({
     thumbnailUrl: a.thumbnailUrl,
     kind: a.kind,
     fileName: a.fileName,
+    durationSeconds: a.durationSeconds ?? null,
   }));
 
   const view = requestPresentationService.buildRequestView(
@@ -494,6 +495,7 @@ export default async function RequestDetailPage({
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 finalClips={finalClips}
                 scenes={scenePlan}
+                storyboard={storyboard}
                 hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
                 hookEnglish={pipelineJob.approvedHookEnglish ?? pipelineJob.hookEnglish}
                 scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}
@@ -564,6 +566,7 @@ export default async function RequestDetailPage({
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 finalClips={finalClips}
                 scenes={scenePlan}
+                storyboard={storyboard}
                 hookThai={pipelineJob.approvedHookThai ?? pipelineJob.hookThai}
                 hookEnglish={pipelineJob.approvedHookEnglish ?? pipelineJob.hookEnglish}
                 scriptThai={pipelineJob.approvedScriptThai ?? pipelineJob.scriptThai}

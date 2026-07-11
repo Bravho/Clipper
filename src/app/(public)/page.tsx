@@ -50,7 +50,7 @@ export default async function HomePage() {
           </p>
           <p className="mx-auto mb-10 max-w-xl text-base text-slate-400">
             พร้อม distribution ตรงสู่{" "}
-            <span className="font-medium text-white">Tvent</span>, TikTok,
+            <span className="font-medium text-white">Travy</span>, TikTok,
             Instagram, YouTube และช่องทางอื่นๆ
           </p>
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
@@ -78,7 +78,7 @@ export default async function HomePage() {
           {[
             { value: "24 ชม.", label: "เร็วที่สุดสำหรับ AI track" },
             { value: "3 ภาษา", label: "Subtitle ไทย · อังกฤษ · จีน" },
-            { value: "Tvent", label: "Distribution หลักในไทย" },
+            { value: "Travy", label: "Distribution หลักในไทย" },
             { value: "30 credits", label: "ฟรีเมื่อสมัคร ไม่ต้องใส่บัตร" },
           ].map((s) => (
             <div key={s.label} className="flex flex-col gap-0.5">
@@ -238,22 +238,22 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Distribution — Tvent highlight */}
+      {/* Distribution — Travy highlight */}
       <section className="bg-slate-900 py-16 px-4 text-center text-white border-t border-slate-700">
         <div className="mx-auto max-w-3xl">
           <div className="mb-4 inline-block rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-white/20">
             Distribution อัตโนมัติ
           </div>
           <h2 className="mb-4 text-2xl font-bold">
-            โพสต์พร้อมกันทุกช่องทาง รวมถึง Tvent
+            โพสต์พร้อมกันทุกช่องทาง รวมถึง Travy
           </h2>
           <p className="mb-8 text-slate-400 max-w-xl mx-auto">
-            Tvent คือ platform วิดีโอท่องเที่ยวของไทย ที่นักท่องเที่ยวต่างชาติใช้
+            Travy คือ platform วิดีโอท่องเที่ยวของไทย ที่นักท่องเที่ยวต่างชาติใช้
             ค้นหาประสบการณ์ในไทย — เราโพสต์ให้อัตโนมัติพร้อมกับ platform สากลอื่นๆ
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             {[
-              { name: "Tvent", highlight: true },
+              { name: "Travy", highlight: true },
               { name: "TikTok" },
               { name: "Instagram" },
               { name: "Facebook" },

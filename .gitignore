@@ -8,6 +8,9 @@
 /.next/
 /out/
 
+# remotion generated bundle (rebuilt at runtime by src/lib/ai/remotionBundle.ts)
+/.remotion-bundle/
+
 # production
 /build
 

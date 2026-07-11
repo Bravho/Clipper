@@ -11,11 +11,27 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "worker": "tsx scripts/render-worker.ts",
-    "worker:once": "tsx scripts/render-worker.ts --once"
+    "worker:once": "tsx scripts/render-worker.ts --once",
+    "cap:sync": "cap sync",
+    "cap:add:ios": "cap add ios",
+    "cap:add:android": "cap add android",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1004.0",
     "@aws-sdk/s3-request-presigner": "^3.1004.0",
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/browser": "^6.0.0",
+    "@capacitor/camera": "^6.1.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.0",
+    "@capacitor/network": "^6.0.0",
+    "@capacitor/preferences": "^6.0.0",
+    "@capacitor/push-notifications": "^6.0.0",
+    "@capacitor/share": "^6.0.0",
+    "@capacitor/splash-screen": "^6.0.0",
+    "@capacitor/status-bar": "^6.0.0",
     "@google/genai": "^1.51.0",
     "@hookform/resolvers": "^3.3.4",
     "@remotion/bundler": "^4.0.300",
@@ -36,6 +52,7 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
     "@remotion/cli": "^4.0.300",
     "@types/bcryptjs": "^2.4.6",
     "@types/jest": "^29.5.12",

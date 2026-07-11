@@ -165,6 +165,7 @@ export class VideoGenerationService {
     staffId: string,
     params: {
       imageUrls: string[];
+      title?: string;
       description: string;
       targetAudience: string;
       targetPlatforms: Platform[];
@@ -640,6 +641,9 @@ export class VideoGenerationService {
       }
       case RenderStep.MontageAllSegments:
         await this._renderAllSceneSegments(job);
+        break;
+      case RenderStep.MontageMerge:
+        await this._runMontageMerge(job);
         break;
       case RenderStep.AnimationGeneration:
         await this._runAnimationGeneration(job);
@@ -1427,31 +1431,43 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
     }
 
-    // Concatenate every approved scene segment into the single base video.
-    let baseVideoAssetIdUpdate: { baseVideoAssetId: string } | Record<string, never> = {};
-    try {
-      baseVideoAssetIdUpdate = { baseVideoAssetId: await this._concatMontageBaseVideo(job) };
-    } catch (err) {
-      console.error("[Montage] Base video concatenation failed:", err);
-      return videoGenerationJobRepository.update(jobId, {
-        status: VideoGenerationJobStatus.Failed,
-        currentStep: VideoGenerationStep.Failed,
-        failedAtStep: VideoGenerationStep.GeneratingBaseVideo,
-      });
-    }
-
-    // All scenes approved → kick off animation generation.
+    // Merging every approved scene segment into the single base video is a heavy
+    // FFmpeg concat/crossfade. It used to run inline+awaited here — the ONE heavy
+    // step still executed on the web server — which is why the merge failed on the
+    // small droplet. Now it is dispatched through the render queue like every other
+    // heavy step: enqueued for the Mac worker when one is alive, run inline only as
+    // the offline fallback. `_runMontageMerge` performs the concat and advances to
+    // animation. The API route returns promptly; the pipeline-status poller shows
+    // the existing "Generating base video" state while it runs.
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingAnimations,
+      currentStep: VideoGenerationStep.GeneratingBaseVideo,
       videoApprovedBy: userId,
-      ...baseVideoAssetIdUpdate,
     });
 
-    await this._dispatchHeavy(updated, RenderStep.AnimationGeneration, () =>
-      this._runAnimationGeneration(updated)
+    await this._dispatchHeavy(updated, RenderStep.MontageMerge, () =>
+      this._runMontageMerge(updated)
     );
 
     return this._getJob(jobId);
+  }
+
+  /**
+   * Merge every approved scene segment into the single base video, then advance
+   * to animation generation. Heavy FFmpeg concat/crossfade — invoked either by
+   * the Mac worker (via `runQueuedRenderStep`) or inline as the droplet fallback.
+   * On failure `_dispatchHeavy`'s `onFail` records `failedAtStep =
+   * GeneratingBaseVideo` (see RENDER_STEP_FAILED_AT), matching the previous
+   * inline behaviour so retry semantics are unchanged.
+   */
+  private async _runMontageMerge(job: VideoGenerationJob): Promise<void> {
+    const baseVideoAssetId = await this._concatMontageBaseVideo(job);
+    const updated = await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.GeneratingAnimations,
+      baseVideoAssetId,
+    });
+    await this._dispatchHeavy(updated, RenderStep.AnimationGeneration, () =>
+      this._runAnimationGeneration(updated)
+    );
   }
 
   /**
