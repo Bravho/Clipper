@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs/promises";
+import { existsSync } from "fs";
 import * as path from "path";
 import * as os from "os";
 import { AI_CONFIG } from "@/config/aiTools";
@@ -107,14 +108,49 @@ export interface ComposeVideoResult {
   exports: Record<string, { storageKey: string; storageUrl: string }>;
 }
 
+/**
+ * Run an S3/Spaces operation with bounded exponential-backoff retries and a
+ * DETAILED final error. DO Spaces intermittently throttles or resets concurrent
+ * requests (the compose step uploads every ratio in parallel), and the AWS SDK
+ * surfaces these as an anonymous "UnknownError" whose `String(err)` hides the
+ * HTTP status and cause. Retrying absorbs the transient case; on genuine failure
+ * we throw an error naming the operation, key, HTTP status, and SDK metadata so
+ * the worker log actually identifies what went wrong.
+ */
+async function spacesWithRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempts = 4
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      console.error(
+        `[spaces] ${label} attempt ${i + 1}/${attempts} failed: ${e?.name ?? String(err)} (http ${e?.$metadata?.httpStatusCode ?? "?"})`
+      );
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+    }
+  }
+  const e = lastErr as { name?: string; message?: string; $metadata?: unknown };
+  throw new Error(
+    `Spaces ${label} failed after ${attempts} attempts: ${e?.name ?? ""} ${e?.message ?? String(lastErr)} metadata=${JSON.stringify(e?.$metadata ?? {})}`
+  );
+}
+
 async function downloadFromSpaces(storageKey: string, destPath: string): Promise<void> {
   const bucket = process.env.DO_SPACES_BUCKET!;
-  const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: storageKey }));
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
-    chunks.push(chunk);
-  }
-  await fs.writeFile(destPath, Buffer.concat(chunks));
+  await spacesWithRetry(`download ${storageKey}`, async () => {
+    const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: storageKey }));
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
+      chunks.push(chunk);
+    }
+    await fs.writeFile(destPath, Buffer.concat(chunks));
+  });
 }
 
 async function uploadToSpaces(
@@ -122,14 +158,16 @@ async function uploadToSpaces(
   storageKey: string
 ): Promise<void> {
   const buffer = await fs.readFile(filePath);
-  await spacesClient.send(
-    new PutObjectCommand({
-      Bucket: process.env.DO_SPACES_BUCKET!,
-      Key: storageKey,
-      Body: buffer,
-      ContentType: "video/mp4",
-      ACL: "public-read",
-    })
+  await spacesWithRetry(`upload ${storageKey}`, () =>
+    spacesClient.send(
+      new PutObjectCommand({
+        Bucket: process.env.DO_SPACES_BUCKET!,
+        Key: storageKey,
+        Body: buffer,
+        ContentType: "video/mp4",
+        ACL: "public-read",
+      })
+    )
   );
 }
 
@@ -377,7 +415,21 @@ async function composeSingleRatio(params: {
     outputPath
   );
 
-  await execFileAsync(ffmpeg, args);
+  const startedAt = Date.now();
+  console.log(
+    `[compose:${ratio}] ffmpeg start (duration=${outputDuration.toFixed(2)}s, music=${hasMusic}, overlay=${overlayInputIdx >= 0}, subs=${!!subtitleFilter})`
+  );
+  try {
+    await execFileAsync(ffmpeg, args);
+  } catch (err) {
+    const detail = describeExecError(err);
+    console.error(`[compose:${ratio}] ffmpeg FAILED after ${((Date.now() - startedAt) / 1000).toFixed(1)}s:`, detail);
+    throw new Error(`compose ${ratio} ffmpeg failed: ${detail}`);
+  }
+  const { size } = await fs.stat(outputPath).catch(() => ({ size: -1 }));
+  console.log(
+    `[compose:${ratio}] ffmpeg done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s → ${size} bytes`
+  );
 }
 
 /**
@@ -735,10 +787,23 @@ export async function composeAndExport(
       ? path.join(process.cwd(), "public", "music", `${params.musicTrackId}.mp3`)
       : undefined;
 
+    console.log(
+      `[compose] request ${params.requestId} start: ratios=${(params.targetRatios ?? ["9:16","16:9","1:1","4:5"]).join(",")} music=${params.musicTrackId ?? "none"}`
+    );
+
     await Promise.all([
       downloadFromSpaces(params.videoStorageKey, videoPath),
       downloadFromSpaces(params.audioStorageKey, audioPath),
     ]);
+    const [baseStat, voiceStat] = await Promise.all([
+      fs.stat(videoPath).catch(() => ({ size: -1 })),
+      fs.stat(audioPath).catch(() => ({ size: -1 })),
+    ]);
+    console.log(`[compose] downloaded base=${baseStat.size}B voice=${voiceStat.size}B`);
+
+    if (musicPath && !existsSync(musicPath)) {
+      throw new Error(`compose: music track file not found on this host: ${musicPath}`);
+    }
 
     // Probe the real voice length AND the base video length. The export runs for
     // the full base-video length (the montage covers the voiceover + intro +
@@ -747,6 +812,7 @@ export async function composeAndExport(
       probeDurationSeconds(audioPath),
       probeDurationSeconds(videoPath),
     ]);
+    console.log(`[compose] probed durations: voice=${voiceDuration}s video=${videoDuration}s`);
 
     // Burned-in subtitles are deferred to Phase 7 (accurate timestamp/timeline
     // alignment). For now we only burn captions if the caller explicitly passes
@@ -792,9 +858,11 @@ export async function composeAndExport(
 
         const storageKey = buildFinalClipKey(params.userId, params.requestId, ratio);
         await uploadToSpaces(outPath, storageKey);
+        console.log(`[compose:${ratio}] uploaded → ${storageKey}`);
         results[ratio] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
       })
     );
+    console.log(`[compose] request ${params.requestId}: all ${targetRatios.length} ratio master(s) composed + uploaded`);
 
     // Dedicated Travy App export at the PRIMARY channel's ratio. If that ratio's
     // Remotion overlay already covers Travy's fixed English+Chinese subtitle
