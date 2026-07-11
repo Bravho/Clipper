@@ -45,6 +45,31 @@ function log(msg: string, extra?: Record<string, unknown>): void {
   console.log(`[worker ${WORKER_ID}] ${ts} ${msg}${extra ? " " + JSON.stringify(extra) : ""}`);
 }
 
+/**
+ * Expand an error into loggable detail. `String(err)` collapses everything to
+ * "Name: message" (e.g. "Unknown: UnknownError"), hiding the stack, the wrapped
+ * `cause`, an ffmpeg subprocess's `stderr`, and AWS SDK `$metadata`/`code` — all
+ * of which are usually what actually identifies the failure.
+ */
+function describeErr(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    const e = err as Error & {
+      cause?: unknown; code?: unknown; $metadata?: unknown; stderr?: unknown; cmd?: unknown;
+    };
+    return {
+      name: e.name,
+      message: e.message,
+      code: e.code,
+      cmd: e.cmd,
+      stderr: typeof e.stderr === "string" ? e.stderr.split("\n").slice(-6).join(" | ") : e.stderr,
+      awsMetadata: e.$metadata,
+      cause: e.cause instanceof Error ? { name: e.cause.name, message: e.cause.message } : e.cause ? String(e.cause) : undefined,
+      stack: e.stack,
+    };
+  }
+  return { raw: String(err) };
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -96,7 +121,7 @@ async function processJob(job: VideoGenerationJob): Promise<void> {
     await videoGenerationJobRepository.completeRenderClaim(job.id, "done");
     log("step done", { job: job.id, step: job.renderStep, seconds: sec(startedAt) });
   } catch (err) {
-    log("step FAILED", { job: job.id, step: job.renderStep, seconds: sec(startedAt), error: String(err) });
+    log("step FAILED", { job: job.id, step: job.renderStep, seconds: sec(startedAt), ...describeErr(err) });
     await videoGenerationJobRepository.completeRenderClaim(job.id, "failed").catch(() => {});
     // Mirror the inline `.catch`: mark the pipeline failed at the right step so
     // the UI shows the error and retryPipeline can resume from it.
