@@ -1272,7 +1272,13 @@ export function VideoApprovalPanel({
             })()
           )
         ) : (
-          videoUrl && (
+          // Once the subtitle overlay is approved/available, the non-subtitled
+          // base montage is no longer the relevant video — the captioned preview
+          // (overlayPreviewUrl) is shown instead (in its own step cards below),
+          // so suppress this generic base-video card at those steps to avoid
+          // showing the user a video without subtitles.
+          videoUrl &&
+          !((isAwaitingOverlayApproval || isAwaitingAdditionalRatios) && overlayPreviewUrl) && (
             <>
               <h2 className="mb-3 text-base font-semibold text-slate-900">
                 วิดีโอฉากที่สร้างจากรูปและคลิปของคุณ
@@ -1857,6 +1863,38 @@ export function VideoApprovalPanel({
         {/* Phase 7 — gate to generate the remaining channels' aspect ratios */}
         {isAwaitingAdditionalRatios && (
           <div className="mt-6 space-y-6">
+            {/* Completed subtitled video for the primary channel — reuses the
+                clip already rendered/approved at the overlay step, so it appears
+                immediately (no re-render) and the requester can play + download
+                the SUBTITLED result right away. */}
+            {overlayPreviewUrl && (
+              <Card className="border-green-100 bg-green-50/30">
+                <h3 className="text-base font-semibold text-slate-900 mb-2">
+                  วิดีโอฉบับสมบูรณ์ (พร้อมซับไตเติ้ล){primaryRatio ? ` — ${primaryRatio}` : ""}
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">
+                  วิดีโอช่องทางหลักพร้อมซับไตเติ้ลและ Motion Graphic เรียบร้อยแล้ว เล่นดูหรือดาวน์โหลดได้ทันที
+                </p>
+                <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[500px]">
+                  <video
+                    key={overlayPreviewUrl}
+                    src={overlayPreviewUrl}
+                    controls
+                    playsInline
+                    className="max-h-[480px] w-auto object-contain rounded"
+                  />
+                </div>
+                <div className="mt-2 flex justify-start">
+                  <a
+                    href={overlayPreviewUrl}
+                    download={`subtitled_video_${(primaryRatio ?? "9:16").replace(":", "_")}.mp4`}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    ดาวน์โหลดวิดีโอที่มีซับไตเติ้ล{primaryRatio ? ` (${primaryRatio})` : ""}
+                  </a>
+                </div>
+              </Card>
+            )}
             <Card className="border-blue-100 bg-blue-50/30">
               <h3 className="text-base font-semibold text-slate-900 mb-2">สร้างอัตราส่วนสำหรับช่องทางอื่น</h3>
               <p className="text-sm text-slate-500 mb-4">

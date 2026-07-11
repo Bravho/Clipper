@@ -151,6 +151,35 @@ export default async function RequestDetailPage({
   const tventClipUrl = pipelineJob?.finalExport_tvent_assetId
     ? assets.find((a) => a.id === pipelineJob.finalExport_tvent_assetId)?.storageUrl ?? null
     : null;
+
+  // Phase 8 — the captioned (subtitled) video actually delivered to each ratio,
+  // so the distribution-review panel can show/download every generated channel
+  // video (not just the primary). Keyed by ratio; each channel maps to its ratio.
+  const captionedUrlByRatio: Record<string, string | null> = {
+    "9:16": pipelineJob?.captionedExport_9_16_assetId
+      ? assets.find((a) => a.id === pipelineJob.captionedExport_9_16_assetId)?.storageUrl ?? null
+      : null,
+    "16:9": pipelineJob?.captionedExport_16_9_assetId
+      ? assets.find((a) => a.id === pipelineJob.captionedExport_16_9_assetId)?.storageUrl ?? null
+      : null,
+    "1:1": pipelineJob?.captionedExport_1_1_assetId
+      ? assets.find((a) => a.id === pipelineJob.captionedExport_1_1_assetId)?.storageUrl ?? null
+      : null,
+    "4:5": pipelineJob?.captionedExport_4_5_assetId
+      ? assets.find((a) => a.id === pipelineJob.captionedExport_4_5_assetId)?.storageUrl ?? null
+      : null,
+  };
+  const channelVideos = (request.targetPlatforms ?? [])
+    .filter((p) => p !== Platform.TventApp)
+    .map((p) => {
+      const ratio = PLATFORM_ASPECT_RATIOS[p as Platform] ?? null;
+      return {
+        platform: p as string,
+        label: PLATFORM_LABELS[p as Platform] ?? (p as string),
+        ratio,
+        url: ratio ? captionedUrlByRatio[ratio] ?? null : null,
+      };
+    });
   const sourceAssets = assets.filter(
     (a) =>
       a.uploadStatus === AssetUploadStatus.Uploaded &&
@@ -520,6 +549,7 @@ export default async function RequestDetailPage({
                 reviewedChannelLabels={(request.targetPlatforms ?? [])
                   .filter((p) => p !== Platform.TventApp)
                   .map((p) => PLATFORM_LABELS[p as Platform] ?? p)}
+                channelVideos={channelVideos}
                 tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
                 tventClipUrl={tventClipUrl}
               />

@@ -19,6 +19,9 @@ interface Props {
   reviewedRatio?: string | null;
   /** Distribution channel labels this reviewed clip is published to (excludes Travy). */
   reviewedChannelLabels?: string[];
+  /** The generated (subtitled) video per distribution channel, so each channel's
+   *  own clip can be played + downloaded next to its publishing form. */
+  channelVideos?: { platform: string; label: string; ratio: string | null; url: string | null }[];
   /** Background Travy render status: 'idle' | 'generating' | 'ready' | 'failed'. */
   tventVideoStatus?: string | null;
   /** Travy (EN+ZH) clip URL once ready. */
@@ -52,10 +55,12 @@ export function DistributionReviewPanel({
   reviewedClipUrl = null,
   reviewedRatio = null,
   reviewedChannelLabels = [],
+  channelVideos = [],
   tventVideoStatus = null,
   tventClipUrl = null,
 }: Props) {
   const router = useRouter();
+  const channelVideoByPlatform = new Map(channelVideos.map((c) => [c.platform, c]));
   const [drafts, setDrafts] = useState<ChannelPublishingDraft[]>(initialDrafts);
   const [ui, setUi] = useState<Record<string, ChannelUiState>>({});
 
@@ -194,6 +199,31 @@ export function DistributionReviewPanel({
                     </span>
                   )}
                 </div>
+
+                {/* This channel's generated (subtitled) video — play + download. */}
+                {(() => {
+                  const cv = channelVideoByPlatform.get(d.platform);
+                  if (!cv?.url) return null;
+                  return (
+                    <div className="mb-3">
+                      <div className="flex max-h-[360px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
+                        <video
+                          src={cv.url}
+                          controls
+                          preload="metadata"
+                          className="max-h-[340px] w-auto rounded object-contain"
+                        />
+                      </div>
+                      <a
+                        href={cv.url}
+                        download={`${d.platform}_video${cv.ratio ? `_${cv.ratio.replace(":", "_")}` : ""}.mp4`}
+                        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        ดาวน์โหลดวิดีโอ{cv.ratio ? ` (${cv.ratio})` : ""}
+                      </a>
+                    </div>
+                  );
+                })()}
 
                 {isPosted && d.url ? (
                   <a

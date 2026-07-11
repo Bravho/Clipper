@@ -26,6 +26,17 @@ export enum RenderStep {
   OverlayComposition = "overlay_composition",
   /** Remaining aspect-ratio overlay renders (`_runAdditionalRatiosOverlay`). */
   AdditionalRatios = "additional_ratios",
+  /**
+   * Automatic Travy (EN+ZH) captioned render (`_runTventVideoGeneration`).
+   * Only used on the no-additional-ratios path, where the finalize runs in a web
+   * request (not inside a worker claim) and so can safely enqueue this as its own
+   * supervised step. On the additional-ratios path the Travy clip is rendered
+   * inline within `_runAdditionalRatiosOverlay` instead (already on the worker).
+   * This step is soft-failing: `_runTventVideoGeneration` never throws — a Travy
+   * failure only sets `tventVideoStatus = "failed"`, it does NOT fail the pipeline
+   * (the other channels are already delivered).
+   */
+  TventGeneration = "tvent_generation",
 }
 
 /**
@@ -42,6 +53,9 @@ export const RENDER_STEP_FAILED_AT: Record<RenderStep, VideoGenerationStep> = {
   [RenderStep.FfmpegComposition]: VideoGenerationStep.ComposingFinalVideo,
   [RenderStep.OverlayComposition]: VideoGenerationStep.GeneratingOverlay,
   [RenderStep.AdditionalRatios]: VideoGenerationStep.GeneratingAdditionalRatios,
+  // Soft-failing step: never throws, so this mapping is only for type
+  // completeness. The pipeline is NOT failed on a Travy error.
+  [RenderStep.TventGeneration]: VideoGenerationStep.AwaitingDistributionReview,
 };
 
 /** Runtime type guard for values coming back from the database. */

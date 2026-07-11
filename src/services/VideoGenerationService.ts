@@ -28,7 +28,6 @@ import { buildAiVideoKey, buildFinalClipKey } from "@/lib/spacesKeys";
 import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
-import type { ImageCoordinates } from "@/lib/ai/geminiSubtitlesService";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeSceneDescription, sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -448,14 +447,20 @@ export class VideoGenerationService {
   }
 
   /**
-   * Render ONE montage scene segment (the requester's real photos/clips with
-   * Ken Burns + transitions) and write it into `sceneVideoAssetIds[sceneIndex]`
-   * NON-cumulatively. Does NOT change the pipeline step — the caller decides
-   * when to advance (one scene → AwaitingVideoApproval, or all scenes → review).
-   * Returns the new segment asset's id. Re-reads the latest segment array before
-   * writing so sequential batch renders accumulate correctly.
+   * Render ONE scene's montage clip at a GIVEN aspect ratio from the approved
+   * scene plan (the requester's real photos/clips with Ken Burns + transitions)
+   * and return the stored MP4. PURE render — creates NO UploadedAsset and touches
+   * NO job fields, so it is reused both for the primary-ratio review segments
+   * (`_renderSceneInto`, below) and for natively re-rendering EACH distribution
+   * ratio at final composition (`_renderMontageBaseAtRatio`). Every ratio uses the
+   * SAME approved assets, durations, motion and subject-focus points — only the
+   * canvas ratio differs, so there is no cropping and no AI/scene regeneration.
    */
-  private async _renderSceneInto(job: VideoGenerationJob, sceneIndex: number): Promise<string> {
+  private async _renderSceneClipAtRatio(
+    job: VideoGenerationJob,
+    sceneIndex: number,
+    ratio: VideoRatio
+  ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(job.requestId);
     if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
@@ -511,19 +516,35 @@ export class VideoGenerationService {
     const totalDuration =
       renderAssets.reduce((sum, a) => sum + a.durationSeconds, 0) || sceneDuration;
 
-    const ratio = this._montageCanvasRatio(req.targetPlatforms[0] ?? Platform.TventApp);
     const transition = isMontageTransition(scene.transitionIn)
       ? scene.transitionIn
       : DEFAULT_MONTAGE_TRANSITION;
     const outputStorageKey = buildAiVideoKey(req.userId, job.requestId);
 
-    const stored = await montageService.renderScene({
+    return montageService.renderScene({
       ratio,
       durationSeconds: totalDuration,
       assets: renderAssets,
       transition,
       outputStorageKey,
     });
+  }
+
+  /**
+   * Render ONE montage scene segment at the PRIMARY ratio and write it into
+   * `sceneVideoAssetIds[sceneIndex]` NON-cumulatively. Does NOT change the pipeline
+   * step — the caller decides when to advance (one scene → AwaitingVideoApproval,
+   * or all scenes → review). Returns the new segment asset's id. Re-reads the
+   * latest segment array before writing so sequential batch renders accumulate
+   * correctly.
+   */
+  private async _renderSceneInto(job: VideoGenerationJob, sceneIndex: number): Promise<string> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const req = await clipRequestRepository.findById(job.requestId);
+    if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const ratio = this._montageCanvasRatio(req.targetPlatforms[0] ?? Platform.TventApp);
+    const stored = await this._renderSceneClipAtRatio(job, sceneIndex, ratio);
 
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
@@ -657,6 +678,11 @@ export class VideoGenerationService {
       case RenderStep.AdditionalRatios:
         await this._runAdditionalRatiosOverlay(job);
         break;
+      case RenderStep.TventGeneration:
+        // Soft-failing: _runTventVideoGeneration never throws (a Travy failure
+        // only sets tventVideoStatus), so this step always completes "done".
+        await this._runTventVideoGeneration(job);
+        break;
       default: {
         const _exhaustive: never = step;
         throw new Error(`Unhandled render step: ${String(_exhaustive)}`);
@@ -758,6 +784,47 @@ export class VideoGenerationService {
       scheduledDeletionAt,
     });
     return baseAsset.id;
+  }
+
+  /**
+   * Natively render the FULL base montage at a GIVEN ratio from the approved scene
+   * plan and return the stored MP4. Each scene is re-rendered on that ratio's own
+   * canvas (reusing the approved assets/durations/motion/subject-focus — no crop,
+   * no AI, no scene-design regeneration), then the segments are crossfaded together
+   * exactly like the primary base (`_concatMontageBaseVideo`). Used by
+   * `_runFFmpegComposition` so every distribution channel gets a purpose-framed
+   * master instead of a center-crop of the primary ratio.
+   */
+  private async _renderMontageBaseAtRatio(
+    job: VideoGenerationJob,
+    ratio: VideoRatio
+  ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const req = await clipRequestRepository.findById(job.requestId);
+    if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const scenePlan = sanitizeScenePlanDescriptions(
+      JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[]
+    );
+    if (scenePlan.length === 0) {
+      throw new Error(`No approved scene plan to render base at ratio ${ratio}`);
+    }
+
+    const segments: { storageKey: string; storageUrl: string; fileSizeBytes: number }[] = [];
+    for (let i = 0; i < scenePlan.length; i++) {
+      segments.push(await this._renderSceneClipAtRatio(job, i, ratio));
+    }
+
+    // A single scene needs no concat.
+    if (segments.length === 1) return segments[0];
+
+    const outputKey = buildAiVideoKey(req.userId, job.requestId);
+    // Cross-dissolve at scene joins (falls back to hard-cut concat on failure) —
+    // identical to the primary base's `_concatMontageBaseVideo`.
+    return ffmpegService.concatVideosWithCrossfade(
+      segments.map((s) => s.storageKey),
+      outputKey
+    );
   }
 
   /**
@@ -1933,7 +2000,12 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
 
     const refreshed = await this._getJob(job.id);
-    await this._finalizeAndStartTvent(refreshed, refreshed.finalApprovedBy ?? "");
+    // We're inside the additional-ratios worker claim, so render Travy inline and
+    // awaited (not as an orphaned background promise) — it must finish before the
+    // claim completes, or the worker would tear it down.
+    await this._finalizeAndStartTvent(refreshed, refreshed.finalApprovedBy ?? "", {
+      renderTventInline: true,
+    });
   }
 
   /**
@@ -1951,7 +2023,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    */
   private async _finalizeAndStartTvent(
     job: VideoGenerationJob,
-    userId: string
+    userId: string,
+    opts: { renderTventInline?: boolean } = {}
   ): Promise<VideoGenerationJob> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
@@ -1992,38 +2065,70 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     const updated = await videoGenerationJobRepository.update(job.id, updates);
 
+    // Render the Travy (EN+ZH) clip in a SUPERVISED way (never as an orphaned
+    // fire-and-forget promise, which the old code did — that promise died when
+    // the worker completed/exited its claim, leaving tventVideoStatus "failed").
     if (needsTvent && !canReuseForTvent) {
-      this._runTventVideoGeneration(updated).catch(async (err) => {
-        console.error("[TventVideoGeneration] failed:", err);
-        await videoGenerationJobRepository.update(job.id, { tventVideoStatus: "failed" });
-      });
+      if (opts.renderTventInline) {
+        // Called from within the additional-ratios worker step: we're already on
+        // the worker inside a live claim, so render inline and AWAIT it so it
+        // finishes before the claim is marked done. _runTventVideoGeneration
+        // never throws, so a Travy failure won't fail the additional-ratios step.
+        await this._runTventVideoGeneration(updated);
+      } else {
+        // Called from a web request (no-additional-ratios path): enqueue a
+        // dedicated, supervised render step for the worker. _dispatchHeavy only
+        // returns after the (fast) enqueue write; the heavy render runs on the
+        // worker. If no worker is alive it falls back to running inline here.
+        await this._dispatchHeavy(updated, RenderStep.TventGeneration, () =>
+          this._runTventVideoGeneration(updated)
+        );
+      }
     }
 
-    return updated;
+    // Re-read so callers (e.g. the API response) see the freshest state,
+    // including the Travy asset/status when it was rendered inline above.
+    return this._getJob(job.id);
   }
 
-  /** Background: render the Travy EN+ZH captioned clip onto the primary master. */
+  /**
+   * Render the Travy EN+ZH captioned clip onto the primary master and record it.
+   *
+   * SOFT-FAILING BY DESIGN: this never throws. The other channels are already
+   * delivered by the time Travy runs, so a Travy render error must not fail the
+   * whole pipeline — it only records `tventVideoStatus = "failed"` (surfaced in
+   * the distribution-review UI). This lets it run either inline on the worker
+   * (awaited) or as its own supervised `RenderStep.TventGeneration` claim without
+   * ever tripping the hard pipeline-failure handlers.
+   */
   private async _runTventVideoGeneration(job: VideoGenerationJob): Promise<void> {
-    const { clipRequestRepository } = await import("@/repositories/index");
-    const request = await clipRequestRepository.findById(job.requestId);
-    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+    try {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const request = await clipRequestRepository.findById(job.requestId);
+      if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
-    const platforms = request.targetPlatforms ?? [];
-    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+      const platforms = request.targetPlatforms ?? [];
+      const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
 
-    const inputs = await this._buildOverlayInputs(job);
-    const tventAssetId = await this._renderCaptionedRatio(
-      job,
-      request.userId,
-      primaryRatio,
-      ["en", "zh"],
-      inputs
-    );
+      const inputs = await this._buildOverlayInputs(job);
+      const tventAssetId = await this._renderCaptionedRatio(
+        job,
+        request.userId,
+        primaryRatio,
+        ["en", "zh"],
+        inputs
+      );
 
-    await videoGenerationJobRepository.update(job.id, {
-      finalExport_tvent_assetId: tventAssetId,
-      tventVideoStatus: "ready",
-    });
+      await videoGenerationJobRepository.update(job.id, {
+        finalExport_tvent_assetId: tventAssetId,
+        tventVideoStatus: "ready",
+      });
+    } catch (err) {
+      console.error("[TventVideoGeneration] failed:", err);
+      await videoGenerationJobRepository
+        .update(job.id, { tventVideoStatus: "failed" })
+        .catch(() => {});
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -2031,12 +2136,15 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
-   * Auto-fill a per-channel publishing draft (title/caption/hashtags, tailored
-   * to each channel's fields — see `src/config/publishFields.ts`) from the
-   * approved script + business profile via Gemini. Fail-open: on any Gemini
-   * error it falls back to the approved caption/script. Excludes Travy
-   * (background-only) and CDN (internal). Preserves any prior draft the
-   * requester already posted/edited, so a re-finalize is idempotent.
+   * Build a per-channel publishing draft (title/caption/hashtags) DETERMINISTICALLY
+   * from the requester's OWN approved data — NO AI / Gemini call at all:
+   *   - caption  = the approved caption (their words), else the approved script
+   *   - title    = the approved hook, else the caption's first line, else business name
+   *   - hashtags = business profile (name/category/location) + any #tags already
+   *                written in the approved caption
+   * Excludes Travy (background-only) and CDN (internal). Preserves any prior draft
+   * the requester already posted/edited, so a re-finalize is idempotent, and every
+   * field remains editable in the distribution-review UI before posting.
    */
   private async _generatePublishingDrafts(
     job: VideoGenerationJob,
@@ -2047,12 +2155,13 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     const existing = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
 
-    const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
-    const scriptEnglish = job.approvedScriptEnglish ?? job.scriptEnglish ?? "";
     const captionThai = job.approvedCaptionThai ?? job.captionThai ?? "";
+    const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
+    const hookThai = job.approvedHookThai ?? job.hookThai ?? "";
 
     let businessName = "";
     let category = "";
+    let location = "";
     try {
       const { clipRequestRepository } = await import("@/repositories/index");
       const { businessProfileService } = await import("@/services/BusinessProfileService");
@@ -2060,73 +2169,37 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const profile = req ? await businessProfileService.getProfile(req.userId) : null;
       businessName = profile?.businessName ?? "";
       category = profile?.category ?? "";
+      location = profile?.location ?? "";
     } catch {
-      /* fail-open — drafts still get a caption/script fallback below */
+      /* fail-open — the deterministic fields below don't require the profile */
     }
 
-    // Tailored copy per channel via Gemini (fail-open to fallback below).
-    let generated: Record<string, { title?: string; caption?: string; hashtags?: string[] }> = {};
-    try {
-      const { requireGeminiApiKey, AI_CONFIG } = await import("@/config/aiTools");
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
-      const channelSpec = channels
-        .map((p) => {
-          const cfg = getPublishFieldConfig(p);
-          return `- ${p}: ${cfg.hasTitle ? "title, " : ""}caption, hashtags`;
-        })
-        .join("\n");
-      const res = await ai.models.generateContent({
-        model: AI_CONFIG.gemini.textModel,
-        contents: `You are a social media marketer for a local business${
-          businessName ? ` called "${businessName}"` : ""
-        }${category ? ` (${category})` : ""}.
-Write short, engaging promotional copy in Thai for a short promo video, tailored to EACH channel below.
-Video Thai script: "${scriptThai}"
-English gist: "${scriptEnglish}"
-Existing Thai caption idea: "${captionThai}"
+    // Caption/title come straight from the requester's approved words.
+    const baseCaption = captionThai || scriptThai;
+    const firstLine = baseCaption.split(/\r?\n/)[0]?.trim() ?? "";
+    const derivedTitle = (hookThai || firstLine || businessName || "").slice(0, 100);
 
-Channels and their fields:
-${channelSpec}
-
-Rules:
-- YouTube "title": <= 70 chars, catchy. Channels without a title should return an empty "title".
-- "caption": platform-appropriate length (TikTok/Instagram short & punchy; Facebook slightly longer; YouTube = a description with a short call to action).
-- "hashtags": 4-8 relevant hashtags WITHOUT the leading '#', mixing Thai + English where natural.
-Return ONLY valid JSON: an object keyed by the channel id, each value { "title": "", "caption": "", "hashtags": [] }.`,
-        config: { responseMimeType: "application/json", temperature: 0.7 },
-      });
-      const parsed = JSON.parse(res.text ?? "{}");
-      if (parsed && typeof parsed === "object") generated = parsed;
-    } catch (err) {
-      console.error("[publishingDrafts] Gemini draft generation failed, using fallback:", err);
-    }
-
-    const fallbackHashtags = [businessName, category]
-      .filter(Boolean)
-      .map((s) => s.replace(/\s+/g, ""))
-      .filter(Boolean);
+    // Hashtags: any #tags already present in the approved caption, plus the
+    // business profile fields — fully deterministic, no model call.
+    const toTag = (s: string) => s.replace(/[#\s]+/g, "").trim();
+    const captionTags = (baseCaption.match(/#[^\s#]+/g) ?? []).map((t) => t.replace(/^#/, ""));
+    const profileTags = [businessName, category, location].map(toTag).filter(Boolean);
+    const derivedHashtags = Array.from(
+      new Set([...captionTags, ...profileTags].filter(Boolean))
+    );
 
     return channels.map((platform) => {
       const prior = existing.get(platform);
       // Never overwrite a channel that already posted successfully.
       if (prior && prior.status === "posted") return prior;
 
-      const g = generated[platform] ?? {};
       const cfg = getPublishFieldConfig(platform);
-      const genHashtags = Array.isArray(g.hashtags)
-        ? g.hashtags.map((h) => String(h).replace(/^#/, "").trim()).filter(Boolean)
-        : [];
       return {
         platform,
-        title: cfg.hasTitle ? (prior?.title || g.title || businessName || "").slice(0, 100) : "",
-        caption: prior?.caption || g.caption || captionThai || scriptThai,
+        title: cfg.hasTitle ? prior?.title || derivedTitle : "",
+        caption: prior?.caption || baseCaption,
         hashtags:
-          prior?.hashtags && prior.hashtags.length > 0
-            ? prior.hashtags
-            : genHashtags.length > 0
-              ? genHashtags
-              : fallbackHashtags,
+          prior?.hashtags && prior.hashtags.length > 0 ? prior.hashtags : derivedHashtags,
         status: prior?.status ?? "pending",
         url: prior?.url ?? null,
         error: prior?.error ?? null,
@@ -2453,16 +2526,8 @@ Return ONLY valid JSON: an object keyed by the channel id, each value { "title":
   }
 
   private async _runFFmpegComposition(job: VideoGenerationJob): Promise<void> {
-    // Phase 4: the latest cumulative base video is composited per-ratio with
-    // that ratio's Remotion overlay clip (animatedOverlayAssetIds) below —
-    // `animatedVideoAssetId` is just the AwaitingAnimationApproval preview
-    // and is not used as a source for the final exports.
-    const videoAssetId = job.baseVideoAssetId;
-    const [videoAsset, audioAsset] = await Promise.all([
-      uploadedAssetRepository.findById(videoAssetId!),
-      uploadedAssetRepository.findById(job.processedVoiceAssetId!),
-    ]);
-    if (!videoAsset || !audioAsset) throw new Error("Required assets missing for composition");
+    const audioAsset = await uploadedAssetRepository.findById(job.processedVoiceAssetId!);
+    if (!audioAsset) throw new Error("Required assets missing for composition");
 
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
@@ -2470,32 +2535,24 @@ Return ONLY valid JSON: an object keyed by the channel id, each value { "title":
 
     const platforms = request.targetPlatforms ?? [];
     const targetRatios = ffmpegService.getRequiredRatiosForPlatforms(platforms);
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
 
-    // This step produces the un-captioned merged MASTERS only (cropped base
-    // video + voice + ducked music) for every required ratio. Subtitles and the
-    // motion-graphic overlay are added in the Phase-7 overlay step on top of
-    // these masters, and the Travy EN+ZH clip is rendered there too — so no
-    // captions, no overlay, and NO Travy export are produced here.
+    // This step produces the un-captioned merged MASTERS only (base video + voice
+    // + ducked music) for every required ratio. Subtitles and the motion-graphic
+    // overlay are added in the Phase-7 overlay step on top of these masters, and
+    // the Travy EN+ZH clip is rendered there too — so no captions, no overlay, and
+    // NO Travy export are produced here.
     //
-    // Per the Phase-7 directive, the Gemini `detectProductCoordinates`
-    // smart-crop ("auto product positioning") has been REMOVED from the path —
-    // ratios are center-cropped (coordinates left undefined).
+    // Option-1 framing: instead of center-cropping ONE primary-ratio base into
+    // every ratio (which discards detail and can cut off the subject), render a
+    // NATIVE base per ratio from the approved scene plan so each channel is
+    // purpose-framed — full source detail, subject-focus preserved, no AI, no
+    // scene-design regeneration. The PRIMARY ratio reuses the already-approved
+    // base video; the other ratios are re-rendered from the same approved scenes.
+    // composeAndExport then muxes voice + ducked music per ratio; because each base
+    // is already at its target ratio the crop filter is a no-op (a scale to the
+    // standard resolution only), so nothing is cropped away.
     const overlayStorageKeys: Partial<Record<ffmpegService.VideoRatio, string>> = {};
-    const coords: ImageCoordinates | undefined = undefined;
-
-    const result = await ffmpegService.composeAndExport({
-      videoStorageKey: videoAsset.storageKey,
-      audioStorageKey: audioAsset.storageKey,
-      scriptThai: job.approvedScriptThai!,
-      scriptEnglish: job.approvedScriptEnglish ?? job.scriptEnglish ?? "",
-      hookThai: job.approvedHookThai!,
-      userId: request.userId,
-      requestId: job.requestId,
-      musicTrackId: job.selectedMusicTrack ?? undefined,
-      coordinates: coords,
-      targetRatios,
-      overlayStorageKeys,
-    });
 
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
@@ -2503,6 +2560,32 @@ Return ONLY valid JSON: an object keyed by the channel id, each value { "title":
     const assetIds: Record<string, string> = {};
 
     for (const ratio of targetRatios) {
+      // Native base for THIS ratio (reuse the approved primary base; re-render the
+      // rest from the approved scene plan at their own canvas).
+      let baseStorageKey: string;
+      if (ratio === primaryRatio && job.baseVideoAssetId) {
+        const primaryBase = await uploadedAssetRepository.findById(job.baseVideoAssetId);
+        if (!primaryBase) throw new Error("Primary base video asset missing for composition");
+        baseStorageKey = primaryBase.storageKey;
+      } else {
+        baseStorageKey = (await this._renderMontageBaseAtRatio(job, ratio)).storageKey;
+      }
+
+      const result = await ffmpegService.composeAndExport({
+        videoStorageKey: baseStorageKey,
+        audioStorageKey: audioAsset.storageKey,
+        scriptThai: job.approvedScriptThai!,
+        scriptEnglish: job.approvedScriptEnglish ?? job.scriptEnglish ?? "",
+        hookThai: job.approvedHookThai!,
+        userId: request.userId,
+        requestId: job.requestId,
+        musicTrackId: job.selectedMusicTrack ?? undefined,
+        // Native base is already at this ratio → crop is a no-op; no smart-crop.
+        coordinates: undefined,
+        targetRatios: [ratio],
+        overlayStorageKeys,
+      });
+
       const exportInfo = result.exports[ratio];
       if (!exportInfo) continue;
 
