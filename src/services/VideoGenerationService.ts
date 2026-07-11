@@ -1465,9 +1465,15 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       currentStep: VideoGenerationStep.GeneratingAnimations,
       baseVideoAssetId,
     });
-    await this._dispatchHeavy(updated, RenderStep.AnimationGeneration, () =>
-      this._runAnimationGeneration(updated)
-    );
+    // Advance to the animation/music-choice review. This is a trivial DB
+    // transition to the AwaitingAnimationApproval gate — no heavy compute and no
+    // further heavy dispatch — so run it INLINE within this same worker claim
+    // rather than enqueuing it as a separate render step. Enqueuing here would be
+    // silently dropped: when this method runs on the worker, `runQueuedRenderStep`
+    // returns and `processJob` then calls `completeRenderClaim(job,'done')`, which
+    // overwrites the freshly-queued follow-up's render_state back to 'done' so no
+    // worker ever claims it — the pipeline would stall right after the merge.
+    await this._runAnimationGeneration(updated);
   }
 
   /**
