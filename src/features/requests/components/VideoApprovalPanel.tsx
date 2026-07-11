@@ -165,6 +165,8 @@ interface Props {
   savedTemplate?: string | null;
   /** Background Travy render status: 'idle' | 'generating' | 'ready' | 'failed'. */
   tventVideoStatus?: string | null;
+  /** Reason the Travy render failed (shown instead of an opaque error). */
+  tventVideoError?: string | null;
   /** Travy (EN+ZH) clip URL once its background render is ready. */
   tventClipUrl?: string | null;
   /** Pipeline is in Failed state — recovery UI is rendered elsewhere, so hide the processing spinner. */
@@ -218,6 +220,7 @@ export function VideoApprovalPanel({
   savedSubtitleLanguages,
   savedTemplate = null,
   tventVideoStatus = null,
+  tventVideoError = null,
   tventClipUrl = null,
   isPipelineFailed = false,
   isProcessing = false,
@@ -1942,7 +1945,17 @@ export function VideoApprovalPanel({
               )
             )}
             {tventVideoStatus === "failed" && (
-              <p className="text-sm text-red-600">การสร้างวิดีโอ Travy ล้มเหลว กรุณาติดต่อแอดมิน</p>
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-red-600">การสร้างวิดีโอ Travy ล้มเหลว</p>
+                {tventVideoError && (
+                  <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700 break-words">
+                    สาเหตุ: {tventVideoError}
+                  </p>
+                )}
+                <p className="text-xs text-slate-500">
+                  ระบบจะให้คุณลองสร้างใหม่ได้ในขั้นตอนตรวจสอบการเผยแพร่
+                </p>
+              </div>
             )}
           </Card>
         )}

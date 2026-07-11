@@ -551,6 +551,7 @@ export default async function RequestDetailPage({
                   .map((p) => PLATFORM_LABELS[p as Platform] ?? p)}
                 channelVideos={channelVideos}
                 tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
+                tventVideoError={pipelineJob.tventVideoError ?? null}
                 tventClipUrl={tventClipUrl}
               />
             )}
@@ -591,6 +592,7 @@ export default async function RequestDetailPage({
                 savedSubtitleLanguages={pipelineJob.subtitleLanguages}
                 savedTemplate={pipelineJob.selectedMotionTemplate ?? "none"}
                 tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
+                tventVideoError={pipelineJob.tventVideoError ?? null}
                 tventClipUrl={tventClipUrl}
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}

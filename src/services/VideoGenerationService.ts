@@ -2055,6 +2055,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       publishingDrafts,
     };
     if (needsTvent) {
+      updates.tventVideoError = null; // clear any stale failure from a prior run
       if (canReuseForTvent) {
         updates.finalExport_tvent_assetId = captionedPrimaryId;
         updates.tventVideoStatus = "ready";
@@ -2122,13 +2123,53 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await videoGenerationJobRepository.update(job.id, {
         finalExport_tvent_assetId: tventAssetId,
         tventVideoStatus: "ready",
+        tventVideoError: null,
       });
     } catch (err) {
       console.error("[TventVideoGeneration] failed:", err);
+      // Persist the reason so the requester sees WHY (not a generic message) and
+      // can retry — and so support can diagnose without server logs.
+      const reason =
+        err instanceof Error ? err.message : String(err ?? "Unknown error");
       await videoGenerationJobRepository
-        .update(job.id, { tventVideoStatus: "failed" })
+        .update(job.id, {
+          tventVideoStatus: "failed",
+          tventVideoError: reason.slice(0, 500),
+        })
         .catch(() => {});
     }
+  }
+
+  /**
+   * Requester retries a FAILED background Travy render from the distribution
+   * review. Clears the error, flips the status back to "generating", and
+   * re-dispatches the supervised Travy render step (worker when alive, inline
+   * fallback otherwise). No-op-safe: only valid while the job is on the
+   * distribution-review step with a failed Travy.
+   */
+  async retryTventVideoByRequester(
+    jobId: string,
+    _userId: string
+  ): Promise<VideoGenerationJob> {
+    void _userId;
+    const job = await this._getJobAtStep(
+      jobId,
+      VideoGenerationStep.AwaitingDistributionReview
+    );
+    if (job.tventVideoStatus !== "failed") {
+      throw new Error("Travy video is not in a failed state");
+    }
+
+    const updated = await videoGenerationJobRepository.update(jobId, {
+      tventVideoStatus: "generating",
+      tventVideoError: null,
+    });
+
+    await this._dispatchHeavy(updated, RenderStep.TventGeneration, () =>
+      this._runTventVideoGeneration(updated)
+    );
+
+    return this._getJob(jobId);
   }
 
   // ──────────────────────────────────────────────────────────────────────────

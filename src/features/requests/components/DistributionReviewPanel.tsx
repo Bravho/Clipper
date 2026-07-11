@@ -24,6 +24,8 @@ interface Props {
   channelVideos?: { platform: string; label: string; ratio: string | null; url: string | null }[];
   /** Background Travy render status: 'idle' | 'generating' | 'ready' | 'failed'. */
   tventVideoStatus?: string | null;
+  /** Reason the Travy render failed (shown so it isn't an opaque error). */
+  tventVideoError?: string | null;
   /** Travy (EN+ZH) clip URL once ready. */
   tventClipUrl?: string | null;
 }
@@ -57,10 +59,32 @@ export function DistributionReviewPanel({
   reviewedChannelLabels = [],
   channelVideos = [],
   tventVideoStatus = null,
+  tventVideoError = null,
   tventClipUrl = null,
 }: Props) {
   const router = useRouter();
   const channelVideoByPlatform = new Map(channelVideos.map((c) => [c.platform, c]));
+  const [retryingTvent, setRetryingTvent] = useState(false);
+  const [tventRetryError, setTventRetryError] = useState<string | null>(null);
+
+  const handleRetryTvent = async () => {
+    setRetryingTvent(true);
+    setTventRetryError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/retry-tvent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "ไม่สามารถลองสร้างใหม่ได้");
+      router.refresh();
+    } catch (err) {
+      setTventRetryError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setRetryingTvent(false);
+    }
+  };
   const [drafts, setDrafts] = useState<ChannelPublishingDraft[]>(initialDrafts);
   const [ui, setUi] = useState<Record<string, ChannelUiState>>({});
 
@@ -351,7 +375,25 @@ export function DistributionReviewPanel({
               <p className="text-sm text-slate-400">วิดีโอ Travy พร้อมแล้ว</p>
             ))}
           {tventVideoStatus === "failed" && (
-            <p className="text-sm text-red-600">การสร้างวิดีโอ Travy ล้มเหลว กรุณาติดต่อแอดมิน</p>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-red-600">การสร้างวิดีโอ Travy ล้มเหลว</p>
+              {tventVideoError && (
+                <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700 break-words">
+                  สาเหตุ: {tventVideoError}
+                </p>
+              )}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleRetryTvent}
+                  disabled={retryingTvent}
+                  className="rounded-md border border-blue-600 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                >
+                  {retryingTvent ? "กำลังลองใหม่..." : "ลองสร้างวิดีโอ Travy อีกครั้ง"}
+                </button>
+                {tventRetryError && <span className="text-xs text-red-600">{tventRetryError}</span>}
+              </div>
+            </div>
           )}
         </Card>
       )}

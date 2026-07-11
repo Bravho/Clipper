@@ -95,6 +95,7 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     captionedExport_4_5_assetId: (row.captioned_export_4_5_asset_id as string) ?? null,
     tventVideoStatus:
       (row.tvent_video_status as "idle" | "generating" | "ready" | "failed") ?? "idle",
+    tventVideoError: (row.tvent_video_error as string) ?? null,
     selectedMotionTemplate: (row.selected_motion_template as string) ?? "none",
     publishingDrafts: parseJsonField<ChannelPublishingDraft[] | null>(row.publishing_drafts, null),
     subtitleLanguages: ((row.subtitle_languages as string[]) ?? ["en", "zh"]) as ("th" | "en" | "zh")[],
@@ -174,6 +175,7 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   "captionedExport_1_1_assetId": "captioned_export_1_1_asset_id",
   "captionedExport_4_5_assetId": "captioned_export_4_5_asset_id",
   tventVideoStatus: "tvent_video_status",
+  tventVideoError: "tvent_video_error",
   selectedMotionTemplate: "selected_motion_template",
   publishingDrafts: "publishing_drafts",
   subtitleLanguages: "subtitle_languages",

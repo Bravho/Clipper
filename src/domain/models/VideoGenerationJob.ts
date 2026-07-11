@@ -191,6 +191,14 @@ export interface VideoGenerationJob {
   tventVideoStatus?: "idle" | "generating" | "ready" | "failed" | null;
 
   /**
+   * When the background Travy render fails (tventVideoStatus === "failed"), the
+   * captured reason (error message, truncated) so the requester sees WHY instead
+   * of a generic "contact admin", and support can diagnose without server logs.
+   * Cleared when a retry starts and on success.
+   */
+  tventVideoError?: string | null;
+
+  /**
    * Motion-graphic template id (Phase 7) chosen by the requester at the
    * merged-review step, applied when the styled/captioned video is rendered.
    * "none" (default) = clean full-bleed video + subtitles only. See
