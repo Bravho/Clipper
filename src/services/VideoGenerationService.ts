@@ -24,7 +24,7 @@ import {
   minMontageTotalSeconds,
   sceneMontageSeconds,
 } from "@/config/montage";
-import { buildAiVideoKey, buildFinalClipKey } from "@/lib/spacesKeys";
+import { buildAiVideoKey, buildFinalClipKey, buildWatermarkedPreviewKey } from "@/lib/spacesKeys";
 import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
@@ -1867,7 +1867,65 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       scheduledDeletionAt,
       videoRatio: ratio,
     });
+
+    // Pre-render the tiled-watermark preview sibling for the paywall. Runs on the
+    // same (worker) claim as this render, so the extra encode stays off the web
+    // droplet. Non-throwing: a watermark failure must not discard the finished
+    // clean master — the serving layer treats "locked + no watermark" as
+    // "withhold the preview" so the clean file is never leaked.
+    await this._renderWatermarkedSibling(asset.id, userId, job.requestId, ratio);
+
     return asset.id;
+  }
+
+  /**
+   * Render (best-effort) the tiled-watermark preview for a clean FinalClip and
+   * persist it as a {@link AssetType.WatermarkedPreview} linked back via
+   * `sourceAssetId`. Never throws — logs and returns on failure. The clean
+   * master is left untouched.
+   */
+  private async _renderWatermarkedSibling(
+    sourceAssetId: string,
+    userId: string,
+    requestId: string,
+    ratio: VideoRatio
+  ): Promise<string | null> {
+    try {
+      const source = await uploadedAssetRepository.findById(sourceAssetId);
+      if (!source) throw new Error(`source asset not found: ${sourceAssetId}`);
+
+      const outputKey = buildWatermarkedPreviewKey(userId, requestId, ratio);
+      const result = await ffmpegService.applyTiledWatermark({
+        sourceStorageKey: source.storageKey,
+        outputStorageKey: outputKey,
+      });
+
+      const scheduledDeletionAt = new Date();
+      scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
+      const wm = await uploadedAssetRepository.create({
+        requestId,
+        userId,
+        fileName: `watermarked_${ratio.replace(":", "-")}.mp4`,
+        assetType: AssetType.WatermarkedPreview,
+        fileSizeBytes: result.fileSizeBytes,
+        mimeType: "video/mp4",
+        storageKey: result.storageKey,
+        storageUrl: result.storageUrl,
+        thumbnailKey: "",
+        thumbnailUrl: "",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        scheduledDeletionAt,
+        videoRatio: ratio,
+        sourceAssetId,
+      });
+      return wm.id;
+    } catch (err) {
+      console.error(
+        `[watermark] failed to render preview sibling for asset ${sourceAssetId} (ratio ${ratio}):`,
+        err
+      );
+      return null;
+    }
   }
 
   /** Background: render the PRIMARY ratio captioned preview, then await review. */

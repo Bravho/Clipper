@@ -56,10 +56,20 @@ export interface UploadedAsset {
   durationSeconds?: number | null;
 
   /**
-   * Video aspect ratio — only set for FinalClip assets.
+   * Video aspect ratio — only set for FinalClip / WatermarkedPreview assets.
    * Null for all other asset types.
    */
   videoRatio?: "9:16" | "16:9" | "1:1" | "4:5" | null;
+
+  /**
+   * For a {@link AssetType.WatermarkedPreview}, the id of the clean FinalClip
+   * asset it was derived from. This is the link the presentation layer uses to
+   * swap a locked requester's preview to the watermarked variant. Null for every
+   * other asset type.
+   *
+   * Persisted as `source_asset_id UUID NULLABLE` on `uploaded_assets`.
+   */
+  sourceAssetId?: string | null;
 
   /** Date when this raw upload will be deleted per the 90-day retention policy. */
   scheduledDeletionAt: Date;

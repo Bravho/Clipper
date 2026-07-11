@@ -75,12 +75,18 @@ const overlayOnMasterMock = jest.fn(async (params: any) => ({
   storageUrl: `https://cdn.example.com/captioned/out.mp4`,
   fileSizeBytes: 4096,
 }));
+const applyTiledWatermarkMock = jest.fn(async (params: any) => ({
+  storageKey: params.outputStorageKey,
+  storageUrl: `https://cdn.example.com/${params.outputStorageKey}`,
+  fileSizeBytes: 3072,
+}));
 jest.mock("@/lib/ai/ffmpegService", () => ({
   concatVideos: (...args: unknown[]) => concatVideosMock(...args),
   getRequiredRatiosForPlatforms: (...args: unknown[]) => getRequiredRatiosForPlatformsMock(...args),
   composeAndExport: (...args: unknown[]) => composeAndExportMock(...args),
   renderOverlayPreview: (...args: unknown[]) => renderOverlayPreviewMock(...args),
   overlayOnMaster: (...args: unknown[]) => overlayOnMasterMock(...args),
+  applyTiledWatermark: (...args: unknown[]) => applyTiledWatermarkMock(...args),
   // Constants read by the Phase-7 overlay timing helpers.
   MUSIC_LEAD_IN_SECONDS: 0.6,
   DEFAULT_COMPOSE_DURATION_SECONDS: 15,
@@ -562,6 +568,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     getRequiredRatiosForPlatformsMock.mockReset();
     composeAndExportMock.mockReset();
     overlayOnMasterMock.mockClear();
+    applyTiledWatermarkMock.mockClear();
     detectProductCoordinatesMock.mockClear();
     alignAudioWithScriptMock.mockClear();
   });
@@ -701,6 +708,17 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.subtitleLanguages).toEqual(["th"]);
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingOverlayApproval);
     expect(updated?.captionedExport_9_16_assetId).toBeTruthy();
+
+    // Pay-to-download watermark: the delivered captioned master gets a
+    // pre-rendered tiled-watermark sibling, linked back via sourceAssetId, so a
+    // locked (unpaid) requester is only ever shown the watermarked variant.
+    expect(applyTiledWatermarkMock).toHaveBeenCalledTimes(1);
+    const cleanId = updated?.captionedExport_9_16_assetId as string;
+    const watermarked = await mockAssetRepo.findWatermarkedPreviewFor(cleanId);
+    expect(watermarked).not.toBeNull();
+    expect(watermarked?.assetType).toBe(AssetType.WatermarkedPreview);
+    expect(watermarked?.videoRatio).toBe("9:16");
+    expect(watermarked?.sourceAssetId).toBe(cleanId);
   });
 
   it("approveOverlayByRequester (single ratio, TH subs) lands on distribution-review, renders Travy EN+ZH in background, NOT yet delivered", async () => {

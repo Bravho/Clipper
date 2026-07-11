@@ -19,15 +19,29 @@ interface Props {
   reviewedRatio?: string | null;
   /** Distribution channel labels this reviewed clip is published to (excludes Travy). */
   reviewedChannelLabels?: string[];
+  /** Asset id of the reviewed (primary, captioned) clip — for the gated download. */
+  reviewedClipAssetId?: string | null;
   /** The generated (subtitled) video per distribution channel, so each channel's
    *  own clip can be played + downloaded next to its publishing form. */
-  channelVideos?: { platform: string; label: string; ratio: string | null; url: string | null }[];
+  channelVideos?: {
+    platform: string;
+    label: string;
+    ratio: string | null;
+    url: string | null;
+    assetId: string | null;
+  }[];
   /** Background Travy render status: 'idle' | 'generating' | 'ready' | 'failed'. */
   tventVideoStatus?: string | null;
   /** Reason the Travy render failed (shown so it isn't an opaque error). */
   tventVideoError?: string | null;
   /** Travy (EN+ZH) clip URL once ready. */
   tventClipUrl?: string | null;
+  /** Asset id of the Travy clip — for the gated download. */
+  tventAssetId?: string | null;
+  /** True when the download is still locked (unpaid) — gates every download button. */
+  downloadLocked?: boolean;
+  /** Price in credits (= ฿) to unlock all downloads for this request. */
+  unlockPrice?: number;
 }
 
 const inputCls =
@@ -57,15 +71,97 @@ export function DistributionReviewPanel({
   reviewedClipUrl = null,
   reviewedRatio = null,
   reviewedChannelLabels = [],
+  reviewedClipAssetId = null,
   channelVideos = [],
   tventVideoStatus = null,
   tventVideoError = null,
   tventClipUrl = null,
+  tventAssetId = null,
+  downloadLocked = false,
+  unlockPrice = 0,
 }: Props) {
   const router = useRouter();
   const channelVideoByPlatform = new Map(channelVideos.map((c) => [c.platform, c]));
   const [retryingTvent, setRetryingTvent] = useState(false);
   const [tventRetryError, setTventRetryError] = useState<string | null>(null);
+
+  // Gated download / paywall (moved here from the separate UnlockDownloadPanel):
+  // every channel's download button unlocks (pays) when locked, or fetches a
+  // short-lived presigned URL from /download when unlocked.
+  const [unlocking, setUnlocking] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleUnlock = async () => {
+    setUnlocking(true);
+    setDownloadError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/unlock-download`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถปลดล็อกได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleDownload = async (assetId: string) => {
+    setDownloadingId(assetId);
+    setDownloadError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/download?assetId=${assetId}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ดาวน์โหลดไม่สำเร็จ");
+      }
+      const { url } = await res.json();
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  /** Lock-aware download control for one clip (unlock CTA when locked). */
+  const renderDownloadControl = ({
+    assetId,
+    ratio,
+    labelSuffix,
+  }: {
+    assetId: string | null;
+    ratio?: string | null;
+    labelSuffix?: string;
+  }) => {
+    if (!assetId) return null;
+    const ratioTxt = ratio ? ` (${ratio})` : "";
+    if (downloadLocked) {
+      return (
+        <button
+          type="button"
+          onClick={handleUnlock}
+          disabled={unlocking}
+          className="inline-flex items-center gap-1 rounded-md border border-blue-600 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+        >
+          {unlocking ? "กำลังปลดล็อก..." : `🔒 ปลดล็อกเพื่อดาวน์โหลด (฿${unlockPrice})`}
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => handleDownload(assetId)}
+        disabled={downloadingId === assetId}
+        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline disabled:opacity-50"
+      >
+        {downloadingId === assetId ? "กำลังเตรียมไฟล์..." : `ดาวน์โหลด${labelSuffix ?? "วิดีโอ"}${ratioTxt}`}
+      </button>
+    );
+  };
 
   const handleRetryTvent = async () => {
     setRetryingTvent(true);
@@ -169,14 +265,11 @@ export function DistributionReviewPanel({
             />
           </div>
           <div className="mt-2">
-            <a
-              href={reviewedClipUrl}
-              download={`approved_video${reviewedRatio ? `_${reviewedRatio.replace(":", "_")}` : ""}.mp4`}
-              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
-            >
-              ดาวน์โหลดวิดีโอ{reviewedRatio ? ` (${reviewedRatio})` : ""}
-            </a>
+            {renderDownloadControl({ assetId: reviewedClipAssetId, ratio: reviewedRatio })}
           </div>
+          {downloadError && (
+            <p className="mt-1 text-xs text-red-600">{downloadError}</p>
+          )}
         </Card>
       )}
 
@@ -238,13 +331,9 @@ export function DistributionReviewPanel({
                           className="max-h-[340px] w-auto rounded object-contain"
                         />
                       </div>
-                      <a
-                        href={cv.url}
-                        download={`${d.platform}_video${cv.ratio ? `_${cv.ratio.replace(":", "_")}` : ""}.mp4`}
-                        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        ดาวน์โหลดวิดีโอ{cv.ratio ? ` (${cv.ratio})` : ""}
-                      </a>
+                      <div className="mt-2">
+                        {renderDownloadControl({ assetId: cv.assetId, ratio: cv.ratio })}
+                      </div>
                     </div>
                   );
                 })()}
@@ -363,13 +452,11 @@ export function DistributionReviewPanel({
                 <div className="flex max-h-[420px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
                   <video src={tventClipUrl} controls className="max-h-[400px] w-auto rounded object-contain" />
                 </div>
-                <a
-                  href={tventClipUrl}
-                  download="final_tvent.mp4"
-                  className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                >
-                  ดาวน์โหลดวิดีโอ Travy
-                </a>
+                {renderDownloadControl({
+                  assetId: tventAssetId,
+                  ratio: reviewedRatio,
+                  labelSuffix: "วิดีโอ Travy",
+                })}
               </div>
             ) : (
               <p className="text-sm text-slate-400">วิดีโอ Travy พร้อมแล้ว</p>

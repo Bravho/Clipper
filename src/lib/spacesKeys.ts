@@ -163,3 +163,22 @@ export function buildFinalClipKey(
   const safeRatio = ratio.replace(":", "-");
   return `final_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;
 }
+
+/**
+ * Key for a watermarked ("RClipper" tiled overlay) preview clip — the pre-rendered
+ * sibling of a final export, shown to a requester whose download is still locked
+ * (unpaid). Stored under its own `preview_exports/` prefix so the storage
+ * lifecycle can treat previews independently of the clean masters (they are
+ * disposable once the download is unlocked).
+ * Lifecycle: retained for 8 years (same as final clips — cheap and simple).
+ *
+ * @param ratio  "9:16" | "16:9" | "1:1" | "4:5" or "tvent" for the Tvent export.
+ */
+export function buildWatermarkedPreviewKey(
+  userId: string,
+  requestId: string,
+  ratio: "9:16" | "16:9" | "1:1" | "4:5" | "tvent"
+): string {
+  const safeRatio = ratio.replace(":", "-");
+  return `preview_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;
+}

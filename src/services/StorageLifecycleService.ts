@@ -36,6 +36,7 @@ export const REQUEST_MEDIA_PREFIXES = [
   "processed_audio",
   "voice_recordings",
   "final_exports",
+  "preview_exports",
   "clips",
 ] as const;
 

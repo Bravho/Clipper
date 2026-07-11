@@ -673,6 +673,112 @@ export async function overlayOnMaster(params: {
   }
 }
 
+/** Default watermark text stamped across locked-download previews. */
+export const WATERMARK_TEXT = "RClipper";
+
+/**
+ * Build the `-vf` value for a tiled, diagonally-staggered semi-transparent
+ * watermark that covers the WHOLE frame, so it can't be cleanly cropped out of
+ * a ripped preview. FFmpeg's `drawtext` can't rotate or auto-tile, so we stamp a
+ * grid of `drawtext` instances whose positions are expressed against the input
+ * dimensions (`w`/`h`) — making the result resolution-independent across every
+ * export ratio. Odd rows are shifted horizontally to give the grid a diagonal,
+ * repeated-watermark feel.
+ */
+export function buildTiledWatermarkFilter(text = WATERMARK_TEXT): string {
+  // Escape the (possibly Windows) font path exactly as animationService does:
+  // backslashes → forward slashes, and ':' escaped for the filtergraph parser.
+  const fontFile = AI_CONFIG.ffmpeg.fontFile.replace(/\\/g, "/").replace(/:/g, "\\:");
+  // Escape characters special to drawtext's text option.
+  const safeText = text.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "’");
+
+  const rows = 6;
+  const cols = 3;
+  const stamps: string[] = [];
+  for (let r = 0; r < rows; r++) {
+    // Diagonal stagger: each row shifts right by a fraction of a column width,
+    // wrapping within the frame via mod so stamps stay on-screen.
+    const rowShift = ((r % cols) / cols) * (1 / cols); // 0 .. <1/cols
+    for (let c = 0; c < cols; c++) {
+      // Keep the horizontal fraction on-screen (< 1) directly, so the x
+      // expression needs no mod()/comma — commas inside a single-quoted filter
+      // option value are otherwise mis-parsed. Reserve ~15% right margin so the
+      // stamp's own width never spills past the frame edge.
+      const xFrac = Math.min(0.85, c / cols + rowShift + 0.04);
+      const yFrac = (r + 0.5) / rows;
+      const xExpr = `w*${xFrac.toFixed(4)}`;
+      const yExpr = `h*${yFrac.toFixed(4)}-text_h/2`;
+      stamps.push(
+        `drawtext=fontfile='${fontFile}':text='${safeText}':` +
+          `fontcolor=white@0.28:fontsize=h/22:` +
+          `shadowcolor=black@0.30:shadowx=2:shadowy=2:` +
+          `x='${xExpr}':y='${yExpr}'`
+      );
+    }
+  }
+  return stamps.join(",");
+}
+
+/**
+ * Pre-render a watermarked ("RClipper" tiled overlay) copy of a finished master
+ * clip. Downloads `sourceStorageKey`, burns the tiled watermark over the video,
+ * stream-copies the audio through untouched (`-c:a copy` — no re-mix), and
+ * uploads the result to `outputStorageKey`.
+ *
+ * This is the paywall's teeth: the watermarked copy is the only variant shown to
+ * a requester whose download is still locked, so even a ripped preview carries
+ * the mark. It runs on the Mac render worker (invoked from the overlay/finalize
+ * step, which is already dispatched there), keeping the extra encode off the web
+ * droplet.
+ */
+export async function applyTiledWatermark(params: {
+  sourceStorageKey: string;
+  outputStorageKey: string;
+  text?: string;
+}): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+  const { sourceStorageKey, outputStorageKey, text } = params;
+  const ffmpeg = AI_CONFIG.ffmpeg.path;
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-watermark-"));
+  try {
+    const srcPath = path.join(tmpDir, "clean.mp4");
+    const outPath = path.join(tmpDir, "watermarked.mp4");
+    await downloadFromSpaces(sourceStorageKey, srcPath);
+
+    const startedAt = Date.now();
+    try {
+      await execFileAsync(ffmpeg, [
+        "-y",
+        "-i", srcPath,
+        "-vf", buildTiledWatermarkFilter(text),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "veryfast",
+        // Copy the master's audio (voice + ducked music) through untouched.
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        outPath,
+      ]);
+    } catch (err) {
+      const detail = describeExecError(err);
+      console.error(`[watermark] ffmpeg FAILED after ${((Date.now() - startedAt) / 1000).toFixed(1)}s:`, detail);
+      throw new Error(`watermark ffmpeg failed: ${detail}`);
+    }
+
+    await uploadToSpaces(outPath, outputStorageKey);
+    const { size } = await fs.stat(outPath);
+    console.log(
+      `[watermark] done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s → ${outputStorageKey} (${size} bytes)`
+    );
+    return {
+      storageKey: outputStorageKey,
+      storageUrl: spacesPublicUrl(outputStorageKey),
+      fileSizeBytes: size,
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Concatenate per-scene montage segments with a short cross-dissolve at each
  * scene join (ffmpeg `xfade`), so scene boundaries dissolve like the within-scene

@@ -4,6 +4,7 @@ import {
   CreateUploadedAssetInput,
   UpdateUploadedAssetInput,
 } from "@/domain/models/UploadedAsset";
+import { AssetType } from "@/domain/enums/AssetType";
 import { SEED_UPLOADED_ASSETS } from "@/seed/requestSeedData";
 
 // TODO: PostgreSQL — replace with PostgresUploadedAssetRepository.
@@ -43,6 +44,20 @@ export class MockUploadedAssetRepository implements IUploadedAssetRepository {
   async findById(id: string): Promise<UploadedAsset | null> {
     const asset = this.store.get(id);
     return asset ? { ...asset } : null;
+  }
+
+  async findWatermarkedPreviewFor(
+    sourceAssetId: string
+  ): Promise<UploadedAsset | null> {
+    for (const asset of this.store.values()) {
+      if (
+        asset.assetType === AssetType.WatermarkedPreview &&
+        asset.sourceAssetId === sourceAssetId
+      ) {
+        return { ...asset };
+      }
+    }
+    return null;
   }
 
   async create(input: CreateUploadedAssetInput): Promise<UploadedAsset> {

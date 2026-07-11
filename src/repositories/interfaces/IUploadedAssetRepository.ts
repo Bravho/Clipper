@@ -17,6 +17,12 @@ import {
 export interface IUploadedAssetRepository {
   findByRequestId(requestId: string): Promise<UploadedAsset[]>;
   findById(id: string): Promise<UploadedAsset | null>;
+  /**
+   * Find the watermarked-preview sibling of a clean FinalClip, if one has been
+   * rendered. Used by the paywall to serve the watermarked variant while the
+   * download is locked. Returns null when no watermarked preview exists.
+   */
+  findWatermarkedPreviewFor(sourceAssetId: string): Promise<UploadedAsset | null>;
   create(input: CreateUploadedAssetInput): Promise<UploadedAsset>;
   update(id: string, input: UpdateUploadedAssetInput): Promise<UploadedAsset>;
   deleteById(id: string): Promise<void>;

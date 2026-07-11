@@ -26,6 +26,7 @@ function rowToAsset(row: Record<string, unknown>): UploadedAsset {
     // NUMERIC comes back as a string — coerce to a real number (or null).
     durationSeconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
     videoRatio: (row.video_ratio as UploadedAsset["videoRatio"]) ?? null,
+    sourceAssetId: (row.source_asset_id as string) ?? null,
     scheduledDeletionAt: new Date(row.scheduled_deletion_at as string),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
@@ -53,14 +54,28 @@ export class PostgresUploadedAssetRepository
     return rows[0] ? rowToAsset(rows[0]) : null;
   }
 
+  async findWatermarkedPreviewFor(
+    sourceAssetId: string
+  ): Promise<UploadedAsset | null> {
+    const { rows } = await this.db.query(
+      `SELECT * FROM uploaded_assets
+        WHERE source_asset_id = $1 AND asset_type = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [sourceAssetId, AssetType.WatermarkedPreview]
+    );
+    return rows[0] ? rowToAsset(rows[0]) : null;
+  }
+
   async create(input: CreateUploadedAssetInput): Promise<UploadedAsset> {
     const { rows } = await this.db.query(
       `INSERT INTO uploaded_assets (
          request_id, user_id, file_name, asset_type,
          file_size_bytes, mime_type, storage_key, storage_url,
          thumbnail_key, thumbnail_url, upload_status,
-         video_ratio, duration_seconds, scheduled_deletion_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         video_ratio, duration_seconds, scheduled_deletion_at,
+         source_asset_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
         input.requestId,
@@ -77,6 +92,7 @@ export class PostgresUploadedAssetRepository
         input.videoRatio ?? null,
         input.durationSeconds ?? null,
         input.scheduledDeletionAt,
+        input.sourceAssetId ?? null,
       ]
     );
     return rowToAsset(rows[0]);

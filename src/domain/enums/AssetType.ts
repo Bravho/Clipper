@@ -24,6 +24,13 @@ export enum AssetType {
   FinalClip = "final_clip",
   /** Base video with Claude-generated animation/graphic overlays applied by FFmpeg. */
   AnimatedVideo = "animated_video",
+  /**
+   * Watermarked ("RClipper" tiled overlay) sibling of a FinalClip, pre-rendered
+   * during the pipeline. This is the ONLY variant shown to a requester whose
+   * download is still locked (unpaid) — the clean FinalClip is never surfaced
+   * until they pay. Linked back to its clean source via `sourceAssetId`.
+   */
+  WatermarkedPreview = "watermarked_preview",
 }
 
 /** Upload status of a single asset record. */

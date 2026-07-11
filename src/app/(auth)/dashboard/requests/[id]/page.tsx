@@ -18,7 +18,6 @@ import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DeliveryLinks } from "@/features/requests/components/DeliveryLinks";
-import { UnlockDownloadPanel } from "@/features/requests/components/UnlockDownloadPanel";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { RequestTimeline } from "@/features/requests/components/RequestTimeline";
 import { PipelineSection } from "@/features/requests/components/PipelineSection";
@@ -138,6 +137,33 @@ export default async function RequestDetailPage({
   const primaryPlatform = (request.targetPlatforms?.[0] as Platform) ?? Platform.TventApp;
   const primaryRatio = PLATFORM_ASPECT_RATIOS[primaryPlatform] ?? null;
 
+  // Pay-to-download watermark gate: while the download is locked (unpaid), every
+  // preview the requester can watch must be the pre-rendered WATERMARKED sibling,
+  // never the clean master (which would otherwise be rippable straight from the
+  // <video src>). `previewUrlFor` maps a clean captioned asset id to its
+  // watermarked variant when locked, and returns the clean URL once unlocked. If
+  // a watermark is (rarely) missing while locked, it returns null so the clean
+  // file is withheld rather than leaked.
+  const downloadLocked = !request.downloadUnlocked;
+  const watermarkedUrlBySource = new Map<string, string>();
+  for (const a of assets) {
+    if (
+      a.assetType === AssetType.WatermarkedPreview &&
+      a.sourceAssetId &&
+      a.storageUrl
+    ) {
+      watermarkedUrlBySource.set(a.sourceAssetId, a.storageUrl);
+    }
+  }
+  const previewUrlFor = (
+    cleanAssetId: string | null | undefined,
+    cleanUrl: string | null
+  ): string | null => {
+    if (!downloadLocked) return cleanUrl;
+    if (!cleanAssetId) return null;
+    return watermarkedUrlBySource.get(cleanAssetId) ?? null;
+  };
+
   // Phase 7 — captioned primary-ratio preview (overlay review step) + Travy clip.
   const captionedPrimaryAssetId =
     primaryRatio === "9:16" ? pipelineJob?.captionedExport_9_16_assetId
@@ -145,29 +171,53 @@ export default async function RequestDetailPage({
     : primaryRatio === "1:1" ? pipelineJob?.captionedExport_1_1_assetId
     : primaryRatio === "4:5" ? pipelineJob?.captionedExport_4_5_assetId
     : null;
-  const overlayPreviewUrl = captionedPrimaryAssetId
-    ? assets.find((a) => a.id === captionedPrimaryAssetId)?.storageUrl ?? null
-    : null;
-  const tventClipUrl = pipelineJob?.finalExport_tvent_assetId
-    ? assets.find((a) => a.id === pipelineJob.finalExport_tvent_assetId)?.storageUrl ?? null
-    : null;
+  const overlayPreviewUrl = previewUrlFor(
+    captionedPrimaryAssetId,
+    captionedPrimaryAssetId
+      ? assets.find((a) => a.id === captionedPrimaryAssetId)?.storageUrl ?? null
+      : null
+  );
+  const tventClipUrl = previewUrlFor(
+    pipelineJob?.finalExport_tvent_assetId,
+    pipelineJob?.finalExport_tvent_assetId
+      ? assets.find((a) => a.id === pipelineJob.finalExport_tvent_assetId)?.storageUrl ?? null
+      : null
+  );
 
   // Phase 8 — the captioned (subtitled) video actually delivered to each ratio,
   // so the distribution-review panel can show/download every generated channel
   // video (not just the primary). Keyed by ratio; each channel maps to its ratio.
   const captionedUrlByRatio: Record<string, string | null> = {
-    "9:16": pipelineJob?.captionedExport_9_16_assetId
-      ? assets.find((a) => a.id === pipelineJob.captionedExport_9_16_assetId)?.storageUrl ?? null
-      : null,
-    "16:9": pipelineJob?.captionedExport_16_9_assetId
-      ? assets.find((a) => a.id === pipelineJob.captionedExport_16_9_assetId)?.storageUrl ?? null
-      : null,
-    "1:1": pipelineJob?.captionedExport_1_1_assetId
-      ? assets.find((a) => a.id === pipelineJob.captionedExport_1_1_assetId)?.storageUrl ?? null
-      : null,
-    "4:5": pipelineJob?.captionedExport_4_5_assetId
-      ? assets.find((a) => a.id === pipelineJob.captionedExport_4_5_assetId)?.storageUrl ?? null
-      : null,
+    "9:16": previewUrlFor(
+      pipelineJob?.captionedExport_9_16_assetId,
+      pipelineJob?.captionedExport_9_16_assetId
+        ? assets.find((a) => a.id === pipelineJob.captionedExport_9_16_assetId)?.storageUrl ?? null
+        : null
+    ),
+    "16:9": previewUrlFor(
+      pipelineJob?.captionedExport_16_9_assetId,
+      pipelineJob?.captionedExport_16_9_assetId
+        ? assets.find((a) => a.id === pipelineJob.captionedExport_16_9_assetId)?.storageUrl ?? null
+        : null
+    ),
+    "1:1": previewUrlFor(
+      pipelineJob?.captionedExport_1_1_assetId,
+      pipelineJob?.captionedExport_1_1_assetId
+        ? assets.find((a) => a.id === pipelineJob.captionedExport_1_1_assetId)?.storageUrl ?? null
+        : null
+    ),
+    "4:5": previewUrlFor(
+      pipelineJob?.captionedExport_4_5_assetId,
+      pipelineJob?.captionedExport_4_5_assetId
+        ? assets.find((a) => a.id === pipelineJob.captionedExport_4_5_assetId)?.storageUrl ?? null
+        : null
+    ),
+  };
+  const captionedAssetIdByRatio: Record<string, string | null> = {
+    "9:16": pipelineJob?.captionedExport_9_16_assetId ?? null,
+    "16:9": pipelineJob?.captionedExport_16_9_assetId ?? null,
+    "1:1": pipelineJob?.captionedExport_1_1_assetId ?? null,
+    "4:5": pipelineJob?.captionedExport_4_5_assetId ?? null,
   };
   const channelVideos = (request.targetPlatforms ?? [])
     .filter((p) => p !== Platform.TventApp)
@@ -178,6 +228,7 @@ export default async function RequestDetailPage({
         label: PLATFORM_LABELS[p as Platform] ?? (p as string),
         ratio,
         url: ratio ? captionedUrlByRatio[ratio] ?? null : null,
+        assetId: ratio ? captionedAssetIdByRatio[ratio] ?? null : null,
       };
     });
   const sourceAssets = assets.filter(
@@ -549,10 +600,14 @@ export default async function RequestDetailPage({
                 reviewedChannelLabels={(request.targetPlatforms ?? [])
                   .filter((p) => p !== Platform.TventApp)
                   .map((p) => PLATFORM_LABELS[p as Platform] ?? p)}
+                reviewedClipAssetId={captionedPrimaryAssetId ?? null}
                 channelVideos={channelVideos}
                 tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
                 tventVideoError={pipelineJob.tventVideoError ?? null}
                 tventClipUrl={tventClipUrl}
+                tventAssetId={pipelineJob.finalExport_tvent_assetId ?? null}
+                downloadLocked={!request.downloadUnlocked}
+                unlockPrice={CREDITS_CONFIG.REQUEST_COST_CREDITS}
               />
             )}
 
@@ -628,20 +683,6 @@ export default async function RequestDetailPage({
           </>
         );
       })()}
-
-      {/* Pay-to-download / trial paywall — shown once final masters exist */}
-      {finalClips.length > 0 && (
-        <UnlockDownloadPanel
-          requestId={request.id}
-          locked={!request.downloadUnlocked}
-          isTrial={!!request.isTrialRequest}
-          price={CREDITS_CONFIG.REQUEST_COST_CREDITS}
-          clips={finalClips.map((c, i) => ({
-            id: c.id,
-            label: `วิดีโอฉบับสมบูรณ์ ${i + 1}`,
-          }))}
-        />
-      )}
 
       {/* Delivery links */}
       {(isTerminal || publishingLinks.length > 0) && (
