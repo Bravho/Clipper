@@ -693,6 +693,21 @@ export class VideoGenerationService {
   /** Failure bookkeeping for a worker-run step (mirrors the inline `.catch`). */
   async recordRenderStepFailure(job: VideoGenerationJob): Promise<void> {
     const step = isRenderStep(job.renderStep) ? job.renderStep : null;
+
+    // Travy is SOFT-FAILING: the other channels are already delivered, so a Travy
+    // step failure must never hard-fail the whole pipeline (which would strand the
+    // job on `Failed` with no valid retry handler). Record only the Travy status +
+    // reason and leave currentStep where it is (AwaitingDistributionReview), so the
+    // requester can retry it. This also guards the worker-guard case, where the
+    // step is rejected before `_runTventVideoGeneration`'s own try/catch runs.
+    if (step === RenderStep.TventGeneration) {
+      await videoGenerationJobRepository.update(job.id, {
+        tventVideoStatus: "failed",
+        tventVideoError: "การสร้างวิดีโอ Travy ล้มเหลว กรุณากดลองใหม่",
+      });
+      return;
+    }
+
     await videoGenerationJobRepository.update(job.id, {
       status: VideoGenerationJobStatus.Failed,
       currentStep: VideoGenerationStep.Failed,
