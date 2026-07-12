@@ -16,6 +16,7 @@ import {
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform, PLATFORM_ASPECT_RATIOS, PLATFORM_LABELS } from "@/domain/enums/Platform";
 import { getRequiredRatiosForPlatforms } from "@/lib/ai/ffmpegService";
+import { isJobStalled } from "@/config/stallThresholds";
 import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
@@ -451,6 +452,10 @@ export default async function RequestDetailPage({
           pipelineJob.finalExport_4_5_assetId,
         ].filter(Boolean).length;
 
+        // Stranded on a processing step past its threshold → offer a manual retry
+        // (never auto-fails; a legitimately long render just keeps loading).
+        const stalled = isJobStalled(pipelineJob);
+
         // Parse scene plan — prefer approved version; fall back to raw AI output
         let scenePlan: ScenePlan[] = [];
         const scenePlanSrc = pipelineJob.approvedScenePlan ?? pipelineJob.scenePlan;
@@ -561,6 +566,7 @@ export default async function RequestDetailPage({
               tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
               requiredRatioCount={requiredRatioCount}
               readyRatioCount={readyRatioCount}
+              stalled={stalled}
             />
 
             {!isFailed && isGeneratingSceneDesign && (

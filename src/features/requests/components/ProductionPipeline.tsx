@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { CREDITS_CONFIG, PIPELINE_PHASES } from "@/config/credits";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 
@@ -52,6 +54,10 @@ interface Props {
   totalChannels?: number;
   videoGenStatus?: "submitted" | "processing" | null;
   videoGenLastPolledAt?: Date | null;
+  /** Request id — needed to POST the stalled-step retry. */
+  requestId?: string;
+  /** True when the job has been stuck on this processing step past its threshold. */
+  stalled?: boolean;
 }
 
 export function ProductionPipeline({
@@ -61,7 +67,34 @@ export function ProductionPipeline({
   totalChannels = DEFAULT_CHANNELS,
   videoGenStatus,
   videoGenLastPolledAt,
+  requestId,
+  stalled = false,
 }: Props) {
+  const router = useRouter();
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  async function handleStalledRetry() {
+    if (!requestId) return;
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/retry-stalled`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setRetryError(data?.error ?? "ลองใหม่ไม่สำเร็จ กรุณาลองอีกครั้ง");
+        setRetrying(false);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setRetryError("เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองอีกครั้ง");
+      setRetrying(false);
+    }
+  }
+
   const isFailed = currentStep === VideoGenerationStep.Failed;
   const failedPhase = isFailed && failedAtStep ? (STEP_TO_PHASE[failedAtStep] ?? 0) : 0;
   const activePhase = currentStep && !isFailed ? (STEP_TO_PHASE[currentStep] ?? 0) : 0;
@@ -233,6 +266,33 @@ export function ProductionPipeline({
           );
         })}
       </ol>
+
+      {/* Stalled recovery: the job has sat on this processing step past its
+          generous threshold (likely an interrupted render or a worker that went
+          away). We never auto-fail it — instead we let the requester re-trigger
+          this step. If it was actually still working, this simply restarts it. */}
+      {stalled && !isFailed && (
+        <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm font-semibold text-amber-800">
+            ขั้นตอนนี้ใช้เวลานานกว่าปกติ
+          </p>
+          <p className="mt-0.5 text-xs text-amber-700">
+            อาจเกิดปัญหาค้างระหว่างการประมวลผล คุณสามารถกดเริ่มขั้นตอนนี้ใหม่ได้
+            หากยังทำงานอยู่ ระบบจะเริ่มประมวลผลใหม่ให้
+          </p>
+          {retryError && (
+            <p className="mt-1 text-xs text-red-600">{retryError}</p>
+          )}
+          <button
+            type="button"
+            onClick={handleStalledRetry}
+            disabled={retrying || !requestId}
+            className="mt-2 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+          >
+            {retrying ? "กำลังเริ่มใหม่..." : "ลองขั้นตอนนี้อีกครั้ง"}
+          </button>
+        </div>
+      )}
 
       {/* One-time charge — all steps above are included in a single fee. */}
       <div className="mt-1 border-t border-slate-100 pt-3">

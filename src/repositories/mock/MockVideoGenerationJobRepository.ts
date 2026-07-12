@@ -79,6 +79,7 @@ export class MockVideoGenerationJobRepository
     const job: VideoGenerationJob = {
       id: crypto.randomUUID(),
       ...input,
+      stepStartedAt: now,
       createdAt: now,
       updatedAt: now,
     };
@@ -97,6 +98,7 @@ export class MockVideoGenerationJobRepository
       ...existing,
       ...input,
       id,
+      ...(input.currentStep !== undefined ? { stepStartedAt: new Date() } : {}),
       updatedAt: new Date(),
     };
     this.store.set(id, updated);

@@ -120,6 +120,9 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     renderHeartbeatAt: row.render_heartbeat_at
       ? new Date(row.render_heartbeat_at as string)
       : null,
+    stepStartedAt: row.step_started_at
+      ? new Date(row.step_started_at as string)
+      : new Date(row.created_at as string),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -320,6 +323,13 @@ export class PostgresVideoGenerationJobRepository
       );
       if (!rows[0]) throw new Error(`VideoGenerationJob not found: ${id}`);
       return rowToJob(rows[0]);
+    }
+
+    // Stamp step entry whenever current_step changes, so the requester UI can
+    // detect a job stranded on a processing step (interrupted inline render /
+    // abandoned claim) and offer a manual retry. Only bumped on a real step change.
+    if (input.currentStep !== undefined) {
+      sets.push(`step_started_at = NOW()`);
     }
 
     sets.push(`updated_at = NOW()`);

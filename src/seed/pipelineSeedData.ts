@@ -74,6 +74,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     animationApprovedBy: null,
     finalApprovedBy: null,
 
+    stepStartedAt: d("2026-05-03T10:01:00Z"),
     createdAt: d("2026-05-03T10:00:00Z"),
     updatedAt: d("2026-05-03T10:01:00Z"),
   },
@@ -162,6 +163,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     animationApprovedBy: null,
     finalApprovedBy: null,
 
+    stepStartedAt: d("2026-05-03T11:05:00Z"),
     createdAt: d("2026-05-03T11:00:00Z"),
     updatedAt: d("2026-05-03T11:05:00Z"),
   },

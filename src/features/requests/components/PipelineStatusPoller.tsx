@@ -20,6 +20,8 @@ interface Props {
   requiredRatioCount?: number;
   /** How many ratios had already landed at server render — the refresh baseline. */
   initialReadyRatioCount?: number;
+  /** Whether the job already looked stalled at server render — the refresh baseline. */
+  initialStalled?: boolean;
   onVideoGenStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
 }
 
@@ -35,6 +37,7 @@ export function PipelineStatusPoller({
   revealRatios = false,
   requiredRatioCount,
   initialReadyRatioCount = 0,
+  initialStalled = false,
   onVideoGenStatus,
 }: Props) {
   const router = useRouter();
@@ -42,6 +45,9 @@ export function PipelineStatusPoller({
   // Highest ratio count we've already refreshed for — starts at what the server
   // rendered, so we only refresh when a NEW ratio lands.
   const revealedCountRef = useRef(initialReadyRatioCount);
+  // Whether we've already refreshed for the stalled banner — starts at the
+  // server-rendered value so we only refresh on the false→true transition.
+  const stalledRef = useRef(initialStalled);
 
   useEffect(() => { onVideoGenStatusRef.current = onVideoGenStatus; }, [onVideoGenStatus]);
 
@@ -89,6 +95,13 @@ export function PipelineStatusPoller({
           if (requiredRatioCount != null && readyCount >= requiredRatioCount) {
             clearInterval(interval);
           }
+        }
+        // Stalled recovery: the step doesn't change when a job strands, so refresh
+        // once when the server reports it has crossed the stall threshold, to
+        // reveal the "taking longer than expected — retry" affordance.
+        if (data.stalled && !stalledRef.current) {
+          stalledRef.current = true;
+          router.refresh();
         }
         // Phase 7 — the Travy render runs in the background while the job is
         // already Complete (no step change), so also refresh when its status

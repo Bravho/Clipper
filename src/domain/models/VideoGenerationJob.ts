@@ -239,6 +239,14 @@ export interface VideoGenerationJob {
   animationApprovedBy: string | null;
   finalApprovedBy: string | null;
 
+  /**
+   * When the job entered its CURRENT step. Auto-stamped by the repository on any
+   * update that changes `currentStep`. Used to detect a job stranded on a
+   * processing step (see `src/config/stallThresholds.ts`). Defaults to row
+   * creation time on legacy rows via migration 013.
+   */
+  stepStartedAt: Date;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -261,13 +269,19 @@ export interface ChannelPublishingDraft {
   error?: string | null;
 }
 
+// `stepStartedAt` is auto-managed by the repository (stamped whenever an update
+// changes currentStep; DB default on insert), so callers never set it — it is
+// excluded from both input types.
 export type CreateVideoGenerationJobInput = Omit<
   VideoGenerationJob,
-  "id" | "createdAt" | "updatedAt"
+  "id" | "createdAt" | "updatedAt" | "stepStartedAt"
 >;
 
 export type UpdateVideoGenerationJobInput = Partial<
-  Omit<VideoGenerationJob, "id" | "requestId" | "createdAt" | "updatedAt">
+  Omit<
+    VideoGenerationJob,
+    "id" | "requestId" | "createdAt" | "updatedAt" | "stepStartedAt"
+  >
 >;
 
 export interface ScenePlan {

@@ -41,6 +41,7 @@ import { AI_CONFIG } from "@/config/aiTools";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE } from "@/config/renderQueue";
+import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
 
 const execFileAsync = promisify(execFile);
 
@@ -3159,9 +3160,58 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         return updated;
       }
 
+      case VideoGenerationStep.GeneratingOverlay: {
+        const updated = await videoGenerationJobRepository.update(jobId, {
+          currentStep: VideoGenerationStep.GeneratingOverlay,
+        });
+        await this._dispatchHeavy(updated, RenderStep.OverlayComposition, () =>
+          this._runOverlayComposition(updated)
+        );
+        return updated;
+      }
+
+      case VideoGenerationStep.GeneratingAdditionalRatios: {
+        const updated = await videoGenerationJobRepository.update(jobId, {
+          currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
+        });
+        await this._dispatchHeavy(updated, RenderStep.AdditionalRatios, () =>
+          this._runAdditionalRatiosOverlay(updated)
+        );
+        return updated;
+      }
+
       default:
         throw new Error(`No retry handler for step: ${failedAt}`);
     }
+  }
+
+  /**
+   * Manually retry a job stranded on a processing step — an interrupted inline
+   * render or an abandoned worker claim, where `render_state` is not "failed" so
+   * `reconcileFailedRender` can't recover it and the page would otherwise spin
+   * forever. This is a recovery affordance, not a cancel: it's only permitted
+   * once the job actually looks stalled (`isJobStalled`), never on a healthy
+   * in-progress render. It marks the stuck step Failed, then reuses the standard
+   * `retryPipeline` resume path to re-dispatch that same step from scratch.
+   */
+  async retryStalledStep(jobId: string): Promise<VideoGenerationJob> {
+    const job = await this._getJob(jobId);
+    if (!STALLABLE_STEPS.includes(job.currentStep)) {
+      throw new Error(
+        `Job is not on a retryable processing step: ${job.currentStep}`
+      );
+    }
+    if (!isJobStalled(job)) {
+      throw new Error(
+        "Job is still processing — retry becomes available only once it has stalled."
+      );
+    }
+    await videoGenerationJobRepository.update(jobId, {
+      status: VideoGenerationJobStatus.Failed,
+      currentStep: VideoGenerationStep.Failed,
+      failedAtStep: job.currentStep,
+    });
+    return this.retryPipeline(jobId);
   }
 
   /** Mark job as complete (called after all platforms published). */

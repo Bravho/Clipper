@@ -8,6 +8,7 @@ import {
   videoGenerationJobRepository,
 } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
+import { isJobStalled } from "@/config/stallThresholds";
 
 /**
  * GET /api/requests/[id]/pipeline-status
@@ -65,6 +66,10 @@ export async function GET(
       currentStep: job.currentStep,
       failedAtStep: job.failedAtStep,
       jobId: job.id,
+      // A job stranded on a processing step (interrupted inline render / abandoned
+      // claim) past its generous per-step threshold. The page uses this to offer a
+      // manual retry instead of spinning forever. Never auto-fails.
+      stalled: isJobStalled(job),
       voiceError,
       processedVoiceAssetId: job.processedVoiceAssetId,
       processedVoiceUrl: processedVoiceAsset?.storageUrl ?? null,

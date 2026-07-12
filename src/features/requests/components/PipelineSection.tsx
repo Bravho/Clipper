@@ -21,6 +21,8 @@ interface Props {
    */
   requiredRatioCount?: number;
   readyRatioCount?: number;
+  /** True when the job has been stuck on a processing step past its threshold. */
+  stalled?: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export function PipelineSection({
   tventVideoStatus = null,
   requiredRatioCount,
   readyRatioCount,
+  stalled = false,
 }: Props) {
   const [videoGenStatus, setVideoGenStatus] = useState<"submitted" | "processing" | null>(null);
   const [videoGenLastPolledAt, setVideoGenLastPolledAt] = useState<Date | null>(null);
@@ -65,6 +68,8 @@ export function PipelineSection({
         totalChannels={totalChannels}
         videoGenStatus={videoGenStatus}
         videoGenLastPolledAt={videoGenLastPolledAt}
+        requestId={requestId}
+        stalled={stalled}
       />
       {isPolling && (
         <PipelineStatusPoller
@@ -74,6 +79,7 @@ export function PipelineSection({
           revealRatios={revealRatios}
           requiredRatioCount={requiredRatioCount}
           initialReadyRatioCount={readyRatioCount}
+          initialStalled={stalled}
           onVideoGenStatus={(status, polledAt) => {
             setVideoGenStatus(status);
             setVideoGenLastPolledAt(polledAt);
