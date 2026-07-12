@@ -28,9 +28,11 @@ export default function TermsPage() {
           <section>
             <h2 className="text-base font-semibold text-slate-900">1. Service Description</h2>
             <p>
-              Clipper is a managed short-video production and distribution service.
-              You submit a brief and source materials; our team creates and publishes
-              a promotional clip on your behalf.
+              Clipper is a managed short-video production service. You submit a
+              brief and source materials; our team creates a promotional clip that
+              you can download and post on your own channels. Clipper does not
+              publish clips to your channels on your behalf. Clipper may, at its
+              discretion, feature selected clips on its own channels.
             </p>
           </section>
 

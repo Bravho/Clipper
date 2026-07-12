@@ -11,6 +11,15 @@ interface Props {
    * even after the job is Complete, so the Travy clip appears without a manual
    * reload. */
   tventVideoStatus?: string | null;
+  /**
+   * Progressive per-ratio reveal: when true, the job is at AwaitingFinalApproval
+   * with more distribution-channel ratios still composing. Keep polling and
+   * refresh as each new ratio's finalExport id appears.
+   */
+  revealRatios?: boolean;
+  requiredRatioCount?: number;
+  /** How many ratios had already landed at server render — the refresh baseline. */
+  initialReadyRatioCount?: number;
   onVideoGenStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
 }
 
@@ -19,15 +28,26 @@ interface Props {
 // old 30s interval was a Veo-era throttle; Veo is no longer on the path.)
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
-export function PipelineStatusPoller({ requestId, currentStep, tventVideoStatus, onVideoGenStatus }: Props) {
+export function PipelineStatusPoller({
+  requestId,
+  currentStep,
+  tventVideoStatus,
+  revealRatios = false,
+  requiredRatioCount,
+  initialReadyRatioCount = 0,
+  onVideoGenStatus,
+}: Props) {
   const router = useRouter();
   const onVideoGenStatusRef = useRef(onVideoGenStatus);
+  // Highest ratio count we've already refreshed for — starts at what the server
+  // rendered, so we only refresh when a NEW ratio lands.
+  const revealedCountRef = useRef(initialReadyRatioCount);
 
   useEffect(() => { onVideoGenStatusRef.current = onVideoGenStatus; }, [onVideoGenStatus]);
 
   useEffect(() => {
     const tventGenerating = tventVideoStatus === "generating";
-    if (!POLLING_STEPS.includes(currentStep) && !tventGenerating) return;
+    if (!POLLING_STEPS.includes(currentStep) && !tventGenerating && !revealRatios) return;
 
     const isVideoGenStep = currentStep === VideoGenerationStep.GeneratingBaseVideo;
     const intervalMs = DEFAULT_POLL_INTERVAL_MS;
@@ -56,6 +76,20 @@ export function PipelineStatusPoller({ requestId, currentStep, tventVideoStatus,
         if (newStep && newStep !== currentStep) {
           router.refresh();
         }
+        // Progressive per-ratio reveal: while at AwaitingFinalApproval the step
+        // stays put, so refresh whenever a new ratio's finalExport id appears.
+        // Each refresh re-renders the server prop (readyRatioCount); once every
+        // required ratio has landed, the parent stops mounting this poller.
+        if (revealRatios && data.finalExports) {
+          const readyCount = Object.values(data.finalExports).filter(Boolean).length;
+          if (readyCount > revealedCountRef.current) {
+            revealedCountRef.current = readyCount;
+            router.refresh();
+          }
+          if (requiredRatioCount != null && readyCount >= requiredRatioCount) {
+            clearInterval(interval);
+          }
+        }
         // Phase 7 — the Travy render runs in the background while the job is
         // already Complete (no step change), so also refresh when its status
         // flips (generating → ready/failed) to reveal the finished clip.
@@ -68,7 +102,7 @@ export function PipelineStatusPoller({ requestId, currentStep, tventVideoStatus,
     }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [requestId, currentStep, tventVideoStatus, router]);
+  }, [requestId, currentStep, tventVideoStatus, revealRatios, requiredRatioCount, router]);
 
   return null;
 }

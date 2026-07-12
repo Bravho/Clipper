@@ -1001,7 +1001,10 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
     return (await mockJobRepo.findById(job.id))!;
   }
 
-  it("confirmPublishingByRequester posts every channel, records links, and completes/delivers", async () => {
+  it("confirmPublishingByRequester finalizes to Complete/Delivered WITHOUT posting to any channel", async () => {
+    // RClipper no longer publishes the requester's clip to their channels — the
+    // requester downloads and posts it themselves. Confirming simply closes out
+    // the request; no social API is called and no publishing link is recorded.
     const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
     const cap = await createCaptioned(request.id, "9:16");
     const drafts = [
@@ -1010,23 +1013,21 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
     const job = await createReviewJob(request.id, { "9:16": cap.id }, drafts);
 
     const service = new VideoGenerationService();
-    const updated = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
+    const updated = await service.confirmPublishingByRequester(job.id, "user-001");
 
-    expect(tiktokUploadMock).toHaveBeenCalledTimes(1);
-    expect(tiktokUploadMock.mock.calls[0][0].videoStorageKey).toBe(cap.storageKey);
+    expect(tiktokUploadMock).not.toHaveBeenCalled();
     expect(updated.currentStep).toBe(VideoGenerationStep.Complete);
-    expect(updated.publishingDrafts?.[0].status).toBe("posted");
-    expect(updated.publishingDrafts?.[0].url).toContain("tiktok.com");
 
     const req = await mockClipRepo.findById(request.id);
     expect(req?.status).toBe(RequestStatus.Delivered);
 
     const links = await mockPublishingLinkRepo.findByRequestId(request.id);
-    expect(links.some((l) => l.platform === Platform.TikTok)).toBe(true);
+    expect(links).toHaveLength(0);
   });
 
-  it("confirmPublishingByRequester surfaces a missing-ratio export as an error (no fallback) and stays on review", async () => {
-    // Instagram needs a 4:5 export; only 9:16 exists → error, no posting attempt.
+  it("confirmPublishingByRequester completes even when a channel export ratio is missing (no posting attempted)", async () => {
+    // Instagram would need a 4:5 export; only 9:16 exists. Since nothing is
+    // posted, that no longer matters — the request still finalizes.
     const request = await createRequestWithPlatforms([Platform.Instagram, Platform.TventApp]);
     const cap = await createCaptioned(request.id, "9:16");
     const drafts = [
@@ -1035,47 +1036,10 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
     const job = await createReviewJob(request.id, { "9:16": cap.id }, drafts);
 
     const service = new VideoGenerationService();
-    const updated = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
+    const updated = await service.confirmPublishingByRequester(job.id, "user-001");
 
     expect(instagramUploadMock).not.toHaveBeenCalled();
-    expect(updated.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
-    expect(updated.publishingDrafts?.[0].status).toBe("failed");
-    expect(updated.publishingDrafts?.[0].error).toContain("4:5");
-    const req = await mockClipRepo.findById(request.id);
-    expect(req?.status).not.toBe(RequestStatus.Delivered);
-  });
-
-  it("on partial failure it stays on review; resubmit posts only the failed channel (no double-post)", async () => {
-    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16", "16:9"]);
-    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.YouTube, Platform.TventApp]);
-    const cap916 = await createCaptioned(request.id, "9:16"); // TikTok
-    const cap169 = await createCaptioned(request.id, "16:9"); // YouTube
-    const drafts = [
-      { platform: Platform.TikTok, title: "", caption: "tt", hashtags: [], status: "pending" },
-      { platform: Platform.YouTube, title: "yt", caption: "yt", hashtags: [], status: "pending" },
-    ];
-    const job = await createReviewJob(request.id, { "9:16": cap916.id, "16:9": cap169.id }, drafts);
-
-    // First attempt: YouTube fails.
-    youtubeUploadMock.mockRejectedValueOnce(new Error("YouTube token refresh failed: 401"));
-
-    const service = new VideoGenerationService();
-    const first = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
-
-    expect(tiktokUploadMock).toHaveBeenCalledTimes(1);
-    expect(first.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
-    const ttDraft1 = first.publishingDrafts?.find((d) => d.platform === Platform.TikTok);
-    const ytDraft1 = first.publishingDrafts?.find((d) => d.platform === Platform.YouTube);
-    expect(ttDraft1?.status).toBe("posted");
-    expect(ytDraft1?.status).toBe("failed");
-    expect(ytDraft1?.error).toContain("401");
-
-    // Resubmit: YouTube now succeeds; TikTok must NOT be posted again.
-    const second = await service.confirmPublishingByRequester(job.id, "user-001", drafts as any);
-
-    expect(tiktokUploadMock).toHaveBeenCalledTimes(1); // still once — no double-post
-    expect(youtubeUploadMock).toHaveBeenCalledTimes(2); // retried
-    expect(second.currentStep).toBe(VideoGenerationStep.Complete);
+    expect(updated.currentStep).toBe(VideoGenerationStep.Complete);
     const req = await mockClipRepo.findById(request.id);
     expect(req?.status).toBe(RequestStatus.Delivered);
   });

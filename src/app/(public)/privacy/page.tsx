@@ -57,9 +57,10 @@ export default function PrivacyPage() {
             </h2>
             <p>
               We use Google OAuth for authentication (if you choose this option).
-              We publish clips to third-party platforms — TikTok, Facebook,
-              Instagram, YouTube — as directed by you. Each of these platforms
-              has its own privacy policy and data practices.
+              If we feature a clip on our own channels, it may be posted to
+              third-party platforms such as TikTok, Facebook, Instagram, or
+              YouTube. Each of these platforms has its own privacy policy and data
+              practices.
             </p>
           </section>
 

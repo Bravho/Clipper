@@ -7,6 +7,7 @@ import {
   uploadedAssetRepository,
   videoGenerationJobRepository,
 } from "@/repositories/index";
+import { videoGenerationService } from "@/services/VideoGenerationService";
 
 /**
  * GET /api/requests/[id]/pipeline-status
@@ -42,6 +43,11 @@ export async function GET(
   if (!job) {
     return NextResponse.json({ currentStep: null, failedAtStep: null, jobId: null });
   }
+
+  // Safety net: if a worker marked the render claim failed but never advanced the
+  // job step, surface the failure here instead of letting the poller spin forever.
+  // No-op unless renderState === "failed" (legitimate long renders keep loading).
+  job = await videoGenerationService.reconcileFailedRender(job);
 
   // The montage engine renders each scene segment in a background task that
   // advances the step itself, so there is nothing to poll here — the poller

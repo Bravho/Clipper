@@ -45,13 +45,13 @@ export enum VideoGenerationStep {
   AwaitingAdditionalRatios   = "awaiting_additional_ratios",
   GeneratingAdditionalRatios = "generating_additional_ratios",
 
-  // Step 4.75 - Distribution review (Phase 8). After the captioned videos for
-  // every selected channel are approved, the requester reviews an auto-filled
-  // (Gemini-generated) publishing form per channel — title/caption/hashtags —
-  // editable before posting. The Travy EN+ZH render runs fire-and-forget in the
-  // background here (tventVideoStatus). Only when the requester confirms does the
-  // pipeline post to the channels, record publishing links, and mark Complete/
-  // Delivered.
+  // Step 4.75 - Final review + download (Phase 8). After the captioned videos for
+  // every selected channel are approved, the requester downloads the finished
+  // exports (every ratio) and posts them on their own channels — RClipper does
+  // NOT publish on the requester's behalf. The Travy EN+ZH render runs
+  // fire-and-forget in the background here (tventVideoStatus). When the requester
+  // confirms, the request is simply marked Complete/Delivered. (Featuring select
+  // clips on RClipper's own channels is a separate staff/admin curation action.)
   AwaitingDistributionReview = "awaiting_distribution_review",
 
   // Step 5 - Platform publishing.
@@ -96,7 +96,7 @@ export const PIPELINE_STEP_LABELS: Record<VideoGenerationStep, string> = {
   [VideoGenerationStep.AwaitingOverlayApproval]:    "Subtitled video ready for review",
   [VideoGenerationStep.AwaitingAdditionalRatios]:   "Ready to generate other channel formats",
   [VideoGenerationStep.GeneratingAdditionalRatios]: "Generating other channel formats...",
-  [VideoGenerationStep.AwaitingDistributionReview]: "Review publishing details for each channel",
+  [VideoGenerationStep.AwaitingDistributionReview]: "Your video is ready to download",
   [VideoGenerationStep.Publishing]:                 "Publishing to platforms",
   [VideoGenerationStep.Complete]:                   "Complete",
   [VideoGenerationStep.Failed]:                     "Production error",
@@ -123,9 +123,9 @@ export const PIPELINE_STEP_DESCRIPTIONS: Record<VideoGenerationStep, string> = {
   [VideoGenerationStep.AwaitingOverlayApproval]:    "Your subtitled video is ready - please review and approve.",
   [VideoGenerationStep.AwaitingAdditionalRatios]:   "Generate the remaining aspect ratios for your other distribution channels.",
   [VideoGenerationStep.GeneratingAdditionalRatios]: "Generating subtitled videos for your other distribution channels.",
-  [VideoGenerationStep.AwaitingDistributionReview]: "Review and edit the title, caption, and hashtags for each channel before publishing.",
+  [VideoGenerationStep.AwaitingDistributionReview]: "Download your finished video in every format and post it on your own channels. Selected clips may be featured on RClipper's channels.",
   [VideoGenerationStep.Publishing]:                 "Your video is being published to selected platforms.",
-  [VideoGenerationStep.Complete]:                   "Your video has been published successfully.",
+  [VideoGenerationStep.Complete]:                   "Your video is complete and ready to download.",
   [VideoGenerationStep.Failed]:                     "A production issue occurred. Please check the details below.",
   [VideoGenerationStep.AwaitingVoiceRecording]:     "Recording your voiceover.",
   [VideoGenerationStep.ProcessingVoice]:            "Applying professional voice enhancement.",

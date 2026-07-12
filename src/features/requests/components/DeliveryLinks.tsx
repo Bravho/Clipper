@@ -6,17 +6,16 @@ interface DeliveryLinksProps {
 }
 
 /**
- * Renders the published/delivered links for a completed clip request.
- *
- * TODO: Staff/Admin — when publishing automation is added, this section
- *   will be populated automatically via social media API webhooks.
- *   Staff will no longer need to manually enter links.
+ * Renders the links for a clip that has been FEATURED on one of RClipper's own
+ * channels. RClipper does not publish the requester's clip to their channels on
+ * their behalf — these links only appear when staff/admin choose to feature a
+ * clip (a curation action).
  */
 export function DeliveryLinks({ links }: DeliveryLinksProps) {
   if (links.length === 0) {
     return (
       <p className="text-sm text-slate-500">
-        Publishing links will appear here once your clip has been posted.
+        This clip has not been featured on any RClipper channel.
       </p>
     );
   }
@@ -52,7 +51,7 @@ export function DeliveryLinks({ links }: DeliveryLinksProps) {
         </div>
       ))}
       <p className="text-xs text-slate-400 mt-1">
-        You may repost or share these links on your own channels at no cost.
+        These are posts where RClipper has featured your clip on its own channels.
       </p>
     </div>
   );

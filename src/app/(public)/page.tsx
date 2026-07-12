@@ -42,16 +42,16 @@ export default async function HomePage() {
           </h1>
           <p className="mx-auto mb-3 max-w-2xl text-lg text-slate-300">
             ส่ง brief — เลือก{" "}
-            <span className="font-semibold text-white">AI ตัดต่อพร้อมโพสต์ ภายใน 24 ชม.</span>{" "}
+            <span className="font-semibold text-white">AI ตัดต่อเสร็จ ภายใน 24 ชม.</span>{" "}
             หรือ{" "}
             <span className="font-semibold text-white">
               Editor ที่เชี่ยวชาญ เพื่อเข้าถึงโฆษณาให้คนไทยและนักท่องเที่ยวต่างชาติสนใจ
             </span>
           </p>
           <p className="mx-auto mb-10 max-w-xl text-base text-slate-400">
-            พร้อม distribution ตรงสู่{" "}
+            ส่งออกไฟล์ในอัตราส่วนที่เหมาะกับ{" "}
             <span className="font-medium text-white">Travy</span>, TikTok,
-            Instagram, YouTube และช่องทางอื่นๆ
+            Instagram, YouTube และช่องทางอื่นๆ — ดาวน์โหลดแล้วโพสต์ได้ทันที
           </p>
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link href={ROUTES.SIGNUP}>
@@ -78,7 +78,7 @@ export default async function HomePage() {
           {[
             { value: "24 ชม.", label: "เร็วที่สุดสำหรับ AI track" },
             { value: "3 ภาษา", label: "Subtitle ไทย · อังกฤษ · จีน" },
-            { value: "Travy", label: "Distribution หลักในไทย" },
+            { value: "Travy", label: "แพลตฟอร์มวิดีโอท่องเที่ยวไทย" },
             { value: "30 credits", label: "ฟรีเมื่อสมัคร ไม่ต้องใส่บัตร" },
           ].map((s) => (
             <div key={s.label} className="flex flex-col gap-0.5">
@@ -96,7 +96,7 @@ export default async function HomePage() {
             เลือกแบบที่ใช่สำหรับธุรกิจคุณ
           </h2>
           <p className="mb-12 text-center text-slate-500">
-            ทั้งสองแบบรวม distribution อัตโนมัติและ subtitle หลายภาษาในราคาเดียวกัน
+            ทั้งสองแบบรวม subtitle หลายภาษาและไฟล์หลายอัตราส่วนพร้อมโพสต์ในราคาเดียวกัน
           </p>
           <div className="grid gap-6 md:grid-cols-2">
             {/* AI track */}
@@ -109,14 +109,14 @@ export default async function HomePage() {
               </h3>
               <p className="mb-6 text-slate-600 leading-relaxed flex-1">
                 ส่งรูป วิดีโอ หรือแค่คำบรรยาย AI จัดการตัดต่อ ใส่ subtitle
-                ไทย-อังกฤษ-จีน และโพสต์ให้อัตโนมัติ เหมาะสำหรับธุรกิจที่ต้องการ
-                คอนเทนต์สม่ำเสมอในราคาประหยัด
+                ไทย-อังกฤษ-จีน และส่งออกไฟล์หลายอัตราส่วนให้พร้อมดาวน์โหลด
+                เหมาะสำหรับธุรกิจที่ต้องการคอนเทนต์สม่ำเสมอในราคาประหยัด
               </p>
               <ul className="mb-8 space-y-2.5 text-sm text-slate-700">
                 {[
                   "Subtitle 3 ภาษา: ไทย · อังกฤษ · จีน",
                   "Export 4 ratio: 9:16 · 16:9 · 1:1 · 4:5",
-                  "โพสต์อัตโนมัติ ไม่ต้องทำเอง",
+                  "ไฟล์พร้อมโพสต์ ดาวน์โหลดได้ทันที",
                   "ผลลัพธ์ภายใน 24–48 ชั่วโมง",
                 ].map((f) => (
                   <li key={f} className="flex items-start gap-2.5">
@@ -222,8 +222,8 @@ export default async function HomePage() {
               },
               {
                 step: "4",
-                title: "รับคลิป + โพสต์อัตโนมัติ",
-                desc: "คลิปถูกโพสต์ไปยังช่องทางที่เลือก รับ link แชร์ต่อได้ทันที",
+                title: "รับคลิปพร้อมโพสต์",
+                desc: "ดาวน์โหลดคลิปทุกอัตราส่วน พร้อมนำไปโพสต์บนช่องทางของคุณได้ทันที",
               },
             ].map((item) => (
               <div key={item.step} className="flex flex-col gap-3">
@@ -242,14 +242,15 @@ export default async function HomePage() {
       <section className="bg-slate-900 py-16 px-4 text-center text-white border-t border-slate-700">
         <div className="mx-auto max-w-3xl">
           <div className="mb-4 inline-block rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-white/20">
-            Distribution อัตโนมัติ
+            พร้อมสำหรับทุกช่องทาง
           </div>
           <h2 className="mb-4 text-2xl font-bold">
-            โพสต์พร้อมกันทุกช่องทาง รวมถึง Travy
+            ไฟล์พร้อมโพสต์ทุกช่องทาง รวมถึง Travy
           </h2>
           <p className="mb-8 text-slate-400 max-w-xl mx-auto">
             Travy คือ platform วิดีโอท่องเที่ยวของไทย ที่นักท่องเที่ยวต่างชาติใช้
-            ค้นหาประสบการณ์ในไทย — เราโพสต์ให้อัตโนมัติพร้อมกับ platform สากลอื่นๆ
+            ค้นหาประสบการณ์ในไทย — เราส่งออกไฟล์ในอัตราส่วนที่เหมาะกับแต่ละช่องทางให้พร้อมโพสต์
+            และคลิปที่คัดเลือกอาจได้รับการนำไปเผยแพร่บนช่องทางของ RClipper
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             {[

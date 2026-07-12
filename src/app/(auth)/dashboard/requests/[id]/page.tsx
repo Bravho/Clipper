@@ -5,6 +5,7 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 import { clipRequestService } from "@/services/ClipRequestService";
+import { videoGenerationService } from "@/services/VideoGenerationService";
 import { requestPresentationService } from "@/services/RequestPresentationService";
 import {
   uploadedAssetRepository,
@@ -14,6 +15,7 @@ import {
 } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform, PLATFORM_ASPECT_RATIOS, PLATFORM_LABELS } from "@/domain/enums/Platform";
+import { getRequiredRatiosForPlatforms } from "@/lib/ai/ffmpegService";
 import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
@@ -64,12 +66,20 @@ export default async function RequestDetailPage({
   }
 
   // Load supporting data in parallel
-  const [assets, publishingLinks, statusHistory, pipelineJob] = await Promise.all([
+  const [assets, publishingLinks, statusHistory, rawPipelineJob] = await Promise.all([
     uploadedAssetRepository.findByRequestId(id),
     publishingLinkRepository.findByRequestId(id),
     requestStatusHistoryRepository.findByRequestId(id),
     videoGenerationJobRepository.findByRequestId(id),
   ]);
+
+  // Reconcile a stuck-failed render (worker marked the claim failed but never
+  // advanced the job step) so a page refresh reflects the failure immediately —
+  // the status poller performs the same reconciliation on its interval. No-op
+  // unless the render genuinely failed, so legitimate long renders still load.
+  const pipelineJob = rawPipelineJob
+    ? await videoGenerationService.reconcileFailedRender(rawPipelineJob)
+    : null;
 
   const baseVideoAsset = pipelineJob?.baseVideoAssetId
     ? assets.find((a) => a.id === pipelineJob.baseVideoAssetId) ?? null
@@ -269,9 +279,6 @@ export default async function RequestDetailPage({
   );
 
   const isDraft = request.status === RequestStatus.Draft;
-  const isTerminal =
-    request.status === RequestStatus.Delivered ||
-    request.status === RequestStatus.Published;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
@@ -430,6 +437,20 @@ export default async function RequestDetailPage({
           pipelineJob.voiceDurationSeconds ?? request.durationSeconds
         );
 
+        // Progressive per-ratio reveal: how many distribution-channel ratios the
+        // compose step must produce, and how many have already landed. These drive
+        // live polling during AwaitingFinalApproval so the remaining ratios appear
+        // as they finish, without a manual reload.
+        const requiredRatioCount = getRequiredRatiosForPlatforms(
+          request.targetPlatforms
+        ).length;
+        const readyRatioCount = [
+          pipelineJob.finalExport_9_16_assetId,
+          pipelineJob.finalExport_16_9_assetId,
+          pipelineJob.finalExport_1_1_assetId,
+          pipelineJob.finalExport_4_5_assetId,
+        ].filter(Boolean).length;
+
         // Parse scene plan — prefer approved version; fall back to raw AI output
         let scenePlan: ScenePlan[] = [];
         const scenePlanSrc = pipelineJob.approvedScenePlan ?? pipelineJob.scenePlan;
@@ -538,6 +559,8 @@ export default async function RequestDetailPage({
               durationSeconds={effectiveDurationSeconds}
               totalChannels={request.targetPlatforms.length}
               tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
+              requiredRatioCount={requiredRatioCount}
+              readyRatioCount={readyRatioCount}
             />
 
             {!isFailed && isGeneratingSceneDesign && (
@@ -684,19 +707,18 @@ export default async function RequestDetailPage({
         );
       })()}
 
-      {/* Delivery links */}
-      {(isTerminal || publishingLinks.length > 0) && (
+      {/* Published links — only shown if this clip has been featured on an
+          RClipper channel (a staff/admin curation action). RClipper does not
+          auto-publish the requester's clip to their channels. */}
+      {publishingLinks.length > 0 && (
         <Card className="mb-6">
           <h2 className="mb-4 text-base font-semibold text-slate-900">
-            Published Links
+            Featured On
           </h2>
           <DeliveryLinks links={publishingLinks} />
-          {isTerminal && (
-            <p className="mt-4 text-xs text-slate-400">
-              You may repost or share these links on your own channels at no cost.
-              The final edited clip remains the property of RClipper.
-            </p>
-          )}
+          <p className="mt-4 text-xs text-slate-400">
+            The final edited clip remains the property of RClipper.
+          </p>
         </Card>
       )}
 

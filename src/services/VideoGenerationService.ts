@@ -715,6 +715,39 @@ export class VideoGenerationService {
     });
   }
 
+  /**
+   * Read-side safety net for the requester's status poller.
+   *
+   * A worker that throws while running a claimed step marks the job's render
+   * claim as `renderState = "failed"`. If the corresponding job-step update
+   * (`recordRenderStepFailure`) didn't also land — e.g. the worker died right
+   * after marking the claim — the job is left sitting on a "processing" step
+   * (ComposingFinalVideo, GeneratingOverlay, …) with no failure recorded, so the
+   * page polls forever showing a spinner and never tells the requester it failed.
+   *
+   * This reconciles that stuck state: when a job whose render claim is `failed`
+   * is still on a non-terminal step, advance it to `Failed` (mirroring
+   * `recordRenderStepFailure`) so the failure panel and retry surface. It is
+   * idempotent and a strict no-op unless a genuinely-failed render is detected —
+   * a job that is merely still rendering has `renderState` "queued"/"claimed",
+   * never "failed", so legitimate long-running renders keep showing "loading".
+   */
+  async reconcileFailedRender(job: VideoGenerationJob): Promise<VideoGenerationJob> {
+    if (job.currentStep === VideoGenerationStep.Failed) return job;
+    if (job.renderState !== "failed") return job;
+
+    const step = isRenderStep(job.renderStep) ? job.renderStep : null;
+    // Travy is soft-failing: a Travy render failure must never hard-fail the
+    // whole pipeline (the other channels are already delivered).
+    if (step === RenderStep.TventGeneration) return job;
+
+    return videoGenerationJobRepository.update(job.id, {
+      status: VideoGenerationJobStatus.Failed,
+      currentStep: VideoGenerationStep.Failed,
+      failedAtStep: step ? RENDER_STEP_FAILED_AT[step] : VideoGenerationStep.Failed,
+    });
+  }
+
   private async _renderSceneSegment(job: VideoGenerationJob, sceneIndex: number): Promise<void> {
     const assetId = await this._renderSceneInto(job, sceneIndex);
     await videoGenerationJobRepository.update(job.id, {
@@ -2359,87 +2392,33 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /**
-   * Requester confirms publishing on the distribution-review step. Posts each
-   * not-yet-posted channel to its social platform using that channel's captioned
-   * export (matching the channel's aspect ratio — NO fallback: a missing export
-   * is surfaced as an error so the requester can regenerate that ratio). Records
-   * a PublishingLink per success and persists per-channel status/url/error on the
-   * drafts.
+   * Requester closes out the distribution-review step. RClipper does NOT publish
+   * the requester's clip to their social channels on their behalf — the requester
+   * downloads the finished exports (every ratio) and posts them on their own
+   * channels. Selected clips MAY later be featured on RClipper's own channels at
+   * RClipper's discretion; that curation is a staff/admin action (see
+   * `moderateAndPublishChannel` / `_postToChannel`, which remain wired to the
+   * social services for that internal use) and is never promised or triggered
+   * here.
    *
-   * Only when EVERY channel is "posted" does the request advance to Complete +
-   * Delivered. Any failure keeps the job on AwaitingDistributionReview with the
-   * error causes recorded, so the requester can fix them (e.g. missing API keys)
-   * and click resubmit — already-posted channels are SKIPPED so they are never
-   * double-posted.
+   * So this simply finalizes the request: mark it Delivered and the job Complete.
+   * No social API calls, no per-channel posting, no publishing-link records.
    */
   async confirmPublishingByRequester(
     jobId: string,
     userId: string,
-    editedDrafts?: ChannelPublishingDraft[]
+    _editedDrafts?: ChannelPublishingDraft[]
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingDistributionReview);
     const job = await this._getJob(jobId);
 
-    const { clipRequestRepository, publishingLinkRepository } = await import("@/repositories/index");
+    const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
     if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
-    // Merge any edits over the stored drafts (edited copy wins; posted channels
-    // keep their prior status/url so they are not retried/double-posted).
-    const stored = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
-    const source =
-      editedDrafts && editedDrafts.length > 0 ? editedDrafts : job.publishingDrafts ?? [];
-    const drafts: ChannelPublishingDraft[] = source.map((d) => {
-      const prior = stored.get(d.platform);
-      const alreadyPosted = prior?.status === "posted";
-      return {
-        platform: d.platform,
-        title: d.title ?? prior?.title ?? "",
-        caption: d.caption ?? prior?.caption ?? "",
-        hashtags: Array.isArray(d.hashtags) ? d.hashtags : prior?.hashtags ?? [],
-        status: alreadyPosted ? "posted" : "pending",
-        url: alreadyPosted ? prior?.url ?? null : null,
-        error: null,
-      };
-    });
-
-    // Post each not-yet-posted channel; collect per-channel outcomes.
-    const results: ChannelPublishingDraft[] = [];
-    for (const draft of drafts) {
-      if (draft.status === "posted") {
-        results.push(draft);
-        continue;
-      }
-      const platform = draft.platform as Platform;
-      try {
-        const url = await this._postToChannel(job, platform, draft);
-        await publishingLinkRepository.create({
-          requestId: job.requestId,
-          platform,
-          url,
-          publishedAt: new Date(),
-        });
-        results.push({ ...draft, status: "posted", url, error: null });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Publishing failed";
-        console.error(`[publishing] ${platform} failed:`, message);
-        results.push({ ...draft, status: "failed", url: null, error: message });
-      }
-    }
-
-    const allPosted = results.length > 0 && results.every((d) => d.status === "posted");
-
-    if (!allPosted) {
-      // Stay on the review step with per-channel error causes for the requester
-      // to fix before resubmitting.
-      return videoGenerationJobRepository.update(jobId, { publishingDrafts: results });
-    }
-
-    // Every channel posted — mark delivered + complete.
     const { RequestStatus } = await import("@/domain/enums/RequestStatus");
     await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
     return videoGenerationJobRepository.update(jobId, {
-      publishingDrafts: results,
       currentStep: VideoGenerationStep.Complete,
       finalApprovedBy: userId || job.finalApprovedBy,
     });

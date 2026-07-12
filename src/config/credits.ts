@@ -112,8 +112,8 @@ export const PIPELINE_PHASES = [
   },
   {
     id: 5,
-    label: "ปรับขนาดและเผยแพร่",
-    desc: "Export 4 ratio + โพสต์อัตโนมัติไปยัง platform ที่เลือก",
+    label: "ปรับขนาดและดาวน์โหลด",
+    desc: "Export 4 ratio ในอัตราส่วนที่เหมาะกับแต่ละช่องทาง พร้อมดาวน์โหลดไปโพสต์เอง",
   },
 ] as const;
 
