@@ -26,6 +26,13 @@ export const spacesClient = new S3Client({
   // subdomain format causes ERR_CERT_COMMON_NAME_INVALID in browsers because
   // the bucket subdomain is not covered by the DO Spaces SSL certificate.
   forcePathStyle: true,
+  // @aws-sdk/client-s3 >= 3.729 adds CRC32 integrity checksums by default
+  // (x-amz-checksum-* headers + aws-chunked trailing checksums on streaming
+  // PUTs). DigitalOcean Spaces rejects these with an opaque 400 "UnknownError",
+  // which surfaces on large streaming uploads (e.g. the montage merge step).
+  // Only send/validate checksums when the API actually requires them.
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 
 export const SPACES_BUCKET = process.env.DO_SPACES_BUCKET!;
