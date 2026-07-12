@@ -61,7 +61,7 @@ export const ACCEPTED_MIME_TYPES = [
 ] as const;
 
 /** Maximum number of files a requester may attach to a single request. */
-export const MAX_UPLOAD_COUNT = 5;
+export const MAX_UPLOAD_COUNT = 10;
 
 /** Maximum file size for image uploads: 8 MB */
 export const MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024;
@@ -70,12 +70,13 @@ export const MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024;
 export const MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024;
 
 /**
- * Maximum file size for a single video upload. Set equal to the per-request
- * total so the 500 MB aggregate cap is the real constraint — a requester can
- * spend their whole budget on one longer/higher-quality clip or spread it
- * across several. (Clip length is still bounded by MAX_CLIP_DURATION_SECONDS.)
+ * Maximum file size for a single video upload: 300 MB. A requester may attach up
+ * to MAX_UPLOAD_COUNT files, but the per-request total is still capped by
+ * MAX_UPLOAD_SIZE_BYTES (500 MB) — so a single 300 MB clip leaves room for a few
+ * more, but not several max-size videos at once. (Clip length is still bounded
+ * by MAX_CLIP_DURATION_SECONDS.)
  */
-export const MAX_VIDEO_SIZE_BYTES = MAX_UPLOAD_SIZE_BYTES;
+export const MAX_VIDEO_SIZE_BYTES = 300 * 1024 * 1024;
 
 /**
  * Maximum duration for a single uploaded video clip: 45 seconds.
