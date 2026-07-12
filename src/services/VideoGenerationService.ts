@@ -1722,6 +1722,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
   }
 
+  /** Job field holding the un-captioned merged MASTER for a given ratio. */
+  private _finalExportFieldForRatio(ratio: VideoRatio): keyof UpdateVideoGenerationJobInput {
+    switch (ratio) {
+      case "9:16": return "finalExport_9_16_assetId";
+      case "16:9": return "finalExport_16_9_assetId";
+      case "1:1": return "finalExport_1_1_assetId";
+      case "4:5": return "finalExport_4_5_assetId";
+      default: return "finalExport_9_16_assetId";
+    }
+  }
+
   private _parseTimeline(job: VideoGenerationJob): TimedSegment[] {
     const raw = job.subtitleTimeline ?? job.voiceTimestamps;
     if (!raw) return [];
@@ -2671,9 +2682,28 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
 
-    const assetIds: Record<string, string> = {};
+    // PROGRESSIVE REVEAL (per-ratio): compose the PRIMARY ratio first, then each
+    // remaining ratio, and PERSIST each ratio to the job the instant it finishes
+    // uploading — not after the whole loop. As soon as the first (primary) ratio
+    // lands we advance the job to AwaitingFinalApproval so the requester can watch
+    // that video immediately while the rest keep composing in the background (no
+    // approval gate between ratios).
+    //
+    // This also makes a LATER ratio's failure non-fatal: if e.g. one ratio's
+    // upload 400s, the ratios that already persisted are kept and the job stays at
+    // AwaitingFinalApproval. Only the FIRST/primary ratio never landing fails the
+    // whole step (there is nothing to review without it).
+    const primaryFirstRatios: ffmpegService.VideoRatio[] = [
+      ...targetRatios.filter((r) => r === primaryRatio),
+      ...targetRatios.filter((r) => r !== primaryRatio),
+    ];
+    // The primary ratio (composed first) is the only fatal one; fall back to the
+    // first required ratio if the primary somehow isn't in the required set.
+    const fatalRatio = primaryFirstRatios[0];
 
-    for (const ratio of targetRatios) {
+    const composeOneRatio = async (
+      ratio: ffmpegService.VideoRatio
+    ): Promise<string> => {
       // Native base for THIS ratio (reuse the approved primary base; re-render the
       // rest from the approved scene plan at their own canvas).
       let baseStorageKey: string;
@@ -2701,7 +2731,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       });
 
       const exportInfo = result.exports[ratio];
-      if (!exportInfo) continue;
+      if (!exportInfo) throw new Error(`compose produced no export for ratio ${ratio}`);
 
       const asset = await uploadedAssetRepository.create({
         requestId: job.requestId,
@@ -2718,20 +2748,48 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         scheduledDeletionAt,
         videoRatio: ratio,
       });
-      assetIds[ratio] = asset.id;
+      return asset.id;
+    };
+
+    let advanced = false;
+    const failedRatios: ffmpegService.VideoRatio[] = [];
+
+    for (const ratio of primaryFirstRatios) {
+      try {
+        const assetId = await composeOneRatio(ratio);
+
+        // Persist THIS ratio right away (partial update — merges, never clobbers
+        // ratios already written). On the first success also advance to
+        // AwaitingFinalApproval so the review UI reveals it without waiting.
+        const updates: UpdateVideoGenerationJobInput = {};
+        updates[this._finalExportFieldForRatio(ratio)] = assetId;
+        if (!advanced) {
+          updates.currentStep = VideoGenerationStep.AwaitingFinalApproval;
+          advanced = true;
+        }
+        await videoGenerationJobRepository.update(job.id, updates);
+        console.log(`[compose:${ratio}] persisted → job${advanced && updates.currentStep ? " (AwaitingFinalApproval)" : ""}`);
+      } catch (err) {
+        // Primary/first ratio is fatal: without it there is nothing to review.
+        if (ratio === fatalRatio) throw err;
+        // A later ratio failing must NOT roll back or hide the ratios that
+        // already landed — record it and keep composing the rest.
+        failedRatios.push(ratio);
+        console.error(`[compose:${ratio}] failed (non-fatal — kept already-composed ratios):`, err);
+      }
     }
 
-    // The Travy (Tvent) export is NO LONGER produced here — it is rendered with
-    // its EN+ZH overlay automatically in the Phase-7 background step after the
-    // overlay is approved (`_runTventVideoGeneration`). Leave it null for now.
-    await videoGenerationJobRepository.update(job.id, {
-      currentStep: VideoGenerationStep.AwaitingFinalApproval,
-      finalExport_9_16_assetId: assetIds["9:16"] ?? null,
-      finalExport_16_9_assetId: assetIds["16:9"] ?? null,
-      finalExport_1_1_assetId: assetIds["1:1"] ?? null,
-      finalExport_4_5_assetId: assetIds["4:5"] ?? null,
-      finalExport_tvent_assetId: null,
-    });
+    if (failedRatios.length > 0) {
+      console.warn(
+        `[compose] finished with ${failedRatios.length} failed ratio(s): ${failedRatios.join(", ")}. ` +
+          `Primary ratio ${primaryRatio} landed, so the job stays at AwaitingFinalApproval; ` +
+          `the failed ratios can be regenerated without discarding the delivered ones.`
+      );
+    }
+    // The Travy (Tvent) export is NOT produced here — it is rendered with its
+    // EN+ZH overlay automatically in the Phase-7 background step after the overlay
+    // is approved (`_runTventVideoGeneration`). finalExport_tvent_assetId is left
+    // as-is (still null at this step).
   }
 
   /** Staff approves all final exports and advances to publishing. */

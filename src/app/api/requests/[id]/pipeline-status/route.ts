@@ -64,6 +64,29 @@ export async function GET(
       processedVoiceUrl: processedVoiceAsset?.storageUrl ?? null,
       videoGenStatus: job.videoGenStatus ?? null,
       videoGenLastPolledAt: job.videoGenLastPolledAt?.toISOString() ?? null,
+      // Progressive per-ratio reveal: the compose step (_runFFmpegComposition)
+      // now advances the job to AwaitingFinalApproval as soon as the FIRST
+      // (primary) ratio uploads, then persists each remaining ratio's
+      // finalExport_* field as it lands. These ids are exposed so the poller can
+      // refresh incrementally as more ratios appear — additive fields only, so
+      // the existing contract is unchanged.
+      //
+      // TODO(clipper_agent web app): PipelineStatusPoller.tsx currently early-
+      // returns for AwaitingFinalApproval (not in POLLING_STEPS), so it stops
+      // polling after the first ratio and later ratios only appear on a manual
+      // reload. To reveal them live, keep polling while
+      // currentStep === AwaitingFinalApproval AND not all required ratios (see
+      // ffmpegService.getRequiredRatiosForPlatforms(request.targetPlatforms))
+      // are present in finalExports below, and call router.refresh() when the
+      // set of non-null finalExport ids grows. Fields to compare:
+      // finalExport_9_16_assetId / finalExport_16_9_assetId /
+      // finalExport_1_1_assetId / finalExport_4_5_assetId.
+      finalExports: {
+        "9:16": job.finalExport_9_16_assetId ?? null,
+        "16:9": job.finalExport_16_9_assetId ?? null,
+        "1:1": job.finalExport_1_1_assetId ?? null,
+        "4:5": job.finalExport_4_5_assetId ?? null,
+      },
       // Phase 7 — background Travy render status, so the poller can keep the
       // Travy spinner live while the job is already Complete.
       tventVideoStatus: job.tventVideoStatus ?? "idle",
