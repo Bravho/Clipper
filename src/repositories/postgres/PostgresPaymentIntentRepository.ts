@@ -92,4 +92,23 @@ export class PostgresPaymentIntentRepository implements IPaymentIntentRepository
     if (!rows[0]) throw new Error("Payment intent not found.");
     return rowToPaymentIntent(rows[0]);
   }
+
+  async markPaidIfPending(
+    id: string,
+    fields?: { gatewayRef?: string | null }
+  ): Promise<PaymentIntent | null> {
+    // Conditional, atomic transition: the WHERE status = 'pending' clause means
+    // only ONE concurrent caller can flip the row to Paid; the loser gets zero
+    // rows back and must not credit.
+    const { rows } = await this.db.query(
+      `UPDATE payment_intents
+         SET status = $2,
+             gateway_ref = COALESCE($3, gateway_ref),
+             updated_at = NOW()
+       WHERE id = $1 AND status = $4
+       RETURNING *`,
+      [id, PaymentStatus.Paid, fields?.gatewayRef ?? null, PaymentStatus.Pending]
+    );
+    return rows[0] ? rowToPaymentIntent(rows[0]) : null;
+  }
 }

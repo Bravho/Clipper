@@ -24,6 +24,7 @@ function makeService(opts?: {
   // intent amount (as GB Prime Pay would), unless a test overrides it.
   const chargedAmounts = new Map<string, number>();
 
+  const gatewayStats = { statusChecks: 0 };
   const gateway = {
     async createPromptPayQr(params: { amountBaht: number; referenceNo: string }) {
       chargedAmounts.set(params.referenceNo, params.amountBaht);
@@ -33,6 +34,7 @@ function makeService(opts?: {
       };
     },
     async getChargeStatus(referenceNo: string) {
+      gatewayStats.statusChecks++;
       const amountBaht =
         opts?.gatewayAmount === undefined
           ? chargedAmounts.get(referenceNo) ?? null
@@ -47,7 +49,7 @@ function makeService(opts?: {
   };
 
   const svc = new PaymentService(intents, credits as never, gateway as never);
-  return { svc, intents, creditCalls };
+  return { svc, intents, creditCalls, gatewayStats };
 }
 
 describe("PaymentService", () => {
@@ -109,5 +111,60 @@ describe("PaymentService", () => {
     await expect(svc.settleFromWebhook("RC-nope")).rejects.toThrow(
       "Unknown payment reference."
     );
+  });
+
+  // ── Poll-side settlement backstop ──────────────────────────────────────────
+
+  it("poll backstop settles a paid intent even with no webhook", async () => {
+    const { svc, creditCalls } = makeService({ paid: true });
+    const intent = await svc.createTopupIntent("user-1", 99);
+
+    const res = await svc.pollIntentStatus(intent.intentId, "user-1");
+
+    expect(res?.status).toBe(PaymentStatus.Paid);
+    expect(creditCalls).toEqual([{ userId: "user-1", credits: 99, baht: 99 }]);
+  });
+
+  it("poll backstop leaves an unpaid intent Pending — never marks it Failed", async () => {
+    const { svc, creditCalls } = makeService({ paid: false });
+    const intent = await svc.createTopupIntent("user-1", 49);
+
+    const res = await svc.pollIntentStatus(intent.intentId, "user-1");
+
+    expect(res?.status).toBe(PaymentStatus.Pending);
+    expect(creditCalls).toHaveLength(0);
+  });
+
+  it("poll backstop throttles gateway checks per intent", async () => {
+    const { svc, gatewayStats } = makeService({ paid: false });
+    const intent = await svc.createTopupIntent("user-1", 49);
+
+    // Three rapid polls within the throttle window → only ONE gateway check.
+    await svc.pollIntentStatus(intent.intentId, "user-1");
+    await svc.pollIntentStatus(intent.intentId, "user-1");
+    await svc.pollIntentStatus(intent.intentId, "user-1");
+
+    expect(gatewayStats.statusChecks).toBe(1);
+  });
+
+  it("returns null for a missing intent or the wrong owner", async () => {
+    const { svc } = makeService({ paid: true });
+    const intent = await svc.createTopupIntent("user-1", 49);
+
+    expect(await svc.pollIntentStatus("does-not-exist", "user-1")).toBeNull();
+    expect(await svc.pollIntentStatus(intent.intentId, "someone-else")).toBeNull();
+  });
+
+  it("concurrent webhook + poll credit the wallet only once", async () => {
+    const { svc, creditCalls } = makeService({ paid: true });
+    const intent = await svc.createTopupIntent("user-1", 49);
+
+    await Promise.all([
+      svc.settleFromWebhook(intent.referenceNo),
+      svc.pollIntentStatus(intent.intentId, "user-1"),
+    ]);
+
+    // The atomic Pending→Paid claim means exactly one path credits.
+    expect(creditCalls).toHaveLength(1);
   });
 });

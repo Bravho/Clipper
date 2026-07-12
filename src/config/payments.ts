@@ -33,6 +33,15 @@ export const PAYMENTS_CONFIG = {
 
   /** Minutes a generated PromptPay QR / payment intent stays payable. */
   intentTtlMinutes: Number(process.env.PAYMENT_INTENT_TTL_MINUTES ?? "30"),
+
+  /**
+   * Poll-side settlement backstop: the status endpoint re-verifies a still-Pending
+   * intent against the gateway (so a payment settles even if the webhook is never
+   * delivered), but at most once per this many milliseconds per intent to avoid
+   * hammering the gateway. The client polls every ~3s; 10s throttles that to a
+   * gateway hit roughly every 3rd–4th poll.
+   */
+  pollBackstopThrottleMs: Number(process.env.PAYMENT_POLL_BACKSTOP_THROTTLE_MS ?? "10000"),
 } as const;
 
 export function requireGbPrimePayKeys(): { publicKey: string; secretKey: string } {

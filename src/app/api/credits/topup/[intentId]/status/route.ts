@@ -3,12 +3,18 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { paymentService } from "@/services/PaymentService";
-import { PaymentStatus } from "@/domain/enums/PaymentStatus";
+
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/credits/topup/[intentId]/status
- * Lightweight polling endpoint for the top-up UI. Returns the intent status and,
- * if it has expired by wall-clock but the webhook hasn't fired, reports "expired".
+ *
+ * Polling endpoint for the top-up UI. Besides reporting the intent's status, it
+ * acts as a SETTLEMENT BACKSTOP: for a still-Pending intent it re-verifies the
+ * payment against the gateway (throttled per-intent) and credits the wallet if
+ * the customer has paid — so a top-up settles even when the gateway webhook is
+ * never delivered. Wall-clock expiry is reported without being persisted, so a
+ * late-but-real payment can still settle. See PaymentService.pollIntentStatus.
  */
 export async function GET(
   _request: Request,
@@ -24,18 +30,10 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  const intent = await paymentService.getIntent(intentId);
-  if (!intent || intent.userId !== session.user.id) {
+  const result = await paymentService.pollIntentStatus(intentId, session.user.id);
+  if (!result) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 
-  let status = intent.status;
-  if (
-    status === PaymentStatus.Pending &&
-    intent.expiresAt.getTime() < Date.now()
-  ) {
-    status = PaymentStatus.Expired;
-  }
-
-  return NextResponse.json({ status });
+  return NextResponse.json({ status: result.status });
 }

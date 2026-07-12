@@ -78,4 +78,21 @@ export class MockPaymentIntentRepository implements IPaymentIntentRepository {
     this.store.set(id, updated);
     return { ...updated };
   }
+
+  async markPaidIfPending(
+    id: string,
+    fields?: { gatewayRef?: string | null }
+  ): Promise<PaymentIntent | null> {
+    const existing = this.store.get(id);
+    // Only the caller that finds it still Pending wins the transition.
+    if (!existing || existing.status !== PaymentStatus.Pending) return null;
+    const updated: PaymentIntent = {
+      ...existing,
+      status: PaymentStatus.Paid,
+      gatewayRef: fields?.gatewayRef !== undefined ? fields.gatewayRef : existing.gatewayRef,
+      updatedAt: new Date(),
+    };
+    this.store.set(id, updated);
+    return { ...updated };
+  }
 }
