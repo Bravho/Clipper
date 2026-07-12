@@ -116,16 +116,16 @@ blind re-run would orphan the previous object. Chosen approach: **skip work alre
    shows the WORKER's id and a normal terminal state — not a stranded `generating_*` +
    `render_state=done`.
 
-## Not done — recommended next PR (out of scope here, needs its own change + live test)
+## Explicitly OUT OF SCOPE — do NOT rebuild these worker-side
 
-These were in your task list but are net-new features better done together with their own
-verification:
-- `PipelineStatusPoller` live per-ratio reveal for `AwaitingFinalApproval` (documented TODO
-  already added in `pipeline-status/route.ts`); passing required/ready ratio counts into
-  `PipelineSection`.
-- `step_started_at` column (`013_step_started_at.sql`) + stall detection (`stallThresholds.ts`)
-  + a manual "retry stuck step" affordance in the requester UI.
-- Optional: deterministic final-clip keys so re-runs overwrite instead of orphaning (currently
-  handled by the retention sweep).
+The following are **already fully implemented in this web-app repo** and are frontend /
+web-app concerns — the worker does not serve the UI, so it must not reimplement them.
+Rebuilding them from the worker side would create two divergent implementations and a merge
+mess. Leave them alone:
+- `PipelineStatusPoller` live per-ratio reveal for `AwaitingFinalApproval`, and required/ready
+  ratio counts passed into `PipelineSection`.
+- `step_started_at` (`013_step_started_at.sql`) + stall detection (`stallThresholds.ts`) + the
+  manual "retry stuck step" affordance in the requester UI.
 
-Want me to take these on next?
+The only optional worker-adjacent follow-up: deterministic final-clip keys so re-runs overwrite
+instead of orphaning — currently handled by the retention sweep, so not urgent.
