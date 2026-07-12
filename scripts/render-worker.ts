@@ -73,6 +73,28 @@ function describeErr(err: unknown): Record<string, unknown> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Release every in-flight claim back to the queue (render_state → "queued") so a
+ * restarting worker re-claims it IMMEDIATELY instead of waiting out
+ * RENDER_STALE_CLAIM_SECONDS. Safe because every heavy step is idempotent
+ * (compose/additional-ratios skip ratios already persisted), so redoing a
+ * partially-done step produces no duplicate/partial artifacts.
+ */
+async function releaseInFlightClaims(): Promise<void> {
+  await Promise.all(
+    [...inFlight].map((jobId) =>
+      videoGenerationJobRepository
+        .update(jobId, {
+          renderState: "queued",
+          claimedBy: null,
+          claimedAt: null,
+          renderHeartbeatAt: null,
+        })
+        .catch(() => {})
+    )
+  );
+}
+
+/**
  * Heartbeat loop: advertise liveness (so the web side enqueues instead of
  * running inline) and bump the keep-alive on every in-flight claim (so a long
  * render is not reclaimed as stale by another worker).
@@ -172,24 +194,51 @@ async function main(): Promise<void> {
     once: RUN_ONCE,
   });
 
-  await sweepScratch();
-  await heartbeatTick(); // advertise liveness immediately so the web side enqueues
+  // Advertise liveness IMMEDIATELY — before the scratch sweep and the first poll —
+  // so the web app's isRenderWorkerAlive() sees a fresh heartbeat the instant we're
+  // back and ENQUEUES heavy steps to us instead of running them inline on the
+  // droplet. RENDER_WORKER_FRESH_SECONDS (45s) comfortably exceeds heartbeatMs (10s),
+  // so a normal restart never opens an "offline" gap unless it takes >45s.
+  await heartbeatTick();
   const heartbeat = setInterval(heartbeatTick, RENDER_QUEUE.heartbeatIntervalMs);
+  await sweepScratch();
 
+  let onShutdown: () => void = () => {};
+  const shutdownRequested = new Promise<void>((resolve) => {
+    onShutdown = resolve;
+  });
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     log(`received ${signal}, draining ${active} in-flight step(s)…`);
+    onShutdown();
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   const slots = Array.from({ length: RENDER_QUEUE.concurrency }, (_, i) => workerSlot(i));
-  await Promise.all(slots);
+  const allSlotsDone = Promise.all(slots);
+
+  if (RUN_ONCE) {
+    await allSlotsDone;
+  } else {
+    // Run until a shutdown signal arrives. On shutdown, workerSlot stops claiming
+    // new work and its current step finishes naturally — but bound how long we wait
+    // so launchd doesn't SIGKILL us mid-exit. If the in-flight step can't finish
+    // within the grace window, release its claim so the restarted worker re-claims
+    // it immediately (idempotent steps make the redo safe).
+    await shutdownRequested;
+    const drained = await Promise.race([
+      allSlotsDone.then(() => true),
+      sleep(RENDER_QUEUE.drainGraceMs).then(() => false),
+    ]);
+    if (!drained) {
+      log(`drain grace ${RENDER_QUEUE.drainGraceMs}ms elapsed with ${active} step(s) still running — releasing claim(s) for immediate reclaim`);
+      await releaseInFlightClaims();
+    }
+  }
 
   clearInterval(heartbeat);
-  // Wait for any straggler to finish its finally block before exiting.
-  while (active > 0) await sleep(200);
   log("stopped");
   process.exit(0);
 }

@@ -22,11 +22,24 @@ export const RENDER_QUEUE = {
   /**
    * A claim whose keep-alive (render_heartbeat_at, else claimed_at) is older
    * than this is considered abandoned (crashed worker) and may be re-claimed.
+   * A live render bumps render_heartbeat_at every heartbeatIntervalMs (10s), so
+   * only a genuinely dead worker's claim goes stale. Kept low (2 min) so a job
+   * abandoned by a SIGKILL'd worker is picked back up quickly rather than sitting
+   * idle for the old 10-minute window. The graceful-shutdown path releases claims
+   * immediately (see the worker's drain), so this is only the crash backstop.
    */
-  staleClaimSeconds: Number(process.env.RENDER_STALE_CLAIM_SECONDS ?? "600"),
+  staleClaimSeconds: Number(process.env.RENDER_STALE_CLAIM_SECONDS ?? "120"),
 
   /** Worker: how often to bump its heartbeat / claim keep-alive, in ms. */
   heartbeatIntervalMs: Number(process.env.RENDER_HEARTBEAT_INTERVAL_MS ?? "10000"),
+
+  /**
+   * Worker: on SIGTERM, how long to let an in-flight step finish before releasing
+   * its claim and exiting. Kept under launchd's SIGKILL timeout so the worker exits
+   * cleanly; a step that can't finish in time is requeued (idempotent) for the
+   * restarted worker rather than abandoned to the stale-claim window.
+   */
+  drainGraceMs: Number(process.env.RENDER_DRAIN_GRACE_MS ?? "15000"),
 
   /** Worker: how often to poll for a queued step when idle, in ms. */
   pollIntervalMs: Number(process.env.RENDER_POLL_INTERVAL_MS ?? "3000"),

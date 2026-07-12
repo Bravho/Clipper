@@ -2107,14 +2107,21 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         ? job.subtitleLanguages
         : (["en", "zh"] as ("th" | "en" | "zh")[]);
 
+    // Idempotent/resumable: re-read the latest job so a stale-claim reclaim or
+    // retry SKIPS ratios already captioned, and persist each ratio the instant it
+    // lands (not batched after the loop) so a mid-loop failure never discards the
+    // ratios that already succeeded.
+    const latest = await this._getJob(job.id);
     const inputs = await this._buildOverlayInputs(job);
-    const updates: UpdateVideoGenerationJobInput = {};
     for (const ratio of remaining) {
+      if (this._captionedAssetIdForRatio(latest, ratio)) {
+        console.log(`[overlay:${ratio}] skipped (already captioned)`);
+        continue;
+      }
       const id = await this._renderCaptionedRatio(job, request.userId, ratio, languages, inputs);
-      updates[this._captionedFieldForRatio(ratio)] = id;
-    }
-    if (Object.keys(updates).length > 0) {
-      await videoGenerationJobRepository.update(job.id, updates);
+      const u: UpdateVideoGenerationJobInput = {};
+      u[this._captionedFieldForRatio(ratio)] = id;
+      await videoGenerationJobRepository.update(job.id, u);
     }
 
     const refreshed = await this._getJob(job.id);
@@ -2731,10 +2738,22 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       return asset.id;
     };
 
+    // Idempotent/resumable: a stale-claim reclaim or a requester "retry" re-runs
+    // this whole step. Re-read the latest job and SKIP any ratio whose master is
+    // already persisted, so a finished ratio is never recomputed/re-uploaded
+    // (which would orphan its Spaces object — final-clip keys are randomised).
+    const latest = (await videoGenerationJobRepository.findById(job.id)) ?? job;
+
     let advanced = false;
     const failedRatios: ffmpegService.VideoRatio[] = [];
 
     for (const ratio of primaryFirstRatios) {
+      if (this._masterAssetIdForRatio(latest, ratio)) {
+        // Already composed on an earlier run — leave it as-is.
+        if (!advanced) advanced = true; // the review already surfaces this ratio
+        console.log(`[compose:${ratio}] skipped (already persisted)`);
+        continue;
+      }
       try {
         const assetId = await composeOneRatio(ratio);
 

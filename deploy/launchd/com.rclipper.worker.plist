@@ -33,9 +33,16 @@
   <key>KeepAlive</key>
   <true/>
 
-  <!-- Back off so a crash-loop doesn't hammer the CPU. -->
+  <!-- Minimum seconds between restarts. Kept low (5s) so a restart re-advertises
+       the heartbeat fast; the web app's alive window is 45s, so a 5s throttle
+       never opens an "offline" gap that would push steps to run inline. -->
   <key>ThrottleInterval</key>
-  <integer>10</integer>
+  <integer>5</integer>
+
+  <!-- On stop/restart, give the worker up to 25s to drain its in-flight step and
+       release its claim before launchd SIGKILLs it (worker's drain grace is 15s). -->
+  <key>ExitTimeOut</key>
+  <integer>25</integer>
 
   <key>ProcessType</key>
   <string>Background</string>
