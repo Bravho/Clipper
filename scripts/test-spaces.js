@@ -19,6 +19,11 @@ const client = new S3Client({
     secretAccessKey: get("DO_SPACES_SECRET"),
   },
   forcePathStyle: true,
+  // @aws-sdk/client-s3 >= 3.729 sends CRC32 integrity checksums by default;
+  // DigitalOcean Spaces rejects them with an opaque 400 "UnknownError".
+  // Only send/validate checksums when the API actually requires them.
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 
 (async () => {
