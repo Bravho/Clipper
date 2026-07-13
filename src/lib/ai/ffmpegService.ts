@@ -677,10 +677,18 @@ export const WATERMARK_TEXT = "RClipper";
  * export ratio. Odd rows are shifted horizontally to give the grid a diagonal,
  * repeated-watermark feel.
  */
-export function buildTiledWatermarkFilter(text = WATERMARK_TEXT): string {
+export function buildTiledWatermarkFilter(
+  text = WATERMARK_TEXT,
+  fontFilePath: string = AI_CONFIG.ffmpeg.fontFile
+): string {
   // Escape the (possibly Windows) font path exactly as animationService does:
   // backslashes → forward slashes, and ':' escaped for the filtergraph parser.
-  const fontFile = AI_CONFIG.ffmpeg.fontFile.replace(/\\/g, "/").replace(/:/g, "\\:");
+  // NOTE: `[` `]` `,` `'` `;` are STRUCTURAL in a filtergraph and cannot be
+  // escaped reliably inside a single-quoted option value — a font path
+  // containing them (e.g. a variable font `NotoSansThai[wdth,wght].ttf`) breaks
+  // the whole `-vf` parse. Callers should pass a path free of those characters;
+  // `stageFiltergraphSafeFont` copies such fonts to a plain name first.
+  const fontFile = fontFilePath.replace(/\\/g, "/").replace(/:/g, "\\:");
   // Escape characters special to drawtext's text option.
   const safeText = text.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "’");
 
@@ -723,6 +731,29 @@ export function buildTiledWatermarkFilter(text = WATERMARK_TEXT): string {
  * step, which is already dispatched there), keeping the extra encode off the web
  * droplet.
  */
+/**
+ * ffmpeg's drawtext `fontfile=` value lives inside a filtergraph where `[` `]`
+ * `,` `'` `;` are structural characters. A variable-font path like
+ * `.../NotoSansThai[wdth,wght].ttf` therefore breaks the `-vf` parse (fails in
+ * ~0.1s). Escaping across ffmpeg's multiple quoting levels is fragile, so if the
+ * configured font path contains any such character, copy the file once into
+ * `destDir` under a plain name and use that instead. Returns the safe path (or
+ * the original if it is already safe / the copy fails — best-effort).
+ */
+async function stageFiltergraphSafeFont(destDir: string): Promise<string> {
+  const configured = AI_CONFIG.ffmpeg.fontFile;
+  if (!/[[\],';]/.test(configured)) return configured;
+  try {
+    const ext = path.extname(configured) || ".ttf";
+    const safe = path.join(destDir, `font${ext}`);
+    await fs.copyFile(configured, safe);
+    return safe;
+  } catch (err) {
+    console.error("[watermark] could not stage a filtergraph-safe font, using configured path:", err);
+    return configured;
+  }
+}
+
 export async function applyTiledWatermark(params: {
   sourceStorageKey: string;
   outputStorageKey: string;
@@ -735,13 +766,16 @@ export async function applyTiledWatermark(params: {
     const srcPath = path.join(tmpDir, "clean.mp4");
     const outPath = path.join(tmpDir, "watermarked.mp4");
     await downloadFromSpaces(sourceStorageKey, srcPath);
+    // Copy the font to a filtergraph-safe path if its configured path contains
+    // characters that break drawtext (e.g. a variable font's `[wdth,wght]`).
+    const fontFilePath = await stageFiltergraphSafeFont(tmpDir);
 
     const startedAt = Date.now();
     try {
       await execFileAsync(ffmpeg, [
         "-y",
         "-i", srcPath,
-        "-vf", buildTiledWatermarkFilter(text),
+        "-vf", buildTiledWatermarkFilter(text, fontFilePath),
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-preset", "veryfast",
