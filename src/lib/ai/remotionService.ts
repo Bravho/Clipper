@@ -4,7 +4,7 @@ import * as os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
+import { spacesClient, spacesPublicUrl, spacesSendWithRetry } from "@/lib/spaces";
 import { AI_CONFIG } from "@/config/aiTools";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { AnimationSpec } from "@/lib/ai/animationService";
@@ -145,14 +145,18 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
 
     const data = await fs.readFile(outputPath);
     const bucket = process.env.DO_SPACES_BUCKET!;
-    await spacesClient.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: outputStorageKey,
-        Body: data,
-        ContentType: "video/webm",
-        ACL: "public-read",
-      })
+    // Retry: DO Spaces intermittently 400s ("UnknownError") a healthy upload.
+    // A single unretried send failing was killing the whole overlay step.
+    await spacesSendWithRetry(`upload overlay ${outputStorageKey}`, () =>
+      spacesClient.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: outputStorageKey,
+          Body: data,
+          ContentType: "video/webm",
+          ACL: "public-read",
+        })
+      )
     );
     return spacesPublicUrl(outputStorageKey);
   } finally {
@@ -222,14 +226,19 @@ export async function renderTemplatedVideo(
 
     const data = await fs.readFile(outputPath);
     const bucket = process.env.DO_SPACES_BUCKET!;
-    await spacesClient.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: params.outputStorageKey,
-        Body: data,
-        ContentType: "video/mp4",
-        ACL: "public-read",
-      })
+    // Retry: DO Spaces intermittently 400s ("UnknownError") a healthy upload.
+    // This is the `overlay_composition` step's final upload — an unretried send
+    // failing here was what stalled the pipeline at "generating_overlay".
+    await spacesSendWithRetry(`upload styled ${params.outputStorageKey}`, () =>
+      spacesClient.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: params.outputStorageKey,
+          Body: data,
+          ContentType: "video/mp4",
+          ACL: "public-read",
+        })
+      )
     );
     return {
       storageKey: params.outputStorageKey,

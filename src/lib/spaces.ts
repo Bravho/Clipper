@@ -38,6 +38,46 @@ export const spacesClient = new S3Client({
 export const SPACES_BUCKET = process.env.DO_SPACES_BUCKET!;
 
 /**
+ * Run a single DO Spaces operation with bounded exponential-backoff retries.
+ *
+ * DO Spaces intermittently throttles or resets a request (especially under the
+ * concurrent up/downloads the render pipeline generates) and the AWS SDK
+ * surfaces these transient failures as an anonymous 400 "UnknownError" whose
+ * `String(err)` hides the HTTP status and cause. Retrying absorbs the transient
+ * case; on genuine failure we throw an error naming the operation and the SDK
+ * metadata so the worker log actually identifies what went wrong.
+ *
+ * Every heavy-step Spaces send (upload/download in remotionService,
+ * animationService, ffmpegService, …) should go through this so a single
+ * transient 400 never fails a whole pipeline step. The compose step already had
+ * this resilience via a private copy in `ffmpegService`; this is the shared,
+ * reusable version.
+ */
+export async function spacesSendWithRetry<T>(
+  label: string,
+  send: () => Promise<T>,
+  attempts = 4
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await send();
+    } catch (err) {
+      lastErr = err;
+      const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      console.error(
+        `[spaces] ${label} attempt ${i + 1}/${attempts} failed: ${e?.name ?? String(err)} (http ${e?.$metadata?.httpStatusCode ?? "?"})`
+      );
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+    }
+  }
+  const e = lastErr as { name?: string; message?: string; $metadata?: unknown };
+  throw new Error(
+    `Spaces ${label} failed after ${attempts} attempts: ${e?.name ?? ""} ${e?.message ?? String(lastErr)} metadata=${JSON.stringify(e?.$metadata ?? {})}`
+  );
+}
+
+/**
  * Build a public URL for a stored object.
  *
  * Uses DO_SPACES_CDN_ENDPOINT if set (recommended for delivery performance).

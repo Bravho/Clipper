@@ -4,7 +4,7 @@ import * as os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
+import { spacesClient, spacesPublicUrl, spacesSendWithRetry } from "@/lib/spaces";
 import { AI_CONFIG, requireGeminiApiKey } from "@/config/aiTools";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
@@ -197,23 +197,29 @@ function buildFilterChain(specs: AnimationSpec[], videoWidth = 1080, videoHeight
 
 async function downloadToTmp(storageKey: string, localPath: string): Promise<void> {
   const bucket = process.env.DO_SPACES_BUCKET!;
-  const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: storageKey }));
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of res.Body as AsyncIterable<Uint8Array>) chunks.push(chunk);
-  await fs.writeFile(localPath, Buffer.concat(chunks));
+  // Retry: DO Spaces intermittently 400s ("UnknownError") a healthy request.
+  await spacesSendWithRetry(`download ${storageKey}`, async () => {
+    const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: storageKey }));
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of res.Body as AsyncIterable<Uint8Array>) chunks.push(chunk);
+    await fs.writeFile(localPath, Buffer.concat(chunks));
+  });
 }
 
 async function uploadFromTmp(localPath: string, storageKey: string): Promise<string> {
   const bucket = process.env.DO_SPACES_BUCKET!;
   const data = await fs.readFile(localPath);
-  await spacesClient.send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: storageKey,
-      Body: data,
-      ContentType: "video/mp4",
-      ACL: "public-read",
-    })
+  // Retry: DO Spaces intermittently 400s ("UnknownError") a healthy upload.
+  await spacesSendWithRetry(`upload ${storageKey}`, () =>
+    spacesClient.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: storageKey,
+        Body: data,
+        ContentType: "video/mp4",
+        ACL: "public-read",
+      })
+    )
   );
   return spacesPublicUrl(storageKey);
 }
