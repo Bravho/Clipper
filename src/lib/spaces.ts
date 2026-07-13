@@ -1,5 +1,12 @@
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { Upload } from "@aws-sdk/lib-storage";
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+  UploadPartCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /**
@@ -37,6 +44,52 @@ export const spacesClient = new S3Client({
 });
 
 export const SPACES_BUCKET = process.env.DO_SPACES_BUCKET!;
+
+/**
+ * Diagnostic tap: when a request to Spaces returns a 4xx/5xx, the AWS SDK often
+ * can't map the body to a known S3 error and throws a generic "UnknownError"
+ * that hides WHAT actually rejected the request. This wraps the HTTP handler to
+ * stash the RAW response body + response headers onto the response object (which
+ * the thrown error references via `error.$response`), so `describeSpacesError`
+ * can log them. That is how we identified the real cause of the
+ * `overlay_composition` stall: a network intermediary (proxy/firewall on the
+ * worker's path — NOT Spaces) returning an HTML `400 Bad request — "Your browser
+ * sent an invalid request."` page for any single request body over ~8-15 MB.
+ * The `Server`/`Via` response headers name the intermediary.
+ */
+function attachSpacesErrorTap(client: S3Client): void {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const handler: any = (client as any).config.requestHandler;
+  if (!handler || typeof handler.handle !== "function" || handler.__spacesTapped) return;
+  const original = handler.handle.bind(handler);
+  handler.handle = async (request: any, options: any) => {
+    const result = await original(request, options);
+    const resp = result?.response;
+    try {
+      if (
+        resp &&
+        typeof resp.statusCode === "number" &&
+        resp.statusCode >= 400 &&
+        resp.body &&
+        typeof resp.body[Symbol.asyncIterator] === "function"
+      ) {
+        const chunks: Buffer[] = [];
+        for await (const c of resp.body) chunks.push(Buffer.from(c));
+        const buf = Buffer.concat(chunks);
+        resp.__rawBody = buf.toString("utf8").slice(0, 800);
+        // Restore a fresh readable so the SDK's own deserializer still works.
+        const { Readable } = await import("stream");
+        resp.body = Readable.from(buf);
+      }
+    } catch {
+      /* best-effort diagnostics only */
+    }
+    return result;
+  };
+  handler.__spacesTapped = true;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+attachSpacesErrorTap(spacesClient);
 
 /**
  * Run a single DO Spaces operation with bounded exponential-backoff retries.
@@ -80,64 +133,143 @@ export async function spacesSendWithRetry<T>(
 }
 
 /**
- * Upload an object to DO Spaces using a MULTIPART upload.
+ * Upload an object to DO Spaces using a SEQUENTIAL, small-part MULTIPART upload.
  *
- * Why not a plain PutObject: a single PutObject of a large video (≈150 MB+)
- * over the render worker's uplink cannot finish inside DO Spaces' ~50-second
- * request window, so Spaces cuts the connection and returns an opaque
- * 400 "UnknownError" (observed: 200 MB and 1 GB single PUTs both failed at
- * ~51 s, while small objects succeed instantly). This is what stalled the
- * `overlay_composition` step — and it affects every large export (compose
- * masters, montage base, styled/overlay clips, watermarked previews).
+ * Root cause this works around: a network intermediary on the render worker's
+ * path (a proxy / firewall / HTTPS-inspecting appliance — NOT DO Spaces) rejects
+ * any single HTTP request whose body exceeds ~8-15 MB. It stalls the oversized
+ * request and, after ~50 s, returns a generic HTML `400 Bad request — "Your
+ * browser sent an invalid request."` page (which the AWS SDK, expecting S3 XML,
+ * surfaces as the opaque 400 "UnknownError" that stalled `overlay_composition`).
+ * Requests at/under 8 MB pass instantly. Confirmed with `scripts/test-spaces-
+ * upload.js`: 8 MB single PUT OK in ~0.6 s, 16 MB PUT fails at ~50 s with the
+ * HTML page.
  *
- * `Upload` splits the body into small parts (8 MB), each its own short request
- * that completes well under the window, and uploads several in parallel. Bodies
- * smaller than one part are sent as a single request automatically, so this is
- * safe for every size. The whole upload is retried on failure (a failed
- * multipart leaves no committed object — `leavePartsOnError` stays false).
+ * So every large export (compose masters, montage base, styled/overlay clips,
+ * watermarked previews) must be sent as multiple SMALL requests, each under the
+ * limit. `Upload` with a 5 MB part size (the S3 minimum) and `queueSize: 1`
+ * sends the parts one at a time — each a ≤5 MB request that passes cleanly — so
+ * neither a single part nor concurrent parts ever exceed the intermediary's
+ * per-request cap. (An earlier 8 MB / parallel config made it WORSE: concurrent
+ * parts summed over the limit.) Init/Complete are tiny requests that also pass.
+ * Bodies under one part go up as a single request automatically.
+ *
+ * NOTE: this is a client-side mitigation. The proper fix is on the worker's
+ * network — remove/relax the ~8 MB request-body limit (e.g. disable HTTPS body
+ * inspection for `*.digitaloceanspaces.com`, or move the worker off that proxy).
  */
+/** Parts smaller than this go up as a single PutObject; larger bodies multipart. */
+const SPACES_PART_SIZE = 5 * 1024 * 1024; // 5 MB — the S3 minimum part size
+
 export async function spacesUpload(params: {
   key: string;
   body: Buffer | Uint8Array;
   contentType: string;
   acl?: "public-read" | "private";
 }): Promise<void> {
-  await spacesSendWithRetry(`upload ${params.key}`, async () => {
-    const upload = new Upload({
-      client: spacesClient,
-      params: {
+  const body = Buffer.isBuffer(params.body) ? params.body : Buffer.from(params.body);
+  const acl = params.acl ?? "public-read";
+
+  // Small enough to clear the intermediary's per-request cap in one shot.
+  if (body.length <= SPACES_PART_SIZE) {
+    await spacesSendWithRetry(`upload ${params.key}`, () =>
+      spacesClient.send(
+        new PutObjectCommand({
+          Bucket: SPACES_BUCKET,
+          Key: params.key,
+          Body: body,
+          ContentType: params.contentType,
+          ACL: acl,
+        })
+      )
+    );
+    return;
+  }
+
+  // Larger: SEQUENTIAL multipart with 5 MB parts. Each UploadPart is its own
+  // ≤5 MB request that clears the cap; Init/Complete are tiny. Done manually
+  // with client-s3 commands (no @aws-sdk/lib-storage — it skewed the SDK types).
+  const created = await spacesSendWithRetry(`mpu-init ${params.key}`, () =>
+    spacesClient.send(
+      new CreateMultipartUploadCommand({
         Bucket: SPACES_BUCKET,
         Key: params.key,
-        Body: params.body,
         ContentType: params.contentType,
-        ACL: params.acl ?? "public-read",
-      },
-      partSize: 8 * 1024 * 1024, // 8 MB parts — each a short, sub-window request
-      queueSize: 4, // upload 4 parts in parallel to use available bandwidth
-      leavePartsOnError: false, // abort (clean up) a failed multipart so retry is clean
-    });
-    await upload.done();
-  });
+        ACL: acl,
+      })
+    )
+  );
+  const uploadId = created.UploadId;
+  if (!uploadId) throw new Error(`Spaces mpu-init ${params.key}: no UploadId returned`);
+
+  try {
+    const parts: { ETag: string | undefined; PartNumber: number }[] = [];
+    let partNumber = 1;
+    for (let offset = 0; offset < body.length; offset += SPACES_PART_SIZE) {
+      const chunk = body.subarray(offset, Math.min(offset + SPACES_PART_SIZE, body.length));
+      const pn = partNumber++;
+      // Await each part before starting the next — sequential, never concurrent,
+      // so in-flight bytes never sum over the intermediary's per-request cap.
+      const res = await spacesSendWithRetry(`mpu-part ${pn} ${params.key}`, () =>
+        spacesClient.send(
+          new UploadPartCommand({
+            Bucket: SPACES_BUCKET,
+            Key: params.key,
+            UploadId: uploadId,
+            PartNumber: pn,
+            Body: chunk,
+          })
+        )
+      );
+      parts.push({ ETag: res.ETag, PartNumber: pn });
+    }
+    await spacesSendWithRetry(`mpu-complete ${params.key}`, () =>
+      spacesClient.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: SPACES_BUCKET,
+          Key: params.key,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: parts },
+        })
+      )
+    );
+  } catch (err) {
+    // Clean up the dangling multipart so a retry starts fresh and no partial
+    // object lingers (best-effort — never mask the original failure).
+    await spacesClient
+      .send(new AbortMultipartUploadCommand({ Bucket: SPACES_BUCKET, Key: params.key, UploadId: uploadId }))
+      .catch(() => {});
+    throw err;
+  }
 }
 
 /** Extract every diagnostic field an AWS SDK S3 error carries into one string. */
 function describeSpacesError(err: unknown): string {
-  const e = err as Record<string, unknown> & {
-    name?: string;
-    message?: string;
-    Code?: string;
-    $metadata?: { httpStatusCode?: number };
-    $response?: { statusCode?: number; body?: unknown };
-  };
-  const rawBody =
-    typeof e?.$response?.body === "string" ? e.$response.body.slice(0, 400) : undefined;
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const e = err as any;
+  const resp = e?.$response;
+  // The error tap (attachSpacesErrorTap) stashes the raw body on the response;
+  // fall back to a string body if the SDK left one there.
+  const rawBody: string | undefined =
+    typeof resp?.__rawBody === "string"
+      ? resp.__rawBody
+      : typeof resp?.body === "string"
+      ? resp.body.slice(0, 800)
+      : undefined;
+  // Server/Via response headers identify a proxy/intermediary in the path.
+  const h = resp?.headers ?? {};
+  const via = h["via"] ?? h["Via"];
+  const server = h["server"] ?? h["Server"];
   return JSON.stringify({
     name: e?.name,
     code: e?.Code,
     message: e?.message,
-    http: e?.$metadata?.httpStatusCode ?? e?.$response?.statusCode,
+    http: e?.$metadata?.httpStatusCode ?? resp?.statusCode,
+    server,
+    via,
     rawBody,
   });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /**
