@@ -3,8 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { spacesClient, spacesPublicUrl, spacesSendWithRetry } from "@/lib/spaces";
+import { spacesPublicUrl, spacesUpload } from "@/lib/spaces";
 import { AI_CONFIG } from "@/config/aiTools";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { AnimationSpec } from "@/lib/ai/animationService";
@@ -144,20 +143,9 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
     });
 
     const data = await fs.readFile(outputPath);
-    const bucket = process.env.DO_SPACES_BUCKET!;
-    // Retry: DO Spaces intermittently 400s ("UnknownError") a healthy upload.
-    // A single unretried send failing was killing the whole overlay step.
-    await spacesSendWithRetry(`upload overlay ${outputStorageKey}`, () =>
-      spacesClient.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: outputStorageKey,
-          Body: data,
-          ContentType: "video/webm",
-          ACL: "public-read",
-        })
-      )
-    );
+    // Multipart: a large overlay clip times out on a single PutObject (~50s
+    // window) and DO Spaces returns an opaque 400. Split into small parts.
+    await spacesUpload({ key: outputStorageKey, body: data, contentType: "video/webm" });
     return spacesPublicUrl(outputStorageKey);
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
@@ -225,21 +213,14 @@ export async function renderTemplatedVideo(
     await faststartRemux(outputPath);
 
     const data = await fs.readFile(outputPath);
-    const bucket = process.env.DO_SPACES_BUCKET!;
-    // Retry: DO Spaces intermittently 400s ("UnknownError") a healthy upload.
-    // This is the `overlay_composition` step's final upload — an unretried send
-    // failing here was what stalled the pipeline at "generating_overlay".
-    await spacesSendWithRetry(`upload styled ${params.outputStorageKey}`, () =>
-      spacesClient.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: params.outputStorageKey,
-          Body: data,
-          ContentType: "video/mp4",
-          ACL: "public-read",
-        })
-      )
+    // Multipart upload: a single PutObject of the styled clip can't finish
+    // inside DO Spaces' ~50s request window and is cut with an opaque 400 — this
+    // is what stalled the `overlay_composition` step ("generating_overlay").
+    // spacesUpload splits it into small parts. Log the size for visibility.
+    console.log(
+      `[overlay] uploading styled ${params.ratio} mp4: ${(data.length / 1048576).toFixed(1)} MB → ${params.outputStorageKey}`
     );
+    await spacesUpload({ key: params.outputStorageKey, body: data, contentType: "video/mp4" });
     return {
       storageKey: params.outputStorageKey,
       storageUrl: spacesPublicUrl(params.outputStorageKey),

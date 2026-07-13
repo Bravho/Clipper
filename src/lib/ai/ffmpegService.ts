@@ -5,9 +5,9 @@ import { existsSync } from "fs";
 import * as path from "path";
 import * as os from "os";
 import { AI_CONFIG } from "@/config/aiTools";
-import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
+import { spacesClient, spacesPublicUrl, spacesUpload } from "@/lib/spaces";
 import { buildFinalClipKey } from "@/lib/spacesKeys";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { ImageCoordinates } from "./geminiSubtitlesService";
 
 const execFileAsync = promisify(execFile);
@@ -158,17 +158,9 @@ async function uploadToSpaces(
   storageKey: string
 ): Promise<void> {
   const buffer = await fs.readFile(filePath);
-  await spacesWithRetry(`upload ${storageKey}`, () =>
-    spacesClient.send(
-      new PutObjectCommand({
-        Bucket: process.env.DO_SPACES_BUCKET!,
-        Key: storageKey,
-        Body: buffer,
-        ContentType: "video/mp4",
-        ACL: "public-read",
-      })
-    )
-  );
+  // Multipart: a single PutObject of a large export times out (~50s window) and
+  // DO Spaces returns an opaque 400. spacesUpload splits it into small parts.
+  await spacesUpload({ key: storageKey, body: buffer, contentType: "video/mp4" });
 }
 
 /** Fallback compose duration when the voice track can't be probed. */

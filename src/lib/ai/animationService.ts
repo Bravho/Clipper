@@ -3,8 +3,8 @@ import * as path from "path";
 import * as os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
-import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import { spacesClient, spacesPublicUrl, spacesSendWithRetry } from "@/lib/spaces";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { spacesClient, spacesPublicUrl, spacesSendWithRetry, spacesUpload } from "@/lib/spaces";
 import { AI_CONFIG, requireGeminiApiKey } from "@/config/aiTools";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
@@ -207,20 +207,10 @@ async function downloadToTmp(storageKey: string, localPath: string): Promise<voi
 }
 
 async function uploadFromTmp(localPath: string, storageKey: string): Promise<string> {
-  const bucket = process.env.DO_SPACES_BUCKET!;
   const data = await fs.readFile(localPath);
-  // Retry: DO Spaces intermittently 400s ("UnknownError") a healthy upload.
-  await spacesSendWithRetry(`upload ${storageKey}`, () =>
-    spacesClient.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: storageKey,
-        Body: data,
-        ContentType: "video/mp4",
-        ACL: "public-read",
-      })
-    )
-  );
+  // Multipart: a large animated clip times out on a single PutObject (~50s
+  // window) and DO Spaces returns an opaque 400. Split into small parts.
+  await spacesUpload({ key: storageKey, body: data, contentType: "video/mp4" });
   return spacesPublicUrl(storageKey);
 }
 

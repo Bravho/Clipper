@@ -1,4 +1,5 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /**
@@ -64,17 +65,79 @@ export async function spacesSendWithRetry<T>(
       return await send();
     } catch (err) {
       lastErr = err;
-      const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      // DO Spaces sometimes returns a 400 whose XML body the SDK can't map to a
+      // known error, surfacing it as name/message "UnknownError" and hiding the
+      // real `<Code>`. Dump every field the SDK DID attach (Code, message, the
+      // raw response body if present, $metadata) so the log actually names the
+      // cause instead of "UnknownError".
       console.error(
-        `[spaces] ${label} attempt ${i + 1}/${attempts} failed: ${e?.name ?? String(err)} (http ${e?.$metadata?.httpStatusCode ?? "?"})`
+        `[spaces] ${label} attempt ${i + 1}/${attempts} failed: ${describeSpacesError(err)}`
       );
       if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500 * 2 ** i));
     }
   }
-  const e = lastErr as { name?: string; message?: string; $metadata?: unknown };
-  throw new Error(
-    `Spaces ${label} failed after ${attempts} attempts: ${e?.name ?? ""} ${e?.message ?? String(lastErr)} metadata=${JSON.stringify(e?.$metadata ?? {})}`
-  );
+  throw new Error(`Spaces ${label} failed after ${attempts} attempts: ${describeSpacesError(lastErr)}`);
+}
+
+/**
+ * Upload an object to DO Spaces using a MULTIPART upload.
+ *
+ * Why not a plain PutObject: a single PutObject of a large video (≈150 MB+)
+ * over the render worker's uplink cannot finish inside DO Spaces' ~50-second
+ * request window, so Spaces cuts the connection and returns an opaque
+ * 400 "UnknownError" (observed: 200 MB and 1 GB single PUTs both failed at
+ * ~51 s, while small objects succeed instantly). This is what stalled the
+ * `overlay_composition` step — and it affects every large export (compose
+ * masters, montage base, styled/overlay clips, watermarked previews).
+ *
+ * `Upload` splits the body into small parts (8 MB), each its own short request
+ * that completes well under the window, and uploads several in parallel. Bodies
+ * smaller than one part are sent as a single request automatically, so this is
+ * safe for every size. The whole upload is retried on failure (a failed
+ * multipart leaves no committed object — `leavePartsOnError` stays false).
+ */
+export async function spacesUpload(params: {
+  key: string;
+  body: Buffer | Uint8Array;
+  contentType: string;
+  acl?: "public-read" | "private";
+}): Promise<void> {
+  await spacesSendWithRetry(`upload ${params.key}`, async () => {
+    const upload = new Upload({
+      client: spacesClient,
+      params: {
+        Bucket: SPACES_BUCKET,
+        Key: params.key,
+        Body: params.body,
+        ContentType: params.contentType,
+        ACL: params.acl ?? "public-read",
+      },
+      partSize: 8 * 1024 * 1024, // 8 MB parts — each a short, sub-window request
+      queueSize: 4, // upload 4 parts in parallel to use available bandwidth
+      leavePartsOnError: false, // abort (clean up) a failed multipart so retry is clean
+    });
+    await upload.done();
+  });
+}
+
+/** Extract every diagnostic field an AWS SDK S3 error carries into one string. */
+function describeSpacesError(err: unknown): string {
+  const e = err as Record<string, unknown> & {
+    name?: string;
+    message?: string;
+    Code?: string;
+    $metadata?: { httpStatusCode?: number };
+    $response?: { statusCode?: number; body?: unknown };
+  };
+  const rawBody =
+    typeof e?.$response?.body === "string" ? e.$response.body.slice(0, 400) : undefined;
+  return JSON.stringify({
+    name: e?.name,
+    code: e?.Code,
+    message: e?.message,
+    http: e?.$metadata?.httpStatusCode ?? e?.$response?.statusCode,
+    rawBody,
+  });
 }
 
 /**

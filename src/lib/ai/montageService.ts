@@ -1,8 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
+import { spacesPublicUrl, spacesUpload } from "@/lib/spaces";
 import { getRemotionBundle } from "@/lib/ai/remotionBundle";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
 import {
@@ -144,16 +143,9 @@ export async function renderScene(
     });
 
     const data = await fs.readFile(outputPath);
-    const bucket = process.env.DO_SPACES_BUCKET!;
-    await spacesClient.send(
-      new PutObjectCommand({
-        Bucket: bucket,
-        Key: params.outputStorageKey,
-        Body: data,
-        ContentType: "video/mp4",
-        ACL: "public-read",
-      })
-    );
+    // Multipart: the montage base video is large; a single PutObject times out
+    // (~50s window) and DO Spaces returns an opaque 400. Split into parts.
+    await spacesUpload({ key: params.outputStorageKey, body: data, contentType: "video/mp4" });
 
     return {
       storageKey: params.outputStorageKey,
