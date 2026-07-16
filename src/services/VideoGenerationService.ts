@@ -1862,8 +1862,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     languages: ("th" | "en" | "zh")[],
     inputs: Awaited<ReturnType<VideoGenerationService["_buildOverlayInputs"]>>
   ): Promise<string> {
-    const masterAssetId = this._masterAssetIdForRatio(job, ratio);
-    if (!masterAssetId) throw new Error(`No merged master export for ratio ${ratio}`);
+    let masterAssetId = this._masterAssetIdForRatio(job, ratio);
+    if (!masterAssetId) {
+      // Self-healing: the compose step non-fatally SKIPS a ratio whose master
+      // upload failed (e.g. the DO Spaces proxy 400 before the multipart fix),
+      // leaving finalExport_<ratio> null. The additional-ratios / distribution
+      // step then needs that master and would hard-fail here. Compose it
+      // on-demand instead, persist it, and carry on.
+      console.log(`[overlay:${ratio}] no merged master — composing it on-demand`);
+      masterAssetId = await this._composeMasterForRatio(job, ratio);
+      await videoGenerationJobRepository.update(job.id, {
+        [this._finalExportFieldForRatio(ratio)]: masterAssetId,
+      } as UpdateVideoGenerationJobInput);
+    }
     const master = await uploadedAssetRepository.findById(masterAssetId);
     if (!master) throw new Error(`Master asset not found: ${masterAssetId}`);
 
@@ -2638,8 +2649,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   private async _runFFmpegComposition(job: VideoGenerationJob): Promise<void> {
-    const audioAsset = await uploadedAssetRepository.findById(job.processedVoiceAssetId!);
-    if (!audioAsset) throw new Error("Required assets missing for composition");
+    if (!job.processedVoiceAssetId) throw new Error("Required assets missing for composition");
 
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
@@ -2664,11 +2674,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // composeAndExport then muxes voice + ducked music per ratio; because each base
     // is already at its target ratio the crop filter is a no-op (a scale to the
     // standard resolution only), so nothing is cropped away.
-    const overlayStorageKeys: Partial<Record<ffmpegService.VideoRatio, string>> = {};
-
-    const scheduledDeletionAt = new Date();
-    scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
-
     // PROGRESSIVE REVEAL (per-ratio): compose the PRIMARY ratio first, then each
     // remaining ratio, and PERSIST each ratio to the job the instant it finishes
     // uploading — not after the whole loop. As soon as the first (primary) ratio
@@ -2688,55 +2693,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // first required ratio if the primary somehow isn't in the required set.
     const fatalRatio = primaryFirstRatios[0];
 
-    const composeOneRatio = async (
-      ratio: ffmpegService.VideoRatio
-    ): Promise<string> => {
-      // Native base for THIS ratio (reuse the approved primary base; re-render the
-      // rest from the approved scene plan at their own canvas).
-      let baseStorageKey: string;
-      if (ratio === primaryRatio && job.baseVideoAssetId) {
-        const primaryBase = await uploadedAssetRepository.findById(job.baseVideoAssetId);
-        if (!primaryBase) throw new Error("Primary base video asset missing for composition");
-        baseStorageKey = primaryBase.storageKey;
-      } else {
-        baseStorageKey = (await this._renderMontageBaseAtRatio(job, ratio)).storageKey;
-      }
-
-      const result = await ffmpegService.composeAndExport({
-        videoStorageKey: baseStorageKey,
-        audioStorageKey: audioAsset.storageKey,
-        scriptThai: job.approvedScriptThai!,
-        scriptEnglish: job.approvedScriptEnglish ?? job.scriptEnglish ?? "",
-        hookThai: job.approvedHookThai!,
-        userId: request.userId,
-        requestId: job.requestId,
-        musicTrackId: job.selectedMusicTrack ?? undefined,
-        // Native base is already at this ratio → crop is a no-op; no smart-crop.
-        coordinates: undefined,
-        targetRatios: [ratio],
-        overlayStorageKeys,
-      });
-
-      const exportInfo = result.exports[ratio];
-      if (!exportInfo) throw new Error(`compose produced no export for ratio ${ratio}`);
-
-      const asset = await uploadedAssetRepository.create({
-        requestId: job.requestId,
-        userId: request.userId,
-        fileName: `final_${ratio.replace(":", "-")}.mp4`,
-        assetType: AssetType.FinalClip,
-        fileSizeBytes: 0,
-        mimeType: "video/mp4",
-        storageKey: exportInfo.storageKey,
-        storageUrl: exportInfo.storageUrl,
-        thumbnailKey: "",
-        thumbnailUrl: "",
-        uploadStatus: AssetUploadStatus.Uploaded,
-        scheduledDeletionAt,
-        videoRatio: ratio,
-      });
-      return asset.id;
-    };
+    // Compose ONE ratio's un-captioned merged master. Extracted to
+    // `_composeMasterForRatio` so the additional-ratios / distribution step can
+    // compose a master ON-DEMAND for any ratio this step non-fatally skipped.
+    const composeOneRatio = (ratio: ffmpegService.VideoRatio): Promise<string> =>
+      this._composeMasterForRatio(job, ratio);
 
     // Idempotent/resumable: a stale-claim reclaim or a requester "retry" re-runs
     // this whole step. Re-read the latest job and SKIP any ratio whose master is
@@ -2789,6 +2750,85 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // EN+ZH overlay automatically in the Phase-7 background step after the overlay
     // is approved (`_runTventVideoGeneration`). finalExport_tvent_assetId is left
     // as-is (still null at this step).
+  }
+
+  /**
+   * Compose ONE ratio's un-captioned merged MASTER (native base at that ratio +
+   * voice + ducked music), upload it, persist a {@link AssetType.FinalClip}
+   * asset, and return its id. The caller records it under
+   * `finalExport_<ratio>_assetId`.
+   *
+   * Used by `_runFFmpegComposition` for every required ratio, AND by
+   * `_renderCaptionedRatio` to fill a master the compose step left missing (a
+   * non-primary ratio it non-fatally skipped, e.g. after a Spaces upload
+   * failure), so the additional-ratios / distribution step self-heals instead of
+   * throwing "No merged master export for ratio …". Self-contained: it re-reads
+   * the voice asset and request itself.
+   */
+  private async _composeMasterForRatio(
+    job: VideoGenerationJob,
+    ratio: VideoRatio
+  ): Promise<string> {
+    const audioAsset = job.processedVoiceAssetId
+      ? await uploadedAssetRepository.findById(job.processedVoiceAssetId)
+      : null;
+    if (!audioAsset) throw new Error("Required voice asset missing for composition");
+
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const primaryRatio = this._montageCanvasRatio(
+      (request.targetPlatforms ?? [])[0] ?? Platform.TventApp
+    );
+
+    // Native base for THIS ratio (reuse the approved primary base; re-render the
+    // rest from the approved scene plan at their own canvas).
+    let baseStorageKey: string;
+    if (ratio === primaryRatio && job.baseVideoAssetId) {
+      const primaryBase = await uploadedAssetRepository.findById(job.baseVideoAssetId);
+      if (!primaryBase) throw new Error("Primary base video asset missing for composition");
+      baseStorageKey = primaryBase.storageKey;
+    } else {
+      baseStorageKey = (await this._renderMontageBaseAtRatio(job, ratio)).storageKey;
+    }
+
+    const result = await ffmpegService.composeAndExport({
+      videoStorageKey: baseStorageKey,
+      audioStorageKey: audioAsset.storageKey,
+      scriptThai: job.approvedScriptThai!,
+      scriptEnglish: job.approvedScriptEnglish ?? job.scriptEnglish ?? "",
+      hookThai: job.approvedHookThai!,
+      userId: request.userId,
+      requestId: job.requestId,
+      musicTrackId: job.selectedMusicTrack ?? undefined,
+      // Native base is already at this ratio → crop is a no-op; no smart-crop.
+      coordinates: undefined,
+      targetRatios: [ratio],
+      overlayStorageKeys: {},
+    });
+
+    const exportInfo = result.exports[ratio];
+    if (!exportInfo) throw new Error(`compose produced no export for ratio ${ratio}`);
+
+    const scheduledDeletionAt = new Date();
+    scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
+    const asset = await uploadedAssetRepository.create({
+      requestId: job.requestId,
+      userId: request.userId,
+      fileName: `final_${ratio.replace(":", "-")}.mp4`,
+      assetType: AssetType.FinalClip,
+      fileSizeBytes: 0,
+      mimeType: "video/mp4",
+      storageKey: exportInfo.storageKey,
+      storageUrl: exportInfo.storageUrl,
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Uploaded,
+      scheduledDeletionAt,
+      videoRatio: ratio,
+    });
+    return asset.id;
   }
 
   /** Staff approves all final exports and advances to publishing. */
