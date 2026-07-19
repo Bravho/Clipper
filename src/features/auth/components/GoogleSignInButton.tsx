@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
+import { startOAuth } from "@/lib/mobile/oauth";
 
 interface GoogleSignInButtonProps {
   callbackUrl?: string;
@@ -18,7 +18,7 @@ export function GoogleSignInButton({
   const handleGoogleSignIn = async () => {
     setLoading(true);
     try {
-      await signIn("google", { callbackUrl });
+      await startOAuth("google", callbackUrl);
     } catch {
       setLoading(false);
     }

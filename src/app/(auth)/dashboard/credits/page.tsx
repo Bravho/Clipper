@@ -8,7 +8,7 @@ import { TransactionType } from "@/domain/enums/TransactionType";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { PromptPayTopup } from "@/features/credits/components/PromptPayTopup";
+import { CreditPurchaseOptions } from "@/features/credits/components/CreditPurchaseOptions";
 
 
 export const metadata: Metadata = { title: "Credits — RClipper" };
@@ -90,7 +90,7 @@ export default async function CreditsPage({
             </p>
             {!canAfford && (
               <p className="mt-1 text-sm font-medium text-yellow-700">
-                Insufficient credits — top up with PromptPay below to submit a request.
+                Insufficient credits — choose a payment option below to submit a request.
               </p>
             )}
           </div>
@@ -113,7 +113,8 @@ export default async function CreditsPage({
         <ul className="flex flex-col gap-2 text-sm text-slate-600">
           <li className="flex items-start gap-2">
             <span className="text-blue-500 font-bold mt-0.5">i</span>
-            1 credit = ฿1. Top up any amount instantly with PromptPay.
+            Credits are purchased in supported packages through the payment
+            method available on this platform.
           </li>
           <li className="flex items-start gap-2">
             <span className="text-red-500 font-bold mt-0.5">−</span>
@@ -130,7 +131,7 @@ export default async function CreditsPage({
       </Card>
 
       <div className="mb-6">
-        <PromptPayTopup
+        <CreditPurchaseOptions
           currentBalance={balance}
           unlockRequestId={query.unlockRequest}
           returnTo={query.returnTo}

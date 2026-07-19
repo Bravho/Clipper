@@ -45,6 +45,7 @@ import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { orderSourceAssets } from "@/lib/sourceAssets";
 import type { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
+import { ReportAiContent } from "@/features/requests/components/ReportAiContent";
 
 export const metadata: Metadata = { title: "Request Detail — RClipper" };
 export const dynamic = "force-dynamic";
@@ -452,6 +453,23 @@ export default async function RequestDetailPage({
           pipelineJob.finalExport_4_5_assetId,
         ].filter(Boolean).length;
 
+        // Progressive per-CHANNEL reveal (GeneratingAdditionalRatios): the step
+        // must produce a CAPTIONED export per user ratio (primary included —
+        // already rendered at the overlay step, so it counts as ready). While
+        // ready < required, the poller refreshes as each channel's video lands.
+        const nonTravyPlatforms = (request.targetPlatforms ?? []).filter(
+          (p) => p !== Platform.TventApp
+        );
+        const userRatios = getRequiredRatiosForPlatforms(
+          nonTravyPlatforms.length > 0
+            ? nonTravyPlatforms
+            : request.targetPlatforms ?? []
+        );
+        const requiredCaptionedCount = userRatios.length;
+        const readyCaptionedCount = userRatios.filter(
+          (r) => captionedAssetIdByRatio[r]
+        ).length;
+
         // Stranded on a processing step past its threshold → offer a manual retry
         // (never auto-fails; a legitimately long render just keeps loading).
         const stalled = isJobStalled(pipelineJob);
@@ -566,6 +584,10 @@ export default async function RequestDetailPage({
               tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
               requiredRatioCount={requiredRatioCount}
               readyRatioCount={readyRatioCount}
+              requiredCaptionedCount={requiredCaptionedCount}
+              readyCaptionedCount={readyCaptionedCount}
+              initialRenderProgress={pipelineJob.renderProgress ?? null}
+              initialRenderProgressDetail={pipelineJob.renderProgressDetail ?? null}
               stalled={stalled}
             />
 
@@ -672,6 +694,10 @@ export default async function RequestDetailPage({
                 isAwaitingAdditionalRatios={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingAdditionalRatios
                 }
+                isGeneratingAdditionalRatios={
+                  pipelineJob.currentStep === VideoGenerationStep.GeneratingAdditionalRatios
+                }
+                channelVideos={channelVideos}
                 overlayPreviewUrl={overlayPreviewUrl}
                 savedSubtitleLanguages={pipelineJob.subtitleLanguages}
                 savedTemplate={pipelineJob.selectedMotionTemplate ?? "none"}
@@ -846,6 +872,17 @@ export default async function RequestDetailPage({
           Status History
         </h2>
         <RequestTimeline history={statusHistory} />
+      </Card>
+
+      <Card className="mb-6">
+        <h2 className="mb-2 text-base font-semibold text-slate-900">
+          Safety and content report
+        </h2>
+        <p className="mb-4 text-sm text-slate-600">
+          Report offensive, unsafe, misleading, infringing, or non-consensual
+          AI-generated content without leaving the app.
+        </p>
+        <ReportAiContent requestId={id} />
       </Card>
 
       {/* Legal reminder */}

@@ -5,6 +5,7 @@ import {
   UpdateVideoGenerationJobInput,
   VideoGenerationStepHistoryEntry,
   ChannelPublishingDraft,
+  RenderProgressDetail,
 } from "@/domain/models/VideoGenerationJob";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -26,7 +27,8 @@ function serializeJobValue(key: string, value: unknown): unknown {
     key === "sceneVideoAssetIds" ||
     key === "animatedOverlayAssetIds" ||
     key === "publishingDrafts" ||
-    key === "renderPayload"
+    key === "renderPayload" ||
+    key === "renderProgressDetail"
   ) {
     return value == null ? null : JSON.stringify(value);
   }
@@ -111,6 +113,11 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     voiceApprovedBy: (row.voice_approved_by as string) ?? null,
     animationApprovedBy: (row.animation_approved_by as string) ?? null,
     finalApprovedBy: (row.final_approved_by as string) ?? null,
+    renderProgress: nullableNumber(row.render_progress),
+    renderProgressDetail: parseJsonField<RenderProgressDetail | null>(
+      row.render_progress_detail,
+      null
+    ),
     renderState:
       (row.render_state as "queued" | "claimed" | "done" | "failed") ?? null,
     renderStep: (row.render_step as string) ?? null,
@@ -191,6 +198,8 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   voiceApprovedBy: "voice_approved_by",
   animationApprovedBy: "animation_approved_by",
   finalApprovedBy: "final_approved_by",
+  renderProgress: "render_progress",
+  renderProgressDetail: "render_progress_detail",
   renderState: "render_state",
   renderStep: "render_step",
   renderPayload: "render_payload",
@@ -352,6 +361,20 @@ export class PostgresVideoGenerationJobRepository
         updated.currentStep,
         updated.currentSceneIndex
       );
+      // Push is best-effort and idempotent. A notification outage must never
+      // roll back a successfully persisted pipeline transition.
+      try {
+        const { pushNotificationService } = await import(
+          "@/services/PushNotificationService"
+        );
+        await pushNotificationService.notifyPipelineStep(
+          updated.id,
+          updated.requestId,
+          updated.currentStep
+        );
+      } catch (err) {
+        console.error("[push] pipeline notification failed:", err);
+      }
     }
 
     return updated;

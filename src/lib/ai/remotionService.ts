@@ -163,6 +163,11 @@ export interface RenderTemplatedVideoParams {
   subtitleLanguages: ("th" | "en" | "zh")[];
   /** DO Spaces key the rendered `.mp4` will be uploaded to. */
   outputStorageKey: string;
+  /**
+   * Optional render-progress callback (0..1), forwarded from Remotion's
+   * `renderMedia` overall progress. Used for the requester-facing % bar.
+   */
+  onProgress?: (fraction: number) => void;
 }
 
 /**
@@ -206,6 +211,7 @@ export async function renderTemplatedVideo(
       outputLocation: outputPath,
       inputProps,
       timeoutInMilliseconds: RENDER_TIMEOUT_MS,
+      onProgress: ({ progress }) => params.onProgress?.(progress),
     });
 
     // Move the moov atom to the front so the player shows the total duration on

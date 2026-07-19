@@ -217,6 +217,20 @@ export interface VideoGenerationJob {
 
   failedAtStep: VideoGenerationStep | null;
 
+  // ── Render progress (per-step % display) ────────────────────────────────────
+  /**
+   * 0–100 progress of the CURRENT generating step, written (throttled) by the
+   * render compute paths (Remotion onProgress / FFmpeg -progress / unit counts).
+   * NULL = no measurable progress (AI-API steps never write it — the UI keeps
+   * its spinner). Reset to NULL by `_dispatchHeavy` whenever a heavy step starts.
+   */
+  renderProgress?: number | null;
+  /**
+   * Optional context for the current progress value, e.g. which unit of a
+   * multi-part step is rendering: { unit: "16:9", unitsDone: 1, unitsTotal: 3 }.
+   */
+  renderProgressDetail?: RenderProgressDetail | null;
+
   // ── Render-queue seam (Mac Mini worker offload) ─────────────────────────────
   // All optional/nullable and absent on legacy rows. When no worker is present
   // these stay null and heavy steps run inline on the web server (unchanged).
@@ -249,6 +263,14 @@ export interface VideoGenerationJob {
 
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Context for `renderProgress` — which unit of a multi-part step is rendering. */
+export interface RenderProgressDetail {
+  /** Human-meaningful unit label, e.g. a ratio ("16:9"), "travy", or a scene number. */
+  unit?: string;
+  unitsDone?: number;
+  unitsTotal?: number;
 }
 
 /**

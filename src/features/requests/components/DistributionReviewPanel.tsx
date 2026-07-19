@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Platform, PLATFORM_LABELS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
+import { Share } from "@capacitor/share";
+import { isNativeMobile } from "@/lib/mobile/platform";
 
 interface Props {
   requestId: string;
@@ -94,7 +96,16 @@ export function DistributionReviewPanel({
         throw new Error(body.error ?? "ดาวน์โหลดไม่สำเร็จ");
       }
       const { url } = await res.json();
-      window.open(url, "_blank", "noopener,noreferrer");
+      if (isNativeMobile()) {
+        await Share.share({
+          title: "RClipper video",
+          text: "Share or save your finished RClipper video",
+          url,
+          dialogTitle: "Share video",
+        });
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {

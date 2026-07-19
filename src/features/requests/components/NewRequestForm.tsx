@@ -31,6 +31,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { GoogleMapLocationPicker } from "@/features/requests/components/GoogleMapLocationPicker";
+import { NativeMediaPicker } from "@/features/requests/components/NativeMediaPicker";
 
 interface PendingFile {
   id: string;
@@ -594,6 +595,11 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             และจะถูกลบหลังจาก 90 วันตามนโยบายการจัดเก็บข้อมูลของเรา
           </p>
         </div>
+
+        <NativeMediaPicker
+          disabled={pendingFiles.length >= MAX_UPLOAD_COUNT}
+          onFiles={addFiles}
+        />
 
         {/* Drop zone */}
         <div

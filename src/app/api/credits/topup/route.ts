@@ -25,6 +25,14 @@ const bodySchema = z.object({
  * Creates a Stripe PromptPay QR for a top-up bundle and returns it for display.
  */
 export async function POST(request: Request) {
+  // Store-distributed native builds must use StoreKit / Google Play Billing for
+  // these digital credits. Block Stripe server-side as well as hiding its UI.
+  if (request.headers.get("user-agent")?.includes("RClipperNative/")) {
+    return NextResponse.json(
+      { error: "Native mobile purchases must use the device app store." },
+      { status: 403 }
+    );
+  }
   const session = await getServerSession(authOptions);
 
   if (!session?.user) {

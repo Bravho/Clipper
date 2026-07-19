@@ -181,6 +181,6 @@ describe("validateUploadCount", () => {
   });
 
   it(`enforces a limit of ${MAX_UPLOAD_COUNT} files`, () => {
-    expect(MAX_UPLOAD_COUNT).toBe(5);
+    expect(MAX_UPLOAD_COUNT).toBe(10);
   });
 });

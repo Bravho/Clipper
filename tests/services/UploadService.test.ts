@@ -82,8 +82,8 @@ describe("UploadService.validateFile", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("enforces MAX_UPLOAD_COUNT = 5", () => {
-    expect(MAX_UPLOAD_COUNT).toBe(5);
+  it("enforces the configured upload count", () => {
+    expect(MAX_UPLOAD_COUNT).toBe(10);
   });
 
   it("enforces MAX_UPLOAD_SIZE_BYTES = 500 MB", () => {

@@ -20,9 +20,29 @@ interface Props {
   requiredRatioCount?: number;
   /** How many ratios had already landed at server render — the refresh baseline. */
   initialReadyRatioCount?: number;
+  /**
+   * Progressive per-CHANNEL reveal (GeneratingAdditionalRatios): when true, each
+   * additional channel's CAPTIONED export is persisted the instant it renders, so
+   * refresh as each one lands — finished channels become playable while the rest
+   * keep generating. Mirrors the revealRatios pattern above.
+   */
+  revealCaptioned?: boolean;
+  /** How many captioned exports the additional-ratios step must produce in total. */
+  requiredCaptionedCount?: number;
+  /** How many captioned exports had already landed at server render. */
+  initialReadyCaptionedCount?: number;
   /** Whether the job already looked stalled at server render — the refresh baseline. */
   initialStalled?: boolean;
   onVideoGenStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
+  /**
+   * Per-step % stream: called on every poll with the server's renderProgress
+   * (0–100 or null = not measurable) + detail. Client state only — intra-step
+   * changes must not rely on RSC refresh (same pattern as onVideoGenStatus).
+   */
+  onProgress?: (
+    pct: number | null,
+    detail: { unit?: string; unitsDone?: number; unitsTotal?: number } | null
+  ) => void;
 }
 
 // All async steps (montage render, GPT, FFmpeg) complete within ~30s–2min, and
@@ -37,23 +57,37 @@ export function PipelineStatusPoller({
   revealRatios = false,
   requiredRatioCount,
   initialReadyRatioCount = 0,
+  revealCaptioned = false,
+  requiredCaptionedCount,
+  initialReadyCaptionedCount = 0,
   initialStalled = false,
   onVideoGenStatus,
+  onProgress,
 }: Props) {
   const router = useRouter();
   const onVideoGenStatusRef = useRef(onVideoGenStatus);
+  const onProgressRef = useRef(onProgress);
   // Highest ratio count we've already refreshed for — starts at what the server
   // rendered, so we only refresh when a NEW ratio lands.
   const revealedCountRef = useRef(initialReadyRatioCount);
+  // Same baseline for the captioned (per-channel) exports.
+  const revealedCaptionedCountRef = useRef(initialReadyCaptionedCount);
   // Whether we've already refreshed for the stalled banner — starts at the
   // server-rendered value so we only refresh on the false→true transition.
   const stalledRef = useRef(initialStalled);
 
   useEffect(() => { onVideoGenStatusRef.current = onVideoGenStatus; }, [onVideoGenStatus]);
+  useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
 
   useEffect(() => {
     const tventGenerating = tventVideoStatus === "generating";
-    if (!POLLING_STEPS.includes(currentStep) && !tventGenerating && !revealRatios) return;
+    if (
+      !POLLING_STEPS.includes(currentStep) &&
+      !tventGenerating &&
+      !revealRatios &&
+      !revealCaptioned
+    )
+      return;
 
     const isVideoGenStep = currentStep === VideoGenerationStep.GeneratingBaseVideo;
     const intervalMs = DEFAULT_POLL_INTERVAL_MS;
@@ -73,6 +107,15 @@ export function PipelineStatusPoller({
           onVideoGenStatusRef.current(
             videoGenStatus,
             videoGenLastPolledAt ? new Date(videoGenLastPolledAt) : new Date()
+          );
+        }
+
+        // Per-step % bar: push every poll's renderProgress into client state
+        // (intra-step change — an RSC refresh would be unreliable/heavy here).
+        if (onProgressRef.current) {
+          onProgressRef.current(
+            typeof data.renderProgress === "number" ? data.renderProgress : null,
+            data.renderProgressDetail ?? null
           );
         }
 
@@ -96,6 +139,20 @@ export function PipelineStatusPoller({
             clearInterval(interval);
           }
         }
+        // Progressive per-CHANNEL reveal: while GeneratingAdditionalRatios the
+        // step stays put until EVERY channel (+ Travy) is done, but each
+        // channel's captioned export id is persisted the moment it renders.
+        // Refresh whenever a new one appears so the finished channel's video is
+        // playable immediately while the rest keep generating. (Do NOT stop the
+        // interval when all captioned exports are in — the step change to
+        // AwaitingDistributionReview still needs to be observed.)
+        if (revealCaptioned && data.captionedExports) {
+          const readyCaptioned = Object.values(data.captionedExports).filter(Boolean).length;
+          if (readyCaptioned > revealedCaptionedCountRef.current) {
+            revealedCaptionedCountRef.current = readyCaptioned;
+            router.refresh();
+          }
+        }
         // Stalled recovery: the step doesn't change when a job strands, so refresh
         // once when the server reports it has crossed the stall threshold, to
         // reveal the "taking longer than expected — retry" affordance.
@@ -115,7 +172,16 @@ export function PipelineStatusPoller({
     }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [requestId, currentStep, tventVideoStatus, revealRatios, requiredRatioCount, router]);
+  }, [
+    requestId,
+    currentStep,
+    tventVideoStatus,
+    revealRatios,
+    requiredRatioCount,
+    revealCaptioned,
+    requiredCaptionedCount,
+    router,
+  ]);
 
   return null;
 }

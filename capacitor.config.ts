@@ -33,9 +33,11 @@ const config: CapacitorConfig = {
   },
   ios: {
     contentInset: "always",
+    appendUserAgent: " RClipperNative/ios",
   },
   android: {
     allowMixedContent: false,
+    appendUserAgent: " RClipperNative/android",
   },
   plugins: {
     SplashScreen: {

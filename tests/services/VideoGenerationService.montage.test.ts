@@ -346,11 +346,13 @@ describe("VideoGenerationService — montage engine (Phase 3)", () => {
     expect(concatVideosMock).not.toHaveBeenCalled();
 
     // Approve all → concat every segment → animation.
-    const final = await service.approveBaseVideoByRequester(job.id, USER_ID);
+    await service.approveBaseVideoByRequester(job.id, USER_ID);
+    await flush();
+    const final = await mockJobRepo.findById(job.id);
     expect(concatVideosMock).toHaveBeenCalledTimes(1);
     const [concatKeys] = concatVideosMock.mock.calls[0];
     expect(concatKeys).toEqual(["montage/seg-1.mp4", "montage/seg-2.mp4"]);
-    expect(final.baseVideoAssetId).toBeTruthy();
+    expect(final?.baseVideoAssetId).toBeTruthy();
     expect(createVideoMock).not.toHaveBeenCalled();
 
     // The animation step is kicked off fire-and-forget. With subtitles/overlays

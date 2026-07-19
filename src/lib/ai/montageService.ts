@@ -60,6 +60,13 @@ export interface RenderSceneParams {
   transition?: MontageTransition;
   /** DO Spaces key the rendered .mp4 scene segment will be uploaded to. */
   outputStorageKey: string;
+  /**
+   * Optional render-progress callback (0..1), forwarded from Remotion's
+   * `renderMedia` overall progress. Used for the requester-facing % bar; must
+   * never throw (callers wrap their own persistence in try/catch or
+   * fire-and-forget).
+   */
+  onProgress?: (fraction: number) => void;
 }
 
 function clamp01(value: number | undefined): number | undefined {
@@ -140,6 +147,7 @@ export async function renderScene(
       outputLocation: outputPath,
       inputProps: inputProps as unknown as Record<string, unknown>,
       timeoutInMilliseconds: RENDER_TIMEOUT_MS,
+      onProgress: ({ progress }) => params.onProgress?.(progress),
     });
 
     const data = await fs.readFile(outputPath);

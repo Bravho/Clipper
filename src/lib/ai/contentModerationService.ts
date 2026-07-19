@@ -18,12 +18,9 @@ import { extractVideoFrames, framesForDuration } from "@/lib/ai/videoFrames";
  * frames (1 for ≤15s, 2 for ≤30s, 3 for >30s; see {@link framesForDuration}),
  * which is enough for a visual safety pass at a fraction of the token cost.
  *
- * Fail-open on INFRASTRUCTURE errors only (missing API key, download failure,
- * frame-extraction failure, malformed model output): if the moderator genuinely
- * cannot run we allow the post rather than hard-blocking every publish in
- * environments without a Gemini key — matching the codebase's fail-open stance
- * on Gemini draft generation. A real "rejected" verdict from the model always
- * blocks.
+ * Fail closed when moderation cannot reach a reliable verdict. Infrastructure or
+ * malformed-response failures require staff review rather than allowing an
+ * unreviewed public post.
  */
 
 export interface ModerationResult {
@@ -61,8 +58,7 @@ async function downloadBuffer(storageKey: string): Promise<Buffer> {
 
 /**
  * Screen one channel's post (text + sampled video frames) for policy violations.
- * Never throws — infrastructure failures resolve to `approved: true` so a broken
- * moderator does not silently block every publish.
+ * Never throws — infrastructure failures resolve to `approved: false`.
  */
 export async function moderatePublishingContent(
   params: ModerateParams
@@ -70,12 +66,17 @@ export async function moderatePublishingContent(
   const { platformLabel, title, caption, hashtags } = params;
   const apiKey = AI_CONFIG.gemini.apiKey;
 
-  // No key → cannot moderate. Fail open (allow) but make it loud in the logs.
+  // No key → cannot establish safety, so require manual review.
   if (!apiKey) {
     console.warn(
-      "[contentModeration] GEMINI_API_KEY not set — skipping moderation (fail-open)."
+      "[contentModeration] GEMINI_API_KEY not set — publishing blocked."
     );
-    return { approved: true, reason: null, violations: [], framesChecked: 0 };
+    return {
+      approved: false,
+      reason: "ระบบตรวจสอบเนื้อหาไม่พร้อมใช้งาน กรุณาให้ทีมงานตรวจสอบก่อนเผยแพร่",
+      violations: ["moderation_unavailable"],
+      framesChecked: 0,
+    };
   }
 
   // Sample the distribution video's frames (best-effort — text-only if it fails).
@@ -137,8 +138,13 @@ Respond with ONLY a valid JSON object of this exact shape:
 
     const raw = response.text ?? "";
     if (!raw) {
-      console.warn("[contentModeration] empty model response — fail-open.");
-      return { approved: true, reason: null, violations: [], framesChecked: frames.length };
+      console.warn("[contentModeration] empty model response — publishing blocked.");
+      return {
+        approved: false,
+        reason: "ไม่สามารถยืนยันความปลอดภัยของเนื้อหาได้ กรุณาให้ทีมงานตรวจสอบ",
+        violations: ["moderation_inconclusive"],
+        framesChecked: frames.length,
+      };
     }
 
     const parsed = JSON.parse(raw) as {
@@ -147,7 +153,7 @@ Respond with ONLY a valid JSON object of this exact shape:
       reason?: string;
     };
 
-    const approved = parsed.approved !== false; // default to allow on ambiguous output
+    const approved = parsed.approved === true;
     return {
       approved,
       reason: approved
@@ -158,7 +164,12 @@ Respond with ONLY a valid JSON object of this exact shape:
       framesChecked: frames.length,
     };
   } catch (err) {
-    console.error("[contentModeration] moderation call failed — fail-open:", err);
-    return { approved: true, reason: null, violations: [], framesChecked: frames.length };
+    console.error("[contentModeration] moderation call failed — publishing blocked:", err);
+    return {
+      approved: false,
+      reason: "ระบบตรวจสอบเนื้อหาขัดข้อง กรุณาให้ทีมงานตรวจสอบก่อนเผยแพร่",
+      violations: ["moderation_error"],
+      framesChecked: frames.length,
+    };
   }
 }

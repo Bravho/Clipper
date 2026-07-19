@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/Button";
+import { startOAuth } from "@/lib/mobile/oauth";
 
 interface AppleSignInButtonProps {
   callbackUrl?: string;
@@ -18,7 +18,7 @@ export function AppleSignInButton({
   const handleAppleSignIn = async () => {
     setLoading(true);
     try {
-      await signIn("apple", { callbackUrl });
+      await startOAuth("apple", callbackUrl);
     } catch {
       setLoading(false);
     }

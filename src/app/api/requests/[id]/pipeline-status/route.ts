@@ -79,25 +79,30 @@ export async function GET(
       // now advances the job to AwaitingFinalApproval as soon as the FIRST
       // (primary) ratio uploads, then persists each remaining ratio's
       // finalExport_* field as it lands. These ids are exposed so the poller can
-      // refresh incrementally as more ratios appear — additive fields only, so
-      // the existing contract is unchanged.
-      //
-      // TODO(clipper_agent web app): PipelineStatusPoller.tsx currently early-
-      // returns for AwaitingFinalApproval (not in POLLING_STEPS), so it stops
-      // polling after the first ratio and later ratios only appear on a manual
-      // reload. To reveal them live, keep polling while
-      // currentStep === AwaitingFinalApproval AND not all required ratios (see
-      // ffmpegService.getRequiredRatiosForPlatforms(request.targetPlatforms))
-      // are present in finalExports below, and call router.refresh() when the
-      // set of non-null finalExport ids grows. Fields to compare:
-      // finalExport_9_16_assetId / finalExport_16_9_assetId /
-      // finalExport_1_1_assetId / finalExport_4_5_assetId.
+      // refresh incrementally as more ratios appear (see the `revealRatios` prop
+      // on PipelineStatusPoller) — additive fields only, so the existing
+      // contract is unchanged.
       finalExports: {
         "9:16": job.finalExport_9_16_assetId ?? null,
         "16:9": job.finalExport_16_9_assetId ?? null,
         "1:1": job.finalExport_1_1_assetId ?? null,
         "4:5": job.finalExport_4_5_assetId ?? null,
       },
+      // Progressive per-channel reveal (GeneratingAdditionalRatios): each ratio's
+      // CAPTIONED export id is persisted the instant that ratio finishes
+      // (`_runAdditionalRatiosOverlay` writes per-iteration). Exposing them lets
+      // the poller refresh as each channel's video lands, so finished channels
+      // are playable while the rest keep rendering. Additive field.
+      captionedExports: {
+        "9:16": job.captionedExport_9_16_assetId ?? null,
+        "16:9": job.captionedExport_16_9_assetId ?? null,
+        "1:1": job.captionedExport_1_1_assetId ?? null,
+        "4:5": job.captionedExport_4_5_assetId ?? null,
+      },
+      // Per-step % (0–100; null = not measurable → the UI keeps its spinner) and
+      // which unit of a multi-part step is rendering. Additive fields.
+      renderProgress: job.renderProgress ?? null,
+      renderProgressDetail: job.renderProgressDetail ?? null,
       // Phase 7 — background Travy render status, so the poller can keep the
       // Travy spinner live while the job is already Complete.
       tventVideoStatus: job.tventVideoStatus ?? "idle",

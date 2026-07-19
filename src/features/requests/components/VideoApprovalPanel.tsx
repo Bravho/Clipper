@@ -157,6 +157,24 @@ interface Props {
   isAwaitingOverlayApproval?: boolean;
   /** Phase 7: gate to generate the remaining channels' aspect ratios. */
   isAwaitingAdditionalRatios?: boolean;
+  /**
+   * The remaining channels' videos are rendering one-by-one (in generation
+   * order). Shows the per-channel grid: each finished channel's video is
+   * playable/downloadable immediately while the rest keep generating.
+   */
+  isGeneratingAdditionalRatios?: boolean;
+  /**
+   * Per-channel captioned videos (page-computed, targetPlatforms order minus
+   * Travy = the order the ratios are generated in). `url`/`assetId` are null
+   * until that channel's ratio has rendered.
+   */
+  channelVideos?: {
+    platform: string;
+    label: string;
+    ratio: string | null;
+    url: string | null;
+    assetId: string | null;
+  }[];
   /** Captioned primary-ratio preview shown at the overlay review step. */
   overlayPreviewUrl?: string | null;
   /** Subtitle languages saved on the job (seed the picker). */
@@ -216,6 +234,8 @@ export function VideoApprovalPanel({
   isAwaitingFinalApproval = false,
   isAwaitingOverlayApproval = false,
   isAwaitingAdditionalRatios = false,
+  isGeneratingAdditionalRatios = false,
+  channelVideos = [],
   overlayPreviewUrl = null,
   savedSubtitleLanguages,
   savedTemplate = null,
@@ -391,6 +411,46 @@ export function VideoApprovalPanel({
     });
   const [overlayApproving, setOverlayApproving] = useState(false);
   const [additionalGenerating, setAdditionalGenerating] = useState(false);
+  // Per-ratio % while the additional channels render: light self-poll of the
+  // pipeline-status endpoint (the page-level poller owns the RSC refresh that
+  // reveals each finished video; this only animates the % on the pending card).
+  const [additionalProgress, setAdditionalProgress] = useState<{
+    pct: number | null;
+    detail: { unit?: string; unitsDone?: number; unitsTotal?: number } | null;
+  }>({ pct: null, detail: null });
+  useEffect(() => {
+    if (!isGeneratingAdditionalRatios) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/requests/${requestId}/pipeline-status`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setAdditionalProgress({
+          pct: typeof data.renderProgress === "number" ? data.renderProgress : null,
+          detail: data.renderProgressDetail ?? null,
+        });
+      } catch {
+        /* network error — try again next interval */
+      }
+    }, 5_000);
+    return () => clearInterval(interval);
+  }, [isGeneratingAdditionalRatios, requestId]);
+
+  /**
+   * % of the ratio CURRENTLY rendering, derived from the overall unit-based
+   * progress: overall = (unitsDone + unitFraction) / unitsTotal, so
+   * unitFraction = overall × unitsTotal − unitsDone. Only meaningful for the
+   * ratio named in `detail.unit`; other pending ratios are queued (no bar).
+   */
+  const currentUnitPct = (ratio: string | null): number | null => {
+    const { pct, detail } = additionalProgress;
+    if (pct == null || !detail || !ratio || detail.unit !== ratio) return null;
+    if (detail.unitsTotal == null || detail.unitsDone == null) return pct;
+    const fraction = (pct / 100) * detail.unitsTotal - detail.unitsDone;
+    return Math.max(0, Math.min(100, fraction * 100));
+  };
   const [editingSubtitle, setEditingSubtitle] = useState(false);
   // Phase 7 — chosen motion template (default "none" = clean video + subtitles).
   const [selectedTemplate, setSelectedTemplate] = useState<string>(savedTemplate ?? "none");
@@ -1859,8 +1919,9 @@ export function VideoApprovalPanel({
           </div>
         )}
 
-        {/* Phase 7 — gate to generate the remaining channels' aspect ratios */}
-        {isAwaitingAdditionalRatios && (
+        {/* Phase 7 — gate to generate the remaining channels' aspect ratios,
+            then the live per-channel grid while they render one-by-one */}
+        {(isAwaitingAdditionalRatios || isGeneratingAdditionalRatios) && (
           <div className="mt-6 space-y-6">
             {/* Completed subtitled video for the primary channel — reuses the
                 clip already rendered/approved at the overlay step, so it appears
@@ -1894,21 +1955,114 @@ export function VideoApprovalPanel({
                 </div>
               </Card>
             )}
-            <Card className="border-blue-100 bg-blue-50/30">
-              <h3 className="text-base font-semibold text-slate-900 mb-2">สร้างอัตราส่วนสำหรับช่องทางอื่น</h3>
-              <p className="text-sm text-slate-500 mb-4">
-                วิดีโอช่องทางหลักพร้อมแล้ว กดปุ่มด้านล่างเพื่อสร้างวิดีโอ (พร้อมซับไตเติ้ลและ Motion Graphic) สำหรับช่องทางอื่นที่มีอัตราส่วนต่างกัน หลังจากนั้นระบบจะสร้างวิดีโอสำหรับช่อง Travy ให้อัตโนมัติ
-              </p>
-              <div className="flex justify-end">
-                <Button
-                  onClick={handleGenerateAdditionalRatios}
-                  loading={additionalGenerating}
-                  disabled={additionalGenerating}
-                >
-                  สร้างอัตราส่วนช่องทางอื่น →
-                </Button>
-              </div>
-            </Card>
+            {isAwaitingAdditionalRatios && (
+              <Card className="border-blue-100 bg-blue-50/30">
+                <h3 className="text-base font-semibold text-slate-900 mb-2">สร้างอัตราส่วนสำหรับช่องทางอื่น</h3>
+                <p className="text-sm text-slate-500 mb-4">
+                  วิดีโอช่องทางหลักพร้อมแล้ว กดปุ่มด้านล่างเพื่อสร้างวิดีโอ (พร้อมซับไตเติ้ลและ Motion Graphic) สำหรับช่องทางอื่นที่มีอัตราส่วนต่างกัน หลังจากนั้นระบบจะสร้างวิดีโอสำหรับช่อง Travy ให้อัตโนมัติ
+                </p>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleGenerateAdditionalRatios}
+                    loading={additionalGenerating}
+                    disabled={additionalGenerating}
+                  >
+                    สร้างอัตราส่วนช่องทางอื่น →
+                  </Button>
+                </div>
+              </Card>
+            )}
+            {/* Live per-channel grid (generation order = channel selection order):
+                each channel's card flips from spinner → playable video the moment
+                its ratio finishes rendering, while the rest keep generating. The
+                page-level poller refreshes as each captioned export lands. */}
+            {isGeneratingAdditionalRatios && (
+              <Card className="border-blue-100 bg-blue-50/30">
+                <h3 className="text-base font-semibold text-slate-900 mb-2">
+                  วิดีโอสำหรับช่องทางอื่น
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">
+                  ระบบกำลังสร้างวิดีโอของแต่ละช่องทางตามลำดับ ช่องทางที่เสร็จแล้วสามารถเล่นดูและดาวน์โหลดได้ทันที
+                  โดยไม่ต้องรอช่องทางอื่น
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {channelVideos
+                    .filter((c) => c.ratio !== primaryRatio)
+                    .map((c) => {
+                      const ready = !!c.assetId;
+                      const unitPct = ready ? null : currentUnitPct(c.ratio);
+                      const rendering = !ready && unitPct != null;
+                      return (
+                        <div
+                          key={c.platform}
+                          className={`rounded-lg border p-3 ${
+                            ready
+                              ? "border-green-200 bg-green-50/40"
+                              : "border-slate-200 bg-white"
+                          }`}
+                        >
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-sm font-semibold text-slate-800">
+                              {c.label}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {c.ratio ? ratioLabel(c.ratio) : ""}
+                            </span>
+                          </div>
+                          {ready && c.url ? (
+                            <>
+                              <div className="flex justify-center overflow-hidden rounded-md bg-slate-900 p-1.5 max-h-[320px]">
+                                <video
+                                  key={c.url}
+                                  src={c.url}
+                                  controls
+                                  playsInline
+                                  className="max-h-[300px] w-auto rounded object-contain"
+                                />
+                              </div>
+                              <a
+                                href={c.url}
+                                download={`subtitled_video_${(c.ratio ?? "").replace(":", "_")}.mp4`}
+                                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                              >
+                                ดาวน์โหลดวิดีโอ ({c.ratio})
+                              </a>
+                            </>
+                          ) : ready ? (
+                            <p className="text-sm text-green-700">
+                              วิดีโอพร้อมแล้ว — ดูได้ในขั้นตอนถัดไป
+                            </p>
+                          ) : (
+                            <div className="flex items-center gap-3 py-3 text-sm text-slate-500">
+                              <div className="h-5 w-5 flex-shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
+                              <div className="min-w-0 flex-1">
+                                {rendering ? (
+                                  <>
+                                    <p>กำลังสร้างวิดีโอช่องทางนี้...</p>
+                                    <div className="mt-1.5 flex items-center gap-2">
+                                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                                        <div
+                                          className="h-full rounded-full bg-blue-600 transition-all duration-700"
+                                          style={{ width: `${unitPct}%` }}
+                                        />
+                                      </div>
+                                      <span className="flex-shrink-0 text-xs tabular-nums text-blue-600">
+                                        {Math.floor(unitPct)}%
+                                      </span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <p>อยู่ในคิว — รอสร้างตามลำดับ</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </Card>
+            )}
           </div>
         )}
 
@@ -1960,7 +2114,9 @@ export function VideoApprovalPanel({
             genuinely running. Gated on isProcessing so it never lingers at
             terminal/review states (Complete/Delivered/Publishing/DistributionReview),
             which fixes the phantom "กำลังประมวลผล..." spinner. */}
-        {!isPipelineFailed && isProcessing && (
+        {/* Suppressed during GeneratingAdditionalRatios — the per-channel grid
+            above carries its own per-channel spinners/progress. */}
+        {!isPipelineFailed && isProcessing && !isGeneratingAdditionalRatios && (
           <Card className="mt-6 border-slate-100 bg-slate-50 p-5 flex flex-col items-center justify-center text-center">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600 mb-4" />
             {isGeneratingVoice ? (

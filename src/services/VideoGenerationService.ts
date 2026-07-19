@@ -26,7 +26,7 @@ import {
   sceneMontageSeconds,
 } from "@/config/montage";
 import { buildAiVideoKey, buildFinalClipKey, buildWatermarkedPreviewKey } from "@/lib/spacesKeys";
-import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
+import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft, RenderProgressDetail } from "@/domain/models/VideoGenerationJob";
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
@@ -462,7 +462,8 @@ export class VideoGenerationService {
   private async _renderSceneClipAtRatio(
     job: VideoGenerationJob,
     sceneIndex: number,
-    ratio: VideoRatio
+    ratio: VideoRatio,
+    onProgress?: (fraction: number) => void
   ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(job.requestId);
@@ -530,6 +531,7 @@ export class VideoGenerationService {
       assets: renderAssets,
       transition,
       outputStorageKey,
+      onProgress,
     });
   }
 
@@ -541,13 +543,17 @@ export class VideoGenerationService {
    * latest segment array before writing so sequential batch renders accumulate
    * correctly.
    */
-  private async _renderSceneInto(job: VideoGenerationJob, sceneIndex: number): Promise<string> {
+  private async _renderSceneInto(
+    job: VideoGenerationJob,
+    sceneIndex: number,
+    onProgress?: (fraction: number) => void
+  ): Promise<string> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(job.requestId);
     if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
     const ratio = this._montageCanvasRatio(req.targetPlatforms[0] ?? Platform.TventApp);
-    const stored = await this._renderSceneClipAtRatio(job, sceneIndex, ratio);
+    const stored = await this._renderSceneClipAtRatio(job, sceneIndex, ratio, onProgress);
 
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
@@ -600,12 +606,46 @@ export class VideoGenerationService {
   // "Generating…" state when this is called.
   // ──────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Throttled writer for the requester-facing per-step % bar. Returns a
+   * callback that persists `renderProgress` (0–100) + optional detail, writing
+   * at most every 3 percentage points / 3 seconds (always writing 100). The
+   * write is fire-and-forget and swallowed on error — progress reporting must
+   * NEVER fail or slow a render, on the droplet or the worker alike.
+   */
+  private _progressWriter(
+    jobId: string
+  ): (pct: number, detail?: RenderProgressDetail) => void {
+    let lastPct = -1;
+    let lastAt = 0;
+    return (pct: number, detail?: RenderProgressDetail) => {
+      const clamped = Math.max(0, Math.min(100, pct));
+      const now = Date.now();
+      if (clamped < 100 && clamped - lastPct < 3 && now - lastAt < 3000) return;
+      if (clamped <= lastPct && clamped < 100) return; // never move backwards
+      lastPct = clamped;
+      lastAt = now;
+      videoGenerationJobRepository
+        .update(jobId, {
+          renderProgress: Math.round(clamped * 10) / 10,
+          renderProgressDetail: detail ?? null,
+        })
+        .catch(() => {});
+    };
+  }
+
   private async _dispatchHeavy(
     job: VideoGenerationJob,
     renderStep: RenderStep,
     inlineFn: () => Promise<void>,
     payload?: Record<string, unknown>
   ): Promise<void> {
+    // Reset the per-step % bar for the step that is about to run (worker or
+    // inline alike). Best-effort: a failed reset must not block the dispatch.
+    await videoGenerationJobRepository
+      .update(job.id, { renderProgress: null, renderProgressDetail: null })
+      .catch(() => {});
+
     const onFail = async (err: unknown) => {
       console.error(`[render:${renderStep}] failed:`, err);
       await videoGenerationJobRepository.update(job.id, {
@@ -752,7 +792,10 @@ export class VideoGenerationService {
   }
 
   private async _renderSceneSegment(job: VideoGenerationJob, sceneIndex: number): Promise<void> {
-    const assetId = await this._renderSceneInto(job, sceneIndex);
+    const writeProgress = this._progressWriter(job.id);
+    const assetId = await this._renderSceneInto(job, sceneIndex, (f) =>
+      writeProgress(f * 100, { unit: `scene ${sceneIndex + 1}` })
+    );
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingVideoApproval,
       baseVideoAssetId: assetId,
@@ -771,8 +814,18 @@ export class VideoGenerationService {
     const scenePlan = sanitizeScenePlanDescriptions(
       JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[]
     );
+    // Overall % across the sequential scene renders: scene i contributes the
+    // window [i/N, (i+1)/N), with Remotion's per-scene fraction filling it.
+    const writeProgress = this._progressWriter(job.id);
+    const sceneCount = Math.max(1, scenePlan.length);
     for (let i = 0; i < scenePlan.length; i++) {
-      await this._renderSceneInto(job, i);
+      await this._renderSceneInto(job, i, (f) =>
+        writeProgress(((i + f) / sceneCount) * 100, {
+          unit: `scene ${i + 1}`,
+          unitsDone: i,
+          unitsTotal: sceneCount,
+        })
+      );
     }
 
     const latest = await videoGenerationJobRepository.findById(job.id);
@@ -1868,7 +1921,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     userId: string,
     ratio: VideoRatio,
     languages: ("th" | "en" | "zh")[],
-    inputs: Awaited<ReturnType<VideoGenerationService["_buildOverlayInputs"]>>
+    inputs: Awaited<ReturnType<VideoGenerationService["_buildOverlayInputs"]>>,
+    onProgress?: (fraction: number) => void
   ): Promise<string> {
     let masterAssetId = this._masterAssetIdForRatio(job, ratio);
     if (!masterAssetId) {
@@ -1912,6 +1966,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       subtitleTimeline: inputs.timeline,
       subtitleLanguages: languages.length > 0 ? languages : ["en", "zh"],
       outputStorageKey: outputKey,
+      onProgress,
     });
 
     const scheduledDeletionAt = new Date();
@@ -2006,12 +2061,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         : (["en", "zh"] as ("th" | "en" | "zh")[]);
 
     const inputs = await this._buildOverlayInputs(job);
+    // Remotion render mapped to 0–95%: the watermark sibling + asset writes after
+    // the render take a moment, so hold the last slice until the step advances.
+    const writeProgress = this._progressWriter(job.id);
     const captionedId = await this._renderCaptionedRatio(
       job,
       request.userId,
       primaryRatio,
       languages,
-      inputs
+      inputs,
+      (f) => writeProgress(f * 95, { unit: primaryRatio })
     );
 
     const updates: UpdateVideoGenerationJobInput = {
@@ -2132,15 +2191,47 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // ratios that already succeeded.
     const latest = await this._getJob(job.id);
     const inputs = await this._buildOverlayInputs(job);
+    // Per-channel % + progressive reveal: unit-based overall progress across the
+    // remaining ratios (generation order = channel selection order), with
+    // Remotion's per-ratio fraction filling each unit's window. `unit` names the
+    // ratio currently rendering so the per-channel grid can show its own %.
+    // Ratios already captioned (stale-claim reclaim / retry) count as done.
+    const writeProgress = this._progressWriter(job.id);
+    const unitsTotal = Math.max(1, remaining.length);
+    let unitsDone = 0;
     for (const ratio of remaining) {
       if (this._captionedAssetIdForRatio(latest, ratio)) {
         console.log(`[overlay:${ratio}] skipped (already captioned)`);
+        unitsDone++;
         continue;
       }
-      const id = await this._renderCaptionedRatio(job, request.userId, ratio, languages, inputs);
+      writeProgress((unitsDone / unitsTotal) * 100, {
+        unit: ratio,
+        unitsDone,
+        unitsTotal,
+      });
+      const id = await this._renderCaptionedRatio(
+        job,
+        request.userId,
+        ratio,
+        languages,
+        inputs,
+        (f) =>
+          writeProgress(((unitsDone + f * 0.95) / unitsTotal) * 100, {
+            unit: ratio,
+            unitsDone,
+            unitsTotal,
+          })
+      );
       const u: UpdateVideoGenerationJobInput = {};
       u[this._captionedFieldForRatio(ratio)] = id;
       await videoGenerationJobRepository.update(job.id, u);
+      unitsDone++;
+      writeProgress((unitsDone / unitsTotal) * 100, {
+        unit: ratio,
+        unitsDone,
+        unitsTotal,
+      });
     }
 
     const refreshed = await this._getJob(job.id);
@@ -2262,12 +2353,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const tventRatio = this._montageCanvasRatio(Platform.TventApp);
 
       const inputs = await this._buildOverlayInputs(job);
+      // Travy runs while the job already sits on AwaitingDistributionReview, so
+      // this % feeds the Travy card (unit "travy"), not the step timeline.
+      const writeProgress = this._progressWriter(job.id);
       const tventAssetId = await this._renderCaptionedRatio(
         job,
         request.userId,
         tventRatio,
         ["en", "zh"],
-        inputs
+        inputs,
+        (f) => writeProgress(f * 95, { unit: "travy" })
       );
 
       await videoGenerationJobRepository.update(job.id, {
@@ -2722,14 +2817,26 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     let advanced = false;
     const failedRatios: ffmpegService.VideoRatio[] = [];
 
+    // Unit-based % across the ratios (FFmpeg compose has no fine-grained
+    // callback; each ratio is one unit). Skipped ratios count as done.
+    const writeProgress = this._progressWriter(job.id);
+    const unitsTotal = Math.max(1, primaryFirstRatios.length);
+    let unitsDone = 0;
+
     for (const ratio of primaryFirstRatios) {
       if (this._masterAssetIdForRatio(latest, ratio)) {
         // Already composed on an earlier run — leave it as-is.
         if (!advanced) advanced = true; // the review already surfaces this ratio
         console.log(`[compose:${ratio}] skipped (already persisted)`);
+        unitsDone++;
         continue;
       }
       try {
+        writeProgress((unitsDone / unitsTotal) * 100, {
+          unit: ratio,
+          unitsDone,
+          unitsTotal,
+        });
         const assetId = await composeOneRatio(ratio);
 
         // Persist THIS ratio right away (partial update — merges, never clobbers
@@ -2742,12 +2849,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           advanced = true;
         }
         await videoGenerationJobRepository.update(job.id, updates);
+        unitsDone++;
+        writeProgress((unitsDone / unitsTotal) * 100, {
+          unit: ratio,
+          unitsDone,
+          unitsTotal,
+        });
         console.log(`[compose:${ratio}] persisted → job${advanced && updates.currentStep ? " (AwaitingFinalApproval)" : ""}`);
       } catch (err) {
         // Primary/first ratio is fatal: without it there is nothing to review.
         if (ratio === fatalRatio) throw err;
         // A later ratio failing must NOT roll back or hide the ratios that
         // already landed — record it and keep composing the rest.
+        unitsDone++;
         failedRatios.push(ratio);
         console.error(`[compose:${ratio}] failed (non-fatal — kept already-composed ratios):`, err);
       }

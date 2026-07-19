@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CREDITS_CONFIG, PIPELINE_PHASES } from "@/config/credits";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
+import type { RenderProgressDetail } from "@/domain/models/VideoGenerationJob";
 
 /** Fallbacks for display only — duration/channels no longer affect the price. */
 const DEFAULT_DURATION_SECONDS = 15;
@@ -54,6 +55,12 @@ interface Props {
   totalChannels?: number;
   videoGenStatus?: "submitted" | "processing" | null;
   videoGenLastPolledAt?: Date | null;
+  /**
+   * Per-step render progress (0–100). Null = not measurable (AI-API steps never
+   * report %) — the spinner alone is shown. Only rendered on the ACTIVE phase.
+   */
+  renderProgress?: number | null;
+  renderProgressDetail?: RenderProgressDetail | null;
   /** Request id — needed to POST the stalled-step retry. */
   requestId?: string;
   /** True when the job has been stuck on this processing step past its threshold. */
@@ -67,6 +74,8 @@ export function ProductionPipeline({
   totalChannels = DEFAULT_CHANNELS,
   videoGenStatus,
   videoGenLastPolledAt,
+  renderProgress = null,
+  renderProgressDetail = null,
   requestId,
   stalled = false,
 }: Props) {
@@ -93,6 +102,23 @@ export function ProductionPipeline({
       setRetryError("เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองอีกครั้ง");
       setRetrying(false);
     }
+  }
+
+  // Thai-friendly label for the multi-unit progress detail, e.g.
+  // "scene 2" → "ฉากที่ 2", a ratio stays "16:9", plus "(1/3)" when known.
+  function progressDetailLabel(detail: RenderProgressDetail | null): string | null {
+    if (!detail?.unit) return null;
+    const sceneMatch = /^scene (\d+)$/.exec(detail.unit);
+    const unitLabel = sceneMatch
+      ? `ฉากที่ ${sceneMatch[1]}`
+      : detail.unit === "travy"
+      ? "Travy"
+      : detail.unit;
+    const counts =
+      detail.unitsTotal != null && detail.unitsDone != null
+        ? ` (${Math.min(detail.unitsDone + 1, detail.unitsTotal)}/${detail.unitsTotal})`
+        : "";
+    return `${unitLabel}${counts}`;
   }
 
   const isFailed = currentStep === VideoGenerationStep.Failed;
@@ -243,6 +269,30 @@ export function ProductionPipeline({
                         </span>
                       )}
                     </p>
+                  )}
+                  {/* Per-step % bar — only while this phase is actively generating
+                      AND the running step reports measurable progress. AI-API
+                      steps never write renderProgress, so they keep the spinner
+                      alone (no bar, by design). */}
+                  {isActive && renderProgress != null && (
+                    <div className="mt-2 w-56 max-w-full">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-blue-600 transition-all duration-700"
+                            style={{ width: `${Math.max(0, Math.min(100, renderProgress))}%` }}
+                          />
+                        </div>
+                        <span className="flex-shrink-0 text-xs tabular-nums text-blue-600">
+                          {Math.floor(Math.max(0, Math.min(100, renderProgress)))}%
+                        </span>
+                      </div>
+                      {progressDetailLabel(renderProgressDetail) && (
+                        <p className="mt-0.5 text-xs text-slate-400">
+                          {progressDetailLabel(renderProgressDetail)}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
                 {/* Every step is covered by the single one-time fee. */}

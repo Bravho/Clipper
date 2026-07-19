@@ -139,6 +139,13 @@ export default function PrivacyPage() {
               for legal, payment, security, fraud-prevention, or dispute purposes.
             </p>
             <p>
+              You may also use the{" "}
+              <Link href="/delete-account" className="text-blue-700 underline">
+                public account deletion request page
+              </Link>
+              .
+            </p>
+            <p>
               Privacy, rights, content-reporting, and removal requests may be sent to{" "}
               <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
                 support@rclipper.com
