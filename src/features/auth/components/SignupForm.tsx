@@ -9,6 +9,7 @@ import { signupSchema, SignupInput } from "@/features/auth/validation/signupSche
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { GoogleSignInButton } from "./GoogleSignInButton";
+import { AppleSignInButton } from "./AppleSignInButton";
 import { ROUTES } from "@/config/routes";
 
 export function SignupForm() {
@@ -60,6 +61,11 @@ export function SignupForm() {
 
       <GoogleSignInButton
         label="สมัครด้วย Google"
+        callbackUrl={ROUTES.DASHBOARD}
+      />
+
+      <AppleSignInButton
+        label="สมัครด้วย Apple"
         callbackUrl={ROUTES.DASHBOARD}
       />
 
@@ -123,7 +129,7 @@ export function SignupForm() {
         <Link href={ROUTES.OWNERSHIP} className="underline hover:text-slate-700">
           นโยบายสิทธิ์ในเนื้อหาและการเผยแพร่
         </Link>
-        ซึ่งอธิบายการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่บน Travy
+        ซึ่งอธิบายการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่บนแอป Travy และเว็บไซต์ Travy.buzz
       </p>
 
       <div className="border-t border-slate-100 pt-2">

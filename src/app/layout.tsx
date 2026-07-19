@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import SessionProvider from "./providers";
@@ -11,8 +10,6 @@ import "./globals.css";
 
 // Seed editor profiles into the in-memory mock store on first server render
 initEditorSeedData();
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: {
@@ -54,7 +51,7 @@ export default async function RootLayout({
   const session = await getServerSession(authOptions);
 
   return (
-    <html lang="th" className={inter.className}>
+    <html lang="th">
       <body className="flex min-h-screen flex-col">
         <SessionProvider session={session}>
           <ServiceWorkerRegister />

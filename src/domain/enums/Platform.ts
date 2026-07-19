@@ -23,7 +23,7 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
   [Platform.Facebook]: "Facebook",
   [Platform.Instagram]: "Instagram",
   [Platform.YouTube]: "YouTube",
-  [Platform.TventApp]: "Travy App",
+  [Platform.TventApp]: "Travy",
   [Platform.CDN]: "Download / CDN Link",
 };
 

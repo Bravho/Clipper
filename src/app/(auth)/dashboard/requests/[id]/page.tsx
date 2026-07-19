@@ -734,6 +734,24 @@ export default async function RequestDetailPage({
           Request Brief
         </h2>
         <dl className="flex flex-col gap-4">
+          <BriefRow label="ชื่อสถานที่" value={view.placeName} />
+          {view.latitude !== null && view.longitude !== null && (
+            <div>
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                ตำแหน่ง
+              </dt>
+              <dd className="mt-1">
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${view.latitude},${view.longitude}`)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm tabular-nums text-blue-600 hover:underline"
+                >
+                  {view.latitude.toFixed(6)}, {view.longitude.toFixed(6)}
+                </a>
+              </dd>
+            </div>
+          )}
           <BriefRow label="Description" value={view.description} />
           <BriefRow label="Target audience" value={view.targetAudience} />
           <BriefRow

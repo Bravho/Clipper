@@ -20,12 +20,27 @@ export interface User {
   name: string;
   role: Role;
   emailVerified: boolean;
+  /**
+   * TRUE when this account's free-trial right was already used — either by
+   * this account, or by a previously deleted account with the same email /
+   * OAuth identity (detected via deleted_account_registry at signup).
+   */
+  trialConsumed: boolean;
+  /**
+   * Tombstone marker. Deletion anonymizes PII in place (name, email) and sets
+   * this timestamp; the row is retained so legally-required financial and
+   * consent records that reference users.id survive without personal data.
+   */
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
 /**
  * Data required to create a new user.
- * The repository layer assigns id, createdAt, updatedAt.
+ * The repository layer assigns id, createdAt, updatedAt, deletedAt (null).
  */
-export type CreateUserInput = Omit<User, "id" | "createdAt" | "updatedAt">;
+export type CreateUserInput = Omit<
+  User,
+  "id" | "createdAt" | "updatedAt" | "deletedAt"
+>;

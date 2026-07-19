@@ -6,6 +6,7 @@ import { CREDITS_CONFIG } from "@/config/credits";
 import {
   clipRequestRepository,
   requestStatusHistoryRepository,
+  userRepository,
 } from "@/repositories";
 import { creditService } from "@/services/CreditService";
 import { uploadService } from "@/services/UploadService";
@@ -36,6 +37,9 @@ export class ClipRequestService {
     const input: CreateClipRequestInput = {
       userId,
       title: data.title,
+      placeName: data.placeName,
+      latitude: data.latitude,
+      longitude: data.longitude,
       description: data.description,
       targetAudience: data.targetAudience,
       targetPlatforms: data.targetPlatforms,
@@ -393,6 +397,12 @@ export class ClipRequestService {
    * draft-only requests do not consume the free trial.
    */
   async isFirstRequest(userId: string): Promise<boolean> {
+    // Fraud prevention: trial_consumed is set at account creation when the
+    // deleted-account registry shows this email/OAuth identity already used
+    // its free trial on a previously deleted account.
+    const user = await userRepository.findById(userId);
+    if (user?.trialConsumed) return false;
+
     const all = await clipRequestRepository.findByUserId(userId);
     return all.every((r) => r.submittedAt === null);
   }

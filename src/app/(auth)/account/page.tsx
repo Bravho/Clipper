@@ -8,6 +8,8 @@ import { PolicyType } from "@/domain/enums/PolicyType";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { SignOutButton } from "./SignOutButton";
+import { ChangePasswordCard } from "@/features/account/components/ChangePasswordCard";
+import { DeleteAccountCard } from "@/features/account/components/DeleteAccountCard";
 
 export const metadata: Metadata = { title: "บัญชีของฉัน" };
 
@@ -55,7 +57,11 @@ export default async function AccountPage() {
               label="วิธีเข้าสู่ระบบ"
               value={
                 <span>
-                  {user.provider === AuthProvider.Google ? "Google" : "อีเมล / รหัสผ่าน"}
+                  {user.provider === AuthProvider.Google
+                    ? "Google"
+                    : user.provider === AuthProvider.Apple
+                      ? "Apple"
+                      : "อีเมล / รหัสผ่าน"}
                 </span>
               }
             />
@@ -144,18 +150,20 @@ export default async function AccountPage() {
           )}
         </Card>
 
-        {/* Placeholder: Profile edit */}
-        <Card className="border-dashed">
-          <p className="text-sm font-medium text-slate-500">
-            การแก้ไขโปรไฟล์ การเปลี่ยนรหัสผ่าน และการจัดการบัญชีที่เชื่อมต่อ
-            จะพร้อมใช้งานในอัปเดตถัดไป
-          </p>
-        </Card>
+        {/* Change password — credentials accounts only (OAuth has no password) */}
+        {user.provider === AuthProvider.Credentials && <ChangePasswordCard />}
 
         {/* Sign out */}
         <div className="flex justify-end">
           <SignOutButton />
         </div>
+
+        {/* Danger zone: account deletion (App Store 5.1.1(v) / Play Store) */}
+        {profile.user.role === Role.Requester && (
+          <DeleteAccountCard
+            hasPassword={user.provider === AuthProvider.Credentials}
+          />
+        )}
       </div>
     </div>
   );

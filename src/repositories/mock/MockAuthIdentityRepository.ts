@@ -69,4 +69,21 @@ export class MockAuthIdentityRepository implements IAuthIdentityRepository {
     this.store.set(identity.id, identity);
     return { ...identity };
   }
+
+  async updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
+    for (const [id, identity] of this.store.entries()) {
+      if (
+        identity.userId === userId &&
+        identity.provider === AuthProvider.Credentials
+      ) {
+        this.store.set(id, { ...identity, passwordHash });
+      }
+    }
+  }
+
+  async deleteByUserId(userId: string): Promise<void> {
+    for (const [id, identity] of this.store.entries()) {
+      if (identity.userId === userId) this.store.delete(id);
+    }
+  }
 }

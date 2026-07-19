@@ -1,6 +1,7 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
+import AppleProvider from "next-auth/providers/apple";
 import { Role } from "@/domain/enums/Role";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { authService } from "@/services/AuthService";
@@ -34,6 +35,15 @@ export const authOptions: NextAuthOptions = {
           prompt: "select_account",
         },
       },
+    }),
+
+    // ---- Apple OAuth (Sign in with Apple) -----------------------------------
+    // Required by App Store guideline 4.8 when a third-party login (Google)
+    // is offered. APPLE_CLIENT_SECRET is a self-signed ES256 JWT that expires
+    // after at most 6 months — regenerate it before expiry.
+    AppleProvider({
+      clientId: process.env.APPLE_CLIENT_ID ?? "",
+      clientSecret: process.env.APPLE_CLIENT_SECRET ?? "",
     }),
 
     // ---- Credentials (email + password) -------------------------------------
@@ -71,22 +81,28 @@ export const authOptions: NextAuthOptions = {
      * Used to handle Google OAuth account creation/linking.
      */
     async signIn({ user, account, profile }) {
-      if (account?.provider === "google") {
+      if (account?.provider === "google" || account?.provider === "apple") {
+        const provider =
+          account.provider === "google"
+            ? AuthProvider.Google
+            : AuthProvider.Apple;
         try {
-          const googleUser = await authService.findOrCreateGoogleUser({
-            googleAccountId: account.providerAccountId!,
+          // Note: Apple only sends the user's name on the FIRST authorization;
+          // fall back to the email if absent.
+          const oauthUser = await authService.findOrCreateOAuthUser(provider, {
+            providerAccountId: account.providerAccountId!,
             email: user.email!,
             name: user.name ?? user.email!,
           });
 
           // Mutate the user object so the jwt callback receives correct data
-          user.id = googleUser.id;
-          user.role = googleUser.role;
-          user.provider = AuthProvider.Google;
+          user.id = oauthUser.id;
+          user.role = oauthUser.role;
+          user.provider = provider;
 
           return true;
         } catch (error) {
-          console.error("[Clipper] Google signIn error:", error);
+          console.error(`[Clipper] ${account.provider} signIn error:`, error);
           return false;
         }
       }
@@ -137,6 +153,36 @@ export const authOptions: NextAuthOptions = {
     signIn: ROUTES.LOGIN,
     error: ROUTES.LOGIN,
   },
+
+  // Sign in with Apple uses response_mode=form_post: Apple POSTs the callback
+  // cross-site, so the CSRF/PKCE cookies must be SameSite=None; Secure or the
+  // callback arrives without them and login fails. Only applied on https
+  // deployments — SameSite=None requires Secure, which would break local
+  // http development for Google/credentials login.
+  ...(process.env.NEXTAUTH_URL?.startsWith("https")
+    ? {
+        cookies: {
+          pkceCodeVerifier: {
+            name: "__Secure-next-auth.pkce.code_verifier",
+            options: {
+              httpOnly: true,
+              sameSite: "none" as const,
+              path: "/",
+              secure: true,
+            },
+          },
+          state: {
+            name: "__Secure-next-auth.state",
+            options: {
+              httpOnly: true,
+              sameSite: "none" as const,
+              path: "/",
+              secure: true,
+            },
+          },
+        },
+      }
+    : {}),
 
   secret: process.env.NEXTAUTH_SECRET,
 };

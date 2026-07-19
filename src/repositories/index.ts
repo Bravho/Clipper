@@ -31,10 +31,14 @@ export const termsAcceptanceRepository = new PostgresTermsAcceptanceRepository()
 export const emailVerificationTokenRepository = new PostgresEmailVerificationTokenRepository();
 
 // ── New Repositories — PostgreSQL ────────────────────────────────────────────
+import { PostgresDeletedAccountRegistryRepository } from "./postgres/PostgresDeletedAccountRegistryRepository";
 import { PostgresBusinessProfileRepository } from "./postgres/PostgresBusinessProfileRepository";
 import { PostgresCreditPurchaseLogRepository } from "./postgres/PostgresCreditPurchaseLogRepository";
 import { PostgresPaymentIntentRepository } from "./postgres/PostgresPaymentIntentRepository";
 
+// Account-deletion fraud-prevention registry. Requires migration 014.
+export const deletedAccountRegistryRepository =
+  new PostgresDeletedAccountRegistryRepository();
 export const businessProfileRepository = new PostgresBusinessProfileRepository();
 export const creditPurchaseLogRepository = new PostgresCreditPurchaseLogRepository();
 // PromptPay top-up intents (Stripe). Requires migration 007.

@@ -30,6 +30,22 @@ export const clipRequestFormSchema = z.object({
     .min(3, "Title must be at least 3 characters.")
     .max(100, "Title must be 100 characters or fewer."),
 
+  placeName: z
+    .string()
+    .trim()
+    .min(1, "กรุณาระบุชื่อสถานที่")
+    .max(150, "ชื่อสถานที่ต้องมีความยาวไม่เกิน 150 ตัวอักษร"),
+
+  latitude: z.coerce
+    .number({ invalid_type_error: "กรุณาเลือกตำแหน่งสถานที่บนแผนที่" })
+    .min(-90, "พิกัดละติจูดไม่ถูกต้อง")
+    .max(90, "พิกัดละติจูดไม่ถูกต้อง"),
+
+  longitude: z.coerce
+    .number({ invalid_type_error: "กรุณาเลือกตำแหน่งสถานที่บนแผนที่" })
+    .min(-180, "พิกัดลองจิจูดไม่ถูกต้อง")
+    .max(180, "พิกัดลองจิจูดไม่ถูกต้อง"),
+
   description: z
     .string()
     .min(20, "Please provide a description of at least 20 characters.")

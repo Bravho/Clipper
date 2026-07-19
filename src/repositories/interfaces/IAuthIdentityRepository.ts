@@ -21,4 +21,10 @@ export interface IAuthIdentityRepository {
   findCredentialsByUserId(userId: string): Promise<AuthIdentity | null>;
 
   create(input: CreateAuthIdentityInput): Promise<AuthIdentity>;
+
+  /** Replace the bcrypt password hash on a user's credentials identity. */
+  updatePasswordHash(userId: string, passwordHash: string): Promise<void>;
+
+  /** Remove all auth identities for a user (account deletion — kills login). */
+  deleteByUserId(userId: string): Promise<void>;
 }

@@ -8,6 +8,9 @@ import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
 
 const validBase = {
   title: "My Great Clip",
+  placeName: "เฝอ 54",
+  latitude: 13.756331,
+  longitude: 100.501762,
   description: "A description that is long enough to pass validation here.",
   targetAudience: "Young adults interested in tech",
   targetPlatforms: [Platform.TikTok],
@@ -26,6 +29,18 @@ describe("clipRequestFormSchema", () => {
     if (!result.success) {
       expect(result.error.flatten().fieldErrors.title).toBeDefined();
     }
+  });
+
+  it("requires a nonblank place name and valid coordinates", () => {
+    expect(
+      clipRequestFormSchema.safeParse({ ...validBase, placeName: "   " }).success
+    ).toBe(false);
+    expect(
+      clipRequestFormSchema.safeParse({ ...validBase, latitude: 91 }).success
+    ).toBe(false);
+    expect(
+      clipRequestFormSchema.safeParse({ ...validBase, longitude: -181 }).success
+    ).toBe(false);
   });
 
   it("rejects title shorter than 3 characters", () => {

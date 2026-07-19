@@ -17,7 +17,7 @@ export default function PrivacyPage() {
           RClipper Privacy Policy
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.1.0 — Effective 18 July 2026
+          Version 1.2.1 — Effective 19 July 2026
         </p>
       </div>
 
@@ -29,11 +29,12 @@ export default function PrivacyPage() {
             </h2>
             <p>
               RClipper collects account and authentication information, request
-              briefs, uploaded images and videos, voice recordings, production
-              choices, approval history, credit and payment records, support
-              communications, and technical information needed to operate and secure
-              the service. Uploaded media may contain personal data about you or
-              other identifiable people.
+              briefs, uploaded images and videos, voice recordings, user-entered
+              text, place names, addresses, selected map locations or coordinates,
+              categories, production choices, approval history, credit and payment
+              records, support communications, and technical information needed to
+              operate and secure the service. Uploaded media and location information
+              may contain personal data about you or other identifiable people.
             </p>
           </section>
 
@@ -69,12 +70,18 @@ export default function PrivacyPage() {
               4. Selected Travy publication
             </h2>
             <p>
-              Not every generated video is published on Travy. RClipper may select a
-              reviewed video for public display on the Travy website or application.
+              Not every generated video is published through Travy. RClipper may
+              select a reviewed video for public display in the Travy app and on the
+              Travy.buzz website.
               When selected, the finished video and associated title, caption,
-              thumbnail, subtitles, translations, business information, and personal
-              data visible or audible in the video become publicly accessible. Public
-              viewers may copy or share content outside RClipper&apos;s control.
+              thumbnail, subtitles, translations, user-entered text, place name,
+              address, selected map location, coordinates, category, business or
+              attraction information, and personal data visible or audible in the
+              video may become publicly accessible. RClipper may present this
+              information in a Travy post, place page, listing, search result, map
+              marker, or related location feature in the Travy app or on Travy.buzz.
+              Public viewers may copy or share
+              content outside RClipper&apos;s control.
             </p>
             <p>
               The request form gives a just-in-time notice and requires confirmation

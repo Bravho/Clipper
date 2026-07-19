@@ -42,6 +42,8 @@ export interface SceneDesignOutput {
 
 export interface GenerateContentParams {
   imageUrls: string[];
+  /** Exact requester-entered place/business name. Never rewrite or split it. */
+  placeName?: string;
   /** Requester-provided clip title (ชื่อคลิป). May contain the place/shop name. */
   title?: string;
   description: string;
@@ -179,6 +181,12 @@ function buildUserPrompt(params: GenerateContentParams): string {
     ...(params.title && params.title.trim()
       ? [
           `Clip title (ชื่อคลิป, provided by the requester — may contain the place/shop/venue name to say in the script): ${params.title}`,
+        ]
+      : []),
+    ...(params.placeName?.trim()
+      ? [
+          `AUTHORITATIVE place/business name: "${params.placeName.trim()}"`,
+          `Place-name preservation rule: reproduce "${params.placeName.trim()}" exactly in visible text. Do not translate, rewrite, abbreviate, normalize, or split this name across sentences or subtitle phrases.`,
         ]
       : []),
     `Video description (รายละเอียดคลิป, provided by the requester — may contain the place/shop/venue name to say in the script): ${params.description}`,

@@ -39,11 +39,21 @@ export class CreditService {
    * Creates the wallet at zero and marks initialisation complete.
    * Guards against double-grant using wallet.initialCreditsGranted.
    */
-  async initialiseRequesterWallet(userId: string): Promise<CreditWallet> {
+  async initialiseRequesterWallet(
+    userId: string,
+    options?: {
+      /**
+       * Withhold the signup bonus — used when the deleted-account registry
+       * shows this email/OAuth identity already received it on a previous,
+       * since-deleted account (fraud prevention).
+       */
+      skipBonus?: boolean;
+    }
+  ): Promise<CreditWallet> {
     const existing = await creditWalletRepository.findByUserId(userId);
     if (existing) {
       // Wallet already exists — only grant bonus if not yet granted
-      if (!existing.initialCreditsGranted) {
+      if (!existing.initialCreditsGranted && !options?.skipBonus) {
         return this.grantSignupBonus(existing);
       }
       return existing;
@@ -55,6 +65,12 @@ export class CreditService {
       balance: 0,
       initialCreditsGranted: false,
     });
+
+    if (options?.skipBonus) {
+      // Mark granted so the bonus can never fire later for this wallet.
+      await creditWalletRepository.markInitialCreditsGranted(wallet.id);
+      return { ...wallet, initialCreditsGranted: true };
+    }
 
     return this.grantSignupBonus(wallet);
   }

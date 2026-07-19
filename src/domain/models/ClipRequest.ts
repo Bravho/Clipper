@@ -38,6 +38,11 @@ export interface ClipRequest {
 
   // Brief fields
   title: string;
+  /** Requester-provided authoritative business/place name. */
+  placeName?: string;
+  /** User-confirmed WGS84 coordinate selected on the request map. */
+  latitude?: number;
+  longitude?: number;
   description: string;
   targetAudience: string;
   targetPlatforms: Platform[];
@@ -142,6 +147,9 @@ export interface ClipRequest {
 export type CreateClipRequestInput = {
   userId: string;
   title: string;
+  placeName?: string;
+  latitude?: number;
+  longitude?: number;
   description: string;
   targetAudience: string;
   targetPlatforms: Platform[];
@@ -155,6 +163,9 @@ export type UpdateClipRequestInput = Partial<
   Pick<
     ClipRequest,
     | "title"
+    | "placeName"
+    | "latitude"
+    | "longitude"
     | "description"
     | "targetAudience"
     | "targetPlatforms"

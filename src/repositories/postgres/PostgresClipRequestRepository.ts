@@ -17,6 +17,9 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     id: row.id as string,
     userId: row.user_id as string,
     title: row.title as string,
+    placeName: (row.place_name as string) ?? "",
+    latitude: row.latitude != null ? Number(row.latitude) : undefined,
+    longitude: row.longitude != null ? Number(row.longitude) : undefined,
     description: row.description as string,
     targetAudience: row.target_audience as string,
     targetPlatforms: (row.target_platforms as string[]) as Platform[],
@@ -60,6 +63,9 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
 // Columns that can be updated via the requester-facing update() method.
 const REQUESTER_UPDATE_COLS: Record<string, string> = {
   title: "title",
+  placeName: "place_name",
+  latitude: "latitude",
+  longitude: "longitude",
   description: "description",
   targetAudience: "target_audience",
   targetPlatforms: "target_platforms",
@@ -202,14 +208,17 @@ export class PostgresClipRequestRepository
   async create(input: CreateClipRequestInput): Promise<ClipRequest> {
     const { rows } = await this.db.query(
       `INSERT INTO clip_requests (
-         user_id, title, description, target_audience,
+         user_id, title, place_name, latitude, longitude, description, target_audience,
          target_platforms, preferred_style, preferred_language,
          duration_seconds, credits_cost
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING *`,
       [
         input.userId,
         input.title,
+        input.placeName,
+        input.latitude,
+        input.longitude,
         input.description,
         input.targetAudience,
         input.targetPlatforms,

@@ -14,5 +14,12 @@ export interface IUserRepository {
   update(id: string, data: Partial<Pick<User, "name" | "role">>): Promise<User>;
   markEmailVerified(id: string): Promise<void>;
   delete(id: string): Promise<void>;
+  /**
+   * App Store / Play Store compliant account deletion: erases PII in place
+   * (full_name → "Deleted user", email → "deleted:<id>") and sets deleted_at.
+   * The row is retained so legally-required financial/consent records that
+   * reference users.id survive without personal data.
+   */
+  anonymizeAndSoftDelete(id: string): Promise<void>;
   listAll(): Promise<User[]>;
 }

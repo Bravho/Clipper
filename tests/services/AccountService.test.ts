@@ -43,6 +43,7 @@ describe("MockUserRepository — account creation", () => {
       name: "Test User",
       role: Role.Requester,
       emailVerified: false,
+      trialConsumed: false,
     });
     expect(user.role).toBe(Role.Requester);
     expect(user.email).toBe("test@example.com");
@@ -56,6 +57,7 @@ describe("MockUserRepository — account creation", () => {
       name: "Test",
       role: Role.Requester,
       emailVerified: false,
+      trialConsumed: false,
     });
     const found = await userRepo.findByEmail("test@example.com");
     expect(found).not.toBeNull();
@@ -75,6 +77,7 @@ describe("MockUserRepository — account creation", () => {
       name: "First",
       role: Role.Requester,
       emailVerified: false,
+      trialConsumed: false,
     });
     // Duplicate email check (as AccountService does it)
     const existing = await userRepo.findByEmail("dup@example.com");
@@ -186,6 +189,7 @@ describe("Role assignment", () => {
       name: "Req",
       role: Role.Requester,
       emailVerified: false,
+      trialConsumed: false,
     });
     expect(user.role).toBe("requester");
   });

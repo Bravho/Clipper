@@ -60,4 +60,17 @@ export class PostgresAuthIdentityRepository
     );
     return rowToIdentity(rows[0]);
   }
+
+  async updatePasswordHash(userId: string, passwordHash: string): Promise<void> {
+    await this.db.query(
+      "UPDATE auth_identities SET password_hash = $1 WHERE user_id = $2 AND provider = $3",
+      [passwordHash, userId, AuthProvider.Credentials]
+    );
+  }
+
+  async deleteByUserId(userId: string): Promise<void> {
+    await this.db.query("DELETE FROM auth_identities WHERE user_id = $1", [
+      userId,
+    ]);
+  }
 }

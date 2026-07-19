@@ -10,6 +10,7 @@ import { loginSchema, LoginInput } from "@/features/auth/validation/loginSchema"
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { GoogleSignInButton } from "./GoogleSignInButton";
+import { AppleSignInButton } from "./AppleSignInButton";
 import { getRoleHomePath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
@@ -100,6 +101,8 @@ export function LoginForm() {
       </div>
 
       <GoogleSignInButton label="เข้าสู่ระบบด้วย Google" />
+
+      <AppleSignInButton label="เข้าสู่ระบบด้วย Apple" />
 
       <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-slate-200" />

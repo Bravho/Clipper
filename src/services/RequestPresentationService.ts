@@ -71,6 +71,9 @@ export interface RequesterRequestView {
     description: string;
   } | null;
   /** Brief fields */
+  placeName: string;
+  latitude: number | null;
+  longitude: number | null;
   description: string;
   targetAudience: string;
   targetPlatforms: string[]; // human-readable labels
@@ -327,6 +330,9 @@ export class RequestPresentationService {
       holdReason: request.holdReason,
       rejectionReason: request.rejectionReason,
       pipelineProgress: this.getPipelineProgress(request.status, pipelineStep),
+      placeName: request.placeName ?? "",
+      latitude: request.latitude ?? null,
+      longitude: request.longitude ?? null,
       description: request.description,
       targetAudience: request.targetAudience,
       targetPlatforms: request.targetPlatforms.map(

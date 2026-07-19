@@ -1,6 +1,7 @@
 import {
   videoGenerationJobRepository,
   uploadedAssetRepository,
+  clipRequestRepository,
 } from "@/repositories/index";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -275,6 +276,7 @@ export class VideoGenerationService {
 
     const output = await chatGptVisionService.generateSpeakingScript({
       ...params,
+      placeName: req?.placeName,
       videoDurationSeconds: 15,
       businessProfileContext,
     });
@@ -1816,7 +1818,13 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         ? job.subtitleLanguages
         : (["en", "zh"] as ("th" | "en" | "zh")[]);
     const { splitSegmentsForDisplay } = await import("@/lib/ai/geminiSubtitlesService");
-    const displayTimeline = splitSegmentsForDisplay(rawTimeline, languages);
+    const request = await clipRequestRepository.findById(job.requestId);
+    const protectedPhrases = request?.placeName ? [request.placeName] : [];
+    const displayTimeline = splitSegmentsForDisplay(
+      rawTimeline,
+      languages,
+      protectedPhrases
+    );
 
     // The master opens with a music-only lead-in (the voice is adelay'd), so
     // shift the caption timeline by the lead-in to stay synced with speech, and

@@ -30,6 +30,7 @@ import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { GoogleMapLocationPicker } from "@/features/requests/components/GoogleMapLocationPicker";
 
 interface PendingFile {
   id: string;
@@ -152,12 +153,14 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const [isDraftSaving, setIsDraftSaving] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [phase, setPhase] = useState<SubmitPhase>("form");
+  const [mapOpen, setMapOpen] = useState(false);
 
   const {
     register,
     handleSubmit,
     watch,
     setFocus,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<SubmitClipRequestValues>({
     resolver: zodResolver(submitClipRequestSchema),
@@ -171,6 +174,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
   const watchedPlatforms = watch("targetPlatforms") ?? [];
   const watchedDuration = watch("durationSeconds") ?? PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS;
+  const watchedLatitude = watch("latitude");
+  const watchedLongitude = watch("longitude");
 
   useEffect(() => {
     const duration = typeof watchedDuration === "number" && !isNaN(watchedDuration)
@@ -506,6 +511,33 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             error={errors.title?.message}
           />
 
+          <div>
+            <Input
+              label="ชื่อสถานที่"
+              placeholder="เช่น เฝอ 54"
+              hint="ระบบจะเก็บชื่อนี้ไว้ทั้งคำเพื่อไม่ให้ถูกตัดแยกในคำบรรยาย"
+              {...register("placeName")}
+              error={errors.placeName?.message}
+            />
+            <input type="hidden" {...register("latitude", { valueAsNumber: true })} />
+            <input type="hidden" {...register("longitude", { valueAsNumber: true })} />
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <Button type="button" variant="outline" onClick={() => setMapOpen(true)}>
+                เลือกตำแหน่งบนแผนที่
+              </Button>
+              {Number.isFinite(watchedLatitude) && Number.isFinite(watchedLongitude) && (
+                <span className="text-sm tabular-nums text-slate-600">
+                  📍 {Number(watchedLatitude).toFixed(6)}, {Number(watchedLongitude).toFixed(6)}
+                </span>
+              )}
+            </div>
+            {(errors.latitude || errors.longitude) && (
+              <p className="mt-1 text-xs text-red-600" role="alert">
+                {errors.latitude?.message ?? errors.longitude?.message}
+              </p>
+            )}
+          </div>
+
           <Textarea
             label="รายละเอียดคลิป"
             placeholder="อธิบายสิ่งที่ต้องการโปรโมทและข้อความหลักที่ต้องการสื่อ..."
@@ -694,17 +726,6 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           </div>
         )}
 
-        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-semibold text-amber-900">
-            การคัดเลือกเพื่อเผยแพร่บน Travy
-          </p>
-          <p className="mt-1 text-sm leading-relaxed text-amber-800">
-            วิดีโอที่สร้างขึ้นไม่ได้เผยแพร่บน Travy ทุกวิดีโอ RClipper
-            อาจคัดเลือกวิดีโอบางรายการที่ผ่านการตรวจสอบเพื่อเผยแพร่ต่อสาธารณะบนเว็บไซต์หรือแอปพลิเคชัน
-            Travy ตามข้อกำหนดและเงื่อนไข
-          </p>
-        </div>
-
         <div className="flex flex-col gap-4">
           <Checkbox
             label={
@@ -720,7 +741,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             label={
               <>
                 ฉันยืนยันว่าเป็นเจ้าของหรือได้รับสิทธิ์และการอนุญาตที่จำเป็นสำหรับไฟล์
-                บุคคล เสียง เพลง เครื่องหมายการค้า และเนื้อหาที่อัพโหลด และยอมรับ{" "}
+                บุคคล เสียง เพลง เครื่องหมายการค้า ข้อความ ชื่อสถานที่
+                ตำแหน่งที่เลือก และเนื้อหาที่อัพโหลดหรือกรอกในคำขอ และยอมรับ{" "}
                 <Link
                   href={ROUTES.TERMS}
                   target="_blank"
@@ -739,7 +761,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                   นโยบายสิทธิ์ในเนื้อหา
                 </Link>
                 {" "}ซึ่งรวมถึงสิทธิ์ของ RClipper
-                ในการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่บนเว็บไซต์และแอปพลิเคชัน Travy
+                ในการคัดเลือกวิดีโอบางรายการ พร้อมข้อความ ชื่อสถานที่
+                และตำแหน่งที่เกี่ยวข้อง เพื่อเผยแพร่หรือแสดงบนแอป Travy และเว็บไซต์ Travy.buzz
               </>
             }
             {...register("rightsConfirmed")}
@@ -781,6 +804,24 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           </Button>
         </div>
       </div>
+
+      <GoogleMapLocationPicker
+        open={mapOpen}
+        initialCoordinates={
+          Number.isFinite(watchedLatitude) && Number.isFinite(watchedLongitude)
+            ? {
+                latitude: Number(watchedLatitude),
+                longitude: Number(watchedLongitude),
+              }
+            : null
+        }
+        onClose={() => setMapOpen(false)}
+        onConfirm={({ latitude, longitude }) => {
+          setValue("latitude", latitude, { shouldValidate: true, shouldDirty: true });
+          setValue("longitude", longitude, { shouldValidate: true, shouldDirty: true });
+          setMapOpen(false);
+        }}
+      />
     </form>
   );
 }

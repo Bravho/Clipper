@@ -258,10 +258,36 @@ function tokenizeForDisplay(
  * mid-word). Some pieces may be empty when the text has fewer units than `n` —
  * callers tolerate empty cue lines (they render nothing for that window).
  */
-function splitTextIntoParts(text: string, n: number, lang: SubtitleLanguage): string[] {
+function splitTextIntoParts(
+  text: string,
+  n: number,
+  lang: SubtitleLanguage,
+  protectedPhrases: string[]
+): string[] {
   const trimmed = text.trim();
   if (n <= 1) return [trimmed];
-  const { units, joiner } = tokenizeForDisplay(trimmed, lang);
+  const replacements = new Map<string, string>();
+  let protectedText = trimmed.normalize("NFC");
+  protectedPhrases
+    .map((phrase) => phrase.trim().normalize("NFC"))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .forEach((phrase, index) => {
+      const placeholder = `RCLIPPERPROTECTED${index}TOKEN`;
+      if (!protectedText.includes(phrase)) return;
+      replacements.set(placeholder, phrase);
+      protectedText = protectedText.split(phrase).join(placeholder);
+    });
+
+  const tokenized = tokenizeForDisplay(protectedText, lang);
+  const units = tokenized.units.map((unit) => {
+    let restored = unit;
+    for (const [placeholder, phrase] of replacements) {
+      restored = restored.split(placeholder).join(phrase);
+    }
+    return restored;
+  });
+  const { joiner } = tokenized;
   const parts: string[] = [];
   for (let i = 0; i < n; i++) {
     const start = Math.floor((i * units.length) / n);
@@ -291,7 +317,8 @@ function splitTextIntoParts(text: string, n: number, lang: SubtitleLanguage): st
  */
 export function splitSegmentsForDisplay(
   segments: TimedSegment[],
-  languages: SubtitleLanguage[] = ["en", "zh"]
+  languages: SubtitleLanguage[] = ["en", "zh"],
+  protectedPhrases: string[] = []
 ): TimedSegment[] {
   const active = languages.length > 0 ? languages : (["en", "zh"] as SubtitleLanguage[]);
 
@@ -319,9 +346,9 @@ export function splitSegmentsForDisplay(
     }
 
     const partsByLang: Record<SubtitleLanguage, string[]> = {
-      th: splitTextIntoParts(textByLang.th, cueCount, "th"),
-      en: splitTextIntoParts(textByLang.en, cueCount, "en"),
-      zh: splitTextIntoParts(textByLang.zh, cueCount, "zh"),
+      th: splitTextIntoParts(textByLang.th, cueCount, "th", protectedPhrases),
+      en: splitTextIntoParts(textByLang.en, cueCount, "en", protectedPhrases),
+      zh: splitTextIntoParts(textByLang.zh, cueCount, "zh", protectedPhrases),
     };
 
     // Time weights from the first active language that has text (fall back to

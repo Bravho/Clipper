@@ -17,7 +17,7 @@ export default function OwnershipPage() {
           Content Ownership and Publication Rights
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.1.0 — Effective 18 July 2026
+          Version 1.2.1 — Effective 19 July 2026
         </p>
       </div>
 
@@ -32,7 +32,9 @@ export default function OwnershipPage() {
               you own those materials or have obtained every licence, consent, model
               or property release, music right, trademark permission, and other
               authorisation necessary for RClipper to process the request and exercise
-              the rights below.
+              the rights below. Request content includes text, titles, descriptions,
+              place names, addresses, selected map locations, coordinates, categories,
+              and other business, attraction, or location information you provide.
             </p>
           </section>
 
@@ -83,9 +85,14 @@ export default function OwnershipPage() {
               selects a reviewed video, you grant RClipper a non-exclusive, worldwide,
               royalty-free licence to reproduce, host, display, communicate to the
               public, and distribute your source materials as incorporated in the
-              finished video on the Travy website and application. The licence
-              includes reasonable titles, captions, subtitles, translations,
-              thumbnails, crops, and technical adaptations needed for Travy.
+              finished video and the related request content in the Travy app and on
+              the Travy.buzz website. RClipper may use text, place names, addresses, selected map
+              locations, coordinates, categories, descriptions, and business or
+              attraction information in a Travy post, place page, listing, caption,
+              search result, map marker, or related location feature in the Travy app
+              or on Travy.buzz. The licence also
+              includes reasonable subtitles, translations, thumbnails, crops, and
+              technical adaptations needed for Travy.
             </p>
             <p>
               This Travy licence continues while the selected video is published and
@@ -109,6 +116,12 @@ export default function OwnershipPage() {
               the video in paid advertising, unrelated promotional campaigns, or
               third-party social networks outside the requester&apos;s chosen
               distribution flow.
+            </p>
+            <p>
+              RClipper does not claim ownership of public facts, geographic
+              coordinates, or third-party place names merely because you entered or
+              selected them. The licence permits RClipper to use and present that
+              information in Travy in connection with the selected content.
             </p>
           </section>
 

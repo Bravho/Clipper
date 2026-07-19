@@ -10,6 +10,8 @@ function rowToUser(row: Record<string, unknown>): User {
     name: row.full_name as string,
     role: row.role as Role,
     emailVerified: row.email_verified as boolean,
+    trialConsumed: (row.trial_consumed as boolean) ?? false,
+    deletedAt: row.deleted_at ? new Date(row.deleted_at as string) : null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -36,10 +38,10 @@ export class PostgresUserRepository implements IUserRepository {
 
   async create(input: CreateUserInput): Promise<User> {
     const { rows } = await this.db.query(
-      `INSERT INTO users (email, full_name, role)
-       VALUES ($1, $2, $3)
+      `INSERT INTO users (email, full_name, role, trial_consumed)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [input.email, input.name, input.role]
+      [input.email, input.name, input.role, input.trialConsumed]
     );
     return rowToUser(rows[0]);
   }
@@ -86,6 +88,18 @@ export class PostgresUserRepository implements IUserRepository {
 
   async delete(id: string): Promise<void> {
     await this.db.query("DELETE FROM users WHERE id = $1", [id]);
+  }
+
+  async anonymizeAndSoftDelete(id: string): Promise<void> {
+    await this.db.query(
+      `UPDATE users
+       SET full_name  = 'Deleted user',
+           email      = 'deleted:' || id,
+           deleted_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [id]
+    );
   }
 
   async listAll(): Promise<User[]> {

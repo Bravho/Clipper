@@ -52,6 +52,7 @@ export class MockUserRepository implements IUserRepository {
     const user: User = {
       ...input,
       id: crypto.randomUUID(),
+      deletedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -72,6 +73,18 @@ export class MockUserRepository implements IUserRepository {
 
   async delete(id: string): Promise<void> {
     this.store.delete(id);
+  }
+
+  async anonymizeAndSoftDelete(id: string): Promise<void> {
+    const existing = this.store.get(id);
+    if (!existing) throw new Error(`User not found: ${id}`);
+    this.store.set(id, {
+      ...existing,
+      name: "Deleted user",
+      email: `deleted:${id}`,
+      deletedAt: new Date(),
+      updatedAt: new Date(),
+    });
   }
 
   async markEmailVerified(id: string): Promise<void> {

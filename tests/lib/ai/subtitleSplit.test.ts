@@ -86,6 +86,28 @@ describe("splitSegmentsForDisplay", () => {
     expect(out.length).toBeLessThanOrEqual(6);
   });
 
+  it("never splits an authoritative place name across Thai subtitle cues", () => {
+    const placeName = "เฝอ 54";
+    const thai =
+      "วันนี้เราจะพาทุกคนมาลองร้านอาหารเวียดนามบรรยากาศอบอุ่นที่เฝอ 54 พร้อมเมนูเด่นและน้ำซุปหอมอร่อย";
+    const out = splitSegmentsForDisplay(
+      [{
+        sentenceNumber: 1,
+        textThai: thai,
+        textEnglish: "",
+        textChinese: "",
+        startSecond: 0,
+        endSecond: 10,
+      }],
+      ["th"],
+      [placeName]
+    );
+
+    expect(out.length).toBeGreaterThan(1);
+    expect(out.filter((cue) => cue.textThai.includes(placeName))).toHaveLength(1);
+    expect(out.map((cue) => cue.textThai).join("")).toBe(thai);
+  });
+
   it("does not split when the time window is non-positive", () => {
     const segs: TimedSegment[] = [
       { sentenceNumber: 1, textThai: "", textEnglish: LONG_EN, textChinese: "", startSecond: 5, endSecond: 5 },
