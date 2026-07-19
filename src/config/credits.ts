@@ -3,7 +3,7 @@
  *
  * Credit unit: **1 credit = 1 THB** (฿). Top-ups are 1:1 — pay ฿100, get 100 credits.
  *
- * Launch pricing: the full list price of a request is 99 credits (฿99). During the
+ * Launch pricing: the full list price of a request is 98 credits (฿98). During the
  * launch window a 50% "founding member" discount applies, so the effective charge
  * is 49 credits (฿49). No free signup credits are granted at launch.
  *
@@ -37,10 +37,10 @@ export const CREDITS_CONFIG = {
  */
 export const TOPUP_BUNDLES = [
   { credits: 49, baht: 49, label: "1 คลิป" },
-  { credits: 99, baht: 99, label: "2 คลิป" },
-  { credits: 249, baht: 249, label: "5 คลิป" },
-  { credits: 499, baht: 499, label: "10 คลิป", popular: true },
-  { credits: 990, baht: 990, label: "20 คลิป" },
+  { credits: 98, baht: 98, label: "2 คลิป" },
+  { credits: 296, baht: 296, label: "6 คลิป" },
+  { credits: 490, baht: 490, label: "10 คลิป", popular: true },
+  { credits: 980, baht: 980, label: "20 คลิป" },
 ] as const;
 
 /**

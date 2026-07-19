@@ -721,16 +721,19 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(watermarked?.sourceAssetId).toBe(cleanId);
   });
 
-  it("approveOverlayByRequester (single ratio, TH subs) lands on distribution-review, renders Travy EN+ZH in background, NOT yet delivered", async () => {
+  it("approveOverlayByRequester (single ratio, TH subs) lands on distribution-review, renders Travy EN+ZH at 16:9 in background, NOT yet delivered", async () => {
     const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
     const master = await createMaster(request.id, "9:16");
+    // Travy always renders at its FIXED 16:9 ratio (not the primary's 9:16), so
+    // a 16:9 master is provided here (in prod a missing one is composed on-demand).
+    const master169 = await createMaster(request.id, "16:9");
     getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
 
     // TH-only subs → Travy cannot reuse; it renders a separate EN+ZH clip.
     const job = await createOverlayJob(
       request.id,
       VideoGenerationStep.AwaitingOverlayApproval,
-      { "9:16": master.id },
+      { "9:16": master.id, "16:9": master169.id },
       ["th"]
     );
     // The overlay preview was rendered before approval — set it so finalize sees it.
@@ -759,26 +762,30 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(req?.status).toBe(RequestStatus.ScheduledForPublishing);
     expect(req?.status).not.toBe(RequestStatus.Delivered);
 
-    // The Travy render uses EN+ZH regardless of the requester's choice.
+    // The Travy render uses EN+ZH regardless of the requester's choice, and is
+    // always at the fixed Travy ratio (16:9), never the primary's ratio.
     const tventCall = renderTemplatedVideoMock.mock.calls.find(
       ([p]: any[]) => JSON.stringify(p.subtitleLanguages) === JSON.stringify(["en", "zh"])
     );
     expect(tventCall).toBeTruthy();
+    expect((tventCall as any[])[0].ratio).toBe("16:9");
   });
 
-  it("Travy reuse: when subtitle languages are exactly {en,zh}, reuses the primary captioned export instead of re-rendering", async () => {
-    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
-    const master = await createMaster(request.id, "9:16");
-    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+  it("Travy reuse: when subtitle languages are exactly {en,zh} AND a 16:9 captioned export exists, reuses it instead of re-rendering", async () => {
+    // Reuse now requires a captioned export at the FIXED Travy ratio (16:9), so
+    // the primary channel here is YouTube (16:9).
+    const request = await createRequestWithPlatforms([Platform.YouTube, Platform.TventApp]);
+    const master = await createMaster(request.id, "16:9");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["16:9"]);
 
     const job = await createOverlayJob(
       request.id,
       VideoGenerationStep.AwaitingOverlayApproval,
-      { "9:16": master.id },
+      { "16:9": master.id },
       ["en", "zh"]
     );
-    const captioned = await createMaster(request.id, "9:16");
-    await mockJobRepo.update(job.id, { captionedExport_9_16_assetId: captioned.id });
+    const captioned = await createMaster(request.id, "16:9");
+    await mockJobRepo.update(job.id, { captionedExport_16_9_assetId: captioned.id });
 
     const service = new VideoGenerationService();
     const updated = await service.approveOverlayByRequester(job.id, "user-001");

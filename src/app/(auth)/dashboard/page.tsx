@@ -20,6 +20,10 @@ export default async function DashboardPage() {
   const summary = await requesterDashboardService.getDashboardSummary(user.id);
 
   const canAfford = summary.creditBalance >= CREDITS_CONFIG.REQUEST_COST_CREDITS;
+  // Trial model: the first request generates for free (pay-to-download), so a
+  // 0-credit new user must NOT be blocked from submitting.
+  const trialAvailable = summary.trialAvailable;
+  const canSubmit = trialAvailable || canAfford;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -33,11 +37,20 @@ export default async function DashboardPage() {
             จัดการคำขอคลิปและติดตามความคืบหน้าของคุณ
           </p>
         </div>
-        <Link href={ROUTES.REQUESTS_NEW}>
-          <Button disabled={!canAfford}>
-            + คำขอใหม่
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {trialAvailable && (
+            <Link href={ROUTES.REQUESTS_NEW}>
+              <Button className="bg-green-600 hover:bg-green-700">
+                ทดลองใช้งานฟรี
+              </Button>
+            </Link>
+          )}
+          <Link href={ROUTES.REQUESTS_NEW}>
+            <Button variant={trialAvailable ? "outline" : undefined} disabled={!canSubmit}>
+              + คำขอใหม่
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Credits + Stats */}
@@ -82,16 +95,32 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Insufficient credits warning */}
-      {!canAfford && (
+      {/* Free trial banner — shown instead of the credit warning while the
+          user's free first request is still available */}
+      {trialAvailable && (
+        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4">
+          <p className="text-sm font-medium text-green-800">
+            คลิปแรกของคุณสร้างฟรี — ทดลองใช้งานได้เลยโดยไม่ต้องเติมเครดิต
+          </p>
+          <p className="mt-1 text-sm text-green-700">
+            ชำระ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
+            เฉพาะเมื่อพอใจผลงานและต้องการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำ
+          </p>
+        </div>
+      )}
+
+      {/* Insufficient credits warning (only after the free trial is used) */}
+      {!trialAvailable && !canAfford && (
         <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 p-4">
           <p className="text-sm font-medium text-yellow-800">
             คุณมีเครดิตคงเหลือ {summary.creditBalance} เครดิต —
             ไม่เพียงพอสำหรับการส่งคำขอใหม่ (ต้องการ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต)
           </p>
-          <p className="mt-1 text-sm text-yellow-700">
-            กรุณาติดต่อฝ่ายสนับสนุนหากต้องการเครดิตเพิ่มเติม
-          </p>
+          <Link href={ROUTES.CREDITS}>
+            <p className="mt-1 text-sm text-yellow-700 hover:underline cursor-pointer">
+              เติมเครดิตที่นี่ →
+            </p>
+          </Link>
         </div>
       )}
 
@@ -108,10 +137,10 @@ export default async function DashboardPage() {
           <Card>
             <div className="text-center py-6">
               <p className="text-slate-500 text-sm">ไม่มีคำขอที่กำลังดำเนินการขณะนี้</p>
-              {canAfford ? (
+              {canSubmit ? (
                 <Link href={ROUTES.REQUESTS_NEW}>
                   <Button className="mt-4" variant="outline" size="sm">
-                    ส่งคำขอแรกของคุณ
+                    {trialAvailable ? "ทดลองสร้างคลิปแรกฟรี" : "ส่งคำขอแรกของคุณ"}
                   </Button>
                 </Link>
               ) : null}
@@ -196,8 +225,9 @@ export default async function DashboardPage() {
           <CardHeader padding="none">
             <CardTitle className="text-sm">ราคาและเครดิต</CardTitle>
             <CardDescription>
-              คำขอคลิปแต่ละรายการใช้ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
-              คุณได้รับ {CREDITS_CONFIG.SIGNUP_BONUS_CREDITS} เครดิตฟรีเมื่อสมัครสมาชิก
+              คลิปแรกสร้างฟรี — ชำระ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
+              เมื่อดาวน์โหลดแบบไม่มีลายน้ำ
+              คำขอถัดไปใช้ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิตต่อรายการ
             </CardDescription>
           </CardHeader>
           <Link href={ROUTES.CREDITS}>

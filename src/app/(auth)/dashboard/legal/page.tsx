@@ -23,8 +23,8 @@ export default async function LegalPage() {
 
       <h1 className="mb-2 text-2xl font-bold text-slate-900">Legal & Policy</h1>
       <p className="mb-8 text-sm text-slate-500">
-        A summary of the key policies that govern your use of the RClipper platform.
-        By using this platform you agree to these terms.
+        A summary of the key policies that govern your use of RClipper. Please review
+        the complete public policies linked below.
       </p>
 
       {/* Terms of Service */}
@@ -33,10 +33,11 @@ export default async function LegalPage() {
         items={[
           "RClipper is a managed short-video production and distribution service.",
           "You may use the platform to submit clip requests and receive delivered content.",
+          "Eligible first trial videos are free to generate and preview with a watermark; downloading the unwatermarked version currently costs 49 credits.",
           "Your account, credits, and requests are personal and non-transferable.",
           "We reserve the right to reject any request that violates these terms.",
           "Service timelines are targets, not guarantees. Our standard aim is to complete accepted requests within 2 working days of receiving complete and usable materials.",
-          "We do not offer refunds on credits used for rejected requests unless the rejection was due to an error on our part.",
+          "Not every generated video is published on Travy. RClipper may select certain reviewed videos for public publication under the accepted request terms.",
         ]}
       />
 
@@ -44,11 +45,11 @@ export default async function LegalPage() {
       <PolicySection
         title="Ownership & Usage Rights"
         items={[
-          "The final edited clip produced for each request is the intellectual property of RClipper.",
+          "RClipper owns the original editing, arrangement, graphics, captions, translations, and other production elements it creates, subject to underlying source-material rights.",
           "You are granted a free, non-exclusive licence to repost and share the delivered clip on your own channels (e.g. your social media accounts, website).",
           "You may NOT resell, redistribute, or relicence the final clip to third parties.",
-          "Uploaded source materials remain your property. You grant us a limited licence to use them solely for the purpose of fulfilling your clip request.",
-          "By uploading materials, you confirm you have the rights to do so and that the materials do not infringe any third-party rights.",
+          "Uploaded source materials remain your property. You grant RClipper the licences needed to produce the request and, if selected, publish the materials as incorporated in the finished video on Travy.",
+          "By uploading materials, you confirm that you own or have all necessary licences, releases, consents, and permissions.",
         ]}
       />
 
@@ -56,11 +57,11 @@ export default async function LegalPage() {
       <PolicySection
         title="Privacy Policy"
         items={[
-          "We collect your name and email address at signup. We do not collect company names, phone numbers, or social media handles.",
-          "Your data is used only to provide and improve the RClipper service.",
+          "We collect account information, request briefs, uploaded media, production choices, approval history, and credit/payment records needed to provide the service.",
+          "Required request data and media may be processed by contracted hosting, storage, authentication, payment, AI, voice, video-generation, and media-processing providers.",
           "We do not sell your personal data to third parties.",
-          "Your request briefs and uploaded materials are handled confidentially within our production team.",
-          "You may request deletion of your account and associated data by contacting support.",
+          "A selected Travy video and its associated title, caption, thumbnail, subtitles, and visible or audible information become publicly accessible.",
+          "You may exercise applicable data rights or submit a privacy, content-reporting, or removal request by contacting support.",
         ]}
       />
 
@@ -71,10 +72,25 @@ export default async function LegalPage() {
           "Uploaded source files (videos and images) are stored only for the purpose of fulfilling your request.",
           "Source files are NOT maintained as a reusable asset library — they are tied to the specific request they were uploaded for.",
           "Raw uploads are scheduled for deletion 90 days after the request is submitted.",
-          "Final delivered clips may be retained by RClipper for portfolio and quality assurance purposes.",
+          "Finished videos may be retained for delivery and quality assurance and, if selected, for Travy publication plus reasonable backup, audit, and legal retention.",
           "If you wish to have your source files removed sooner, please contact our support team.",
         ]}
       />
+
+      <Card className="mb-5">
+        <h2 className="mb-3 text-base font-semibold text-slate-900">Complete policies</h2>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link href={ROUTES.TERMS} className="text-blue-700 underline">
+            Terms and Conditions
+          </Link>
+          <Link href={ROUTES.OWNERSHIP} className="text-blue-700 underline">
+            Content Ownership and Publication Rights
+          </Link>
+          <Link href={ROUTES.PRIVACY} className="text-blue-700 underline">
+            Privacy Policy
+          </Link>
+        </div>
+      </Card>
 
       {/* Contact */}
       <Card className="mt-4">
@@ -89,8 +105,8 @@ export default async function LegalPage() {
           .
         </p>
         <p className="mt-2 text-xs text-slate-400">
-          Last updated: March 2026. These policies may be updated from time to time.
-          Continued use of the platform constitutes acceptance of the current version.
+          Last updated: 18 July 2026. Material changes will be presented for renewed
+          acceptance where required.
         </p>
       </Card>
     </div>

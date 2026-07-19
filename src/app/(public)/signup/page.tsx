@@ -25,8 +25,8 @@ export default async function SignupPage() {
             สร้างบัญชี RClipper ของคุณ
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            สมัครด้วย Google หรืออีเมล บัญชีใหม่รับ{" "}
-            <span className="font-semibold text-blue-700">30 เครดิตฟรี</span>
+            สมัครด้วย Google หรืออีเมล{" "}
+            <span className="font-semibold text-blue-700">บัญชีใหม่เริ่มต้นที่ 0 เครดิต</span>
           </p>
         </div>
 

@@ -12,7 +12,7 @@ export interface CreditWallet {
   id: string;
   userId: string;
   balance: number;
-  /** True once the 30-credit signup bonus has been granted. Guards against double-grant. */
+  /** True once the configured starting-credit rule has been applied. */
   initialCreditsGranted: boolean;
   createdAt: Date;
   updatedAt: Date;

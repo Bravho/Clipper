@@ -34,7 +34,7 @@ export class MockPaymentIntentRepository implements IPaymentIntentRepository {
       creditsToAdd: input.creditsToAdd,
       status: PaymentStatus.Pending,
       referenceNo: input.referenceNo,
-      gatewayRef: null,
+      gatewayRef: input.gatewayRef ?? null,
       qrPayload: input.qrPayload ?? null,
       expiresAt: input.expiresAt,
       createdAt: now,
@@ -51,6 +51,11 @@ export class MockPaymentIntentRepository implements IPaymentIntentRepository {
 
   async findByReferenceNo(referenceNo: string): Promise<PaymentIntent | null> {
     const found = [...this.store.values()].find((p) => p.referenceNo === referenceNo);
+    return found ? { ...found } : null;
+  }
+
+  async findByGatewayRef(gatewayRef: string): Promise<PaymentIntent | null> {
+    const found = [...this.store.values()].find((p) => p.gatewayRef === gatewayRef);
     return found ? { ...found } : null;
   }
 

@@ -70,6 +70,9 @@ export const PLATFORM_ASPECT_RATIOS: Record<Platform, string> = {
   [Platform.Facebook]: "16:9",
   [Platform.Instagram]: "4:5",
   [Platform.YouTube]: "16:9",
-  [Platform.TventApp]: "9:16",
+  // Travy is FIXED at 16:9 (same as YouTube): the Travy clip is uploaded to
+  // YouTube and embedded in the Travy web app, so it never mirrors the
+  // primary channel's ratio.
+  [Platform.TventApp]: "16:9",
   [Platform.CDN]: "16:9",
 };

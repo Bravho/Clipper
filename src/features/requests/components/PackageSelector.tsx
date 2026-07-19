@@ -7,9 +7,11 @@ import { CREDITS_CONFIG } from "@/config/credits";
 
 interface Props {
   creditBalance: number;
+  /** True when the user's free trial (first) request is still available. */
+  trialAvailable?: boolean;
 }
 
-export function PackageSelector({ creditBalance }: Props) {
+export function PackageSelector({ creditBalance, trialAvailable = false }: Props) {
   const [selected, setSelected] = useState<"ai" | "editor" | null>(null);
   // Duration / channels are creative preferences only — they no longer affect
   // the price (a request is a single flat charge). Kept for the pipeline display.
@@ -41,6 +43,7 @@ export function PackageSelector({ creditBalance }: Props) {
 
         <NewRequestForm
           creditBalance={creditBalance}
+          trialAvailable={trialAvailable}
           onCreditParamsChange={(d, p) => {
             setDurationSeconds(d);
             setPlatformCount(p);
@@ -94,12 +97,24 @@ export function PackageSelector({ creditBalance }: Props) {
           </ul>
           <div className="flex items-center justify-between">
             <div>
+              {trialAvailable ? (
+                <>
+                  <span className="text-2xl font-bold text-green-600">ฟรี</span>
+                  <span className="ml-2 text-xs text-slate-500">
+                    คลิปแรกสร้างฟรี · ชำระ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
+                    เมื่อดาวน์โหลดแบบไม่มีลายน้ำ
+                  </span>
+                </>
+              ) : (
+                <>
               <span className="text-xs text-slate-500">ราคาเดียว</span>
               <span className="ml-1 text-2xl font-bold text-slate-900">
                 {CREDITS_CONFIG.REQUEST_COST_CREDITS}
               </span>
               <span className="ml-1 text-sm text-slate-400">เครดิต</span>
-              {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE ? (
+                </>
+              )}
+              {!trialAvailable && CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE ? (
                 <p className="text-xs text-slate-400 mt-0.5">
                   <span className="line-through">
                     ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}

@@ -22,6 +22,13 @@ import {
 
 export interface DashboardSummary {
   creditBalance: number;
+  /**
+   * True when the user has never submitted a request — their next submission is
+   * the free trial (generates free, pay-to-download). Mirrors
+   * ClipRequestService.isFirstRequest(); computed here from the already-fetched
+   * request list to avoid an extra round trip.
+   */
+  trialAvailable: boolean;
   activeRequestCount: number;
   draftCount: number;
   recentRequests: DashboardRequestRow[];
@@ -86,6 +93,7 @@ export class RequesterDashboardService {
 
     return {
       creditBalance: balance,
+      trialAvailable: allRequests.every((r) => r.submittedAt === null),
       activeRequestCount: activeRequests.length,
       draftCount: draftRequests.length,
       recentRequests,

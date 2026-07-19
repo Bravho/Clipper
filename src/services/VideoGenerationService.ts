@@ -2166,7 +2166,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const request = await clipRequestRepository.findById(job.requestId);
     const platforms = request?.targetPlatforms ?? [];
     const needsTvent = platforms.includes(Platform.TventApp);
-    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    // Travy always renders at its own fixed ratio (16:9 — uploaded to YouTube
+    // for the Travy web app), independent of the primary channel's ratio.
+    const tventRatio = this._montageCanvasRatio(Platform.TventApp);
 
     // Editing is complete and publishing is queued — mark the REQUEST accordingly
     // so it stays under "in progress" (ScheduledForPublishing is an active status)
@@ -2178,12 +2180,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const publishingDrafts = await this._generatePublishingDrafts(job, platforms);
 
     // Travy EN+ZH reuse: when the requester's own subtitle languages are exactly
-    // {en, zh}, the primary captioned export already matches what the Travy clip
-    // would be (EN+ZH at the primary ratio, which Travy uses) — reuse it instead
-    // of rendering a duplicate. Otherwise render Travy separately in background.
-    const captionedPrimaryId = this._captionedAssetIdForRatio(job, primaryRatio);
+    // {en, zh} AND a captioned export at the Travy ratio (16:9) already exists
+    // (i.e. the primary channel is 16:9, or 16:9 was produced as an additional
+    // ratio), that export already matches what the Travy clip would be — reuse
+    // it instead of rendering a duplicate. Otherwise render Travy separately in
+    // background at 16:9.
+    const captionedTventRatioId = this._captionedAssetIdForRatio(job, tventRatio);
     const canReuseForTvent =
-      needsTvent && this._isEnZhOnly(job.subtitleLanguages) && !!captionedPrimaryId;
+      needsTvent && this._isEnZhOnly(job.subtitleLanguages) && !!captionedTventRatioId;
 
     const updates: UpdateVideoGenerationJobInput = {
       currentStep: VideoGenerationStep.AwaitingDistributionReview,
@@ -2193,7 +2197,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (needsTvent) {
       updates.tventVideoError = null; // clear any stale failure from a prior run
       if (canReuseForTvent) {
-        updates.finalExport_tvent_assetId = captionedPrimaryId;
+        updates.finalExport_tvent_assetId = captionedTventRatioId;
         updates.tventVideoStatus = "ready";
       } else {
         updates.tventVideoStatus = "generating";
@@ -2229,7 +2233,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /**
-   * Render the Travy EN+ZH captioned clip onto the primary master and record it.
+   * Render the Travy EN+ZH captioned clip at the fixed Travy ratio (16:9) and
+   * record it. If no 16:9 master exists yet (primary channel is a different
+   * ratio), `_renderCaptionedRatio` composes it on-demand.
    *
    * SOFT-FAILING BY DESIGN: this never throws. The other channels are already
    * delivered by the time Travy runs, so a Travy render error must not fail the
@@ -2244,14 +2250,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const request = await clipRequestRepository.findById(job.requestId);
       if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
-      const platforms = request.targetPlatforms ?? [];
-      const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+      // Fixed Travy ratio (16:9) — never the primary channel's ratio.
+      const tventRatio = this._montageCanvasRatio(Platform.TventApp);
 
       const inputs = await this._buildOverlayInputs(job);
       const tventAssetId = await this._renderCaptionedRatio(
         job,
         request.userId,
-        primaryRatio,
+        tventRatio,
         ["en", "zh"],
         inputs
       );

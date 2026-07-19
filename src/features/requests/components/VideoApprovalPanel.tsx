@@ -282,15 +282,10 @@ export function VideoApprovalPanel({
   // Requester approval states
   // Distribution channels chosen at voice approval, in click order. The FIRST
   // chosen channel is the PRIMARY — it sets the base video's aspect ratio.
-  // Travy App (Tvent) is always included (mandatory, locked) and is not counted
-  // as a primary click; its export adopts the primary's ratio.
+  // Travy App (Tvent) is always included (mandatory, locked) and always exports
+  // at its own fixed ratio (16:9, same as YouTube).
   const [channelOrder, setChannelOrder] = useState<Platform[]>([]);
   const primaryChannel: Platform = channelOrder[0] ?? Platform.TventApp;
-  // Ratio derived from the in-panel channel picker (voice-approval step). Named
-  // distinctly from the `primaryRatio` PROP, which the page computes from the
-  // saved primary channel and is the source of truth at later steps where
-  // `channelOrder` is empty.
-  const primaryChannelRatio = PLATFORM_ASPECT_RATIOS[primaryChannel];
   const toggleChannel = (p: Platform) =>
     setChannelOrder((prev) =>
       prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
@@ -1518,8 +1513,9 @@ export function VideoApprovalPanel({
                   เลือกได้มากกว่าหนึ่งช่องทาง ช่องทางแรกที่เลือกคือช่องทางหลัก ระบบจะสร้างวิดีโอในอัตราส่วนของช่องทางหลัก (ช่องทางอื่นจะครอบตัดจากวิดีโอนี้)
                 </p>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {/* Travy App — mandatory, locked, dark grey. Its ratio mirrors
-                      the primary channel's ratio. */}
+                  {/* Travy App — mandatory, locked, dark grey. Fixed at 16:9
+                      (same as YouTube — the Travy clip is uploaded to YouTube
+                      and shown in the Travy web app). */}
                   <div
                     aria-disabled
                     className="cursor-not-allowed rounded-md border border-slate-300 bg-slate-200 px-3 py-2 text-left text-sm text-slate-700"
@@ -1528,7 +1524,7 @@ export function VideoApprovalPanel({
                       {PLATFORM_LABELS[Platform.TventApp]}
                     </span>
                     <span className="block text-xs text-slate-500">
-                      {ratioLabel(primaryChannelRatio)} · ค่าเริ่มต้น
+                      {ratioLabel(PLATFORM_ASPECT_RATIOS[Platform.TventApp])} · ค่าเริ่มต้น
                     </span>
                   </div>
 

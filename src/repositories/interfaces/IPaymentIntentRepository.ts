@@ -5,6 +5,7 @@ export interface IPaymentIntentRepository {
   create(input: CreatePaymentIntentInput): Promise<PaymentIntent>;
   findById(id: string): Promise<PaymentIntent | null>;
   findByReferenceNo(referenceNo: string): Promise<PaymentIntent | null>;
+  findByGatewayRef(gatewayRef: string): Promise<PaymentIntent | null>;
   findByUserId(userId: string): Promise<PaymentIntent[]>;
   /**
    * Update status (and optionally gateway ref / qr payload).

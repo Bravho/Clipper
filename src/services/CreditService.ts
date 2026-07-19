@@ -14,7 +14,7 @@ import { CreditPurchaseLog } from "@/domain/models/CreditPurchaseLog";
  * CreditService — manages all credit wallet operations.
  *
  * Business rules enforced here:
- * - Signup bonus (30 credits) is granted exactly once per account.
+ * - New requester wallets start at zero credits.
  * - Credits cannot go below zero.
  *
  * TODO: When request submission is implemented, call deductCredits()
@@ -36,7 +36,7 @@ export class CreditService {
 
   /**
    * Initialise a new credit wallet for a requester.
-   * Creates the wallet and immediately grants the signup bonus.
+   * Creates the wallet at zero and marks initialisation complete.
    * Guards against double-grant using wallet.initialCreditsGranted.
    */
   async initialiseRequesterWallet(userId: string): Promise<CreditWallet> {
@@ -60,7 +60,7 @@ export class CreditService {
   }
 
   /**
-   * Grant the 30-credit signup bonus.
+   * Apply the configured signup credit amount (currently zero).
    * Safe to call multiple times — idempotent via initialCreditsGranted flag.
    */
   async grantSignupBonus(wallet: CreditWallet): Promise<CreditWallet> {
@@ -154,7 +154,7 @@ export class CreditService {
   }
 
   /**
-   * Credit a wallet from a confirmed gateway top-up (e.g. PromptPay via GB Prime Pay).
+   * Credit a wallet from a confirmed gateway top-up (PromptPay via Stripe).
    *
    * Wraps the purchase log, wallet increment, and ledger entry in a single DB
    * transaction. Records a TopUp ledger entry (distinct from manual AdminCredit).
@@ -198,7 +198,7 @@ export class CreditService {
         userId,
         amount: creditsAmount,
         type: TransactionType.TopUp,
-        description: `PromptPay top-up: ${creditsAmount} credits (฿${pricePaidBaht}). Ref: ${reference}`,
+        description: `Stripe top-up: ${creditsAmount} credits (฿${pricePaidBaht}). Ref: ${reference}`,
         referenceId: null,
       });
 

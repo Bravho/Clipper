@@ -39,6 +39,11 @@ interface PendingFile {
 
 interface NewRequestFormProps {
   creditBalance: number;
+  /**
+   * True when this will be the user's free trial (first) request — submission
+   * is free (pay-to-download later), so the credit gate must not block it.
+   */
+  trialAvailable?: boolean;
   /** When true, only image uploads are accepted (no video files). */
   imageOnly?: boolean;
   /** Override the credit cost shown and validated. Defaults to REQUEST_COST_CREDITS. */
@@ -136,7 +141,7 @@ function generateVideoThumbnail(file: File): Promise<string | null> {
 
 type SubmitPhase = "form" | "submitting";
 
-export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, onCreditParamsChange }: NewRequestFormProps) {
+export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnly = false, creditCost, onCreditParamsChange }: NewRequestFormProps) {
   const COST = creditCost ?? CREDITS_CONFIG.REQUEST_COST_CREDITS;
   const acceptedTypes = imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_MIME_TYPES;
 
@@ -314,7 +319,8 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
   const onSubmit = async (data: SubmitClipRequestValues) => {
     setSubmitError(null);
 
-    if (creditBalance < COST) {
+    // The free trial request submits without credits — skip the balance gate.
+    if (!trialAvailable && creditBalance < COST) {
       setSubmitError(
         `คุณต้องการ ${COST} เครดิตสำหรับค่าบริการครั้งเดียว แต่ปัจจุบันมีเพียง ${creditBalance} เครดิต`
       );
@@ -442,7 +448,8 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const insufficientCredits = creditBalance < COST;
+  // The free trial request submits without credits — never block it on balance.
+  const insufficientCredits = !trialAvailable && creditBalance < COST;
 
   if (phase === "submitting") {
     return (
@@ -461,6 +468,18 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
   }
   return (
     <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-8">
+      {/* Free trial notice */}
+      {trialAvailable && (
+        <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+          <p className="text-sm font-medium text-green-800">
+            คำขอนี้เป็นคลิปทดลองฟรีของคุณ — สร้างได้เลยโดยไม่ใช้เครดิต
+          </p>
+          <p className="mt-1 text-sm text-green-700">
+            ชำระ {COST} เครดิตภายหลัง เฉพาะเมื่อต้องการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำ
+          </p>
+        </div>
+      )}
+
       {/* Insufficient credits warning */}
       {insufficientCredits && (
         <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4">
@@ -625,37 +644,74 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
           ก่อนส่งคำขอ
         </legend>
 
-        {/* One-time charge reminder — a request is a single flat fee, not per-step. */}
-        <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50 p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-blue-800">
-                ค่าบริการครั้งเดียว {COST} เครดิต · ครอบคลุมทุกขั้นตอน
-              </p>
-              <p className="mt-0.5 text-sm text-blue-700">
-                เครดิตปัจจุบัน: {creditBalance} เครดิต · คงเหลือหลังชำระ:{" "}
-                {creditBalance - COST} เครดิต
-              </p>
-              {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
-                <p className="mt-0.5 text-xs text-blue-600">
-                  <span className="line-through">
-                    ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
-                  </span>{" "}
-                  ฿{COST} ราคาเปิดตัว (ลด 50%) · ไม่มีค่าใช้จ่ายรายขั้นตอนเพิ่มเติม
+        {/* One-time charge reminder — a request is a single flat fee, not per-step.
+            Trial requests generate for free; payment happens later at download. */}
+        {trialAvailable ? (
+          <div className="mb-5 rounded-lg border border-green-100 bg-green-50 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-green-800">
+                  คลิปทดลองฟรี · สร้างได้เลยโดยไม่ใช้เครดิต
                 </p>
-              )}
-            </div>
-            <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-right">
-              <p className="text-xs text-slate-400">ชำระครั้งเดียว</p>
-              <p className="text-lg font-bold text-blue-700 tabular-nums">{COST}</p>
-              <p className="text-xs text-slate-400">เครดิต</p>
+                <p className="mt-0.5 text-sm text-green-700">
+                  ชำระ {COST} เครดิตภายหลัง
+                  เฉพาะเมื่อต้องการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำ
+                </p>
+              </div>
+              <div className="flex-shrink-0 rounded-lg border border-green-200 bg-white px-3 py-2 text-right">
+                <p className="text-xs text-slate-400">ค่าส่งคำขอ</p>
+                <p className="text-lg font-bold text-green-700">ฟรี</p>
+                <p className="text-xs text-slate-400">จ่ายตอนดาวน์โหลด</p>
+              </div>
             </div>
           </div>
+        ) : (
+          <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-blue-800">
+                  ค่าบริการครั้งเดียว {COST} เครดิต · ครอบคลุมทุกขั้นตอน
+                </p>
+                <p className="mt-0.5 text-sm text-blue-700">
+                  เครดิตปัจจุบัน: {creditBalance} เครดิต · คงเหลือหลังชำระ:{" "}
+                  {creditBalance - COST} เครดิต
+                </p>
+                {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
+                  <p className="mt-0.5 text-xs text-blue-600">
+                    <span className="line-through">
+                      ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
+                    </span>{" "}
+                    ฿{COST} ราคาเปิดตัว (ลด 50%) · ไม่มีค่าใช้จ่ายรายขั้นตอนเพิ่มเติม
+                  </p>
+                )}
+              </div>
+              <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-right">
+                <p className="text-xs text-slate-400">ชำระครั้งเดียว</p>
+                <p className="text-lg font-bold text-blue-700 tabular-nums">{COST}</p>
+                <p className="text-xs text-slate-400">เครดิต</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-900">
+            การคัดเลือกเพื่อเผยแพร่บน Travy
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-amber-800">
+            วิดีโอที่สร้างขึ้นไม่ได้เผยแพร่บน Travy ทุกวิดีโอ RClipper
+            อาจคัดเลือกวิดีโอบางรายการที่ผ่านการตรวจสอบเพื่อเผยแพร่ต่อสาธารณะบนเว็บไซต์หรือแอปพลิเคชัน
+            Travy ตามข้อกำหนดและเงื่อนไข
+          </p>
         </div>
 
         <div className="flex flex-col gap-4">
           <Checkbox
-            label={`ฉันเข้าใจว่าการส่งคำขอนี้จะใช้ ${COST} เครดิต แบบชำระครั้งเดียว ครอบคลุมทุกขั้นตอนการผลิต`}
+            label={
+              trialAvailable
+                ? `ฉันเข้าใจว่าคำขอนี้เป็นคลิปทดลองฟรี และการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำจะมีค่าบริการ ${COST} เครดิต`
+                : `ฉันเข้าใจว่าการส่งคำขอนี้จะใช้ ${COST} เครดิต แบบชำระครั้งเดียว ครอบคลุมทุกขั้นตอนการผลิต`
+            }
             {...register("creditConfirmed")}
             error={errors.creditConfirmed?.message}
           />
@@ -663,25 +719,27 @@ export function NewRequestForm({ creditBalance, imageOnly = false, creditCost, o
           <Checkbox
             label={
               <>
-                ฉันยืนยันว่ามีสิทธิ์ในการส่งไฟล์ที่อัพโหลด และยอมรับ{" "}
+                ฉันยืนยันว่าเป็นเจ้าของหรือได้รับสิทธิ์และการอนุญาตที่จำเป็นสำหรับไฟล์
+                บุคคล เสียง เพลง เครื่องหมายการค้า และเนื้อหาที่อัพโหลด และยอมรับ{" "}
                 <Link
                   href={ROUTES.TERMS}
                   target="_blank"
                   className="text-blue-600 underline hover:text-blue-800"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  ข้อกำหนดการใช้งาน
+                  ข้อกำหนดและเงื่อนไขของ RClipper
                 </Link>{" "}
                 และ{" "}
                 <Link
-                  href={ROUTES.PRIVACY}
+                  href={ROUTES.OWNERSHIP}
                   target="_blank"
                   className="text-blue-600 underline hover:text-blue-800"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  นโยบายความเป็นส่วนตัว
+                  นโยบายสิทธิ์ในเนื้อหา
                 </Link>
-                รวมถึงสิทธิ์ในเนื้อหา
+                {" "}ซึ่งรวมถึงสิทธิ์ของ RClipper
+                ในการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่บนเว็บไซต์และแอปพลิเคชัน Travy
               </>
             }
             {...register("rightsConfirmed")}

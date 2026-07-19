@@ -7,8 +7,8 @@
  * Seed requester: user@example.com (id: "user-requester-001")
  *
  * Credit accounting for seed requester:
- *   +30  signup bonus
- *   +70  admin credit grant (for dev/testing richness)
+ *    +0  starting credits
+ *   +100 admin credit grant (for dev/testing richness)
  *   -10  req-002 (submitted)
  *   -10  req-003 (accepted for production)
  *   -10  req-004 (editing)
@@ -42,8 +42,8 @@ const REQUESTER_ID = "user-requester-001";
 const d = (iso: string) => new Date(iso);
 
 // ─── Wallets override ───────────────────────────────────────────────────────
-// The base seed wallet has 30 credits. We override to 20 to reflect
-// the request charges below. This is imported and merged in mockData.ts.
+// The development account receives an explicit admin grant; real new accounts
+// still start at zero. This override reflects the request charges below.
 export const SEED_REQUESTER_WALLET_OVERRIDE: Partial<CreditWallet> & {
   userId: string;
 } = {
@@ -57,7 +57,7 @@ export const SEED_REQUEST_TRANSACTIONS: CreditTransaction[] = [
   {
     id: "txn-admin-credit-001",
     userId: REQUESTER_ID,
-    amount: 70,
+    amount: 100,
     type: TransactionType.AdminCredit,
     description: "Development credit grant for testing purposes.",
     referenceId: null,

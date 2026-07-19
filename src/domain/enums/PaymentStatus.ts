@@ -13,12 +13,14 @@ export enum PaymentStatus {
   Failed = "failed",
 }
 
-/** Payment gateway providers. Only PromptPay via GB Prime Pay at launch. */
+/** Payment gateway providers. GB Prime Pay remains for historical records. */
 export enum PaymentGateway {
   GbPrimePay = "gbprimepay",
+  Stripe = "stripe",
 }
 
-/** Payment method. Card is deferred; PromptPay only for now. */
+/** Payment method used for the Stripe top-up. */
 export enum PaymentMethod {
   PromptPayQr = "promptpay_qr",
+  Card = "card",
 }

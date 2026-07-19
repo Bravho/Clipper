@@ -79,7 +79,7 @@ export default async function HomePage() {
             { value: "24 ชม.", label: "เร็วที่สุดสำหรับ AI track" },
             { value: "3 ภาษา", label: "Subtitle ไทย · อังกฤษ · จีน" },
             { value: "Travy", label: "แพลตฟอร์มวิดีโอท่องเที่ยวไทย" },
-            { value: "30 credits", label: "ฟรีเมื่อสมัคร ไม่ต้องใส่บัตร" },
+            { value: "฿49", label: "ราคาเริ่มต้นต่อคลิป" },
           ].map((s) => (
             <div key={s.label} className="flex flex-col gap-0.5">
               <span className="text-xl font-bold text-white">{s.value}</span>
@@ -208,7 +208,7 @@ export default async function HomePage() {
               {
                 step: "1",
                 title: "สมัครฟรี",
-                desc: "สมัครด้วย Google หรืออีเมล รับ 30 credits ทันที ไม่ต้องใส่บัตรเครดิต",
+                desc: "สมัครด้วย Google หรืออีเมล เริ่มต้นที่ 0 เครดิต แล้วเลือกเติมเครดิตเมื่อต้องการ",
               },
               {
                 step: "2",
@@ -283,10 +283,10 @@ export default async function HomePage() {
             พร้อมทำคลิปแรกหรือยัง?
           </h2>
           <p className="mb-2 text-slate-600">
-            สมัครฟรี รับ 30 credits ทันที — ไม่ต้องใส่บัตรเครดิต
+            สมัครฟรี เริ่มต้นที่ 0 เครดิต — ไม่ต้องใส่บัตรเครดิต
           </p>
           <p className="mb-8 text-sm text-slate-400">
-            1 คลิป ใช้ 10 credits · 30 credits = 3 คลิปแรกฟรี
+            เติมเครดิตผ่าน PromptPay หรือ Credit card เมื่อพร้อมเริ่มทำคลิป
           </p>
           <Link href={ROUTES.SIGNUP}>
             <Button size="lg" className="min-w-[220px]">

@@ -118,8 +118,12 @@ export function SignupForm() {
         และ{" "}
         <Link href={ROUTES.PRIVACY} className="underline hover:text-slate-700">
           นโยบายความเป็นส่วนตัว
+        </Link>{" "}
+        และ{" "}
+        <Link href={ROUTES.OWNERSHIP} className="underline hover:text-slate-700">
+          นโยบายสิทธิ์ในเนื้อหาและการเผยแพร่
         </Link>
-        รวมถึงสิทธิ์ความเป็นเจ้าของเนื้อหาและนโยบายการเก็บข้อมูล
+        ซึ่งอธิบายการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่บน Travy
       </p>
 
       <div className="border-t border-slate-100 pt-2">

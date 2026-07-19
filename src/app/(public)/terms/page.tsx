@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Card } from "@/components/ui/Card";
+import { ROUTES } from "@/config/routes";
 
 export const metadata: Metadata = {
-  title: "Terms of Service",
-  description: "Clipper Platform Terms of Service — Version 1.0.0",
+  title: "Terms and Conditions — RClipper",
+  description: "RClipper Terms and Conditions — Version 1.1.0",
 };
+
+const EFFECTIVE_DATE = "18 July 2026";
 
 export default function TermsPage() {
   return (
@@ -12,59 +16,143 @@ export default function TermsPage() {
       <div className="mb-8">
         <p className="text-sm font-medium text-blue-700">Legal</p>
         <h1 className="mt-1 text-3xl font-bold text-slate-900">
-          Terms of Service
+          RClipper Terms and Conditions
         </h1>
-        <p className="mt-2 text-sm text-slate-500">Version 1.0.0 — Effective January 1, 2024</p>
+        <p className="mt-2 text-sm text-slate-500">
+          Version 1.1.0 — Effective {EFFECTIVE_DATE}
+        </p>
       </div>
 
       <Card>
-        <div className="prose prose-slate max-w-none space-y-6 text-sm text-slate-700 leading-relaxed">
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
-            <strong>Placeholder:</strong> This is a placeholder page. Full Terms of Service
-            content will be added before public launch. By using this platform
-            you agree to these terms when finalised.
-          </div>
-
+        <div className="prose prose-slate max-w-none space-y-7 text-sm leading-relaxed text-slate-700">
           <section>
-            <h2 className="text-base font-semibold text-slate-900">1. Service Description</h2>
+            <h2 className="text-base font-semibold text-slate-900">1. The service</h2>
             <p>
-              Clipper is a managed short-video production service. You submit a
-              brief and source materials; our team creates a promotional clip that
-              you can download and post on your own channels. Clipper does not
-              publish clips to your channels on your behalf. Clipper may, at its
-              discretion, feature selected clips on its own channels.
+              RClipper is a managed short-video production service. A requester
+              submits a brief and source materials, reviews production stages, and
+              receives a finished video subject to these Terms. RClipper may reject
+              or stop a request that is unlawful, unsafe, technically unsuitable, or
+              inconsistent with these Terms.
             </p>
           </section>
 
           <section>
-            <h2 className="text-base font-semibold text-slate-900">2. Account Registration</h2>
+            <h2 className="text-base font-semibold text-slate-900">
+              2. Trial video and credits
+            </h2>
             <p>
-              You must be at least 18 years old to create an account. You are
-              responsible for maintaining the confidentiality of your credentials.
+              If the interface identifies a request as an eligible free trial,
+              creating and previewing its watermarked video does not consume credits.
+              Downloading the unwatermarked version costs the number of credits shown
+              beside the request confirmation and download control (currently 49
+              credits). For a non-trial request, the applicable credit charge and
+              charging point are shown before submission. Credits are personal,
+              non-transferable, and have no cash value except where applicable law
+              requires otherwise.
             </p>
           </section>
 
           <section>
-            <h2 className="text-base font-semibold text-slate-900">3. Credits and Payments</h2>
+            <h2 className="text-base font-semibold text-slate-900">
+              3. Your uploaded materials
+            </h2>
             <p>
-              New requester accounts receive 30 complimentary credits. Credits are
-              non-transferable and have no cash value. Credit terms may change with
-              notice.
+              You must own or have all licences, releases, consents, and permissions
+              needed for every uploaded image, video, recording, voice, performance,
+              song, logo, trademark, location, and identifiable person. You must not
+              submit material that infringes another person&apos;s rights, is unlawful,
+              deceptive, defamatory, abusive, or otherwise prohibited by RClipper.
             </p>
           </section>
 
           <section>
-            <h2 className="text-base font-semibold text-slate-900">4. Content Ownership</h2>
+            <h2 className="text-base font-semibold text-slate-900">
+              4. Ownership and licences
+            </h2>
             <p>
-              See our Ownership and Usage Rights policy for full details on who owns
-              the final edited clip and what rights you retain.
+              You retain ownership of your original uploaded materials. RClipper owns
+              the original editing, arrangement, graphics, captions, translations,
+              and other production elements it creates, subject to rights in the
+              underlying materials. Your licence to use a delivered video and
+              RClipper&apos;s licence to use uploaded materials are described in the{" "}
+              <Link href={ROUTES.OWNERSHIP} className="text-blue-700 underline">
+                Content Ownership and Publication Rights Policy
+              </Link>
+              , which forms part of these Terms.
             </p>
           </section>
 
           <section>
-            <h2 className="text-base font-semibold text-slate-900">5. Contact</h2>
+            <h2 className="text-base font-semibold text-slate-900">
+              5. Selection for Travy
+            </h2>
             <p>
-              For questions about these terms, please contact us through the platform.
+              Not every generated video is published on Travy. RClipper may select
+              certain reviewed videos for public publication on the Travy website or
+              application under an RClipper or Travy-controlled account. Selection is
+              discretionary, is not guaranteed, and does not entitle the requester to
+              payment, promotion, audience size, or a minimum publication period.
+            </p>
+            <p>
+              By confirming the content-rights checkbox for a request, you authorise
+              RClipper to use the uploaded materials as incorporated in that finished
+              video for this selected Travy publication. RClipper may prepare titles,
+              captions, subtitles, translations, thumbnails, crops, and technical
+              formats reasonably required for Travy. This permission does not
+              authorise unrelated advertising or publication on other third-party
+              social networks unless separately disclosed and authorised.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-slate-900">
+              6. Review, moderation, and removal
+            </h2>
+            <p>
+              RClipper may review, decline, unpublish, or remove content at any time
+              for quality, safety, legal, operational, or policy reasons. Requests to
+              report rights violations, privacy concerns, or objectionable content
+              may be sent to{" "}
+              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
+                support@rclipper.com
+              </a>
+              . A removal request will be assessed under applicable law and the
+              rights of affected people; ownership of RClipper&apos;s production
+              elements does not override applicable privacy or third-party rights.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-slate-900">
+              7. Service availability and liability
+            </h2>
+            <p>
+              Production estimates are targets rather than guarantees. To the extent
+              permitted by law, RClipper is not responsible for delays or failures
+              caused by incomplete materials, third-party providers, platform
+              outages, force majeure, or the requester&apos;s lack of necessary
+              rights. Nothing in these Terms excludes rights or remedies that cannot
+              lawfully be excluded.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-slate-900">
+              8. Privacy, changes, and contact
+            </h2>
+            <p>
+              The{" "}
+              <Link href={ROUTES.PRIVACY} className="text-blue-700 underline">
+                Privacy Policy
+              </Link>{" "}
+              explains how RClipper handles personal data, media, retention, AI
+              providers, and Travy publication. Material changes to ownership or
+              publication rights will be presented for renewed acceptance where
+              required. Questions may be sent to{" "}
+              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
+                support@rclipper.com
+              </a>
+              .
             </p>
           </section>
         </div>

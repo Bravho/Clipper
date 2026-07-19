@@ -36,7 +36,7 @@ export interface AccountProfile {
  * This is the central service for the signup flow. It coordinates:
  * 1. User record creation
  * 2. Auth identity creation
- * 3. Credit wallet initialisation (30 free credits for requesters)
+ * 3. Credit wallet initialisation (zero starting credits for requesters)
  * 4. Legal consent recording
  *
  * Business rules enforced:
@@ -78,7 +78,7 @@ export class AccountService {
       passwordHash: input.passwordHash,
     });
 
-    // 4. Initialise credit wallet + grant signup bonus
+    // 4. Initialise the requester wallet at the configured starting balance
     const wallet = await creditService.initialiseRequesterWallet(user.id);
 
     // 5. Record legal consents

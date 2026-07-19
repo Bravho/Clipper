@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { ROUTES } from "@/config/routes";
 
 export interface DownloadableClip {
   id: string;
@@ -41,28 +39,15 @@ export function UnlockDownloadPanel({
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [needTopup, setNeedTopup] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const unlock = async () => {
     setLoading(true);
     setError(null);
-    setNeedTopup(false);
-    try {
-      const res = await fetch(`/api/requests/${requestId}/unlock-download`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        if (res.status === 402) setNeedTopup(true);
-        throw new Error(body.error ?? "ไม่สามารถปลดล็อกได้");
-      }
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
-    } finally {
-      setLoading(false);
-    }
+    const returnTo = `/dashboard/requests/${requestId}`;
+    router.push(
+      `/dashboard/credits?unlockRequest=${encodeURIComponent(requestId)}&returnTo=${encodeURIComponent(returnTo)}`
+    );
   };
 
   const download = async (assetId: string) => {
@@ -106,14 +91,6 @@ export function UnlockDownloadPanel({
           <Button onClick={unlock} loading={loading}>
             ปลดล็อกด้วย {price} เครดิต (฿{price})
           </Button>
-          {needTopup && (
-            <Link
-              href={ROUTES.CREDITS}
-              className="text-sm font-medium text-blue-700 hover:underline"
-            >
-              เครดิตไม่พอ — เติมเครดิตด้วย PromptPay →
-            </Link>
-          )}
         </div>
       </Card>
     );

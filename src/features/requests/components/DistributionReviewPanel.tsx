@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
-import { Platform, PLATFORM_LABELS } from "@/domain/enums/Platform";
+import { Platform, PLATFORM_LABELS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
 
 interface Props {
@@ -78,18 +78,10 @@ export function DistributionReviewPanel({
   const handleUnlock = async () => {
     setUnlocking(true);
     setDownloadError(null);
-    try {
-      const res = await fetch(`/api/requests/${requestId}/unlock-download`, { method: "POST" });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถปลดล็อกได้");
-      }
-      router.refresh();
-    } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
-    } finally {
-      setUnlocking(false);
-    }
+    const returnTo = `/dashboard/requests/${requestId}`;
+    router.push(
+      `/dashboard/credits?unlockRequest=${encodeURIComponent(requestId)}&returnTo=${encodeURIComponent(returnTo)}`
+    );
   };
 
   const handleDownload = async (assetId: string) => {
@@ -314,7 +306,9 @@ export function DistributionReviewPanel({
                 </div>
                 {renderDownloadControl({
                   assetId: tventAssetId,
-                  ratio: reviewedRatio,
+                  // Travy is always rendered at its own fixed ratio (16:9),
+                  // not the reviewed/primary ratio.
+                  ratio: PLATFORM_ASPECT_RATIOS[Platform.TventApp],
                   labelSuffix: "วิดีโอ Travy",
                 })}
               </div>

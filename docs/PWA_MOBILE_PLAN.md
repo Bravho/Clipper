@@ -115,7 +115,7 @@ Add `@capacitor/core`, `@capacitor/cli`, `@capacitor/ios`, `@capacitor/android`.
 
 - **Google OAuth** in a WebView: Google blocks OAuth in embedded WebViews. Use `@capacitor/browser` (opens the system browser / SFSafariViewController / Chrome Custom Tab) for the sign-in leg, then return via a **custom URL scheme / App Link / Universal Link** deep link back into the app. NextAuth callback URLs must whitelist these.
 - **Session persistence**: cookies inside the Capacitor WebView persist, but validate that NextAuth's cookie flags (`Secure`, `SameSite`) behave under the `capacitor://`/`https://` origin. May need `sameSite: "none"` for the OAuth redirect hop.
-- **Payments** (GBPrimePay webhook/redirect flows under `api/payments`): redirects must resolve back into the app via deep links; test the full top-up round trip.
+- **Payments** (Stripe PromptPay webhook under `api/payments`): ensure the public webhook remains reachable and test the full top-up round trip in the mobile shell.
 
 ### B4. Native capabilities to add
 

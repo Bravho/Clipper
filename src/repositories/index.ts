@@ -37,7 +37,7 @@ import { PostgresPaymentIntentRepository } from "./postgres/PostgresPaymentInten
 
 export const businessProfileRepository = new PostgresBusinessProfileRepository();
 export const creditPurchaseLogRepository = new PostgresCreditPurchaseLogRepository();
-// PromptPay top-up intents (GB Prime Pay). Requires migration 007.
+// PromptPay top-up intents (Stripe). Requires migration 007.
 export const paymentIntentRepository = new PostgresPaymentIntentRepository();
 
 // ── Phase 2B — PostgreSQL ────────────────────────────────────────────────────

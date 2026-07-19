@@ -1,7 +1,6 @@
 import bcrypt from "bcryptjs";
 import { Role } from "@/domain/enums/Role";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
-import { TransactionType } from "@/domain/enums/TransactionType";
 import { PolicyType } from "@/domain/enums/PolicyType";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { CURRENT_POLICY_VERSIONS } from "@/config/policyVersions";
@@ -115,16 +114,6 @@ export const SEED_WALLETS: CreditWallet[] = [
 // ---- Credit transactions --------------------------------------------------
 
 export const SEED_TRANSACTIONS: CreditTransaction[] = [
-  {
-    id: "txn-requester-bonus-001",
-    userId: "user-requester-001",
-    amount: CREDITS_CONFIG.SIGNUP_BONUS_CREDITS,
-    type: TransactionType.SignupBonus,
-    description: "Welcome! 30 free credits on account creation.",
-    referenceId: null,
-    createdAt: now,
-  },
-  // Phase 2B: request charge transactions appended
   ...SEED_REQUEST_TRANSACTIONS,
 ];
 

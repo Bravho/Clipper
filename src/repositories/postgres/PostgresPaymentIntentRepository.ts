@@ -33,7 +33,7 @@ export class PostgresPaymentIntentRepository implements IPaymentIntentRepository
       `INSERT INTO payment_intents
          (user_id, gateway, method, amount_baht, credits_to_add, status,
           reference_no, gateway_ref, qr_payload, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         input.userId,
@@ -43,6 +43,7 @@ export class PostgresPaymentIntentRepository implements IPaymentIntentRepository
         input.creditsToAdd,
         PaymentStatus.Pending,
         input.referenceNo,
+        input.gatewayRef ?? null,
         input.qrPayload ?? null,
         input.expiresAt,
       ]
@@ -62,6 +63,14 @@ export class PostgresPaymentIntentRepository implements IPaymentIntentRepository
     const { rows } = await this.db.query(
       "SELECT * FROM payment_intents WHERE reference_no = $1",
       [referenceNo]
+    );
+    return rows[0] ? rowToPaymentIntent(rows[0]) : null;
+  }
+
+  async findByGatewayRef(gatewayRef: string): Promise<PaymentIntent | null> {
+    const { rows } = await this.db.query(
+      "SELECT * FROM payment_intents WHERE gateway_ref = $1",
+      [gatewayRef]
     );
     return rows[0] ? rowToPaymentIntent(rows[0]) : null;
   }

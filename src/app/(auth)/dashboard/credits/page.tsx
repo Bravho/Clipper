@@ -8,7 +8,6 @@ import { TransactionType } from "@/domain/enums/TransactionType";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { ManualBuyForm } from "@/features/credits/components/ManualBuyForm";
 import { PromptPayTopup } from "@/features/credits/components/PromptPayTopup";
 
 
@@ -21,7 +20,7 @@ const TRANSACTION_LABELS: Record<TransactionType, string> = {
   [TransactionType.AdminCredit]: "Credit Grant",
   [TransactionType.AdminDebit]: "Credit Deduction",
   [TransactionType.DiscountApplied]: "Discount Applied",
-  [TransactionType.TopUp]: "PromptPay Top-up",
+  [TransactionType.TopUp]: "Stripe Top-up",
 };
 
 const TRANSACTION_VARIANTS: Record<
@@ -37,8 +36,13 @@ const TRANSACTION_VARIANTS: Record<
   [TransactionType.TopUp]: "green",
 };
 
-export default async function CreditsPage() {
+export default async function CreditsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ unlockRequest?: string; returnTo?: string }>;
+}) {
   const user = await requireRole(Role.Requester);
+  const query = await searchParams;
   const [balance, transactions] = await Promise.all([
     creditService.getBalance(user.id),
     creditService.getTransactionHistory(user.id),
@@ -126,12 +130,12 @@ export default async function CreditsPage() {
       </Card>
 
       <div className="mb-6">
-        <PromptPayTopup />
-      </div>
-
-      {/* Manual bank-transfer fallback for users who prefer not to use QR. */}
-      <div className="mb-8">
-        <ManualBuyForm />
+        <PromptPayTopup
+          currentBalance={balance}
+          unlockRequestId={query.unlockRequest}
+          returnTo={query.returnTo}
+          unlockPrice={CREDITS_CONFIG.REQUEST_COST_CREDITS}
+        />
       </div>
 
 

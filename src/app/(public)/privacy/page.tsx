@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Card } from "@/components/ui/Card";
+import { ROUTES } from "@/config/routes";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy",
-  description: "Clipper Platform Privacy Policy — including content ownership rights and storage retention terms.",
+  title: "Privacy Policy — RClipper",
+  description: "How RClipper handles account data, uploaded media, AI processing, retention, and selected Travy publication.",
 };
 
 export default function PrivacyPage() {
@@ -11,165 +13,148 @@ export default function PrivacyPage() {
     <div className="mx-auto max-w-3xl px-4 py-16">
       <div className="mb-8">
         <p className="text-sm font-medium text-blue-700">Legal</p>
-        <h1 className="mt-1 text-3xl font-bold text-slate-900">Privacy Policy</h1>
+        <h1 className="mt-1 text-3xl font-bold text-slate-900">
+          RClipper Privacy Policy
+        </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.0.0 — Effective January 1, 2024
-        </p>
-        <p className="mt-1 text-xs text-slate-400">
-          This policy covers privacy, content ownership and usage rights, and
-          storage and retention practices.
+          Version 1.1.0 — Effective 18 July 2026
         </p>
       </div>
 
       <Card>
-        <div className="prose prose-slate max-w-none space-y-8 text-sm text-slate-700 leading-relaxed">
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 text-xs">
-            <strong>Placeholder:</strong> Full policy language will be finalised before public launch.
-          </div>
-
-          {/* ---- Privacy -------------------------------------------------- */}
+        <div className="prose prose-slate max-w-none space-y-7 text-sm leading-relaxed text-slate-700">
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              1. Information We Collect
+              1. Data we collect
             </h2>
             <p>
-              We collect your name and email address when you register. If you
-              sign in with Google, we receive your name and email from Google.
-              We do not collect your company name, phone number, or social media
-              handles.
+              RClipper collects account and authentication information, request
+              briefs, uploaded images and videos, voice recordings, production
+              choices, approval history, credit and payment records, support
+              communications, and technical information needed to operate and secure
+              the service. Uploaded media may contain personal data about you or
+              other identifiable people.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              2. How We Use Your Information
+              2. How we use data
             </h2>
             <p>
-              We use your information to operate the platform, process your clip
-              requests, communicate with you about your requests, and meet our
-              legal obligations. We do not sell your personal data.
+              We use this data to register and secure accounts, process and deliver
+              video requests, generate scripts, audio, subtitles, translations and
+              video outputs, administer credits and payments, provide support,
+              moderate content, prevent abuse, comply with law, and improve service
+              reliability. We do not sell personal data.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              3. Third-Party Services
+              3. AI and service providers
             </h2>
             <p>
-              We use Google OAuth for authentication (if you choose this option).
-              If we feature a clip on our own channels, it may be posted to
-              third-party platforms such as TikTok, Facebook, Instagram, or
-              YouTube. Each of these platforms has its own privacy policy and data
-              practices.
+              RClipper may transmit the request information and media required for a
+              production step to contracted hosting, storage, authentication,
+              payment, email, AI, voice, video-generation, and media-processing
+              providers. Only data reasonably needed for the relevant service should
+              be transmitted. These providers may process data in other countries
+              under their applicable contractual and security protections.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              4. Your Rights
+              4. Selected Travy publication
             </h2>
             <p>
-              You may request deletion of your account and associated personal
-              data at any time by contacting us through the platform. Source
-              files you upload are deleted automatically per the retention terms
-              below.
+              Not every generated video is published on Travy. RClipper may select a
+              reviewed video for public display on the Travy website or application.
+              When selected, the finished video and associated title, caption,
+              thumbnail, subtitles, translations, business information, and personal
+              data visible or audible in the video become publicly accessible. Public
+              viewers may copy or share content outside RClipper&apos;s control.
             </p>
-          </section>
-
-          {/* ---- Ownership ------------------------------------------------ */}
-          <div className="border-t border-slate-100 pt-6">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Content Ownership and Usage Rights
-            </h2>
-          </div>
-
-          <section>
-            <h2 className="text-base font-semibold text-slate-900">
-              5. Ownership of Final Output
-            </h2>
             <p>
-              The final edited video clip produced by Clipper&rsquo;s team is
-              owned by the platform operator (Clipper). You do not own the
-              edited clip.
+              The request form gives a just-in-time notice and requires confirmation
+              that the requester has the necessary rights and accepts the applicable
+              publication terms. Full licence terms are in the{" "}
+              <Link href={ROUTES.OWNERSHIP} className="text-blue-700 underline">
+                Content Ownership and Publication Rights Policy
+              </Link>
+              .
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              6. Your Reshare License
+              5. Storage and retention
             </h2>
             <p>
-              Upon delivery, you are granted a non-exclusive, royalty-free
-              license to reshare and redistribute the final clip on your own
-              channels — including social media, your website, and messaging
-              platforms. You may not sell or sublicense the clip to any third
-              party.
+              Raw source uploads are associated with the request for which they were
+              supplied and are ordinarily scheduled for deletion 90 days after
+              upload, subject to active production, security, legal, dispute, backup,
+              and technical requirements. Production records, approval evidence,
+              credit records, and policy-acceptance records may be retained for as
+              long as reasonably necessary to operate the service and establish the
+              parties&apos; rights.
+            </p>
+            <p>
+              Finished videos may be retained for delivery, quality assurance, and,
+              where selected, for the duration of Travy publication plus reasonable
+              backup, audit, legal, and content-integrity retention.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              7. Source Material Rights
+              6. Security
             </h2>
             <p>
-              By uploading source videos and images, you confirm that you own
-              or have obtained all necessary rights to use those materials. You
-              grant Clipper a limited, non-exclusive license to use those
-              materials solely for producing your requested clip. This license
-              ends when your source files are deleted.
-            </p>
-          </section>
-
-          {/* ---- Storage -------------------------------------------------- */}
-          <div className="border-t border-slate-100 pt-6">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Storage and Retention
-            </h2>
-          </div>
-
-          <section>
-            <h2 className="text-base font-semibold text-slate-900">
-              8. Source File Retention
-            </h2>
-            <p>
-              Source files you upload for clip production are stored in our
-              cloud infrastructure (DigitalOcean Spaces) and are automatically
-              and permanently deleted after <strong>90 days</strong> from the
-              date of upload. Clipper does not maintain a permanent asset
-              library of your raw uploads.
+              RClipper uses administrative, technical, and organisational safeguards
+              designed to protect data, including access controls and encrypted
+              network transmission where supported. No online service can guarantee
+              absolute security.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              9. Final Clip Retention
+              7. Your choices and rights
             </h2>
             <p>
-              Completed and published clips remain accessible via their
-              delivery links for as long as the platform is active, unless
-              removed at the platform's discretion or upon your request.
+              Subject to applicable law, you may request access, correction,
+              deletion, restriction, objection, withdrawal of consent where consent
+              is the legal basis, or information about the handling of your personal
+              data. Account deletion is available through the service where provided
+              or by contacting support. Some records may be retained where required
+              for legal, payment, security, fraud-prevention, or dispute purposes.
+            </p>
+            <p>
+              Privacy, rights, content-reporting, and removal requests may be sent to{" "}
+              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
+                support@rclipper.com
+              </a>
+              . Please identify the relevant request or published Travy video.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              10. Account Data Retention
+              8. Changes and contact
             </h2>
             <p>
-              Your account data (name, email, credit history, request history)
-              is retained for as long as your account is active. If you delete
-              your account, personal data is removed within 30 days, subject to
-              legal obligations.
+              We may update this policy to reflect changes in the service or law.
+              Material changes to ownership, data use, or publication rights will be
+              presented for renewed acceptance where required. Questions may be sent
+              to{" "}
+              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
+                support@rclipper.com
+              </a>
+              .
             </p>
           </section>
-
-          {/* ---- Contact -------------------------------------------------- */}
-          <div className="border-t border-slate-100 pt-4">
-            <p className="text-xs text-slate-500">
-              For any questions about this policy, please contact us through the
-              platform.
-            </p>
-          </div>
         </div>
       </Card>
     </div>

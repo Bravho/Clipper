@@ -16,11 +16,13 @@ const bodySchema = z.object({
     .refine((v) => allowedAmounts.includes(v as (typeof allowedAmounts)[number]), {
       message: "Amount must be one of the offered top-up bundles.",
     }),
+  paymentMethod: z.enum(["promptpay", "card"]).default("promptpay"),
+  returnPath: z.string().startsWith("/").optional(),
 });
 
 /**
  * POST /api/credits/topup
- * Creates a PromptPay QR for a top-up bundle and returns it for display.
+ * Creates a Stripe PromptPay QR for a top-up bundle and returns it for display.
  */
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
@@ -48,10 +50,20 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await paymentService.createTopupIntent(
-      session.user.id,
-      parsed.data.amountBaht
-    );
+    const origin = new URL(request.url).origin;
+    const safeReturnPath = parsed.data.returnPath ?? "/dashboard/credits";
+    const result =
+      parsed.data.paymentMethod === "card"
+        ? await paymentService.createCardTopupIntent(
+            session.user.id,
+            parsed.data.amountBaht,
+            `${origin}${safeReturnPath}`
+          )
+        : await paymentService.createTopupIntent(
+            session.user.id,
+            parsed.data.amountBaht,
+            session.user.email
+          );
     return NextResponse.json(result);
   } catch (err) {
     console.error("[POST /api/credits/topup]", err);

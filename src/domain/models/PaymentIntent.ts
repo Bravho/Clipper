@@ -22,9 +22,9 @@ export interface PaymentIntent {
   status: PaymentStatus;
   /** Our unique reference sent to the gateway (idempotency key). */
   referenceNo: string;
-  /** Gateway's own reference, populated on callback. */
+  /** Gateway's own reference, populated when the payment is created. */
   gatewayRef: string | null;
-  /** Raw QR payload / image data URL returned by the gateway (for display). */
+  /** QR image URL returned by the gateway (for display). */
   qrPayload: string | null;
   /** When the QR / intent stops being payable. */
   expiresAt: Date;
@@ -39,6 +39,7 @@ export type CreatePaymentIntentInput = {
   amountBaht: number;
   creditsToAdd: number;
   referenceNo: string;
+  gatewayRef?: string | null;
   qrPayload?: string | null;
   expiresAt: Date;
 };

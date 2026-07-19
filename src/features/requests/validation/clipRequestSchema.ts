@@ -79,7 +79,7 @@ export const submitClipRequestSchema = clipRequestFormSchema.extend({
   rightsConfirmed: z.literal(true, {
     errorMap: () => ({
       message:
-        "You must confirm you have the rights to submit these materials.",
+        "You must confirm the required content rights and accept RClipper's publication terms.",
     }),
   }),
 });

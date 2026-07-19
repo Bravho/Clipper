@@ -4,13 +4,17 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 import { creditService } from "@/services/CreditService";
+import { clipRequestService } from "@/services/ClipRequestService";
 import { PackageSelector } from "@/features/requests/components/PackageSelector";
 
 export const metadata: Metadata = { title: "คำขอใหม่ — RClipper" };
 
 export default async function NewRequestPage() {
   const user = await requireRole(Role.Requester);
-  const balance = await creditService.getBalance(user.id);
+  const [balance, trialAvailable] = await Promise.all([
+    creditService.getBalance(user.id),
+    clipRequestService.isFirstRequest(user.id),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-10">
@@ -35,7 +39,7 @@ export default async function NewRequestPage() {
         </p>
       </div>
 
-      <PackageSelector creditBalance={balance} />
+      <PackageSelector creditBalance={balance} trialAvailable={trialAvailable} />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * PaymentService — orchestrates PromptPay top-ups via GB Prime Pay.
+ * PaymentService — orchestrates PromptPay top-ups via Stripe.
  *
  * Flow:
  *   createTopupIntent()  → creates a PaymentIntent + a PromptPay QR to display.
@@ -21,7 +21,12 @@ import {
   PaymentStatus,
 } from "@/domain/enums/PaymentStatus";
 import { PAYMENTS_CONFIG } from "@/config/payments";
-import { createPromptPayQr, getChargeStatus } from "@/lib/payments/gbPrimePay";
+import {
+  createPromptPayQr,
+  createCardCheckout,
+  getChargeStatus,
+  ChargeStatusResult,
+} from "@/lib/payments/stripe";
 import { IPaymentIntentRepository } from "@/repositories/interfaces/IPaymentIntentRepository";
 
 export interface CreateTopupResult {
@@ -29,8 +34,13 @@ export interface CreateTopupResult {
   referenceNo: string;
   amountBaht: number;
   creditsToAdd: number;
-  qrImageDataUrl: string;
+  qrImageDataUrl?: string;
+  checkoutUrl?: string;
   expiresAt: Date;
+  /** False when Stripe is in test mode — the QR is a simulation, not a real PromptPay code. */
+  livemode?: boolean;
+  /** Stripe-hosted payment-instructions page (usable to simulate payment in test mode). */
+  hostedInstructionsUrl?: string;
 }
 
 export class PaymentService {
@@ -47,7 +57,7 @@ export class PaymentService {
     private intents: IPaymentIntentRepository = paymentIntentRepository,
     private credits = creditService,
     // Injected gateway fns so the service is testable without the live API.
-    private gateway = { createPromptPayQr, getChargeStatus }
+    private gateway = { createPromptPayQr, createCardCheckout, getChargeStatus }
   ) {}
 
   /**
@@ -55,7 +65,8 @@ export class PaymentService {
    */
   async createTopupIntent(
     userId: string,
-    amountBaht: number
+    amountBaht: number,
+    customerEmail: string
   ): Promise<CreateTopupResult> {
     if (!Number.isFinite(amountBaht) || amountBaht <= 0) {
       throw new Error("Top-up amount must be greater than 0.");
@@ -71,15 +82,19 @@ export class PaymentService {
       amountBaht,
       referenceNo,
       detail: `RClipper credits x${creditsToAdd}`,
+      customerEmail,
+      userId,
+      creditsToAdd,
     });
 
     const intent = await this.intents.create({
       userId,
-      gateway: PaymentGateway.GbPrimePay,
+      gateway: PaymentGateway.Stripe,
       method: PaymentMethod.PromptPayQr,
       amountBaht,
       creditsToAdd,
       referenceNo,
+      gatewayRef: qr.gatewayRef,
       qrPayload: qr.qrImageDataUrl,
       expiresAt,
     });
@@ -90,6 +105,59 @@ export class PaymentService {
       amountBaht,
       creditsToAdd,
       qrImageDataUrl: qr.qrImageDataUrl,
+      expiresAt,
+      livemode: qr.livemode,
+      hostedInstructionsUrl: qr.hostedInstructionsUrl,
+    };
+  }
+
+  async createCardTopupIntent(
+    userId: string,
+    amountBaht: number,
+    returnUrl: string
+  ): Promise<CreateTopupResult> {
+    if (!Number.isFinite(amountBaht) || amountBaht <= 0) {
+      throw new Error("Top-up amount must be greater than 0.");
+    }
+    const referenceNo = `RC-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const creditsToAdd = Math.round(amountBaht);
+    const expiresAt = new Date(
+      Date.now() + PAYMENTS_CONFIG.intentTtlMinutes * 60 * 1000
+    );
+    const intent = await this.intents.create({
+      userId,
+      gateway: PaymentGateway.Stripe,
+      method: PaymentMethod.Card,
+      amountBaht,
+      creditsToAdd,
+      referenceNo,
+      expiresAt,
+    });
+    let checkout;
+    try {
+      const separator = returnUrl.includes("?") ? "&" : "?";
+      checkout = await this.gateway.createCardCheckout({
+        amountBaht,
+        referenceNo,
+        detail: `RClipper credits x${creditsToAdd}`,
+        userId,
+        creditsToAdd,
+        successUrl: `${returnUrl}${separator}card=success&topupIntent=${intent.id}`,
+        cancelUrl: `${returnUrl}${separator}card=cancelled`,
+      });
+      await this.intents.updateStatus(intent.id, PaymentStatus.Pending, {
+        gatewayRef: checkout.gatewayRef,
+      });
+    } catch (err) {
+      await this.intents.updateStatus(intent.id, PaymentStatus.Failed).catch(() => undefined);
+      throw err;
+    }
+    return {
+      intentId: intent.id,
+      referenceNo,
+      amountBaht,
+      creditsToAdd,
+      checkoutUrl: checkout.checkoutUrl,
       expiresAt,
     };
   }
@@ -104,14 +172,25 @@ export class PaymentService {
    * Webhook semantics: the webhook only fires AFTER a payment attempt, so a
    * gateway "not paid" here is a genuine failure and the intent is marked Failed.
    */
-  async settleFromWebhook(referenceNo: string): Promise<PaymentIntent> {
-    const intent = await this.intents.findByReferenceNo(referenceNo);
+  async settleFromWebhook(
+    gatewayRef: string,
+    verifiedStatus?: ChargeStatusResult
+  ): Promise<PaymentIntent> {
+    let intent = await this.intents.findByGatewayRef(gatewayRef);
+    if (!intent && verifiedStatus?.referenceNo) {
+      intent = await this.intents.findByReferenceNo(verifiedStatus.referenceNo);
+      // Stripe emits payment_intent.succeeded before checkout.session.completed
+      // for card Checkout. The local card intent tracks the Checkout Session id,
+      // so settlement is intentionally left to the following Checkout event.
+      if (intent?.method === PaymentMethod.Card) return intent;
+    }
     if (!intent) throw new Error("Unknown payment reference.");
 
     // Only a still-Pending intent is actionable (Paid/Failed/Expired are terminal).
     if (intent.status !== PaymentStatus.Pending) return intent;
 
-    return this._verifyAndSettle(intent, referenceNo, { failIfNotPaid: true });
+    const status = verifiedStatus ?? await this.gateway.getChargeStatus(gatewayRef);
+    return this._settleVerifiedStatus(intent, status, { failIfNotPaid: false });
   }
 
   /**
@@ -137,7 +216,7 @@ export class PaymentService {
     if (intent.status === PaymentStatus.Pending && this._shouldPollGateway(intentId)) {
       this._markGatewayPolled(intentId);
       try {
-        intent = await this._verifyAndSettle(intent, intent.referenceNo, {
+        intent = await this._verifyAndSettle(intent, {
           failIfNotPaid: false,
         });
       } catch (err) {
@@ -171,13 +250,30 @@ export class PaymentService {
    */
   private async _verifyAndSettle(
     intent: PaymentIntent,
-    referenceNo: string,
     opts: { failIfNotPaid: boolean }
   ): Promise<PaymentIntent> {
-    const status = await this.gateway.getChargeStatus(referenceNo);
+    if (!intent.gatewayRef) throw new Error("Payment intent has no Stripe reference.");
+    const status = await this.gateway.getChargeStatus(intent.gatewayRef);
+    return this._settleVerifiedStatus(intent, status, opts);
+  }
+
+  private async _settleVerifiedStatus(
+    intent: PaymentIntent,
+    status: ChargeStatusResult,
+    opts: { failIfNotPaid: boolean }
+  ): Promise<PaymentIntent> {
+    if (status.gatewayRef !== intent.gatewayRef) {
+      throw new Error("Stripe PaymentIntent reference mismatch.");
+    }
+    if (status.referenceNo !== intent.referenceNo) {
+      throw new Error("Stripe payment metadata reference mismatch.");
+    }
+    if (status.currency.toLowerCase() !== "thb") {
+      return this.intents.updateStatus(intent.id, PaymentStatus.Failed);
+    }
 
     if (!status.paid) {
-      if (opts.failIfNotPaid) {
+      if (status.failed || opts.failIfNotPaid) {
         return this.intents.updateStatus(intent.id, PaymentStatus.Failed, {
           gatewayRef: status.gatewayRef,
         });
@@ -192,7 +288,7 @@ export class PaymentService {
       });
     }
 
-    return this._creditClaimedIntent(intent, status.gatewayRef ?? referenceNo);
+    return this._creditClaimedIntent(intent, status.gatewayRef);
   }
 
   /**
