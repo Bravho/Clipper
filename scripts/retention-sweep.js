@@ -271,9 +271,9 @@ async function sweepOrphans() {
   // 2. Look up every referenced request in one query.
   const ids = [...keysByRequest.keys()];
   const { rows } = await db.query(
-    `SELECT id, status,
+    `SELECT id::text AS id, status,
             (updated_at < NOW() - ($2 || ' days')::interval) AS past_grace
-       FROM clip_requests WHERE id = ANY($1::text[])`,
+       FROM clip_requests WHERE id::text = ANY($1::text[])`,
     [ids, String(FINAL_CLIP_DAYS)]
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
