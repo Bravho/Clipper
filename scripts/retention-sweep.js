@@ -1,7 +1,7 @@
 /**
  * retention-sweep.js — scheduled storage/data-retention sweep.
  *
- * Implements the two application-level retention rules from
+ * Implements the application-level retention rules from
  * docs/storage-lifecycle-design.md (Addendum A):
  *
  *   A. Final-clip window: a request that has been delivered/published for more
@@ -11,6 +11,19 @@
  *   B. Inactivity auto-cancel: a non-terminal, non-draft request with no
  *      activity for more than INACTIVE_DAYS (default 30) is marked
  *      'auto_cancelled' and its media purged (thumbnails kept).
+ *
+ *   C. Stale drafts: a Draft with no activity for more than INACTIVE_DAYS has
+ *      its media purged and its uploaded_assets rows deleted (so the draft UI
+ *      doesn't render broken links to lifecycle-expired objects). The draft
+ *      row itself is kept — the requester can re-upload and still submit.
+ *
+ *   D. Orphan reconciliation: lists every media prefix and deletes objects
+ *      whose requestId no longer exists in the DB, or belongs to a request
+ *      that is terminal (rejected / auto_cancelled / delivered / published)
+ *      and past the FINAL_CLIP_DAYS grace window. Catches strays left by
+ *      partial failures, deleted drafts, and lifecycle-driven deletions that
+ *      removed request_mat/ but not the processed artefacts.
+ *      Skip with --skip-reconcile.
  *
  * Cascade guarantee: purge deletes across EVERY media prefix for the request in
  * one pass, so removing the uploads necessarily removes every processed
@@ -37,6 +50,7 @@ const {
 // ── Args ─────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run");
+const SKIP_RECONCILE = args.includes("--skip-reconcile");
 const argVal = (name, def) => {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
   return hit ? Number(hit.split("=")[1]) : def;
@@ -49,18 +63,16 @@ const env = fs.readFileSync(path.join(__dirname, "..", ".env.local"), "utf8");
 const get = (k) =>
   (env.match(new RegExp("^" + k + "\\s*=\\s*(.+)$", "m")) || [])[1]?.trim();
 
-const MEDIA_PREFIXES = [
-  "tmp",
-  "processing",
-  "request_mat",
-  "ai_videos",
-  "animated_videos",
-  "animated_overlays",
-  "processed_audio",
-  "voice_recordings",
-  "final_exports",
-  "clips",
-];
+// Shared with src/services/StorageLifecycleService.ts — single source of truth
+// so the app cascade and this sweep can never drift (preview_exports was once
+// missing here for exactly that reason).
+const { mediaPrefixes: MEDIA_PREFIXES } = require(path.join(
+  __dirname,
+  "..",
+  "src",
+  "config",
+  "mediaPrefixes.json"
+));
 
 const BUCKET = get("DO_SPACES_BUCKET");
 const s3 = new S3Client({
@@ -185,17 +197,127 @@ async function sweepInactive() {
   return total;
 }
 
+async function sweepStaleDrafts() {
+  const { rows } = await db.query(
+    `SELECT id, user_id FROM clip_requests
+       WHERE status = 'draft'
+         AND updated_at < NOW() - ($1 || ' days')::interval`,
+    [String(INACTIVE_DAYS)]
+  );
+  console.log(`\n[C] Stale drafts > ${INACTIVE_DAYS}d — ${rows.length} request(s)`);
+  let total = 0;
+  for (const r of rows) {
+    total += await purge("stale-draft", r.user_id, r.id);
+    if (!DRY_RUN) {
+      const res = await db.query(
+        `DELETE FROM uploaded_assets WHERE request_id = $1`,
+        [r.id]
+      );
+      if (res.rowCount > 0) {
+        console.log(`   stale-draft ${r.id}: removed ${res.rowCount} asset row(s)`);
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * [D] Orphan reconciliation.
+ *
+ * Key layout is {prefix}/{userId}/{YYYY-MM-DD}/{requestId}/... — the requestId
+ * is always the 4th segment. Any object whose requestId is unknown to the DB,
+ * or whose request is terminal and past the grace window, is an orphan.
+ * Keys that don't match the expected layout are left alone (never guess-delete).
+ */
+async function sweepOrphans() {
+  console.log(`\n[D] Orphan reconciliation`);
+
+  // 1. Collect keys per requestId across every media prefix (thumbnails excluded).
+  const keysByRequest = new Map(); // requestId -> string[]
+  let skippedUnparseable = 0;
+  for (const prefix of MEDIA_PREFIXES) {
+    let token;
+    do {
+      const res = await s3.send(
+        new ListObjectsV2Command({
+          Bucket: BUCKET,
+          Prefix: `${prefix}/`,
+          ContinuationToken: token,
+        })
+      );
+      for (const obj of res.Contents || []) {
+        if (!obj.Key) continue;
+        const parts = obj.Key.split("/");
+        // Expect at least prefix/userId/date/requestId/filename
+        if (parts.length < 5 || !parts[3]) {
+          skippedUnparseable++;
+          continue;
+        }
+        const requestId = parts[3];
+        if (!keysByRequest.has(requestId)) keysByRequest.set(requestId, []);
+        keysByRequest.get(requestId).push(obj.Key);
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+  }
+  if (skippedUnparseable > 0) {
+    console.log(`   skipped ${skippedUnparseable} key(s) with unexpected layout`);
+  }
+  if (keysByRequest.size === 0) {
+    console.log("   no media objects found");
+    return 0;
+  }
+
+  // 2. Look up every referenced request in one query.
+  const ids = [...keysByRequest.keys()];
+  const { rows } = await db.query(
+    `SELECT id, status,
+            (updated_at < NOW() - ($2 || ' days')::interval) AS past_grace
+       FROM clip_requests WHERE id = ANY($1::text[])`,
+    [ids, String(FINAL_CLIP_DAYS)]
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  // 3. Decide per request. Delete only clearly-safe cases.
+  const PURGEABLE_TERMINAL = new Set([
+    "rejected",
+    "auto_cancelled",
+    "delivered",
+    "published",
+  ]);
+  let total = 0;
+  for (const [requestId, keys] of keysByRequest) {
+    const req = byId.get(requestId);
+    let reason = null;
+    if (!req) {
+      reason = "request not in DB";
+    } else if (PURGEABLE_TERMINAL.has(req.status) && req.past_grace) {
+      reason = `terminal '${req.status}' past ${FINAL_CLIP_DAYS}d grace`;
+    }
+    if (!reason) continue;
+    const n = await deleteKeys(keys);
+    console.log(
+      `   orphan ${requestId} (${reason}): ${DRY_RUN ? "would delete" : "deleted"} ${n}/${keys.length} object(s)`
+    );
+    total += n;
+  }
+  if (total === 0) console.log("   no orphans");
+  return total;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 (async () => {
   console.log(
-    `Retention sweep ${DRY_RUN ? "(DRY RUN) " : ""}— clip=${FINAL_CLIP_DAYS}d inactive=${INACTIVE_DAYS}d`
+    `Retention sweep ${DRY_RUN ? "(DRY RUN) " : ""}— clip=${FINAL_CLIP_DAYS}d inactive=${INACTIVE_DAYS}d${SKIP_RECONCILE ? " (reconcile skipped)" : ""}`
   );
   await db.connect();
   try {
     const a = await sweepDeliveredClips();
     const b = await sweepInactive();
+    const c = await sweepStaleDrafts();
+    const d = SKIP_RECONCILE ? 0 : await sweepOrphans();
     console.log(
-      `\nDone. ${DRY_RUN ? "Would delete" : "Deleted"} ${a + b} object(s) total.`
+      `\nDone. ${DRY_RUN ? "Would delete" : "Deleted"} ${a + b + c + d} object(s) total.`
     );
   } catch (err) {
     console.error("Sweep failed:", err);

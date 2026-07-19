@@ -3,6 +3,7 @@ import {
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { spacesClient, SPACES_BUCKET } from "@/lib/spaces";
+import mediaPrefixConfig from "@/config/mediaPrefixes.json";
 
 /**
  * StorageLifecycleService — cascade deletion of a request's media in Spaces.
@@ -25,23 +26,16 @@ import { spacesClient, SPACES_BUCKET } from "@/lib/spaces";
  * `/{requestId}/`.
  */
 
-/** Every media prefix that can hold artefacts for a request. */
-export const REQUEST_MEDIA_PREFIXES = [
-  "tmp",
-  "processing",
-  "request_mat",
-  "ai_videos",
-  "animated_videos",
-  "animated_overlays",
-  "processed_audio",
-  "voice_recordings",
-  "final_exports",
-  "preview_exports",
-  "clips",
-] as const;
+/**
+ * Every media prefix that can hold artefacts for a request.
+ * Sourced from src/config/mediaPrefixes.json — shared with
+ * scripts/retention-sweep.js so the two lists cannot drift.
+ */
+export const REQUEST_MEDIA_PREFIXES: readonly string[] =
+  mediaPrefixConfig.mediaPrefixes;
 
 /** Prefix that is intentionally preserved when `keepThumbnails` is set. */
-export const THUMBNAIL_PREFIX = "thumbnails";
+export const THUMBNAIL_PREFIX = mediaPrefixConfig.thumbnailPrefix;
 
 export interface PurgeResult {
   requestId: string;

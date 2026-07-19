@@ -1,0 +1,17 @@
+{
+  "_comment": "Single source of truth for every DO Spaces prefix that can hold a request's media. Imported by src/services/StorageLifecycleService.ts (purge cascade) AND scripts/retention-sweep.js (daily cron sweep) — keep additions here so the two can never drift. When adding a prefix, also add a matching S3 lifecycle backstop rule on the bucket (see docs/storage-lifecycle-design.md A.3).",
+  "mediaPrefixes": [
+    "tmp",
+    "processing",
+    "request_mat",
+    "ai_videos",
+    "animated_videos",
+    "animated_overlays",
+    "processed_audio",
+    "voice_recordings",
+    "final_exports",
+    "preview_exports",
+    "clips"
+  ],
+  "thumbnailPrefix": "thumbnails"
+}
