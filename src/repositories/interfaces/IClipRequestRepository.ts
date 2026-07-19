@@ -20,6 +20,8 @@ export interface IClipRequestRepository {
   // ── Requester queries ───────────────────────────────────────────────────────
   findById(id: string): Promise<ClipRequest | null>;
   findByUserId(userId: string): Promise<ClipRequest[]>;
+  /** Whether the requester has ever submitted a request. */
+  hasSubmittedRequestByUserId(userId: string): Promise<boolean>;
   findByUserIdAndStatus(
     userId: string,
     statuses: RequestStatus[]

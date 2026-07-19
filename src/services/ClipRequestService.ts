@@ -402,11 +402,12 @@ export class ClipRequestService {
     // Fraud prevention: trial_consumed is set at account creation when the
     // deleted-account registry shows this email/OAuth identity already used
     // its free trial on a previously deleted account.
-    const user = await userRepository.findById(userId);
+    const [user, hasSubmittedRequest] = await Promise.all([
+      userRepository.findById(userId),
+      clipRequestRepository.hasSubmittedRequestByUserId(userId),
+    ]);
     if (user?.trialConsumed) return false;
-
-    const all = await clipRequestRepository.findByUserId(userId);
-    return all.every((r) => r.submittedAt === null);
+    return !hasSubmittedRequest;
   }
 
   /**

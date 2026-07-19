@@ -1,9 +1,16 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
-import { NewRequestForm } from "./NewRequestForm";
-import { ProductionPipeline } from "./ProductionPipeline";
 import { CREDITS_CONFIG } from "@/config/credits";
+import { useI18n } from "@/i18n/client";
+
+const NewRequestForm = dynamic(() =>
+  import("./NewRequestForm").then((module) => module.NewRequestForm)
+);
+const ProductionPipeline = dynamic(() =>
+  import("./ProductionPipeline").then((module) => module.ProductionPipeline)
+);
 
 interface Props {
   creditBalance: number;
@@ -12,6 +19,7 @@ interface Props {
 }
 
 export function PackageSelector({ creditBalance, trialAvailable = false }: Props) {
+  const { t } = useI18n();
   const [selected, setSelected] = useState<"ai" | "editor" | null>(null);
   // Duration / channels are creative preferences only — they no longer affect
   // the price (a request is a single flat charge). Kept for the pipeline display.
@@ -26,7 +34,7 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
           onClick={() => setSelected(null)}
           className="mb-6 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
         >
-          ← เปลี่ยนประเภทการผลิต
+          {t("request.changeProduction")}
         </button>
 
         <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 flex items-center gap-3">
@@ -36,8 +44,8 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
             </svg>
           </div>
           <div>
-            <p className="text-sm font-semibold text-blue-800">AI Track — วิดีโอ AI · รูปภาพและคลิปวิดีโอ</p>
-            <p className="text-xs text-blue-600 mt-0.5">AI สร้างวิดีโอให้อัตโนมัติจากรูปและคลิปของคุณ · ราคาเดียว ครบทุกขั้นตอน</p>
+            <p className="text-sm font-semibold text-blue-800">{t("request.aiTrackTitle")}</p>
+            <p className="text-xs text-blue-600 mt-0.5">{t("request.aiTrackBody")}</p>
           </div>
         </div>
 

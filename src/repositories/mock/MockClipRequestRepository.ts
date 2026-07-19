@@ -53,6 +53,12 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
+  async hasSubmittedRequestByUserId(userId: string): Promise<boolean> {
+    return [...this.store.values()].some(
+      (request) => request.userId === userId && request.submittedAt !== null
+    );
+  }
+
   async findByUserIdAndStatus(
     userId: string,
     statuses: RequestStatus[]

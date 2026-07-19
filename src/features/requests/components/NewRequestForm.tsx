@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -30,8 +31,18 @@ import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
-import { GoogleMapLocationPicker } from "@/features/requests/components/GoogleMapLocationPicker";
-import { NativeMediaPicker } from "@/features/requests/components/NativeMediaPicker";
+import { useI18n } from "@/i18n/client";
+
+const GoogleMapLocationPicker = dynamic(() =>
+  import("@/features/requests/components/GoogleMapLocationPicker").then(
+    (module) => module.GoogleMapLocationPicker
+  )
+);
+const NativeMediaPicker = dynamic(() =>
+  import("@/features/requests/components/NativeMediaPicker").then(
+    (module) => module.NativeMediaPicker
+  )
+);
 
 interface PendingFile {
   id: string;
@@ -144,6 +155,7 @@ function generateVideoThumbnail(file: File): Promise<string | null> {
 type SubmitPhase = "form" | "submitting";
 
 export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnly = false, creditCost, onCreditParamsChange }: NewRequestFormProps) {
+  const { t } = useI18n();
   const COST = creditCost ?? CREDITS_CONFIG.REQUEST_COST_CREDITS;
   const acceptedTypes = imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_MIME_TYPES;
 
@@ -501,22 +513,21 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       {/* Section 1 — เกี่ยวกับคลิปของคุณ */}
       <fieldset className="rounded-xl border border-slate-200 bg-white p-6">
         <legend className="mb-5 text-base font-semibold text-slate-900 px-1">
-          เกี่ยวกับคลิปของคุณ
+          {t("request.about")}
         </legend>
         <div className="flex flex-col gap-5">
           <Input
-            label="ชื่อคลิป"
-            placeholder="เช่น โปรโมชั่นซัมเมอร์ — กรกฎาคม 2026"
-            hint="ตั้งชื่อคลิปที่สั้นและสื่อความหมาย"
+            label={t("request.clipName")}
+            placeholder={t("request.clipNamePlaceholder")}
+            hint={t("request.clipNameHint")}
             {...register("title")}
             error={errors.title?.message}
           />
 
           <div>
             <Input
-              label="ชื่อสถานที่"
-              placeholder="เช่น เฝอ 54"
-              hint="ระบบจะเก็บชื่อนี้ไว้ทั้งคำเพื่อไม่ให้ถูกตัดแยกในคำบรรยาย"
+              label={t("request.placeName")}
+              placeholder={t("request.placePlaceholder")}
               {...register("placeName")}
               error={errors.placeName?.message}
             />
@@ -524,7 +535,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             <input type="hidden" {...register("longitude", { valueAsNumber: true })} />
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <Button type="button" variant="outline" onClick={() => setMapOpen(true)}>
-                เลือกตำแหน่งบนแผนที่
+                {t("request.chooseMap")}
               </Button>
               {Number.isFinite(watchedLatitude) && Number.isFinite(watchedLongitude) && (
                 <span className="text-sm tabular-nums text-slate-600">
@@ -540,9 +551,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           </div>
 
           <Textarea
-            label="รายละเอียดคลิป"
-            placeholder="อธิบายสิ่งที่ต้องการโปรโมทและข้อความหลักที่ต้องการสื่อ..."
-            hint="อธิบายสั้นๆ ว่าต้องการโปรโมทอะไรและข้อความหลักที่ต้องการสื่อ"
+            label={t("request.details")}
+            placeholder={t("request.detailsPlaceholder")}
+            hint={t("request.detailsHint")}
             rows={4}
             {...register("description")}
             error={errors.description?.message}
@@ -552,10 +563,10 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           <div>
             <div className="mb-2 flex items-center justify-between">
               <label className="text-sm font-medium text-slate-700">
-                ความยาววิดีโอ <span className="text-red-500">*</span>
+                {t("request.duration")} <span className="text-red-500">*</span>
               </label>
               <span className="rounded-full bg-blue-600 px-3 py-0.5 text-sm font-bold text-white tabular-nums">
-                {watchedDuration} วินาที
+                {t("request.seconds", { count: watchedDuration })}
               </span>
             </div>
             <input
@@ -567,8 +578,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
               {...register("durationSeconds", { valueAsNumber: true })}
             />
             <div className="mt-1 flex justify-between text-xs text-slate-400">
-              <span>{PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS} วินาที</span>
-              <span>{PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS} วินาที</span>
+              <span>{t("request.seconds", { count: PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS })}</span>
+              <span>{t("request.seconds", { count: PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS })}</span>
             </div>
             {errors.durationSeconds && (
               <p className="mt-1 text-xs text-red-600" role="alert">
@@ -582,9 +593,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       {/* Section 3 — ไฟล์ต้นฉบับ */}
       <fieldset className="rounded-xl border border-slate-200 bg-white p-6">
         <legend className="mb-2 text-base font-semibold text-slate-900 px-1">
-          ไฟล์ต้นฉบับ
+          {t("request.sourceFiles")}
           <span className="ml-2 text-xs font-normal text-slate-400">
-            (ไม่บังคับ สูงสุด {MAX_UPLOAD_COUNT} ไฟล์)
+            {t("request.optionalFiles", { count: MAX_UPLOAD_COUNT })}
           </span>
         </legend>
 
@@ -679,7 +690,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       {/* Section 4 — ก่อนส่งคำขอ */}
       <fieldset className="rounded-xl border border-slate-200 bg-white p-6">
         <legend className="mb-5 text-base font-semibold text-slate-900 px-1">
-          ก่อนส่งคำขอ
+          {t("request.beforeSubmit")}
         </legend>
 
         {/* One-time charge reminder — a request is a single flat fee, not per-step.
@@ -792,13 +803,13 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           disabled={isDraftSaving}
           className="text-sm text-slate-500 hover:text-slate-700 disabled:opacity-50"
         >
-          {isDraftSaving ? "กำลังบันทึก..." : draftSaved ? "บันทึกแล้ว ✓" : "บันทึกแบบร่าง"}
+          {isDraftSaving ? t("request.saving") : draftSaved ? t("request.saved") : t("request.saveDraft")}
         </button>
 
         <div className="flex gap-3">
           <Link href={ROUTES.REQUESTS}>
             <Button type="button" variant="outline">
-              ยกเลิก
+              {t("request.cancel")}
             </Button>
           </Link>
           <Button
@@ -806,7 +817,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             loading={isSubmitting}
             disabled={insufficientCredits || isSubmitting}
           >
-            ส่งคำขอ
+            {t("request.submit")}
           </Button>
         </div>
       </div>

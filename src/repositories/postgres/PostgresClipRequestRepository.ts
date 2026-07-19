@@ -120,6 +120,18 @@ export class PostgresClipRequestRepository
     return rows.map(rowToClipRequest);
   }
 
+  async hasSubmittedRequestByUserId(userId: string): Promise<boolean> {
+    const { rows } = await this.db.query(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM clip_requests
+         WHERE user_id = $1 AND submitted_at IS NOT NULL
+       ) AS exists`,
+      [userId]
+    );
+    return rows[0]?.exists === true;
+  }
+
   async findByUserIdAndStatus(
     userId: string,
     statuses: RequestStatus[]

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
 
 type Coordinates = { latitude: number; longitude: number };
 
@@ -118,6 +119,7 @@ export function GoogleMapLocationPicker({
   onConfirm,
   onClose,
 }: GoogleMapLocationPickerProps) {
+  const { t } = useI18n();
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const markerRef = useRef<GoogleAdvancedMarker | null>(null);
@@ -235,15 +237,15 @@ export function GoogleMapLocationPicker({
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 id="map-picker-title" className="text-lg font-semibold text-slate-900">
-              เลือกตำแหน่งสถานที่
+              {t("map.title")}
             </h2>
-            <p className="text-sm text-slate-500">แตะบนแผนที่หรือลากหมุดไปยังตำแหน่งที่ต้องการ</p>
+            <p className="text-sm text-slate-500">{t("map.instructions")}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="rounded p-2 text-slate-500 hover:bg-slate-100"
-            aria-label="ปิดแผนที่"
+            aria-label={t("map.close")}
           >
             ×
           </button>
@@ -253,7 +255,7 @@ export function GoogleMapLocationPicker({
           <div ref={mapContainerRef} className="h-full w-full" />
           {loading && (
             <div className="absolute inset-0 grid place-items-center bg-slate-100">
-              <span className="text-sm text-slate-600">กำลังโหลด Google Maps…</span>
+              <span className="text-sm text-slate-600">{t("map.loading")}</span>
             </div>
           )}
         </div>
@@ -262,21 +264,21 @@ export function GoogleMapLocationPicker({
         <p className="mt-3 text-sm tabular-nums text-slate-600">
           {selected
             ? `${selected.latitude.toFixed(6)}, ${selected.longitude.toFixed(6)}`
-            : "ยังไม่ได้เลือกตำแหน่ง"}
+            : t("map.notSelected")}
         </p>
 
         <div className="mt-5 flex flex-wrap justify-between gap-3">
           <Button type="button" variant="outline" onClick={useCurrentLocation} disabled={locating || loading}>
-            {locating ? "กำลังค้นหาตำแหน่ง…" : "ใช้ตำแหน่งปัจจุบัน"}
+            {locating ? t("map.locating") : t("map.current")}
           </Button>
           <div className="flex gap-3">
-            <Button type="button" variant="outline" onClick={onClose}>ยกเลิก</Button>
+            <Button type="button" variant="outline" onClick={onClose}>{t("request.cancel")}</Button>
             <Button
               type="button"
               disabled={!selected}
               onClick={() => selected && onConfirm(selected)}
             >
-              ยืนยันตำแหน่ง
+              {t("map.confirm")}
             </Button>
           </div>
         </div>
