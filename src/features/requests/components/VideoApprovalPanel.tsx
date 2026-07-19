@@ -346,7 +346,7 @@ export function VideoApprovalPanel({
   // video length (plus the usual estimate tolerance). Use the storyboard-based
   // ceiling when available, else the legacy media-based one.
   const voiceCapSeconds = hasStoryboardEstimate
-    ? estimatedVideoRange.maxSeconds
+    ? suggestedVoiceRange.maxSeconds
     : suggestedVoiceSeconds;
   const voiceTooLong =
     voiceCapSeconds != null &&
@@ -1622,7 +1622,12 @@ export function VideoApprovalPanel({
                 <Button
                   onClick={handleApproveVoice}
                   loading={voiceApproving}
-                  disabled={voiceRecreating || voiceApproving || voiceTooLong}
+                  disabled={
+                    voiceRecreating ||
+                    voiceApproving ||
+                    voiceSeconds == null ||
+                    voiceTooLong
+                  }
                 >
                   อนุมัติเสียงพากย์
                 </Button>

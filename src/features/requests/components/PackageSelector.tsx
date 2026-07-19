@@ -69,7 +69,7 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
   return (
     <div>
       <p className="mb-6 text-sm text-slate-500">
-        เลือก AI หรือ Editor สำหรับธุรกิจของคุณ
+        {t("request.chooseTrack")}
       </p>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -82,18 +82,17 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
             AI Track
           </div>
           <h3 className="mb-3 text-2xl font-bold text-slate-900">
-            ไว · ถูก · ไม่ต้องรู้เรื่องวิดีโอ
+            {t("request.aiHeadline")}
           </h3>
           <p className="mb-6 text-slate-600 leading-relaxed flex-1">
-            ส่งรูปหรือคำบรรยาย AI จัดการตัดต่อ ใส่ subtitle ไทย-อังกฤษ-จีน
-            และส่งออกไฟล์หลายอัตราส่วนให้พร้อมดาวน์โหลด เหมาะสำหรับธุรกิจที่ต้องการคอนเทนต์สม่ำเสมอในราคาประหยัด
+            {t("request.aiDescription")}
           </p>
           <ul className="mb-8 space-y-2.5 text-sm text-slate-700">
             {[
-              "Subtitle 3 ภาษา: ไทย · อังกฤษ · จีน",
-              "Export 4 ratio: 9:16 · 16:9 · 1:1 · 4:5",
-              "ไฟล์พร้อมโพสต์ ดาวน์โหลดได้ทันที",
-              "ผลลัพธ์ภายใน 24–48 ชั่วโมง",
+              t("request.aiFeatureSubtitles"),
+              t("request.aiFeatureRatios"),
+              t("request.aiFeatureReady"),
+              t("request.aiTurnaround"),
             ].map((f) => (
               <li key={f} className="flex items-start gap-2.5">
                 <span className="mt-0.5 h-4 w-4 flex-shrink-0 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold">
@@ -107,19 +106,18 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
             <div>
               {trialAvailable ? (
                 <>
-                  <span className="text-2xl font-bold text-green-600">ฟรี</span>
+                  <span className="text-2xl font-bold text-green-600">{t("request.free")}</span>
                   <span className="ml-2 text-xs text-slate-500">
-                    คลิปแรกสร้างฟรี · ชำระ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
-                    เมื่อดาวน์โหลดแบบไม่มีลายน้ำ
+                    {t("request.firstClipPrice", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
                   </span>
                 </>
               ) : (
                 <>
-              <span className="text-xs text-slate-500">ราคาเดียว</span>
+              <span className="text-xs text-slate-500">{t("request.onePrice")}</span>
               <span className="ml-1 text-2xl font-bold text-slate-900">
                 {CREDITS_CONFIG.REQUEST_COST_CREDITS}
               </span>
-              <span className="ml-1 text-sm text-slate-400">เครดิต</span>
+              <span className="ml-1 text-sm text-slate-400">{t("request.creditsUnit")}</span>
                 </>
               )}
               {!trialAvailable && CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE ? (
@@ -128,15 +126,15 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
                     ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
                   </span>{" "}
                   <span className="font-medium text-green-600">
-                    ฿{CREDITS_CONFIG.REQUEST_COST_CREDITS} ราคาเปิดตัว · ครบทุกขั้นตอน
+                    {t("request.launchPrice", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
                   </span>
                 </p>
               ) : (
-                <p className="text-xs text-slate-400 mt-0.5">ครอบคลุมทุกขั้นตอน</p>
+                <p className="text-xs text-slate-400 mt-0.5">{t("request.allStepsIncluded")}</p>
               )}
             </div>
             <span className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
-              เริ่มด้วย AI →
+              {t("request.startAi")}
             </span>
           </div>
         </div>

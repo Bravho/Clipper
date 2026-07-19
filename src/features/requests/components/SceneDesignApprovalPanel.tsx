@@ -11,10 +11,8 @@ import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
 import {
   assetPlaySeconds,
-  MAX_VOICE_OVER_SHORTAGE_SECONDS,
   minMontageTotalSeconds,
   sceneMontageSeconds,
-  voiceOverShortageSeconds,
 } from "@/config/montage";
 
 interface SceneDesignApprovalPanelProps {
@@ -150,13 +148,8 @@ export function SceneDesignApprovalPanel({
   // silence" hint (advisory only, never blocks approval).
   const overBySeconds = Math.max(0, totalSceneSeconds - minTotalSeconds);
 
-  // How much LONGER the voiceover runs than the total picture. Up to
-  // MAX_VOICE_OVER_SHORTAGE_SECONDS is tolerated (the leftover is filled with a
-  // black scene while the voice + music keep playing); beyond it, merging is
-  // hard-blocked — the requester must lengthen the scenes or regenerate a
-  // shorter voiceover, otherwise the clip would end on a long black gap.
-  const shortageSeconds = voiceOverShortageSeconds(totalSceneSeconds, voiceDurationSeconds);
-  const mergeBlocked = shortageSeconds > MAX_VOICE_OVER_SHORTAGE_SECONDS;
+  // The same strict minimum is enforced again by the server and merge step.
+  const mergeBlocked = !meetsMinimum;
 
   // The submitted montage length follows the true scene length so what renders
   // matches. Length no longer affects price — a request is a single flat fee.
@@ -177,13 +170,11 @@ export function SceneDesignApprovalPanel({
   if (emptyScenes.length > 0) {
     blockers.push(`ฉากที่ ${emptyScenes.join(", ")} ยังไม่ได้เลือกรูปหรือคลิป`);
   }
-  // A small shortage (voice slightly longer than the picture) is allowed — the
-  // leftover becomes a short black scene under the voice. A LARGE shortage is a
-  // hard blocker: the requester must add scene/clip length or regenerate a
-  // shorter voiceover before the clips can be merged.
+  // Any real shortage is blocked so approval cannot create a black tail or fail
+  // at the following merge step.
   if (mergeBlocked) {
     blockers.push(
-      `เสียงพากย์ยาวกว่าวิดีโอประมาณ ${round1(shortageSeconds)} วินาที (เกิน ${MAX_VOICE_OVER_SHORTAGE_SECONDS} วินาที) — ` +
+      `วิดีโอยังสั้นกว่าเวลาที่ต้องใช้ประมาณ ${round1(deficitSeconds)} วินาที — ` +
         `กรุณาเพิ่มความยาวฉาก/คลิป หรือกด “สร้างเสียงพากย์ใหม่” ให้บทพูดสั้นลง ก่อนรวมคลิป`
     );
   }
@@ -369,7 +360,7 @@ export function SceneDesignApprovalPanel({
           >
             <p className={`text-xs ${mergeBlocked ? "text-red-700" : "text-amber-700"}`}>
               {mergeBlocked
-                ? `เสียงพากย์ยาวกว่าวิดีโอประมาณ ${round1(shortageSeconds)} วินาที (เกิน ${MAX_VOICE_OVER_SHORTAGE_SECONDS} วินาที) — ` +
+                ? `วิดีโอยังสั้นกว่าเวลาที่ต้องใช้ประมาณ ${round1(deficitSeconds)} วินาที — ` +
                   `ยังรวมคลิปไม่ได้ กรุณาเพิ่มความยาวฉาก/คลิป หรือกด “สร้างเสียงพากย์ใหม่” ให้บทพูดสั้นลง`
                 : `คำแนะนำ: เสียงพากย์ยาวกว่าความยาววิดีโอรวมประมาณ ${round1(deficitSeconds)} วินาที — ` +
                   `แนะนำให้เพิ่มความยาวฉาก/คลิป หรือแก้บทพูดให้สั้นลงแล้วกด “สร้างเสียงพากย์ใหม่” ` +

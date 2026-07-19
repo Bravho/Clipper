@@ -1,6 +1,7 @@
 import {
   DEFAULT_MOTION_PRESET,
   isMotionPreset,
+  MIN_AUTOMATIC_CLIP_PLAYBACK_RATE,
   MONTAGE_FPS,
   type MontageAssetSpec,
   type MotionPreset,
@@ -205,6 +206,84 @@ export function buildSceneMontageAssets(
 
     return asset;
   });
+}
+
+/**
+ * Fit a concrete montage plan to the required total without scheduling a clip
+ * beyond the footage it can cover at an acceptable playback rate. Extra time
+ * goes to stills first. A clip-only plan with insufficient footage is rejected
+ * instead of rendering a black remainder.
+ */
+export function fitScenePlanToVisualCapacity(
+  scenePlan: ScenePlan[],
+  ordered: OrderedSourceAsset[],
+  requiredTotalSeconds: number
+): ScenePlan[] {
+  const plan = scenePlan.map((scene) => ({
+    ...scene,
+    assets: scene.assets?.map((asset) => ({ ...asset })),
+  }));
+  const images: MontageSceneAsset[] = [];
+  const clips: Array<{ asset: MontageSceneAsset; capacity: number }> = [];
+
+  for (const scene of plan) {
+    for (const asset of scene.assets ?? []) {
+      if (asset.kind === "image") {
+        images.push(asset);
+        continue;
+      }
+      const selectedSeconds =
+        Number.isFinite(asset.trimStartSeconds) &&
+        Number.isFinite(asset.trimEndSeconds) &&
+        (asset.trimEndSeconds as number) > (asset.trimStartSeconds as number)
+          ? (asset.trimEndSeconds as number) - (asset.trimStartSeconds as number)
+          : Number(ordered[asset.assetIndex]?.durationSeconds);
+      if (!Number.isFinite(selectedSeconds) || selectedSeconds <= 0) continue;
+      const capacity = selectedSeconds / MIN_AUTOMATIC_CLIP_PLAYBACK_RATE;
+      asset.durationSeconds = Math.min(asset.durationSeconds, capacity);
+      clips.push({ asset, capacity });
+    }
+  }
+
+  const total = () =>
+    plan.reduce(
+      (sceneSum, scene) =>
+        sceneSum +
+        (scene.assets ?? []).reduce(
+          (assetSum, asset) => assetSum + (Number(asset.durationSeconds) || 0),
+          0
+        ),
+      0
+    );
+  let remaining = Math.max(0, requiredTotalSeconds - total());
+
+  if (remaining > 0 && images.length > 0) {
+    const each = remaining / images.length;
+    for (const image of images) image.durationSeconds += each;
+    remaining = 0;
+  }
+
+  for (const clip of clips) {
+    if (remaining <= 1e-6) break;
+    const available = Math.max(0, clip.capacity - clip.asset.durationSeconds);
+    const added = Math.min(available, remaining);
+    clip.asset.durationSeconds += added;
+    remaining -= added;
+  }
+
+  if (remaining > 1e-6) {
+    throw new Error(
+      `Uploaded clips cannot cover the voiceover without black frames. Shorten the voice by at least ${Math.ceil(remaining)} seconds or add a still image.`
+    );
+  }
+
+  return plan.map((scene) => ({
+    ...scene,
+    durationSeconds: (scene.assets ?? []).reduce(
+      (sum, asset) => sum + (Number(asset.durationSeconds) || 0),
+      0
+    ),
+  }));
 }
 
 /**

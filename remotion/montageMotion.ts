@@ -67,12 +67,10 @@ function round(n: number): number {
 
 /**
  * Slowest a clip may be played to fill a scene slot longer than its footage.
- * 0.6 ≈ at most a 1.67× stretch — enough to absorb a few seconds of shortfall
- * without looking like obvious slow-motion. Beyond this the clip plays at the
- * cap and any residual is covered by the cross-dissolve / a black tail rather
- * than a long frozen frame.
+ * 0.8 allows at most a 1.25× stretch, avoiding conspicuous slow-motion. The
+ * planner must move any remaining duration to stills or reject the plan.
  */
-export const MIN_CLIP_PLAYBACK_RATE = 0.6;
+export const MIN_CLIP_PLAYBACK_RATE = 0.8;
 
 /**
  * Playback rate for a clip whose scene slot is longer than its available

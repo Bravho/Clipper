@@ -90,6 +90,9 @@ export const MONTAGE_INTRO_SECONDS = 0.6;
  */
 export const MONTAGE_ENDING_SECONDS = 1.0;
 
+/** Slowest automatic clip playback rate permitted by the duration planner. */
+export const MIN_AUTOMATIC_CLIP_PLAYBACK_RATE = 0.8;
+
 /**
  * Minimum acceptable total montage length: the approved voice length plus the
  * short music intro and ending tail. The requester's scenes (stills included)
@@ -101,6 +104,41 @@ export function minMontageTotalSeconds(voiceDurationSeconds: number | null | und
       ? (voiceDurationSeconds as number)
       : 0;
   return voice + MONTAGE_INTRO_SECONDS + MONTAGE_ENDING_SECONDS;
+}
+
+export interface MontageCoverage {
+  voiceSeconds: number;
+  visualSeconds: number;
+  requiredVisualSeconds: number;
+  deficitSeconds: number;
+  surplusSeconds: number;
+  isCovered: boolean;
+}
+
+/** One authoritative coverage decision for every montage approval gate. */
+export function evaluateMontageCoverage(params: {
+  voiceDurationSeconds: number | null | undefined;
+  totalSceneSeconds: number;
+}): MontageCoverage {
+  const voiceSeconds =
+    Number.isFinite(params.voiceDurationSeconds) && (params.voiceDurationSeconds as number) > 0
+      ? (params.voiceDurationSeconds as number)
+      : 0;
+  const visualSeconds =
+    Number.isFinite(params.totalSceneSeconds) && params.totalSceneSeconds > 0
+      ? params.totalSceneSeconds
+      : 0;
+  const requiredVisualSeconds = minMontageTotalSeconds(voiceSeconds);
+  const deficitSeconds = Math.max(0, requiredVisualSeconds - visualSeconds);
+  return {
+    voiceSeconds,
+    visualSeconds,
+    requiredVisualSeconds,
+    deficitSeconds,
+    surplusSeconds: Math.max(0, visualSeconds - requiredVisualSeconds),
+    // One frame of tolerance absorbs floating-point/frame rounding only.
+    isCovered: deficitSeconds <= 1 / MONTAGE_FPS,
+  };
 }
 
 /**
@@ -125,7 +163,7 @@ export const SUGGESTED_SECONDS_PER_IMAGE = 5;
  * is allowed (the extra is absorbed by slower clips / a short black tail); longer
  * than this and the requester must shorten the script and regenerate.
  */
-export const VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS = 10;
+export const VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS = 0;
 
 /**
  * Estimate a suggested MAXIMUM voiceover length from the uploaded source media,

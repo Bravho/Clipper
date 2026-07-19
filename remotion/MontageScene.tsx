@@ -122,32 +122,23 @@ function AssetLayer({
     durationInFrames / fps
   );
 
-  // Once the (possibly slowed) clip has played all its footage, there is nothing
-  // left to show. Rather than freezing the last frame, render NOTHING so the
-  // scene's black background shows through — a black scene, over which the voice
-  // and music (muxed later at compose) keep playing. `coveredFrames` is how many
-  // timeline frames the footage fills at the current playback rate.
-  const clipExhausted =
-    clipFootageSeconds > 0 &&
-    frame >= (clipFootageSeconds * fps) / clipPlaybackRate;
-
+  // The planner keeps the slot within safe footage capacity. If stale data ever
+  // exceeds it, OffthreadVideo retains visible media instead of exposing black.
   return (
     <AbsoluteFill style={{ opacity, transform: entranceTransform || undefined, overflow: "hidden" }}>
       {asset.kind === "clip" ? (
-        clipExhausted ? null : (
-          <OffthreadVideo
-            src={asset.url}
-            startFrom={Math.max(0, Math.round((asset.trimStartSeconds ?? 0) * fps))}
-            endAt={
-              asset.trimEndSeconds != null
-                ? Math.round(asset.trimEndSeconds * fps)
-                : undefined
-            }
-            playbackRate={clipPlaybackRate}
-            muted
-            style={mediaStyle}
-          />
-        )
+        <OffthreadVideo
+          src={asset.url}
+          startFrom={Math.max(0, Math.round((asset.trimStartSeconds ?? 0) * fps))}
+          endAt={
+            asset.trimEndSeconds != null
+              ? Math.round(asset.trimEndSeconds * fps)
+              : undefined
+          }
+          playbackRate={clipPlaybackRate}
+          muted
+          style={mediaStyle}
+        />
       ) : (
         <Img src={asset.url} style={mediaStyle} />
       )}

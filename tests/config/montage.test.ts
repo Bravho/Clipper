@@ -1,5 +1,6 @@
 import {
   assetPlaySeconds,
+  evaluateMontageCoverage,
   estimateSuggestedVoiceSeconds,
   estimateAssetDurationRange,
   estimateSceneDurationRange,
@@ -211,5 +212,20 @@ describe("minMontageTotalSeconds", () => {
     expect(minMontageTotalSeconds(undefined)).toBeCloseTo(floor);
     expect(minMontageTotalSeconds(0)).toBeCloseTo(floor);
     expect(minMontageTotalSeconds(-5)).toBeCloseTo(floor);
+  });
+});
+
+describe("evaluateMontageCoverage", () => {
+  it("uses the same strict voice + intro + ending rule at every gate", () => {
+    expect(
+      evaluateMontageCoverage({ voiceDurationSeconds: 20, totalSceneSeconds: 21.6 })
+        .isCovered
+    ).toBe(true);
+    const short = evaluateMontageCoverage({
+      voiceDurationSeconds: 20,
+      totalSceneSeconds: 20,
+    });
+    expect(short.isCovered).toBe(false);
+    expect(short.deficitSeconds).toBeCloseTo(1.6);
   });
 });

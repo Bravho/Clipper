@@ -7,9 +7,11 @@ import { getRoleHomePath } from "@/config/routes";
 import { ROUTES } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { Button } from "@/components/ui/Button";
+import { getServerI18n } from "@/i18n/server";
 
 export default async function HomePage() {
   const session = await getServerSession(authOptions);
+  const { t } = getServerI18n();
 
   if (session?.user) {
     redirect(getRoleHomePath(session.user.role as Role));
@@ -34,29 +36,27 @@ export default async function HomePage() {
           </div>
           <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-blue-700/20 px-4 py-1.5 text-sm font-medium text-blue-400 ring-1 ring-blue-700/40">
             <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
-            Marketplace สำหรับเจ้าของธุรกิจท่องเที่ยว ร้านอาหารและเครื่องดื่ม ที่ไม่มีเวลาทำคลิปโปรโมทด้วยตนเอง
+            {t("home.audience")}
           </div>
           <h1 className="mb-6 text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
-            ทำคลิปโฆษณา<br />
-            <span className="text-blue-400">ไม่ต้องรอ ไม่ต้องมีความรู้ด้านตัดต่อ</span>
+            {t("home.headline")}<br />
+            <span className="text-blue-400">{t("home.headlineAccent")}</span>
           </h1>
           <p className="mx-auto mb-3 max-w-2xl text-lg text-slate-300">
-            ส่ง brief — เลือก{" "}
-            <span className="font-semibold text-white">AI ตัดต่อเสร็จ ภายใน 24 ชม.</span>{" "}
-            หรือ{" "}
+            {t("home.briefPrefix")}{" "}
+            <span className="font-semibold text-white">{t("home.aiPromise")}</span>{" "}
+            {t("home.or")}{" "}
             <span className="font-semibold text-white">
-              Editor ที่เชี่ยวชาญ เพื่อเข้าถึงโฆษณาให้คนไทยและนักท่องเที่ยวต่างชาติสนใจ
+              {t("home.editorPromise")}
             </span>
           </p>
           <p className="mx-auto mb-10 max-w-xl text-base text-slate-400">
-            ส่งออกไฟล์ในอัตราส่วนที่เหมาะกับ{" "}
-            <span className="font-medium text-white">Travy</span>, TikTok,
-            Instagram, YouTube และช่องทางอื่นๆ — ดาวน์โหลดแล้วโพสต์ได้ทันที
+            {t("home.export")}
           </p>
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Link href={ROUTES.SIGNUP}>
               <Button size="lg" className="min-w-[200px]">
-                เริ่มต้นใช้งาน
+                {t("nav.getStarted")}
               </Button>
             </Link>
             <Link href={ROUTES.LOGIN}>
@@ -65,7 +65,7 @@ export default async function HomePage() {
                 size="lg"
                 className="min-w-[140px] border-slate-600 text-slate-300 hover:bg-slate-800"
               >
-                เข้าสู่ระบบ
+                {t("nav.signIn")}
               </Button>
             </Link>
           </div>
@@ -76,10 +76,10 @@ export default async function HomePage() {
       <section className="bg-slate-800 py-5 px-4 border-b border-slate-700">
         <div className="mx-auto max-w-5xl grid grid-cols-2 gap-4 sm:grid-cols-4 text-center">
           {[
-            { value: "24 ชม.", label: "เร็วที่สุดสำหรับ AI track" },
-            { value: "3 ภาษา", label: "Subtitle ไทย · อังกฤษ · จีน" },
-            { value: "Travy", label: "แพลตฟอร์มวิดีโอท่องเที่ยวไทย" },
-            { value: "฿49", label: "ราคาเริ่มต้นต่อคลิป" },
+            { value: t("home.statSpeedValue"), label: t("home.statSpeed") },
+            { value: t("home.statLanguagesValue"), label: t("home.statLanguages") },
+            { value: "Travy", label: t("home.statTravy") },
+            { value: "฿49", label: t("home.statPrice") },
           ].map((s) => (
             <div key={s.label} className="flex flex-col gap-0.5">
               <span className="text-xl font-bold text-white">{s.value}</span>
@@ -93,10 +93,10 @@ export default async function HomePage() {
       <section className="py-20 px-4 bg-white">
         <div className="mx-auto max-w-5xl">
           <h2 className="mb-3 text-center text-3xl font-bold text-slate-900">
-            เลือกแบบที่ใช่สำหรับธุรกิจคุณ
+            {t("home.chooseTitle")}
           </h2>
           <p className="mb-12 text-center text-slate-500">
-            ทั้งสองแบบรวม subtitle หลายภาษาและไฟล์หลายอัตราส่วนพร้อมโพสต์ในราคาเดียวกัน
+            {t("home.chooseBody")}
           </p>
           <div className="grid gap-6 md:grid-cols-2">
             {/* AI track */}
@@ -105,19 +105,17 @@ export default async function HomePage() {
                 AI Track
               </div>
               <h3 className="mb-3 text-2xl font-bold text-slate-900">
-                ไว · ถูก · ไม่ต้องรู้เรื่องวิดีโอ
+                {t("request.aiHeadline")}
               </h3>
               <p className="mb-6 text-slate-600 leading-relaxed flex-1">
-                ส่งรูป วิดีโอ หรือแค่คำบรรยาย AI จัดการตัดต่อ ใส่ subtitle
-                ไทย-อังกฤษ-จีน และส่งออกไฟล์หลายอัตราส่วนให้พร้อมดาวน์โหลด
-                เหมาะสำหรับธุรกิจที่ต้องการคอนเทนต์สม่ำเสมอในราคาประหยัด
+                {t("request.aiDescription")}
               </p>
               <ul className="mb-8 space-y-2.5 text-sm text-slate-700">
                 {[
-                  "Subtitle 3 ภาษา: ไทย · อังกฤษ · จีน",
-                  "Export 4 ratio: 9:16 · 16:9 · 1:1 · 4:5",
-                  "ไฟล์พร้อมโพสต์ ดาวน์โหลดได้ทันที",
-                  "ผลลัพธ์ภายใน 24–48 ชั่วโมง",
+                  t("request.aiFeatureSubtitles"),
+                  t("request.aiFeatureRatios"),
+                  t("request.aiFeatureReady"),
+                  t("request.aiTurnaround"),
                 ].map((f) => (
                   <li key={f} className="flex items-start gap-2.5">
                     <span className="mt-0.5 h-4 w-4 flex-shrink-0 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold">
@@ -128,7 +126,7 @@ export default async function HomePage() {
                 ))}
               </ul>
               <Link href={ROUTES.SIGNUP} className="block w-full rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-4 text-center text-sm transition-colors">
-                เริ่มด้วย AI
+                {t("request.startAi")}
               </Link>
             </div>
 

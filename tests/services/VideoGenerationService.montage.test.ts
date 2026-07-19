@@ -535,5 +535,41 @@ describe("VideoGenerationService — montage engine (Phase 3)", () => {
     // Approved plan preserved so the scene-design panel reloads the current design.
     expect(updated.approvedScenePlan).toBeTruthy();
   });
+
+  it("rejects scene approval immediately when the next merge gate would reject its duration", async () => {
+    const request = await createRequestWithImages(1);
+    const job = await createMontageJob(
+      request.id,
+      VideoGenerationStep.AwaitingSceneDesignApproval,
+      { voiceDurationSeconds: 12 }
+    );
+    const shortPlan: ScenePlan[] = [
+      {
+        sceneNumber: 1,
+        durationSeconds: 12,
+        visualDescriptionThai: "ฉากสั้นเกินไป",
+        imageIndexes: [],
+        assets: [
+          {
+            assetIndex: 0,
+            kind: "image",
+            motion: "ken_burns_in",
+            durationSeconds: 12,
+          },
+        ],
+      },
+    ];
+
+    await expect(
+      new VideoGenerationService().approveSceneDesignByRequester(job.id, USER_ID, {
+        scenePlan: JSON.stringify(shortPlan),
+        durationSeconds: 12,
+      })
+    ).rejects.toThrow(/without black frames/);
+
+    const unchanged = await mockJobRepo.findById(job.id);
+    expect(unchanged?.currentStep).toBe(VideoGenerationStep.AwaitingSceneDesignApproval);
+    expect(renderSceneMock).not.toHaveBeenCalled();
+  });
 });
 // end of montage Phase 3 suite

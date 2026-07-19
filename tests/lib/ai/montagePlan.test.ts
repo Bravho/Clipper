@@ -1,6 +1,7 @@
 import {
   allocateAssetDurations,
   buildSceneMontageAssets,
+  fitScenePlanToVisualCapacity,
   inferMotionFromText,
   pickMotionForIndex,
   toRenderAssetSpecs,
@@ -9,7 +10,7 @@ import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 function ordered(
-  specs: { kind: "image" | "clip" }[]
+  specs: { kind: "image" | "clip"; durationSeconds?: number }[]
 ): OrderedSourceAsset[] {
   return specs.map((s, index) => ({
     index,
@@ -18,6 +19,7 @@ function ordered(
     thumbnailUrl: `https://cdn.example.com/asset-${index}-thumb.jpg`,
     kind: s.kind,
     fileName: `asset-${index}`,
+    durationSeconds: s.durationSeconds ?? null,
   }));
 }
 
@@ -169,5 +171,41 @@ describe("toRenderAssetSpecs — cross-pipeline index alignment", () => {
     );
     expect(specs).toHaveLength(1);
     expect(specs[0].url).toBe(list[0].url);
+  });
+});
+
+describe("fitScenePlanToVisualCapacity", () => {
+  it("moves clip overflow to a still instead of scheduling black frames", () => {
+    const list = ordered([
+      { kind: "clip", durationSeconds: 4 },
+      { kind: "image" },
+    ]);
+    const plan = [
+      scene({
+        durationSeconds: 10,
+        assets: [
+          { assetIndex: 0, kind: "clip", motion: "static", durationSeconds: 8 },
+          { assetIndex: 1, kind: "image", motion: "pan_left", durationSeconds: 2 },
+        ],
+      }),
+    ];
+    const fitted = fitScenePlanToVisualCapacity(plan, list, 10);
+    expect(fitted[0].assets![0].durationSeconds).toBeCloseTo(5);
+    expect(fitted[0].assets![1].durationSeconds).toBeCloseTo(5);
+    expect(fitted[0].durationSeconds).toBeCloseTo(10);
+  });
+
+  it("rejects a clip-only plan that cannot cover the required duration", () => {
+    const list = ordered([{ kind: "clip", durationSeconds: 4 }]);
+    const plan = [
+      scene({
+        assets: [
+          { assetIndex: 0, kind: "clip", motion: "static", durationSeconds: 10 },
+        ],
+      }),
+    ];
+    expect(() => fitScenePlanToVisualCapacity(plan, list, 8)).toThrow(
+      /without black frames/
+    );
   });
 });

@@ -18,9 +18,15 @@ import * as remotionService from "@/lib/ai/remotionService";
 import { derivePalette, type Palette } from "@/lib/ai/paletteService";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import { orderSourceAssets, type OrderedSourceAsset } from "@/lib/sourceAssets";
-import { buildSceneMontageAssets, inferMotionFromText, toRenderAssetSpecs } from "@/lib/ai/montagePlan";
+import {
+  buildSceneMontageAssets,
+  fitScenePlanToVisualCapacity,
+  inferMotionFromText,
+  toRenderAssetSpecs,
+} from "@/lib/ai/montagePlan";
 import {
   DEFAULT_MONTAGE_TRANSITION,
+  evaluateMontageCoverage,
   isMontageTransition,
   minMontageTotalSeconds,
   sceneMontageSeconds,
@@ -281,7 +287,10 @@ export class VideoGenerationService {
         req?.preferredLanguage === "en" || req?.preferredLanguage === "vi"
           ? req.preferredLanguage
           : "th",
-      videoDurationSeconds: 15,
+      videoDurationSeconds:
+        req && Number.isFinite(req.durationSeconds) && req.durationSeconds > 0
+          ? req.durationSeconds
+          : 15,
       businessProfileContext,
     });
 
@@ -1332,7 +1341,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // requester is held to at approval. Trimming clips can only grow it further.
     const montageTargetSeconds = minMontageTotalSeconds(job.voiceDurationSeconds ?? durationSeconds);
     const sceneDurations = this._allocateSceneDurations(output.scenePlan, montageTargetSeconds);
-    const scenePlanToPersist: ScenePlan[] = output.scenePlan.map((scene, i) => {
+    const allocatedScenePlan: ScenePlan[] = output.scenePlan.map((scene, i) => {
       const sceneDuration =
         Number.isFinite(sceneDurations[i]) && sceneDurations[i] > 0
           ? sceneDurations[i]
@@ -1353,6 +1362,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           : DEFAULT_MONTAGE_TRANSITION,
       };
     });
+    const scenePlanToPersist = fitScenePlanToVisualCapacity(
+      allocatedScenePlan,
+      ordered,
+      montageTargetSeconds
+    );
 
     await videoGenerationJobRepository.update(job.id, {
       currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
@@ -1417,6 +1431,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     targetPlatforms?: Platform[]
   ): Promise<VideoGenerationJob> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
+    if (!Number.isFinite(job.voiceDurationSeconds) || (job.voiceDurationSeconds as number) <= 0) {
+      throw new Error("Voice duration is not ready yet. Please wait for audio processing to finish.");
+    }
+    const maximumVoiceSeconds =
+      PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS - minMontageTotalSeconds(0);
+    if ((job.voiceDurationSeconds as number) > maximumVoiceSeconds + 1e-6) {
+      throw new Error(
+        `Voiceover is too long for the ${PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS}-second video limit. Shorten it to ${Math.floor(maximumVoiceSeconds)} seconds or less and regenerate the voice.`
+      );
+    }
 
     // The chosen channels set the distribution set; the primary (first) sets the
     // base video's aspect ratio.
@@ -1466,13 +1490,23 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       ? parsedScenePlan
       : normalizeScenePlanToDuration(parsedScenePlan, durationSeconds);
 
-    // Coverage (montage total vs voice length) is a RECOMMENDATION, not a hard
-    // gate — the requester is advised in the UI, but may approve a shorter
-    // montage. The final compose step pads the video (freezes the last frame) to
-    // cover any remaining narration, so a shortfall degrades quality but never
-    // cuts the voiceover off.
+    // Enforce the same invariant as the next merge gate. A shorter plan must be
+    // corrected here rather than rendered with black padding and rejected later.
 
     const { clipRequestRepository } = await import("@/repositories/index");
+    const totalSeconds = scenePlan.reduce(
+      (sum, scene) => sum + sceneMontageSeconds(scene),
+      0
+    );
+    const coverage = evaluateMontageCoverage({
+      voiceDurationSeconds: job.voiceDurationSeconds,
+      totalSceneSeconds: totalSeconds,
+    });
+    if (!coverage.isCovered) {
+      throw new Error(
+        `Total video length (${Math.round(totalSeconds * 10) / 10}s) must be at least ${Math.ceil(coverage.requiredVisualSeconds * 10) / 10}s to cover the full voiceover without black frames.`
+      );
+    }
     await clipRequestRepository.update(job.requestId, { durationSeconds });
 
     // The all-scenes overview page shows every scene's script (editable).
@@ -1598,10 +1632,13 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const approvedPlan = JSON.parse(job.approvedScenePlan ?? "[]") as ScenePlan[];
     if (approvedPlan.some((s) => Array.isArray(s.assets) && s.assets.length > 0)) {
       const totalSeconds = approvedPlan.reduce((sum, s) => sum + sceneMontageSeconds(s), 0);
-      const minSeconds = minMontageTotalSeconds(job.voiceDurationSeconds ?? undefined);
-      if (totalSeconds + 1e-6 < minSeconds) {
+      const coverage = evaluateMontageCoverage({
+        voiceDurationSeconds: job.voiceDurationSeconds,
+        totalSceneSeconds: totalSeconds,
+      });
+      if (!coverage.isCovered) {
         throw new Error(
-          `ความยาววิดีโอรวม (${Math.round(totalSeconds * 10) / 10} วินาที) ต้องอย่างน้อย ${Math.round(minSeconds * 10) / 10} วินาที เพื่อให้คลุมเสียงพากย์ทั้งหมด`
+          `ความยาววิดีโอรวม (${Math.round(totalSeconds * 10) / 10} วินาที) ต้องอย่างน้อย ${Math.ceil(coverage.requiredVisualSeconds * 10) / 10} วินาที เพื่อให้คลุมเสียงพากย์ทั้งหมดโดยไม่มีช่วงจอดำ`
         );
       }
     }

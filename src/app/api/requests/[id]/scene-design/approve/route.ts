@@ -6,9 +6,8 @@ import { clipRequestRepository, videoGenerationJobRepository } from "@/repositor
 import { videoGenerationService } from "@/services/VideoGenerationService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 import {
-  MAX_VOICE_OVER_SHORTAGE_SECONDS,
+  evaluateMontageCoverage,
   sceneMontageSeconds,
-  voiceOverShortageSeconds,
 } from "@/config/montage";
 
 export async function POST(
@@ -45,19 +44,17 @@ export async function POST(
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
-  // Server-side merge gate: reject when the voiceover runs more than
-  // MAX_VOICE_OVER_SHORTAGE_SECONDS longer than the total montage picture. A
-  // smaller shortage is allowed (its leftover renders as a black scene under the
-  // voice); a larger one must be fixed by lengthening scenes or regenerating a
-  // shorter voiceover before the clips can be merged.
+  // Use the same strict coverage rule as the later merge approval so a plan that
+  // passes here cannot be rejected at the next step or require black padding.
   const totalSceneSeconds = scenePlan.reduce((sum, s) => sum + sceneMontageSeconds(s), 0);
-  const shortageSeconds = voiceOverShortageSeconds(totalSceneSeconds, job.voiceDurationSeconds);
-  if (shortageSeconds > MAX_VOICE_OVER_SHORTAGE_SECONDS) {
+  const coverage = evaluateMontageCoverage({
+    voiceDurationSeconds: job.voiceDurationSeconds,
+    totalSceneSeconds,
+  });
+  if (!coverage.isCovered) {
     return NextResponse.json(
       {
-        error:
-          `เสียงพากย์ยาวกว่าวิดีโอประมาณ ${Math.round(shortageSeconds)} วินาที (เกิน ${MAX_VOICE_OVER_SHORTAGE_SECONDS} วินาที) — ` +
-          `กรุณาเพิ่มความยาวฉาก/คลิป หรือสร้างเสียงพากย์ใหม่ให้สั้นลงก่อนรวมคลิป`,
+        error: `ความยาววิดีโอรวมต้องอย่างน้อย ${Math.ceil(coverage.requiredVisualSeconds * 10) / 10} วินาที เพื่อคลุมเสียงพากย์โดยไม่มีช่วงจอดำ`,
       },
       { status: 422 }
     );
