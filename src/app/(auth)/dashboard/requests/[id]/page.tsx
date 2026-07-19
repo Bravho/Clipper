@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import dynamicImport from "next/dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireRole } from "@/lib/auth/helpers";
@@ -23,29 +24,64 @@ import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DeliveryLinks } from "@/features/requests/components/DeliveryLinks";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { RequestTimeline } from "@/features/requests/components/RequestTimeline";
-import { PipelineSection } from "@/features/requests/components/PipelineSection";
-import { PipelineFailurePanel } from "@/features/requests/components/PipelineFailurePanel";
-import { ContentApprovalPanel } from "@/features/requests/components/ContentApprovalPanel";
-import {
-  SceneDesignApprovalPanel,
-  SceneDesignGeneratingPanel,
-} from "@/features/requests/components/SceneDesignApprovalPanel";
-import { SceneScriptApprovalPanel } from "@/features/requests/components/SceneScriptApprovalPanel";
-import { VideoApprovalPanel } from "@/features/requests/components/VideoApprovalPanel";
-import { DistributionReviewPanel } from "@/features/requests/components/DistributionReviewPanel";
 import { RetentionNoteText } from "@/features/requests/components/RetentionNoteText";
 import {
   finalClipAvailabilityNote,
   inactivityNote,
   uploadedMaterialsNote,
 } from "@/lib/retentionNotes";
-import { AnalyzeButton } from "@/features/requests/components/AnalyzeButton";
 import { StoryboardView } from "@/features/requests/components/StoryboardView";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { orderSourceAssets } from "@/lib/sourceAssets";
 import type { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
 import { ReportAiContent } from "@/features/requests/components/ReportAiContent";
+
+// Split the interactive workflow steps so a request only downloads the browser
+// code needed for its current pipeline state.
+const AnalyzeButton = dynamicImport(() =>
+  import("@/features/requests/components/AnalyzeButton").then((module) => module.AnalyzeButton)
+);
+const ContentApprovalPanel = dynamicImport(() =>
+  import("@/features/requests/components/ContentApprovalPanel").then(
+    (module) => module.ContentApprovalPanel
+  )
+);
+const DistributionReviewPanel = dynamicImport(() =>
+  import("@/features/requests/components/DistributionReviewPanel").then(
+    (module) => module.DistributionReviewPanel
+  )
+);
+const PipelineFailurePanel = dynamicImport(() =>
+  import("@/features/requests/components/PipelineFailurePanel").then(
+    (module) => module.PipelineFailurePanel
+  )
+);
+const PipelineSection = dynamicImport(() =>
+  import("@/features/requests/components/PipelineSection").then(
+    (module) => module.PipelineSection
+  )
+);
+const SceneDesignApprovalPanel = dynamicImport(() =>
+  import("@/features/requests/components/SceneDesignApprovalPanel").then(
+    (module) => module.SceneDesignApprovalPanel
+  )
+);
+const SceneDesignGeneratingPanel = dynamicImport(() =>
+  import("@/features/requests/components/SceneDesignApprovalPanel").then(
+    (module) => module.SceneDesignGeneratingPanel
+  )
+);
+const SceneScriptApprovalPanel = dynamicImport(() =>
+  import("@/features/requests/components/SceneScriptApprovalPanel").then(
+    (module) => module.SceneScriptApprovalPanel
+  )
+);
+const VideoApprovalPanel = dynamicImport(() =>
+  import("@/features/requests/components/VideoApprovalPanel").then(
+    (module) => module.VideoApprovalPanel
+  )
+);
 
 export const metadata: Metadata = { title: "Request Detail — RClipper" };
 export const dynamic = "force-dynamic";
@@ -56,32 +92,56 @@ export default async function RequestDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
-  const user = await requireRole(Role.Requester);
+  const pageStartedAt = performance.now();
+  const timings: Record<string, number> = {};
+  const timed = async <T,>(label: string, operation: () => Promise<T>): Promise<T> => {
+    const startedAt = performance.now();
+    try {
+      return await operation();
+    } finally {
+      timings[label] = Math.round(performance.now() - startedAt);
+    }
+  };
 
-  // Load request — returns 404 if not found or not owned by user
+  const { id } = await params;
+  const user = await timed("auth", () => requireRole(Role.Requester));
+
+  // Start all independent reads together. Ownership is still checked before
+  // any result is rendered, but supporting reads no longer wait for it.
+  const supportingDataPromise = Promise.all([
+    timed("assets", () => uploadedAssetRepository.findByRequestId(id)),
+    timed("publishingLinks", () => publishingLinkRepository.findByRequestId(id)),
+    timed("statusHistory", () => requestStatusHistoryRepository.findByRequestId(id)),
+    timed("pipelineJob", () => videoGenerationJobRepository.findByRequestId(id)),
+  ]);
+
   let request;
   try {
-    request = await clipRequestService.getOwnedRequest(id, user.id);
+    request = await timed("request", () => clipRequestService.getOwnedRequest(id, user.id));
   } catch {
+    // Avoid leaving rejected supporting reads unobserved on a not-found path.
+    await supportingDataPromise.catch(() => undefined);
     notFound();
   }
 
-  // Load supporting data in parallel
-  const [assets, publishingLinks, statusHistory, rawPipelineJob] = await Promise.all([
-    uploadedAssetRepository.findByRequestId(id),
-    publishingLinkRepository.findByRequestId(id),
-    requestStatusHistoryRepository.findByRequestId(id),
-    videoGenerationJobRepository.findByRequestId(id),
-  ]);
+  const [assets, publishingLinks, statusHistory, rawPipelineJob] = await supportingDataPromise;
 
   // Reconcile a stuck-failed render (worker marked the claim failed but never
   // advanced the job step) so a page refresh reflects the failure immediately —
   // the status poller performs the same reconciliation on its interval. No-op
   // unless the render genuinely failed, so legitimate long renders still load.
   const pipelineJob = rawPipelineJob
-    ? await videoGenerationService.reconcileFailedRender(rawPipelineJob)
+    ? await timed("reconcileFailedRender", () =>
+        videoGenerationService.reconcileFailedRender(rawPipelineJob)
+      )
     : null;
+
+  if (process.env.REQUEST_DETAIL_PERF_LOG === "1") {
+    console.info("[request-detail timing]", {
+      ...timings,
+      totalDataLoad: Math.round(performance.now() - pageStartedAt),
+    });
+  }
 
   const baseVideoAsset = pipelineJob?.baseVideoAssetId
     ? assets.find((a) => a.id === pipelineJob.baseVideoAssetId) ?? null

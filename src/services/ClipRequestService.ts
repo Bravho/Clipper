@@ -10,6 +10,7 @@ import {
 } from "@/repositories";
 import { creditService } from "@/services/CreditService";
 import { uploadService } from "@/services/UploadService";
+import type { AppLocale } from "@/i18n/config";
 
 /**
  * ClipRequestService — manages the full lifecycle of a clip request
@@ -32,7 +33,8 @@ export class ClipRequestService {
    */
   async createDraft(
     userId: string,
-    data: ClipRequestFormValues
+    data: ClipRequestFormValues,
+    contentLanguage: AppLocale = "th"
   ): Promise<ClipRequest> {
     const input: CreateClipRequestInput = {
       userId,
@@ -44,7 +46,7 @@ export class ClipRequestService {
       targetAudience: data.targetAudience,
       targetPlatforms: data.targetPlatforms,
       preferredStyle: "",
-      preferredLanguage: "",
+      preferredLanguage: contentLanguage,
       durationSeconds: data.durationSeconds,
     };
 

@@ -1,6 +1,10 @@
+"use client";
+
 import { Badge } from "@/components/ui/Badge";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { requestPresentationService } from "@/services/RequestPresentationService";
+import { useI18n } from "@/i18n/client";
+import type { MessageKey } from "@/i18n/messages";
 
 interface RequestStatusBadgeProps {
   status: RequestStatus;
@@ -15,7 +19,9 @@ export function RequestStatusBadge({
   status,
   className,
 }: RequestStatusBadgeProps) {
-  const { label, badgeVariant } = requestPresentationService.getStatusPresentation(status);
+  const { t } = useI18n();
+  const { badgeVariant } = requestPresentationService.getStatusPresentation(status);
+  const label = t(`status.${status}` as MessageKey);
   return (
     <Badge variant={badgeVariant} className={className}>
       {label}

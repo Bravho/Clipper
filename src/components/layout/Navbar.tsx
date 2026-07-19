@@ -9,6 +9,8 @@ import { ROUTES } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { LanguageSelector } from "@/components/layout/LanguageSelector";
+import { useI18n } from "@/i18n/client";
 
 const roleBadgeVariant: Record<Role, "blue" | "green" | "red"> = {
   [Role.Requester]: "blue",
@@ -16,6 +18,7 @@ const roleBadgeVariant: Record<Role, "blue" | "green" | "red"> = {
 };
 
 export function Navbar() {
+  const { t } = useI18n();
   const { data: session, status } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isLoading = status === "loading";
@@ -36,9 +39,6 @@ export function Navbar() {
             <span className="text-xl font-bold tracking-tight text-white">
               RClipper
             </span>
-            <span className="hidden rounded bg-blue-600 px-1.5 py-0.5 text-xs font-semibold text-white sm:block">
-              Thailand
-            </span>
           </Link>
 
           {/* Desktop nav */}
@@ -49,13 +49,13 @@ export function Navbar() {
                   href={dashboardHref}
                   className="text-sm text-slate-300 hover:text-white"
                 >
-                  แดชบอร์ด
+                  {t("nav.dashboard")}
                 </Link>
                 <Link
                   href={ROUTES.ACCOUNT}
                   className="text-sm text-slate-300 hover:text-white"
                 >
-                  บัญชีของฉัน
+                  {t("nav.account")}
                 </Link>
                 <div className="flex items-center gap-3 pl-4 border-l border-slate-700">
                   <Badge variant={roleBadgeVariant[user.role]}>
@@ -70,8 +70,9 @@ export function Navbar() {
                     onClick={() => signOut({ callbackUrl: ROUTES.HOME })}
                     className="border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
                   >
-                    ออกจากระบบ
+                    {t("nav.signOut")}
                   </Button>
+                  <LanguageSelector />
                 </div>
               </>
             ) : (
@@ -80,11 +81,12 @@ export function Navbar() {
                   href={ROUTES.LOGIN}
                   className="text-sm text-slate-300 hover:text-white"
                 >
-                  เข้าสู่ระบบ
+                  {t("nav.signIn")}
                 </Link>
                 <Link href={ROUTES.SIGNUP}>
-                  <Button size="sm">เริ่มต้นใช้งาน</Button>
+                  <Button size="sm">{t("nav.getStarted")}</Button>
                 </Link>
+                <LanguageSelector />
               </>
             )}
           </div>
@@ -113,26 +115,28 @@ export function Navbar() {
             <div className="flex flex-col gap-3">
               <span className="text-sm text-slate-400">{user.name}</span>
               <Link href={dashboardHref} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                แดชบอร์ด
+                {t("nav.dashboard")}
               </Link>
               <Link href={ROUTES.ACCOUNT} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                บัญชีของฉัน
+                {t("nav.account")}
               </Link>
               <button
                 onClick={() => signOut({ callbackUrl: ROUTES.HOME })}
                 className="text-left text-sm text-red-400 hover:text-red-300"
               >
-                ออกจากระบบ
+                {t("nav.signOut")}
               </button>
+              <LanguageSelector />
             </div>
           ) : (
             <div className="flex flex-col gap-3">
               <Link href={ROUTES.LOGIN} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                เข้าสู่ระบบ
+                {t("nav.signIn")}
               </Link>
               <Link href={ROUTES.SIGNUP} className="text-sm text-blue-400" onClick={() => setMobileOpen(false)}>
-                เริ่มต้นใช้งาน
+                {t("nav.getStarted")}
               </Link>
+              <LanguageSelector />
             </div>
           )}
         </div>

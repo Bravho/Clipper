@@ -277,6 +277,10 @@ export class VideoGenerationService {
     const output = await chatGptVisionService.generateSpeakingScript({
       ...params,
       placeName: req?.placeName,
+      contentLanguage:
+        req?.preferredLanguage === "en" || req?.preferredLanguage === "vi"
+          ? req.preferredLanguage
+          : "th",
       videoDurationSeconds: 15,
       businessProfileContext,
     });

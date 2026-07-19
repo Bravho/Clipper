@@ -1,34 +1,33 @@
+"use client";
+
 import Link from "next/link";
 import { ROUTES } from "@/config/routes";
-
-const NAV_LINKS = [
-  { href: ROUTES.DASHBOARD, label: "แดชบอร์ด", icon: "⊡" },
-  { href: ROUTES.REQUESTS, label: "คำขอของฉัน", icon: "◫" },
-  { href: ROUTES.CREDITS, label: "เครดิต", icon: "◈" },
-] as const;
+import { useI18n } from "@/i18n/client";
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const { t } = useI18n();
+  const navLinks = [
+    { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
+    { href: ROUTES.REQUESTS, label: t("sidebar.requests"), icon: "◫" },
+    { href: ROUTES.CREDITS, label: t("sidebar.credits"), icon: "◈" },
+  ] as const;
+
   return (
     <div className="flex min-h-screen bg-slate-50">
-      {/* Sidebar */}
       <aside className="hidden w-56 flex-shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-        {/* Brand */}
         <div className="flex h-16 items-center border-b border-slate-100 px-5">
-          <span className="text-sm font-bold tracking-tight text-slate-900">
-            RClipper
-          </span>
+          <span className="text-sm font-bold tracking-tight text-slate-900">RClipper</span>
           <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
             Portal
           </span>
         </div>
 
-        {/* Nav links */}
         <nav className="flex flex-1 flex-col gap-1 p-3">
-          {NAV_LINKS.map((link) => (
+          {navLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
@@ -40,28 +39,20 @@ export default function DashboardLayout({
           ))}
         </nav>
 
-        {/* Footer help text */}
         <div className="border-t border-slate-100 p-4">
           <p className="text-xs text-slate-400">
-            ต้องการความช่วยเหลือ?{" "}
-            <a
-              href="mailto:support@rclipper.com"
-              className="text-blue-600 hover:underline"
-            >
-              ติดต่อฝ่ายสนับสนุน
+            {t("sidebar.help")}{" "}
+            <a href="mailto:support@rclipper.com" className="text-blue-600 hover:underline">
+              {t("sidebar.contact")}
             </a>
           </p>
         </div>
       </aside>
 
-      {/* Main content */}
       <div className="flex flex-1 flex-col">
-        {/* Top bar (mobile) */}
         <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-4 lg:hidden">
           <span className="text-sm font-bold text-slate-900">RClipper Portal</span>
         </header>
-
-        {/* Page content */}
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
     </div>

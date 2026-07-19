@@ -12,10 +12,12 @@ import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { CancelRequestButton } from "@/features/requests/components/CancelRequestButton";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { CREDITS_CONFIG } from "@/config/credits";
+import { getServerI18n } from "@/i18n/server";
 
 export const metadata: Metadata = { title: "แดชบอร์ด — RClipper" };
 
 export default async function DashboardPage() {
+  const { locale, t } = getServerI18n();
   const user = await requireRole(Role.Requester);
   const summary = await requesterDashboardService.getDashboardSummary(user.id);
 
@@ -31,23 +33,23 @@ export default async function DashboardPage() {
       <div className="mb-8 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            ยินดีต้อนรับกลับ, {user.name.split(" ")[0]}
+            {t("dashboard.welcome", { name: user.name.split(" ")[0] })}
           </h1>
           <p className="mt-1 text-slate-500">
-            จัดการคำขอคลิปและติดตามความคืบหน้าของคุณ
+            {t("dashboard.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
           {trialAvailable && (
             <Link href={ROUTES.REQUESTS_NEW}>
               <Button className="bg-green-600 hover:bg-green-700">
-                ทดลองใช้งานฟรี
+                {t("dashboard.freeTrial")}
               </Button>
             </Link>
           )}
           <Link href={ROUTES.REQUESTS_NEW}>
             <Button variant={trialAvailable ? "outline" : undefined} disabled={!canSubmit}>
-              + คำขอใหม่
+              {t("dashboard.newRequest")}
             </Button>
           </Link>
         </div>
@@ -61,11 +63,11 @@ export default async function DashboardPage() {
           </div>
           <div>
             <p className="font-semibold text-blue-900">
-              {summary.creditBalance} เครดิต
+              {t("dashboard.credits", { count: summary.creditBalance })}
             </p>
             <Link href={ROUTES.CREDITS}>
               <p className="text-sm text-blue-700 hover:underline cursor-pointer">
-                ดูประวัติเครดิต →
+                {t("dashboard.creditHistory")}
               </p>
             </Link>
           </div>
@@ -75,7 +77,7 @@ export default async function DashboardPage() {
           <p className="text-3xl font-bold text-slate-900">
             {summary.activeRequestCount}
           </p>
-          <p className="mt-1 text-sm text-slate-500">คำขอที่กำลังดำเนินการ</p>
+          <p className="mt-1 text-sm text-slate-500">{t("dashboard.activeCount")}</p>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5">
@@ -83,12 +85,12 @@ export default async function DashboardPage() {
             {summary.draftCount}
           </p>
           <p className="mt-1 text-sm text-slate-500">
-            แบบร่างที่ยังไม่เสร็จ
+            {t("dashboard.draftCount")}
           </p>
           {summary.draftCount > 0 && (
             <Link href={ROUTES.REQUESTS}>
               <p className="mt-1 text-xs text-blue-600 hover:underline cursor-pointer">
-                ดำเนินการต่อ →
+                {t("dashboard.continue")}
               </p>
             </Link>
           )}
@@ -100,11 +102,10 @@ export default async function DashboardPage() {
       {trialAvailable && (
         <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4">
           <p className="text-sm font-medium text-green-800">
-            คลิปแรกของคุณสร้างฟรี — ทดลองใช้งานได้เลยโดยไม่ต้องเติมเครดิต
+            {t("dashboard.trialTitle")}
           </p>
           <p className="mt-1 text-sm text-green-700">
-            ชำระ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
-            เฉพาะเมื่อพอใจผลงานและต้องการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำ
+            {t("dashboard.trialBody", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
           </p>
         </div>
       )}
@@ -113,12 +114,14 @@ export default async function DashboardPage() {
       {!trialAvailable && !canAfford && (
         <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 p-4">
           <p className="text-sm font-medium text-yellow-800">
-            คุณมีเครดิตคงเหลือ {summary.creditBalance} เครดิต —
-            ไม่เพียงพอสำหรับการส่งคำขอใหม่ (ต้องการ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต)
+            {t("dashboard.lowCredits", {
+              balance: summary.creditBalance,
+              cost: CREDITS_CONFIG.REQUEST_COST_CREDITS,
+            })}
           </p>
           <Link href={ROUTES.CREDITS}>
             <p className="mt-1 text-sm text-yellow-700 hover:underline cursor-pointer">
-              เติมเครดิตที่นี่ →
+              {t("dashboard.topUp")}
             </p>
           </Link>
         </div>
@@ -127,20 +130,20 @@ export default async function DashboardPage() {
       {/* Active Requests */}
       <div className="mb-8">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-slate-900">คำขอที่กำลังดำเนินการ</h2>
+          <h2 className="text-base font-semibold text-slate-900">{t("dashboard.active")}</h2>
           <Link href={ROUTES.REQUESTS} className="text-sm text-blue-600 hover:underline">
-            ดูทั้งหมด →
+            {t("dashboard.viewAll")}
           </Link>
         </div>
 
         {summary.activeRequests.length === 0 ? (
           <Card>
             <div className="text-center py-6">
-              <p className="text-slate-500 text-sm">ไม่มีคำขอที่กำลังดำเนินการขณะนี้</p>
+              <p className="text-slate-500 text-sm">{t("dashboard.noActive")}</p>
               {canSubmit ? (
                 <Link href={ROUTES.REQUESTS_NEW}>
                   <Button className="mt-4" variant="outline" size="sm">
-                    {trialAvailable ? "ทดลองสร้างคลิปแรกฟรี" : "ส่งคำขอแรกของคุณ"}
+                    {trialAvailable ? t("dashboard.firstFree") : t("dashboard.firstRequest")}
                   </Button>
                 </Link>
               ) : null}
@@ -153,23 +156,35 @@ export default async function DashboardPage() {
                 req.status === RequestStatus.Draft ||
                 req.status === RequestStatus.Submitted;
               return (
-                <Link key={req.id} href={requestDetailPath(req.id)}>
-                  <Card className="cursor-pointer transition-shadow hover:shadow-md">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-slate-900 truncate">{req.title}</p>
-                        <p className="mt-0.5 text-xs text-slate-400">
+                <Link
+                  key={req.id}
+                  href={requestDetailPath(req.id)}
+                  className="block min-w-0"
+                >
+                  <Card
+                    padding="sm"
+                    className="cursor-pointer transition-shadow hover:shadow-md sm:p-6"
+                  >
+                    <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words font-medium leading-6 text-slate-900 sm:truncate">
+                          {req.title}
+                        </p>
+                        <p className="mt-1 break-words text-xs leading-5 text-slate-400">
                           {req.statusPresentation.description}
                         </p>
                         {req.queueDisplay.show && (
-                          <p className="mt-1 text-xs text-slate-500">
+                          <p className="mt-1 break-words text-xs leading-5 text-slate-500">
                             {req.queueDisplay.message}
                           </p>
                         )}
                       </div>
-                      <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                      <div className="flex min-w-0 flex-col items-start gap-2 border-t border-slate-100 pt-3 sm:flex-shrink-0 sm:items-end sm:border-0 sm:pt-0">
                         <RequestStatusBadge status={req.status} />
-                        <DueDateDisplay display={req.dueDateDisplay} />
+                        <DueDateDisplay
+                          display={req.dueDateDisplay}
+                          className="max-w-full break-words sm:max-w-64 sm:text-right"
+                        />
                         {cancellable && (
                           <CancelRequestButton requestId={req.id} status={req.status} />
                         )}
@@ -187,7 +202,7 @@ export default async function DashboardPage() {
       {summary.recentlyDelivered.length > 0 && (
         <div className="mb-8">
           <h2 className="mb-4 text-base font-semibold text-slate-900">
-            ส่งมอบล่าสุด
+            {t("dashboard.recent")}
           </h2>
           <div className="flex flex-col gap-3">
             {summary.recentlyDelivered.map((row) => (
@@ -197,18 +212,18 @@ export default async function DashboardPage() {
                     <div>
                       <p className="font-medium text-slate-900">{row.title}</p>
                       <p className="text-xs text-slate-400">
-                        ส่งมอบเมื่อ{" "}
-                        {row.deliveredAt.toLocaleDateString("th-TH", {
+                        {t("dashboard.deliveredOn", { date: row.deliveredAt.toLocaleDateString(
+                          locale === "th" ? "th-TH" : locale === "vi" ? "vi-VN" : "en-GB", {
                           day: "numeric",
                           month: "short",
                           year: "numeric",
-                        })}
+                        }) })}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant="green">ส่งมอบแล้ว</Badge>
+                      <Badge variant="green">{t("dashboard.delivered")}</Badge>
                       <span className="text-xs text-slate-500">
-                        {row.linkCount} ลิงก์
+                        {t("dashboard.links", { count: row.linkCount })}
                       </span>
                     </div>
                   </div>
@@ -223,30 +238,28 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader padding="none">
-            <CardTitle className="text-sm">ราคาและเครดิต</CardTitle>
+            <CardTitle className="text-sm">{t("dashboard.pricing")}</CardTitle>
             <CardDescription>
-              คลิปแรกสร้างฟรี — ชำระ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
-              เมื่อดาวน์โหลดแบบไม่มีลายน้ำ
-              คำขอถัดไปใช้ {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิตต่อรายการ
+              {t("dashboard.pricingBody", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
             </CardDescription>
           </CardHeader>
           <Link href={ROUTES.CREDITS}>
             <p className="mt-3 text-xs text-blue-600 hover:underline cursor-pointer">
-              ดูประวัติเครดิต →
+              {t("dashboard.creditHistory")}
             </p>
           </Link>
         </Card>
 
         <Card>
           <CardHeader padding="none">
-            <CardTitle className="text-sm">สิทธิ์ความเป็นเจ้าของ</CardTitle>
+            <CardTitle className="text-sm">{t("dashboard.ownership")}</CardTitle>
             <CardDescription>
-              คลิปที่ตัดต่อแล้วเป็นของ RClipper คุณสามารถแชร์และโพสต์คลิปที่ส่งมอบแล้วบนช่องทางของคุณเองได้
+              {t("dashboard.ownershipBody")}
             </CardDescription>
           </CardHeader>
           <Link href={ROUTES.LEGAL}>
             <p className="mt-3 text-xs text-blue-600 hover:underline cursor-pointer">
-              อ่านนโยบายฉบับเต็ม →
+              {t("dashboard.readPolicy")}
             </p>
           </Link>
         </Card>

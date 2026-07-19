@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestService } from "@/services/ClipRequestService";
 import { clipRequestFormSchema } from "@/features/requests/validation/clipRequestSchema";
+import { cookies } from "next/headers";
+import { DEFAULT_LOCALE, isAppLocale, LOCALE_COOKIE } from "@/i18n/config";
 
 /**
  * POST /api/requests
@@ -43,9 +45,12 @@ export async function POST(request: Request) {
   }
 
   try {
+    const localeCookie = cookies().get(LOCALE_COOKIE)?.value;
+    const contentLanguage = isAppLocale(localeCookie) ? localeCookie : DEFAULT_LOCALE;
     const draft = await clipRequestService.createDraft(
       session.user.id,
-      parsed.data
+      parsed.data,
+      contentLanguage
     );
     return NextResponse.json({ requestId: draft.id }, { status: 201 });
   } catch (err) {

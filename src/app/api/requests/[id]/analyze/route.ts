@@ -49,6 +49,10 @@ export async function POST(
       imageUrls,
       title: clipRequest.title,
       placeName: clipRequest.placeName,
+      contentLanguage:
+        clipRequest.preferredLanguage === "en" || clipRequest.preferredLanguage === "vi"
+          ? clipRequest.preferredLanguage
+          : "th",
       description: clipRequest.description,
       targetAudience: clipRequest.targetAudience,
       targetPlatforms: clipRequest.targetPlatforms,

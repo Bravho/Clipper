@@ -8,6 +8,7 @@ import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { sanitizeStoryboard } from "@/lib/ai/storyboard";
 import { extractVideoFrames } from "@/lib/ai/videoFrames";
+import type { AppLocale } from "@/i18n/config";
 
 export interface ChatGptContentOutput {
   scenePlan: ScenePlan[];
@@ -44,6 +45,8 @@ export interface GenerateContentParams {
   imageUrls: string[];
   /** Exact requester-entered place/business name. Never rewrite or split it. */
   placeName?: string;
+  /** UI-selected content language captured when the request was created. */
+  contentLanguage?: AppLocale;
   /** Requester-provided clip title (ชื่อคลิป). May contain the place/shop name. */
   title?: string;
   description: string;
@@ -177,7 +180,14 @@ Schema:
 }`;
 
 function buildUserPrompt(params: GenerateContentParams): string {
+  const outputLanguage =
+    params.contentLanguage === "en"
+      ? "English"
+      : params.contentLanguage === "vi"
+        ? "Vietnamese"
+        : "Thai";
   const promptParts = [
+    `Selected content language: ${outputLanguage}. All requester-visible generated prose, speaking script, captions, hooks, storyboard summaries, and scene descriptions MUST be written in ${outputLanguage}. Preserve user-provided names exactly in their original spelling.`,
     ...(params.title && params.title.trim()
       ? [
           `Clip title (ชื่อคลิป, provided by the requester — may contain the place/shop/venue name to say in the script): ${params.title}`,

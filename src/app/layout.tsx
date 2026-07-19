@@ -8,6 +8,7 @@ import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 import { NativePushRegistration } from "@/components/mobile/NativePushRegistration";
 import { NativeDeepLinkHandler } from "@/components/mobile/NativeDeepLinkHandler";
 import { initEditorSeedData } from "@/seed/editorSeedData";
+import { getServerLocale } from "@/i18n/server";
 import "./globals.css";
 
 // Seed editor profiles into the in-memory mock store on first server render
@@ -51,11 +52,12 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const session = await getServerSession(authOptions);
+  const locale = getServerLocale();
 
   return (
-    <html lang="th">
+    <html lang={locale}>
       <body className="flex min-h-screen flex-col">
-        <SessionProvider session={session}>
+        <SessionProvider session={session} locale={locale}>
           <ServiceWorkerRegister />
           <NativePushRegistration />
           <NativeDeepLinkHandler />
