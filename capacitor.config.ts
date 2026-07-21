@@ -23,12 +23,12 @@ const config: CapacitorConfig = {
   server: {
     url: serverUrl,
     cleartext: false,
-    // Restrict in-WebView navigation to your own domain(s) plus the OAuth /
-    // payment redirect hosts you actually use. Everything else opens externally.
+    // Keep third-party identity providers out of WKWebView. Google blocks OAuth
+    // authorization in embedded user agents; startOAuth() opens the provider in
+    // the system Safari authentication surface instead.
     allowNavigation: [
       "app.rclipper.com",
       "*.rclipper.com",
-      "accounts.google.com",
     ],
   },
   ios: {

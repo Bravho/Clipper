@@ -1,5 +1,19 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  async headers() {
+    return [
+      {
+        source: "/.well-known/apple-app-site-association",
+        headers: [
+          {
+            key: "Content-Type",
+            value: "application/json",
+          },
+        ],
+      },
+    ];
+  },
+
   // Don't let pre-existing ESLint warnings (unused vars, etc.) abort the
   // production build. Lint is still available via `npm run lint`; it just no
   // longer blocks `next build`. Without this, `next build` fails at the lint

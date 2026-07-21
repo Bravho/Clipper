@@ -19,6 +19,7 @@ export function SignupForm() {
   const {
     register,
     handleSubmit,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<SignupInput>({
     resolver: zodResolver(signupSchema),
@@ -37,12 +38,40 @@ export function SignupForm() {
       const result = await response.json();
 
       if (!response.ok) {
+        if (response.status === 409) {
+          // A previous attempt may have created the account successfully before
+          // verification-email delivery failed. Preserve that account/password
+          // and take the user to the resend flow instead of leaving them stuck.
+          router.push(
+            `${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}&existing=1`
+          );
+          return;
+        }
+
+        if (result.fieldErrors && typeof result.fieldErrors === "object") {
+          for (const [field, messages] of Object.entries(result.fieldErrors)) {
+            if (
+              (field === "name" ||
+                field === "email" ||
+                field === "password" ||
+                field === "confirmPassword") &&
+              Array.isArray(messages) &&
+              typeof messages[0] === "string"
+            ) {
+              setError(field, { type: "server", message: messages[0] });
+            }
+          }
+        }
         setServerError(result.error ?? "การสมัครสมาชิกล้มเหลว กรุณาลองอีกครั้ง");
         return;
       }
 
       // Account created — redirect to verify-email page
-      router.push(`${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}`);
+      const deliveryFailed =
+        result.data?.verificationEmailSent === false ? "&delivery=failed" : "";
+      router.push(
+        `${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}${deliveryFailed}`
+      );
     } catch {
       setServerError("เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
     }

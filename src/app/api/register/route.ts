@@ -21,7 +21,14 @@ import type { ApiResponse } from "@/types";
  * NOTE: Google sign-up is handled entirely by NextAuth (signIn callback).
  *       This route is only for email/password registration.
  */
-export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
+interface RegistrationResult {
+  requiresVerification: boolean;
+  verificationEmailSent: boolean;
+}
+
+export async function POST(
+  req: NextRequest
+): Promise<NextResponse<ApiResponse<RegistrationResult>>> {
   try {
     const body = await req.json();
     const parseResult = signupSchema.safeParse(body);
@@ -64,10 +71,26 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       },
     });
 
-    await emailVerificationService.generateAndSend(user.id, user.email, user.name);
+    let verificationEmailSent = true;
+    try {
+      await emailVerificationService.generateAndSend(
+        user.id,
+        user.email,
+        user.name
+      );
+    } catch (error) {
+      verificationEmailSent = false;
+      // Account creation has already succeeded. Do not tell the user that
+      // registration failed and encourage a duplicate retry; direct them to
+      // the verification page where delivery can be retried.
+      console.error("[Clipper] verification email delivery failed:", error);
+    }
 
     return NextResponse.json(
-      { success: true, requiresVerification: true },
+      {
+        success: true,
+        data: { requiresVerification: true, verificationEmailSent },
+      },
       { status: 201 }
     );
   } catch (error) {

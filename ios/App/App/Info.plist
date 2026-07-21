@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>RClipper uses the camera only when you choose to take a photo for a video request.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>RClipper uses the microphone only when you choose to record narration for a video project.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>RClipper lets you select photos and videos to include in your video request.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

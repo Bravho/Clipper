@@ -9,6 +9,8 @@ import { ROUTES } from "@/config/routes";
 export default function VerifyEmailPage() {
   const searchParams = useSearchParams();
   const email = searchParams.get("email") ?? "";
+  const initialDeliveryFailed = searchParams.get("delivery") === "failed";
+  const existingAccount = searchParams.get("existing") === "1";
 
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [resendError, setResendError] = useState<string | null>(null);
@@ -49,14 +51,22 @@ export default function VerifyEmailPage() {
 
         <h1 className="text-2xl font-bold text-slate-900">Check your inbox</h1>
         <p className="mt-3 text-sm text-slate-500 leading-relaxed">
-          We sent a verification link to{" "}
+          {existingAccount
+            ? "An account with this email already exists but may still need verification: "
+            : initialDeliveryFailed
+            ? "Your account was created, but we could not send the verification email to "
+            : "We sent a verification link to "}
           {email ? (
             <span className="font-medium text-slate-700">{email}</span>
           ) : (
             "your email address"
           )}
           .<br />
-          Click the link in the email to activate your account.
+          {existingAccount
+            ? "Use the button below to send a fresh verification link, or sign in if you have already verified it."
+            : initialDeliveryFailed
+            ? "Use the button below to try sending it again."
+            : "Click the link in the email to activate your account."}
         </p>
 
         <p className="mt-2 text-xs text-slate-400">

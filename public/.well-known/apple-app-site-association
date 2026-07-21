@@ -1,0 +1,25 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "F47AYL2ZMB.com.rclipper.app"
+        ],
+        "components": [
+          {
+            "/": "/api/auth/callback/*",
+            "comment": "Return OAuth callbacks to the installed RClipper app."
+          },
+          {
+            "/": "/dashboard/*",
+            "comment": "Open requester dashboard links in RClipper."
+          },
+          {
+            "/": "/account/*",
+            "comment": "Open account links in RClipper."
+          }
+        ]
+      }
+    ]
+  }
+}

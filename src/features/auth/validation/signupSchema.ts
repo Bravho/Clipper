@@ -13,7 +13,12 @@ export const signupSchema = z
       .string()
       .min(2, "Full name must be at least 2 characters.")
       .max(100, "Full name must be under 100 characters.")
-      .regex(/^[a-zA-Z\s\-'.]+$/, "Full name contains invalid characters."),
+      // Accept names in every language used by the product, including Thai
+      // combining marks. Numbers and symbols remain disallowed.
+      .regex(
+        /^[\p{L}\p{M}\s\-'.]+$/u,
+        "Full name may contain letters, spaces, apostrophes, periods, and hyphens."
+      ),
     email: z
       .string()
       .min(1, "Email is required.")
