@@ -37,7 +37,7 @@ export default async function LegalPage() {
           "Your account, credits, and requests are personal and non-transferable.",
           "We reserve the right to reject any request that violates these terms.",
           "Service timelines are targets, not guarantees. Our standard aim is to complete accepted requests within 2 working days of receiving complete and usable materials.",
-          "Not every generated video is published through Travy. RClipper may select certain reviewed videos for public publication in the Travy app and on the Travy.buzz website under the accepted request terms.",
+          "Not every generated video is published. RClipper may select certain reviewed videos for public publication through the Travy app, Travy.buzz, and RClipper-owned or controlled Facebook, Instagram, TikTok, YouTube, and Xiaohongshu (小红书) accounts.",
         ]}
       />
 
@@ -48,7 +48,7 @@ export default async function LegalPage() {
           "RClipper owns the original editing, arrangement, graphics, captions, translations, and other production elements it creates, subject to underlying source-material rights.",
           "You are granted a free, non-exclusive licence to repost and share the delivered clip on your own channels (e.g. your social media accounts, website).",
           "You may NOT resell, redistribute, or relicence the final clip to third parties.",
-          "Uploaded source materials remain your property. You grant RClipper the licences needed to produce the request and, if selected, publish the materials and related request text, place names, and selected locations in the Travy app and on Travy.buzz.",
+          "Uploaded source materials remain your property. You grant RClipper the licences needed to produce the request and, if selected, publish the materials and related request text, place names, and selected locations through the defined RClipper Channels.",
           "By uploading materials, you confirm that you own or have all necessary licences, releases, consents, and permissions.",
         ]}
       />
@@ -60,7 +60,7 @@ export default async function LegalPage() {
           "We collect account information, request briefs, uploaded media, production choices, approval history, and credit/payment records needed to provide the service.",
           "Required request data and media may be processed by contracted hosting, storage, authentication, payment, AI, voice, video-generation, and media-processing providers.",
           "We do not sell your personal data to third parties.",
-          "A video selected for the Travy app and Travy.buzz, together with its title, caption, thumbnail, subtitles, user-entered text, place names, selected map locations, and visible or audible information, may become publicly accessible.",
+          "A selected video, together with its title, caption, hashtags, thumbnail, subtitles, user-entered text, place names, selected map locations, and visible or audible information, may become publicly accessible through the defined RClipper Channels.",
           "You may exercise applicable data rights or submit a privacy, content-reporting, or removal request by contacting support.",
         ]}
       />
@@ -105,7 +105,7 @@ export default async function LegalPage() {
           .
         </p>
         <p className="mt-2 text-xs text-slate-400">
-          Last updated: 19 July 2026. Material changes will be presented for renewed
+          Last updated: 22 July 2026. Material changes will be presented for renewed
           acceptance where required.
         </p>
       </Card>

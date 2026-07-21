@@ -17,7 +17,7 @@ export default function PrivacyPage() {
           RClipper Privacy Policy
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.2.1 — Effective 19 July 2026
+          Version 1.3.0 — Effective 22 July 2026
         </p>
       </div>
 
@@ -67,19 +67,22 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              4. Selected Travy publication
+              4. Selected publication through RClipper Channels
             </h2>
             <p>
-              Not every generated video is published through Travy. RClipper may
-              select a reviewed video for public display in the Travy app and on the
-              Travy.buzz website.
+              Not every generated video is published. RClipper may select a reviewed
+              video for public display through the RClipper Channels: the Travy app,
+              Travy.buzz website, and official accounts owned or controlled by
+              RClipper on Facebook, Instagram, TikTok, YouTube, and Xiaohongshu
+              (小红书). Those platform operators may process published content and
+              related data under their own privacy policies and terms.
               When selected, the finished video and associated title, caption,
               thumbnail, subtitles, translations, user-entered text, place name,
               address, selected map location, coordinates, category, business or
               attraction information, and personal data visible or audible in the
               video may become publicly accessible. RClipper may present this
               information in a Travy post, place page, listing, search result, map
-              marker, or related location feature in the Travy app or on Travy.buzz.
+              marker, or related location feature through the RClipper Channels.
               Public viewers may copy or share
               content outside RClipper&apos;s control.
             </p>
@@ -109,7 +112,7 @@ export default function PrivacyPage() {
             </p>
             <p>
               Finished videos may be retained for delivery, quality assurance, and,
-              where selected, for the duration of Travy publication plus reasonable
+              where selected, for the duration of RClipper Channel publication plus reasonable
               backup, audit, legal, and content-integrity retention.
             </p>
           </section>

@@ -17,7 +17,7 @@ export default function OwnershipPage() {
           Content Ownership and Publication Rights
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.2.1 — Effective 19 July 2026
+          Version 1.3.0 — Effective 22 July 2026
         </p>
       </div>
 
@@ -78,24 +78,25 @@ export default function OwnershipPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              5. Licence for selected Travy publication
+              5. Licence for selected RClipper Channel publication
             </h2>
             <p>
-              Not every generated video will be published on Travy. If RClipper
-              selects a reviewed video, you grant RClipper a non-exclusive, worldwide,
+              Not every generated video will be published. If RClipper selects a
+              reviewed video, you grant RClipper a non-exclusive, worldwide,
               royalty-free licence to reproduce, host, display, communicate to the
               public, and distribute your source materials as incorporated in the
-              finished video and the related request content in the Travy app and on
-              the Travy.buzz website. RClipper may use text, place names, addresses, selected map
+              finished video and the related request content through the RClipper
+              Channels: the Travy app, Travy.buzz website, and official accounts owned
+              or controlled by RClipper on Facebook, Instagram, TikTok, YouTube, and
+              Xiaohongshu (小红书). RClipper may use text, place names, addresses, selected map
               locations, coordinates, categories, descriptions, and business or
-              attraction information in a Travy post, place page, listing, caption,
-              search result, map marker, or related location feature in the Travy app
-              or on Travy.buzz. The licence also
-              includes reasonable subtitles, translations, thumbnails, crops, and
-              technical adaptations needed for Travy.
+              attraction information in a post, place page, listing, caption, search
+              result, map marker, or related location feature. The licence also
+              includes reasonable titles, hashtags, subtitles, translations,
+              thumbnails, crops, and technical adaptations needed for each RClipper Channel.
             </p>
             <p>
-              This Travy licence continues while the selected video is published and
+              This licence continues while the selected video is published and
               for reasonable backup, legal, audit, and content-integrity retention.
               RClipper may remove a selected video at its discretion. Requests based
               on privacy, safety, or third-party rights may be sent to{" "}
@@ -108,20 +109,19 @@ export default function OwnershipPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              6. No unrelated publication licence
+              6. Limits on the publication licence
             </h2>
             <p>
-              The selected-publication licence above is limited to Travy. RClipper
-              must separately disclose and obtain any authorisation required to use
-              the video in paid advertising, unrelated promotional campaigns, or
-              third-party social networks outside the requester&apos;s chosen
-              distribution flow.
+              The selected-publication licence is limited to the RClipper Channels.
+              RClipper must separately disclose and obtain any authorisation required
+              to use the content in paid advertising, unrelated promotional campaigns,
+              accounts RClipper does not own or control, or other channels not listed above.
             </p>
             <p>
               RClipper does not claim ownership of public facts, geographic
               coordinates, or third-party place names merely because you entered or
               selected them. The licence permits RClipper to use and present that
-              information in Travy in connection with the selected content.
+              information through the RClipper Channels in connection with the selected content.
             </p>
           </section>
 

@@ -757,9 +757,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           <Checkbox
             label={
               <>
-                ฉันยืนยันว่าเป็นเจ้าของหรือได้รับสิทธิ์และการอนุญาตที่จำเป็นสำหรับไฟล์
-                บุคคล เสียง เพลง เครื่องหมายการค้า ข้อความ ชื่อสถานที่
-                ตำแหน่งที่เลือก และเนื้อหาที่อัพโหลดหรือกรอกในคำขอ และยอมรับ{" "}
+                ฉันยืนยันว่าเป็นเจ้าของหรือได้รับสิทธิ์และการอนุญาตที่จำเป็นสำหรับไฟล์ บุคคล เสียง เพลง เครื่องหมายการค้า ข้อความ ชื่อสถานที่ ตำแหน่งที่เลือก และเนื้อหาที่อัปโหลดหรือกรอกในคำขอ และยอมรับ{" "}
                 <Link
                   href={ROUTES.TERMS}
                   target="_blank"
@@ -768,18 +766,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                 >
                   ข้อกำหนดและเงื่อนไขของ RClipper
                 </Link>{" "}
-                และ{" "}
-                <Link
-                  href={ROUTES.OWNERSHIP}
-                  target="_blank"
-                  className="text-blue-600 underline hover:text-blue-800"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  นโยบายสิทธิ์ในเนื้อหา
-                </Link>
-                {" "}ซึ่งรวมถึงสิทธิ์ของ RClipper
-                ในการคัดเลือกวิดีโอบางรายการ พร้อมข้อความ ชื่อสถานที่
-                และตำแหน่งที่เกี่ยวข้อง เพื่อเผยแพร่หรือแสดงบนแอป Travy และเว็บไซต์ Travy.buzz
+                รวมถึงสิทธิ์ของ RClipper ในการคัดเลือกวิดีโอบางรายการพร้อมข้อมูลที่เกี่ยวข้องเพื่อเผยแพร่บนแอป Travy เว็บไซต์ Travy.buzz และบัญชีโซเชียลมีเดียอย่างเป็นทางการที่ RClipper เป็นเจ้าของหรือควบคุม
               </>
             }
             {...register("rightsConfirmed")}

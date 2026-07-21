@@ -158,7 +158,8 @@ export function SignupForm() {
         <Link href={ROUTES.OWNERSHIP} className="underline hover:text-slate-700">
           นโยบายสิทธิ์ในเนื้อหาและการเผยแพร่
         </Link>
-        ซึ่งอธิบายการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่บนแอป Travy และเว็บไซต์ Travy.buzz
+        ซึ่งอธิบายการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่ผ่านช่องทางของ RClipper
+        รวมถึงแอป Travy เว็บไซต์ Travy.buzz และบัญชีโซเชียลมีเดียอย่างเป็นทางการ
       </p>
 
       <div className="border-t border-slate-100 pt-2">

@@ -5,10 +5,10 @@ import { ROUTES } from "@/config/routes";
 
 export const metadata: Metadata = {
   title: "Terms and Conditions — RClipper",
-  description: "RClipper Terms and Conditions — Version 1.2.1",
+  description: "RClipper Terms and Conditions — Version 1.3.0",
 };
 
-const EFFECTIVE_DATE = "19 July 2026";
+const EFFECTIVE_DATE = "22 July 2026";
 
 export default function TermsPage() {
   return (
@@ -19,7 +19,7 @@ export default function TermsPage() {
           RClipper Terms and Conditions
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.2.1 — Effective {EFFECTIVE_DATE}
+          Version 1.3.0 — Effective {EFFECTIVE_DATE}
         </p>
       </div>
 
@@ -87,28 +87,31 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              5. Selection for Travy
+              5. Selection for RClipper Channels
             </h2>
             <p>
-              Not every generated video is published through Travy. RClipper may
-              select certain reviewed videos for public publication on the Travy app
-              and Travy.buzz website under an RClipper or Travy-controlled account. Selection is
-              discretionary, is not guaranteed, and does not entitle the requester to
-              payment, promotion, audience size, or a minimum publication period.
+              Not every generated video is published. RClipper may select certain
+              reviewed videos for public publication through the “RClipper Channels.”
+              RClipper Channels means the Travy app, Travy.buzz website, and official
+              accounts owned or controlled by RClipper on Facebook, Instagram,
+              TikTok, YouTube, and Xiaohongshu (小红书). Selection is discretionary,
+              is not guaranteed, and does not entitle the requester to payment,
+              promotion, audience size, or a minimum publication period.
             </p>
             <p>
               By confirming the content-rights checkbox for a request, you authorise
-              RClipper to use the uploaded materials and request content for this
-              selected Travy publication. This includes text, place names, addresses,
+              RClipper to use the uploaded materials and request content for selected
+              publication through the RClipper Channels. This includes text, place names, addresses,
               selected map locations, coordinates, categories, descriptions, and
               business or attraction information, whether or not each item appears
               inside the finished video. RClipper may display this information in a
-              Travy post, place page, listing, caption, search result, map marker, or
-              related location feature in the Travy app or on Travy.buzz, and may prepare subtitles, translations,
-              thumbnails, crops, and technical formats reasonably required for Travy.
-              This permission does not
-              authorise unrelated advertising or publication on other third-party
-              social networks unless separately disclosed and authorised.
+              post, place page, listing, caption, search result, map marker, or related
+              location feature. RClipper may prepare titles, captions, hashtags,
+              subtitles, translations, thumbnails, crops, and technical formats
+              reasonably required for each RClipper Channel.
+              This permission does not authorise paid advertising, publication
+              through accounts that RClipper does not own or control, or unrelated
+              promotional use unless separately disclosed and authorised.
             </p>
           </section>
 
