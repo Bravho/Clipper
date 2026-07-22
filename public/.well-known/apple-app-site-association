@@ -15,8 +15,16 @@
             "comment": "Open requester dashboard links in RClipper."
           },
           {
+            "/": "/dashboard",
+            "comment": "Return the exact post-login dashboard URL to RClipper."
+          },
+          {
             "/": "/account/*",
             "comment": "Open account links in RClipper."
+          },
+          {
+            "/": "/account",
+            "comment": "Open the exact account URL in RClipper."
           }
         ]
       }

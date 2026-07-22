@@ -2,6 +2,7 @@ import { withAuth, NextRequestWithAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
+import { logAuthEvent } from "@/lib/auth/diagnostics";
 
 /**
  * Clipper route protection middleware.
@@ -23,6 +24,10 @@ export default withAuth(
     const role = req.nextauth.token?.role as Role | undefined;
 
     if (!role) {
+      logAuthEvent("middleware_redirect", {
+        path: pathname,
+        reason: "missing_role",
+      });
       // Should not happen (authorized callback guards this), but be safe
       return NextResponse.redirect(new URL(ROUTES.LOGIN, req.url));
     }
@@ -30,6 +35,11 @@ export default withAuth(
     // /admin — Admin only
     if (pathname.startsWith(ROUTES.ADMIN)) {
       if (role !== Role.Admin) {
+        logAuthEvent("middleware_redirect", {
+          path: pathname,
+          role,
+          reason: "admin_role_mismatch",
+        });
         return NextResponse.redirect(new URL(ROUTES.DASHBOARD, req.url));
       }
     }
@@ -37,11 +47,17 @@ export default withAuth(
     // /dashboard — Requester only
     if (pathname.startsWith(ROUTES.DASHBOARD)) {
       if (role !== Role.Requester) {
+        logAuthEvent("middleware_redirect", {
+          path: pathname,
+          role,
+          reason: "requester_role_mismatch",
+        });
         return NextResponse.redirect(new URL(ROUTES.ADMIN, req.url));
       }
     }
 
     // /account — any authenticated role (no additional check needed)
+    logAuthEvent("middleware_allowed", { path: pathname, role });
     return NextResponse.next();
   },
   {

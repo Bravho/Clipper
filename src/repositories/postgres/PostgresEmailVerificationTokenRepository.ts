@@ -45,4 +45,13 @@ export class PostgresEmailVerificationTokenRepository
       [id]
     );
   }
+
+  async invalidateUnusedForUser(userId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE email_verification_tokens
+       SET used_at = NOW()
+       WHERE user_id = $1 AND used_at IS NULL`,
+      [userId]
+    );
+  }
 }

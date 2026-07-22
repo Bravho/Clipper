@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { ROUTES } from "@/config/routes";
 
 export default function VerifyEmailPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get("email") ?? "";
   const initialDeliveryFailed = searchParams.get("delivery") === "failed";
@@ -14,6 +15,41 @@ export default function VerifyEmailPage() {
 
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [resendError, setResendError] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [verifyState, setVerifyState] = useState<"idle" | "verifying" | "error">("idle");
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  async function handleVerify(event: React.FormEvent) {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(code)) {
+      setVerifyError("Enter the six-digit code from your email.");
+      return;
+    }
+
+    setVerifyState("verifying");
+    setVerifyError(null);
+    try {
+      const res = await fetch("/api/verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVerifyError(data.error ?? "Verification failed.");
+        setVerifyState("error");
+        return;
+      }
+      router.push(
+        `${ROUTES.LOGIN}?message=${encodeURIComponent(
+          "Email verified! You can now sign in."
+        )}`
+      );
+    } catch {
+      setVerifyError("An unexpected error occurred. Please try again.");
+      setVerifyState("error");
+    }
+  }
 
   async function handleResend() {
     setResendState("sending");
@@ -55,7 +91,7 @@ export default function VerifyEmailPage() {
             ? "An account with this email already exists but may still need verification: "
             : initialDeliveryFailed
             ? "Your account was created, but we could not send the verification email to "
-            : "We sent a verification link to "}
+            : "We sent a six-digit verification code to "}
           {email ? (
             <span className="font-medium text-slate-700">{email}</span>
           ) : (
@@ -66,17 +102,49 @@ export default function VerifyEmailPage() {
             ? "Use the button below to send a fresh verification link, or sign in if you have already verified it."
             : initialDeliveryFailed
             ? "Use the button below to try sending it again."
-            : "Click the link in the email to activate your account."}
+            : "Enter the code below to activate your account."}
         </p>
 
         <p className="mt-2 text-xs text-slate-400">
-          The link expires in 24 hours.
+          The code expires in 10 minutes.
         </p>
+
+        <form onSubmit={handleVerify} className="mt-6">
+          <label htmlFor="verification-code" className="sr-only">
+            Six-digit verification code
+          </label>
+          <input
+            id="verification-code"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            value={code}
+            onChange={(event) =>
+              setCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+            }
+            placeholder="000000"
+            className="w-full rounded-md border border-slate-300 px-4 py-3 text-center text-2xl font-semibold tracking-[0.5em] text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          {verifyError && (
+            <p className="mt-2 text-sm text-red-600">{verifyError}</p>
+          )}
+          <div className="mt-4">
+            <Button
+              type="submit"
+              fullWidth
+              loading={verifyState === "verifying"}
+              disabled={!email || code.length !== 6}
+            >
+              Verify email
+            </Button>
+          </div>
+        </form>
 
         <div className="mt-8 border-t border-slate-100 pt-6">
           {resendState === "sent" ? (
             <p className="text-sm text-green-700 font-medium">
-              Verification email resent. Check your inbox.
+              A new verification code was sent. Check your inbox.
             </p>
           ) : (
             <>
@@ -93,7 +161,7 @@ export default function VerifyEmailPage() {
                 onClick={handleResend}
                 disabled={!email}
               >
-                Resend verification email
+                Resend verification code
               </Button>
             </>
           )}

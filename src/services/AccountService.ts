@@ -36,6 +36,25 @@ export interface AccountProfile {
   acceptances: TermsAcceptance[];
 }
 
+/** Raised when public signup is attempted for an existing email address. */
+export class ExistingAccountError extends Error {
+  constructor(public readonly emailVerified: boolean) {
+    super("An account with this email address already exists.");
+    this.name = "ExistingAccountError";
+  }
+}
+
+/**
+ * Signals that a credentials signup refreshed an existing, still-unverified
+ * account. The API must issue a fresh verification code for this user.
+ */
+export class RefreshedUnverifiedAccountError extends Error {
+  constructor(public readonly user: User) {
+    super("Unverified account credentials refreshed.");
+    this.name = "RefreshedUnverifiedAccountError";
+  }
+}
+
 /**
  * AccountService — orchestrates user account creation.
  *
@@ -65,7 +84,35 @@ export class AccountService {
     // 1. Duplicate email check
     const existing = await userRepository.findByEmail(input.email);
     if (existing) {
-      throw new Error("An account with this email address already exists.");
+      if (
+        !existing.emailVerified &&
+        input.provider === AuthProvider.Credentials &&
+        input.passwordHash
+      ) {
+        const credentialsIdentity =
+          await authIdentityRepository.findCredentialsByUserId(existing.id);
+
+        if (credentialsIdentity) {
+          await authIdentityRepository.updatePasswordHash(
+            existing.id,
+            input.passwordHash
+          );
+        } else {
+          await authIdentityRepository.create({
+            userId: existing.id,
+            provider: AuthProvider.Credentials,
+            providerAccountId: null,
+            passwordHash: input.passwordHash,
+          });
+        }
+
+        const refreshedUser = await userRepository.update(existing.id, {
+          name: input.name.trim(),
+        });
+        throw new RefreshedUnverifiedAccountError(refreshedUser);
+      }
+
+      throw new ExistingAccountError(existing.emailVerified);
     }
 
     // 1b. Deleted-account registry check (fraud prevention).

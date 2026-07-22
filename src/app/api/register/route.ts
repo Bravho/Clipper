@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { signupSchema } from "@/features/auth/validation/signupSchema";
-import { accountService, AccountService } from "@/services/AccountService";
+import {
+  accountService,
+  AccountService,
+  ExistingAccountError,
+  RefreshedUnverifiedAccountError,
+} from "@/services/AccountService";
 import { emailVerificationService } from "@/services/EmailVerificationService";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { ConsentInput } from "@/services/ConsentService";
@@ -22,8 +27,9 @@ import type { ApiResponse } from "@/types";
  *       This route is only for email/password registration.
  */
 interface RegistrationResult {
-  requiresVerification: boolean;
-  verificationEmailSent: boolean;
+  requiresVerification?: boolean;
+  verificationEmailSent?: boolean;
+  existingAccountVerified?: boolean;
 }
 
 export async function POST(
@@ -94,15 +100,44 @@ export async function POST(
       { status: 201 }
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "An unexpected error occurred.";
+    if (error instanceof RefreshedUnverifiedAccountError) {
+      let verificationEmailSent = true;
+      try {
+        await emailVerificationService.generateAndSend(
+          error.user.id,
+          error.user.email,
+          error.user.name
+        );
+      } catch (deliveryError) {
+        verificationEmailSent = false;
+        console.error(
+          "[Clipper] refreshed-account verification email delivery failed:",
+          deliveryError
+        );
+      }
 
-    if (message.includes("already exists")) {
       return NextResponse.json(
-        { success: false, error: message },
+        {
+          success: true,
+          data: { requiresVerification: true, verificationEmailSent },
+        },
+        { status: 200 }
+      );
+    }
+
+    if (error instanceof ExistingAccountError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "An account with this email address already exists.",
+          data: { existingAccountVerified: error.emailVerified },
+        },
         { status: 409 }
       );
     }
+
+    const message =
+      error instanceof Error ? error.message : "An unexpected error occurred.";
 
     console.error("[Clipper] /api/register error:", error);
     return NextResponse.json(

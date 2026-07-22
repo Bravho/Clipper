@@ -39,8 +39,7 @@ export async function GET(
   }
 
   const isOwner = clipRequest.userId === session.user.id;
-  const isStaff =
-    session.user.role === Role.Editor || session.user.role === Role.Admin;
+  const isStaff = session.user.role === Role.Admin;
   if (!isOwner && !isStaff) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }

@@ -40,7 +40,7 @@ export async function GET(
     return new NextResponse("Not found", { status: 404 });
   }
   const isOwner = clipRequest.userId === session.user.id;
-  const isStaff = session.user.role === Role.Editor || session.user.role === Role.Admin;
+  const isStaff = session.user.role === Role.Admin;
   if (!isOwner && !isStaff) {
     return new NextResponse("Forbidden", { status: 403 });
   }

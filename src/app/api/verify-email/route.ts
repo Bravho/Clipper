@@ -4,21 +4,26 @@ import type { ApiResponse } from "@/types";
 
 /**
  * POST /api/verify-email
- * Body: { token: string }
+ * Body: { email: string, code: string }
  * Verifies the token and marks the user's email as verified.
  */
 export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
   try {
-    const { token } = await req.json();
+    const { email, code } = await req.json();
 
-    if (!token || typeof token !== "string") {
+    if (
+      typeof email !== "string" ||
+      !email ||
+      typeof code !== "string" ||
+      !/^\d{6}$/.test(code)
+    ) {
       return NextResponse.json(
-        { success: false, error: "Missing verification token." },
+        { success: false, error: "Enter the six-digit verification code." },
         { status: 400 }
       );
     }
 
-    const result = await emailVerificationService.verify(token);
+    const result = await emailVerificationService.verify(email, code);
 
     if (!result.success) {
       return NextResponse.json(

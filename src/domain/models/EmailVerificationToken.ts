@@ -1,7 +1,7 @@
 /**
  * Email verification token.
- * Stores a SHA-256 hash of the raw token sent in the verification URL.
- * The raw token is never stored — only the hash.
+ * Stores a SHA-256 hash of the email-bound verification code.
+ * The six-digit code is never stored — only the hash.
  */
 export interface EmailVerificationToken {
   id: string;

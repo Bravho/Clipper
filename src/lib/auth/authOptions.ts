@@ -6,6 +6,7 @@ import { Role } from "@/domain/enums/Role";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { authService } from "@/services/AuthService";
 import { ROUTES, getRoleHomePath } from "@/config/routes";
+import { logAuthEvent } from "@/lib/auth/diagnostics";
 
 /**
  * NextAuth configuration for Clipper.
@@ -54,21 +55,45 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        if (!credentials?.email || !credentials?.password) {
+          logAuthEvent("credentials_rejected", { reason: "missing_fields" });
+          return null;
+        }
 
-        const user = await authService.verifyCredentials(
-          credentials.email,
-          credentials.password
-        );
+        let verifiedUser: Awaited<
+          ReturnType<typeof authService.verifyCredentials>
+        >;
+        try {
+          verifiedUser = await authService.verifyCredentials(
+            credentials.email,
+            credentials.password
+          );
+        } catch (error) {
+          logAuthEvent("credentials_rejected", {
+            reason:
+              error instanceof Error ? error.message : "verification_error",
+          });
+          throw error;
+        }
 
-        if (!user) return null;
+        if (!verifiedUser) {
+          logAuthEvent("credentials_rejected", {
+            reason: "invalid_credentials",
+          });
+          return null;
+        }
+
+        logAuthEvent("credentials_accepted", {
+          userId: verifiedUser.id,
+          role: verifiedUser.role,
+        });
 
         // Return the shape that NextAuth expects (with our custom fields)
         return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
+          id: verifiedUser.id,
+          email: verifiedUser.email,
+          name: verifiedUser.name,
+          role: verifiedUser.role,
           provider: AuthProvider.Credentials,
         };
       },
@@ -108,6 +133,10 @@ export const authOptions: NextAuthOptions = {
       }
 
       // Credentials provider: authorize() already validated the user
+      logAuthEvent("signin_callback_accepted", {
+        userId: user.id,
+        provider: account?.provider ?? "credentials",
+      });
       return true;
     },
 
@@ -121,6 +150,11 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         token.role = user.role as Role;
         token.provider = user.provider as AuthProvider;
+        logAuthEvent("jwt_created", {
+          userId: user.id,
+          role: user.role as Role,
+          provider: user.provider as AuthProvider,
+        });
       }
       return token;
     },
@@ -134,6 +168,11 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.id;
         session.user.role = token.role;
         session.user.provider = token.provider;
+        logAuthEvent("session_returned", {
+          userId: token.id as string,
+          role: token.role as Role,
+          provider: token.provider as AuthProvider,
+        });
       }
       return session;
     },

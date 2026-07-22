@@ -16,6 +16,7 @@ describe("getRoleHomePath", () => {
   it("redirects Admin to /admin", () => {
     expect(getRoleHomePath(Role.Admin)).toBe(ROUTES.ADMIN);
   });
+
 });
 
 describe("ROUTES config", () => {
@@ -75,4 +76,5 @@ describe("middleware role-route rules (logic verification)", () => {
   it("Admin accessing /dashboard — redirected to /admin", () => {
     expect(simulateMiddlewareRedirect(Role.Admin, "/dashboard")).toBe("/admin");
   });
+
 });

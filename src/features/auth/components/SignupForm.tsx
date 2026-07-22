@@ -39,6 +39,15 @@ export function SignupForm() {
 
       if (!response.ok) {
         if (response.status === 409) {
+          if (result.data?.existingAccountVerified === true) {
+            router.push(
+              `${ROUTES.LOGIN}?message=${encodeURIComponent(
+                "อีเมลนี้มีบัญชีที่ยืนยันแล้ว กรุณาเข้าสู่ระบบ"
+              )}`
+            );
+            return;
+          }
+
           // A previous attempt may have created the account successfully before
           // verification-email delivery failed. Preserve that account/password
           // and take the user to the resend flow instead of leaving them stuck.
