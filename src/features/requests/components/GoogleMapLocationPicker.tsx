@@ -8,6 +8,7 @@ type Coordinates = { latitude: number; longitude: number };
 
 interface GoogleMapLocationPickerProps {
   open: boolean;
+  placeName?: string;
   initialCoordinates?: Coordinates | null;
   onConfirm: (coordinates: Coordinates) => void;
   onClose: () => void;
@@ -35,6 +36,10 @@ interface GoogleAdvancedMarker {
   addListener(eventName: "dragend", handler: () => void): void;
 }
 
+interface GoogleGeocoderResult {
+  geometry: { location: GoogleLatLng };
+}
+
 interface GoogleMapsApi {
   Map: new (
     element: HTMLElement,
@@ -54,6 +59,15 @@ interface GoogleMapsApi {
       gmpDraggable: boolean;
       title: string;
     }) => GoogleAdvancedMarker;
+  };
+  Geocoder: new () => {
+    geocode(
+      request: { address: string; region?: string },
+      callback: (
+        results: GoogleGeocoderResult[] | null,
+        status: string
+      ) => void
+    ): void;
   };
 }
 
@@ -115,6 +129,7 @@ const BANGKOK = { latitude: 13.756331, longitude: 100.501762 };
 
 export function GoogleMapLocationPicker({
   open,
+  placeName,
   initialCoordinates,
   onConfirm,
   onClose,
@@ -131,59 +146,118 @@ export function GoogleMapLocationPicker({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !mapContainerRef.current) return;
+    let cancelled = false;
+    setLoading(true);
     setSelected(initialCoordinates ?? null);
     setError(null);
-  }, [open, initialCoordinates]);
-
-  useEffect(() => {
-    if (!open || !mapContainerRef.current || mapRef.current) return;
-    setLoading(true);
 
     void loadGoogleMaps()
       .then((maps) => {
-        if (!mapContainerRef.current) return;
-        const start = initialCoordinates ?? BANGKOK;
-        const map = new maps.Map(mapContainerRef.current, {
-          center: { lat: start.latitude, lng: start.longitude },
-          zoom: initialCoordinates ? 16 : 11,
-          mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID?.trim() || "DEMO_MAP_ID",
-          streetViewControl: false,
-          mapTypeControl: false,
-          fullscreenControl: false,
-        });
-        const marker = new maps.marker.AdvancedMarkerElement({
-          map,
-          position: { lat: start.latitude, lng: start.longitude },
-          gmpDraggable: true,
-          title: "ลากหมุดเพื่อเลือกตำแหน่ง",
-        });
-        if (!initialCoordinates) marker.map = null;
+        if (cancelled || !mapContainerRef.current) return;
+        if (!mapRef.current || !markerRef.current) {
+          const start = initialCoordinates ?? BANGKOK;
+          const map = new maps.Map(mapContainerRef.current, {
+            center: { lat: start.latitude, lng: start.longitude },
+            zoom: initialCoordinates ? 16 : 11,
+            mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID?.trim() || "DEMO_MAP_ID",
+            streetViewControl: false,
+            mapTypeControl: false,
+            fullscreenControl: false,
+          });
+          const marker = new maps.marker.AdvancedMarkerElement({
+            map,
+            position: { lat: start.latitude, lng: start.longitude },
+            gmpDraggable: true,
+            title: "ลากหมุดเพื่อเลือกตำแหน่ง",
+          });
 
-        map.addListener("click", (event) => {
-          if (!event.latLng) return;
-          const next = {
-            latitude: event.latLng.lat(),
-            longitude: event.latLng.lng(),
+          map.addListener("click", (event) => {
+            if (!event.latLng) return;
+            const next = {
+              latitude: event.latLng.lat(),
+              longitude: event.latLng.lng(),
+            };
+            marker.position = { lat: next.latitude, lng: next.longitude };
+            marker.map = map;
+            setSelected(next);
+          });
+          marker.addListener("dragend", () => {
+            setSelected(normalizeMarkerPosition(marker.position));
+          });
+
+          mapRef.current = map;
+          markerRef.current = marker;
+        }
+
+        const showMarker = (coordinates: Coordinates, zoom = 16) => {
+          if (cancelled || !mapRef.current || !markerRef.current) return;
+          const position = {
+            lat: coordinates.latitude,
+            lng: coordinates.longitude,
           };
-          marker.position = { lat: next.latitude, lng: next.longitude };
-          marker.map = map;
-          setSelected(next);
-        });
-        marker.addListener("dragend", () => {
-          setSelected(normalizeMarkerPosition(marker.position));
-        });
+          markerRef.current.position = position;
+          markerRef.current.map = mapRef.current;
+          mapRef.current.setCenter(position);
+          mapRef.current.setZoom(zoom);
+          setSelected(coordinates);
+        };
 
-        mapRef.current = map;
-        markerRef.current = marker;
+        const address = placeName?.trim();
+        if (address) {
+          return new Promise<void>((resolve) => {
+            new maps.Geocoder().geocode(
+              { address, region: "TH" },
+              (results, status) => {
+                if (cancelled) {
+                  resolve();
+                  return;
+                }
+                const location = results?.[0]?.geometry.location;
+                if (status === "OK" && location) {
+                  showMarker({
+                    latitude: location.lat(),
+                    longitude: location.lng(),
+                  });
+                } else {
+                  if (initialCoordinates) {
+                    showMarker(initialCoordinates);
+                  } else {
+                    setSelected(null);
+                    if (markerRef.current) markerRef.current.map = null;
+                  }
+                  setError(t("map.placeNotFound"));
+                }
+                resolve();
+              }
+            );
+          });
+        }
+
+        if (initialCoordinates) {
+          showMarker(initialCoordinates);
+        } else {
+          setSelected(null);
+          if (markerRef.current) markerRef.current.map = null;
+          mapRef.current?.setCenter({
+            lat: BANGKOK.latitude,
+            lng: BANGKOK.longitude,
+          });
+          mapRef.current?.setZoom(11);
+        }
       })
       .catch((reason: unknown) => {
+        if (cancelled) return;
         setError(reason instanceof Error ? reason.message : "Google Maps โหลดไม่สำเร็จ");
       })
       .finally(() => {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       });
-  }, [open, initialCoordinates]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, initialCoordinates, placeName, t]);
 
   useEffect(() => {
     return () => {

@@ -38,11 +38,6 @@ const GoogleMapLocationPicker = dynamic(() =>
     (module) => module.GoogleMapLocationPicker
   )
 );
-const NativeMediaPicker = dynamic(() =>
-  import("@/features/requests/components/NativeMediaPicker").then(
-    (module) => module.NativeMediaPicker
-  )
-);
 
 interface PendingFile {
   id: string;
@@ -79,7 +74,7 @@ function readVideoDuration(file: File): Promise<number> {
     try {
       const url = URL.createObjectURL(file);
       const video = document.createElement("video");
-      video.preload = "metadata";
+      video.preload = "auto";
       video.onloadedmetadata = () => {
         URL.revokeObjectURL(url);
         resolve(video.duration);
@@ -146,6 +141,7 @@ function generateVideoThumbnail(file: File): Promise<string | null> {
       // Safety net if metadata/seek never fires.
       setTimeout(() => finish(null), 5000);
       video.src = url;
+      video.load();
     } catch {
       resolve(null);
     }
@@ -187,6 +183,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
   const watchedPlatforms = watch("targetPlatforms") ?? [];
   const watchedDuration = watch("durationSeconds") ?? PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS;
+  const watchedPlaceName = watch("placeName");
   const watchedLatitude = watch("latitude");
   const watchedLongitude = watch("longitude");
 
@@ -210,6 +207,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) addFiles(Array.from(e.target.files));
+    // Allow selecting the same photo/video again after it has been removed.
+    e.target.value = "";
   };
 
   const addFiles = (files: File[]) => {
@@ -253,8 +252,17 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         item.file.type as (typeof ACCEPTED_VIDEO_MIME_TYPES)[number]
       );
       if (isVideo) {
+        // Show the selected local video immediately. This is also the fallback
+        // on iOS/WKWebView when canvas frame extraction cannot decode the clip.
+        const videoUrl = URL.createObjectURL(item.file);
+        setPreviews((prev) => ({ ...prev, [item.id]: videoUrl }));
         void generateVideoThumbnail(item.file).then((thumb) => {
-          if (thumb) setPreviews((prev) => ({ ...prev, [item.id]: thumb }));
+          if (!thumb) return;
+          setPreviews((prev) => {
+            const previous = prev[item.id];
+            if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
+            return { ...prev, [item.id]: thumb };
+          });
         });
       } else if (item.file.type.startsWith("image/")) {
         const objUrl = URL.createObjectURL(item.file);
@@ -607,11 +615,6 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           </p>
         </div>
 
-        <NativeMediaPicker
-          disabled={pendingFiles.length >= MAX_UPLOAD_COUNT}
-          onFiles={addFiles}
-        />
-
         {/* Drop zone */}
         <div
           onDrop={handleFileDrop}
@@ -651,7 +654,26 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                 }`}
               >
                 <div className="flex aspect-square items-center justify-center bg-slate-50">
-                  {previews[item.id] ? (
+                  {previews[item.id]?.startsWith("blob:") &&
+                  item.file.type.startsWith("video/") ? (
+                    <video
+                      src={previews[item.id]}
+                      className="h-full w-full object-cover"
+                      preload="metadata"
+                      muted
+                      playsInline
+                      onLoadedMetadata={(event) => {
+                        try {
+                          event.currentTarget.currentTime = Math.min(
+                            0.1,
+                            event.currentTarget.duration / 2
+                          );
+                        } catch {
+                          // The first frame remains a valid fallback.
+                        }
+                      }}
+                    />
+                  ) : previews[item.id] ? (
                     <img
                       src={previews[item.id]}
                       alt={item.file.name}
@@ -811,6 +833,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
       <GoogleMapLocationPicker
         open={mapOpen}
+        placeName={watchedPlaceName}
         initialCoordinates={
           Number.isFinite(watchedLatitude) && Number.isFinite(watchedLongitude)
             ? {
