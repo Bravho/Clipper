@@ -751,6 +751,9 @@ export default async function RequestDetailPage({
                 isAwaitingOverlayApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingOverlayApproval
                 }
+                isGeneratingOverlay={
+                  pipelineJob.currentStep === VideoGenerationStep.GeneratingOverlay
+                }
                 isAwaitingAdditionalRatios={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingAdditionalRatios
                 }

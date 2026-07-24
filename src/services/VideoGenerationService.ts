@@ -20,6 +20,7 @@ import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import { orderSourceAssets, type OrderedSourceAsset } from "@/lib/sourceAssets";
 import {
   buildSceneMontageAssets,
+  applyApprovedStoryboardSelections,
   fitScenePlanToVisualCapacity,
   inferMotionFromText,
   toRenderAssetSpecs,
@@ -1232,6 +1233,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.ComposingFinalVideo,
       animationApprovedBy: userId,
+      // At this point the old animation preview is just the silent base video.
+      // Do not expose it as if it were the in-progress audio-merged result.
+      animatedVideoAssetId: null,
       ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
       ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
     });
@@ -1340,8 +1344,12 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // so the default (pre-edit) plan already clears the minimum-length gate the
     // requester is held to at approval. Trimming clips can only grow it further.
     const montageTargetSeconds = minMontageTotalSeconds(job.voiceDurationSeconds ?? durationSeconds);
-    const sceneDurations = this._allocateSceneDurations(output.scenePlan, montageTargetSeconds);
-    const allocatedScenePlan: ScenePlan[] = output.scenePlan.map((scene, i) => {
+    // The model may refine visual direction and timing, but the requester chose
+    // the scene order and source material at the prior storyboard gate. Restore
+    // those choices deterministically before building the preview assets.
+    const selectedScenePlan = applyApprovedStoryboardSelections(output.scenePlan, storyboard);
+    const sceneDurations = this._allocateSceneDurations(selectedScenePlan, montageTargetSeconds);
+    const allocatedScenePlan: ScenePlan[] = selectedScenePlan.map((scene, i) => {
       const sceneDuration =
         Number.isFinite(sceneDurations[i]) && sceneDurations[i] > 0
           ? sceneDurations[i]
@@ -1654,6 +1662,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
       videoApprovedBy: userId,
+      // While the all-scenes merge is running there is no meaningful single
+      // base preview yet. The previous value is only a representative first
+      // scene used to enter the review panel, so clear it until the real merged
+      // asset is written by `_runMontageMerge`.
+      baseVideoAssetId: null,
     });
 
     await this._dispatchHeavy(updated, RenderStep.MontageMerge, () =>
@@ -2113,9 +2126,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       inputs,
       (f) => writeProgress(f * 95, { unit: primaryRatio })
     );
-
     const updates: UpdateVideoGenerationJobInput = {
       currentStep: VideoGenerationStep.AwaitingOverlayApproval,
+      renderProgress: null,
+      renderProgressDetail: null,
     };
     updates[this._captionedFieldForRatio(primaryRatio)] = captionedId;
     await videoGenerationJobRepository.update(job.id, updates);
@@ -2824,12 +2838,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // composeAndExport then muxes voice + ducked music per ratio; because each base
     // is already at its target ratio the crop filter is a no-op (a scale to the
     // standard resolution only), so nothing is cropped away.
-    // PROGRESSIVE REVEAL (per-ratio): compose the PRIMARY ratio first, then each
-    // remaining ratio, and PERSIST each ratio to the job the instant it finishes
-    // uploading — not after the whole loop. As soon as the first (primary) ratio
-    // lands we advance the job to AwaitingFinalApproval so the requester can watch
-    // that video immediately while the rest keep composing in the background (no
-    // approval gate between ratios).
+    // Compose the PRIMARY ratio first, then each remaining ratio, and persist
+    // each result immediately for resumability. Do NOT enter the review gate
+    // until every ratio has finished (or made its non-fatal attempt): exposing
+    // the first ratio while the worker was still active produced a stale video
+    // preview alongside a misleading 100%-but-loading state.
     //
     // This also makes a LATER ratio's failure non-fatal: if e.g. one ratio's
     // upload 400s, the ratios that already persisted are kept and the job stays at
@@ -2855,7 +2868,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // (which would orphan its Spaces object — final-clip keys are randomised).
     const latest = (await videoGenerationJobRepository.findById(job.id)) ?? job;
 
-    let advanced = false;
     const failedRatios: ffmpegService.VideoRatio[] = [];
 
     // Unit-based % across the ratios (FFmpeg compose has no fine-grained
@@ -2867,7 +2879,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     for (const ratio of primaryFirstRatios) {
       if (this._masterAssetIdForRatio(latest, ratio)) {
         // Already composed on an earlier run — leave it as-is.
-        if (!advanced) advanced = true; // the review already surfaces this ratio
         console.log(`[compose:${ratio}] skipped (already persisted)`);
         unitsDone++;
         continue;
@@ -2881,22 +2892,22 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         const assetId = await composeOneRatio(ratio);
 
         // Persist THIS ratio right away (partial update — merges, never clobbers
-        // ratios already written). On the first success also advance to
-        // AwaitingFinalApproval so the review UI reveals it without waiting.
+        // ratios already written), but keep the processing step active until
+        // the entire batch exits the loop.
         const updates: UpdateVideoGenerationJobInput = {};
         updates[this._finalExportFieldForRatio(ratio)] = assetId;
-        if (!advanced) {
-          updates.currentStep = VideoGenerationStep.AwaitingFinalApproval;
-          advanced = true;
-        }
         await videoGenerationJobRepository.update(job.id, updates);
         unitsDone++;
-        writeProgress((unitsDone / unitsTotal) * 100, {
-          unit: ratio,
-          unitsDone,
-          unitsTotal,
-        });
-        console.log(`[compose:${ratio}] persisted → job${advanced && updates.currentStep ? " (AwaitingFinalApproval)" : ""}`);
+        // Do not publish a final active-step percentage after the last unit:
+        // the next authoritative write changes the step to its review gate.
+        if (unitsDone < unitsTotal) {
+          writeProgress((unitsDone / unitsTotal) * 99, {
+            unit: ratio,
+            unitsDone,
+            unitsTotal,
+          });
+        }
+        console.log(`[compose:${ratio}] persisted → job`);
       } catch (err) {
         // Primary/first ratio is fatal: without it there is nothing to review.
         if (ratio === fatalRatio) throw err;
@@ -2911,10 +2922,18 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (failedRatios.length > 0) {
       console.warn(
         `[compose] finished with ${failedRatios.length} failed ratio(s): ${failedRatios.join(", ")}. ` +
-          `Primary ratio ${primaryRatio} landed, so the job stays at AwaitingFinalApproval; ` +
+          `Primary ratio ${primaryRatio} landed, so the job can enter AwaitingFinalApproval; ` +
           `the failed ratios can be regenerated without discarding the delivered ones.`
       );
     }
+    // Single authoritative completion transition. Clearing progress in the same
+    // update ensures no completed job remains rendered as "100% + loading".
+    await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.AwaitingFinalApproval,
+      renderProgress: null,
+      renderProgressDetail: null,
+    });
+    console.log(`[compose] request ${job.requestId}: batch complete → AwaitingFinalApproval`);
     // The Travy (Tvent) export is NOT produced here — it is rendered with its
     // EN+ZH overlay automatically in the Phase-7 background step after the overlay
     // is approved (`_runTventVideoGeneration`). finalExport_tvent_assetId is left

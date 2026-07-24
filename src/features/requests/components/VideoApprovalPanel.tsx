@@ -155,6 +155,8 @@ interface Props {
   isAwaitingFinalApproval?: boolean;
   /** Phase 7: reviewing the subtitle + motion-graphic captioned preview. */
   isAwaitingOverlayApproval?: boolean;
+  /** Primary-ratio subtitle/Motion Graphic render is currently running. */
+  isGeneratingOverlay?: boolean;
   /** Phase 7: gate to generate the remaining channels' aspect ratios. */
   isAwaitingAdditionalRatios?: boolean;
   /**
@@ -233,6 +235,7 @@ export function VideoApprovalPanel({
   isAwaitingAnimationApproval = false,
   isAwaitingFinalApproval = false,
   isAwaitingOverlayApproval = false,
+  isGeneratingOverlay = false,
   isAwaitingAdditionalRatios = false,
   isGeneratingAdditionalRatios = false,
   channelVideos = [],
@@ -269,6 +272,7 @@ export function VideoApprovalPanel({
   const pathname = usePathname();
   const [mode, setMode] = useState<"review" | "revise">("review");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isMergingScenes, setIsMergingScenes] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [editHookThai, setEditHookThai] = useState(hookThai ?? "");
@@ -298,6 +302,7 @@ export function VideoApprovalPanel({
   const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(savedMusicTrack ?? null);
   const [playingMusicTrack, setPlayingMusicTrack] = useState<string | null>(null);
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voicePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Requester approval states
   // Distribution channels chosen at voice approval, in click order. The FIRST
@@ -392,7 +397,48 @@ export function VideoApprovalPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAwaitingVoiceApproval, orderedAssets]);
   const [animationApproving, setAnimationApproving] = useState(false);
+  useEffect(() => {
+    // Once the refreshed server state leaves the music-selection gate, the
+    // normal pipeline `isProcessing` flag owns the loading UI.
+    if (!isAwaitingAnimationApproval) setAnimationApproving(false);
+  }, [isAwaitingAnimationApproval]);
   const [finalApproving, setFinalApproving] = useState(false);
+  const [overlayMergeProgress, setOverlayMergeProgress] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isAwaitingFinalApproval) setFinalApproving(false);
+  }, [isAwaitingFinalApproval]);
+
+  useEffect(() => {
+    if (!isGeneratingOverlay) {
+      setOverlayMergeProgress(null);
+      return;
+    }
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/requests/${requestId}/pipeline-status`, {
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (typeof data.renderProgress === "number") {
+          setOverlayMergeProgress((prev) =>
+            prev == null ? data.renderProgress : Math.max(prev, data.renderProgress)
+          );
+        }
+      } catch {
+        // The main pipeline poller still owns recovery/navigation; a missed
+        // percentage poll must not affect the render itself.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isGeneratingOverlay, requestId]);
   // Phase 7 — subtitle languages chosen at the merged-review step (seed from the
   // job, default to Thai for the requester's own channels). Travy always EN+ZH.
   const [subtitleLangs, setSubtitleLangs] = useState<("th" | "en" | "zh")[]>(
@@ -577,6 +623,37 @@ export function VideoApprovalPanel({
   const handleApproveAnimation = async () => {
     setAnimationApproving(true);
     setError(null);
+    // Stop every sound source used by this review step before starting the
+    // merge. This includes the standalone music sample, voice player, and the
+    // combined-preview modal's Web Audio elements.
+    if (musicAudioRef.current) {
+      musicAudioRef.current.pause();
+      musicAudioRef.current.src = "";
+      musicAudioRef.current = null;
+    }
+    setPlayingMusicTrack(null);
+    if (voicePreviewAudioRef.current) {
+      voicePreviewAudioRef.current.pause();
+      voicePreviewAudioRef.current.currentTime = 0;
+    }
+    if (previewMusicRef.current) {
+      previewMusicRef.current.pause();
+      previewMusicRef.current.currentTime = 0;
+    }
+    if (previewVoiceRef.current) {
+      previewVoiceRef.current.pause();
+      previewVoiceRef.current.currentTime = 0;
+    }
+    if (previewVideoRef.current) {
+      previewVideoRef.current.pause();
+      previewVideoRef.current.currentTime = 0;
+    }
+    if (duckingRafRef.current) {
+      cancelAnimationFrame(duckingRafRef.current);
+      duckingRafRef.current = null;
+    }
+    setShowPreviewModal(false);
+    setIsPreviewPlaying(false);
     try {
       const res = await fetch(`/api/requests/${requestId}/approve-animation`, {
         method: "POST",
@@ -593,7 +670,6 @@ export function VideoApprovalPanel({
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
-    } finally {
       setAnimationApproving(false);
     }
   };
@@ -643,7 +719,6 @@ export function VideoApprovalPanel({
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
-    } finally {
       setFinalApproving(false);
     }
   };
@@ -1188,6 +1263,7 @@ export function VideoApprovalPanel({
 
   const handleApprove = async () => {
     setIsSubmitting(true);
+    setIsMergingScenes(sceneVideos.length > 0);
     setError(null);
     try {
       const res = await fetch(`/api/requests/${requestId}/approve-video`, {
@@ -1200,10 +1276,10 @@ export function VideoApprovalPanel({
         throw new Error(body.error ?? "ไม่สามารถอนุมัติวิดีโอได้");
       }
       router.refresh();
-      setIsSubmitting(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
       setIsSubmitting(false);
+      setIsMergingScenes(false);
     }
   };
 
@@ -1265,7 +1341,17 @@ export function VideoApprovalPanel({
         {/* Combined review: every scene's video, each revised individually,
             then "Approve all" merges them into one. In revise mode only the
             scene being edited is shown, to avoid confusing it with the others. */}
-        {isAwaitingApproval && sceneVideos.length > 0 ? (
+        {isMergingScenes ? (
+          <div className="flex min-h-48 flex-col items-center justify-center text-center">
+            <div className="h-9 w-9 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
+            <h2 className="mt-4 text-base font-semibold text-slate-900">
+              กำลังรวมวิดีโอทุกฉาก
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              ระบบกำลังสร้างวิดีโอรวม กรุณารอสักครู่
+            </p>
+          </div>
+        ) : isAwaitingApproval && sceneVideos.length > 0 ? (
           mode === "review" ? (
             <>
               <h2 className="mb-1 text-base font-semibold text-slate-900">
@@ -1336,6 +1422,9 @@ export function VideoApprovalPanel({
           // so suppress this generic base-video card at those steps to avoid
           // showing the user a video without subtitles.
           videoUrl &&
+          !animationApproving &&
+          !finalApproving &&
+          !isProcessing &&
           !((isAwaitingOverlayApproval || isAwaitingAdditionalRatios) && overlayPreviewUrl) && (
             <>
               <h2 className="mb-3 text-base font-semibold text-slate-900">
@@ -1351,7 +1440,7 @@ export function VideoApprovalPanel({
           )
         )}
 
-        {isAwaitingApproval && (
+        {isAwaitingApproval && !isMergingScenes && (
           <div className="mt-4">
             {error && (
               <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3">
@@ -1637,7 +1726,7 @@ export function VideoApprovalPanel({
         )}
 
         {/* Animation Approval Phase */}
-        {isAwaitingAnimationApproval && (
+        {isAwaitingAnimationApproval && !animationApproving && (
           <div className="mt-6 space-y-6">
             <Card className="border-purple-100 bg-purple-50/40">
               <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3.5: เลือกเพลงพื้นหลังและรวมเสียงเข้าในวีดิโอ</h3>
@@ -1651,6 +1740,7 @@ export function VideoApprovalPanel({
                 <div className="mb-4">
                   <p className="text-xs font-semibold text-purple-700 mb-1">เสียงพากย์ AI</p>
                   <audio
+                    ref={voicePreviewAudioRef}
                     key={displayedVoiceAssetId ?? displayedVoiceUrl}
                     src={displayedVoiceUrl}
                     controls
@@ -1740,7 +1830,7 @@ export function VideoApprovalPanel({
         )}
 
         {/* Final Video Approval Phase */}
-        {isAwaitingFinalApproval && (
+        {isAwaitingFinalApproval && !finalApproving && (
           <div className="mt-6 space-y-6">
             <Card className="border-green-100 bg-green-50/30">
               <h3 className="text-base font-semibold text-slate-900 mb-2">ตรวจสอบวิดีโอที่รวมเสียงแล้ว</h3>
@@ -2121,10 +2211,40 @@ export function VideoApprovalPanel({
             which fixes the phantom "กำลังประมวลผล..." spinner. */}
         {/* Suppressed during GeneratingAdditionalRatios — the per-channel grid
             above carries its own per-channel spinners/progress. */}
-        {!isPipelineFailed && isProcessing && !isGeneratingAdditionalRatios && (
+        {!isPipelineFailed &&
+          (isProcessing || animationApproving || finalApproving) &&
+          !isGeneratingAdditionalRatios && (
           <Card className="mt-6 border-slate-100 bg-slate-50 p-5 flex flex-col items-center justify-center text-center">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600 mb-4" />
-            {isGeneratingVoice ? (
+            {isGeneratingOverlay || finalApproving ? (
+              <>
+                <h4 className="text-sm font-semibold text-slate-800">
+                  กำลังรวมซับไตเติ้ลและ Motion Graphic...
+                </h4>
+                <p className="mt-1 text-xs text-slate-400 max-w-[320px]">
+                  ระบบกำลังเรนเดอร์ซับไตเติ้ลลงในวิดีโอ คุณสามารถดูตัวอย่างได้เมื่อขั้นตอนนี้เสร็จสมบูรณ์
+                </p>
+                <div className="mt-4 w-72 max-w-full">
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-blue-600 transition-all duration-700"
+                      style={{
+                        width: `${Math.max(
+                          0,
+                          Math.min(100, finalApproving ? 0 : overlayMergeProgress ?? 0)
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-sm font-semibold tabular-nums text-blue-600">
+                    {Math.floor(
+                      Math.max(0, Math.min(100, finalApproving ? 0 : overlayMergeProgress ?? 0))
+                    )}
+                    %
+                  </p>
+                </div>
+              </>
+            ) : isGeneratingVoice ? (
               <>
                 <h4 className="text-sm font-semibold text-slate-800">กำลังสร้างเสียงพากย์ AI...</h4>
                 <p className="mt-1 text-xs text-slate-400 max-w-[280px]">

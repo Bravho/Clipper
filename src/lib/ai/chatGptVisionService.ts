@@ -244,7 +244,7 @@ function buildSceneDesignPrompt(
   if (params.storyboard && params.storyboard.length > 0) {
     lines.push(
       "",
-      "Approved storyboard (use as the seed — keep the scene order and image selection unless the script clearly needs otherwise):",
+      "Approved storyboard (AUTHORITATIVE: preserve its exact scene order and per-scene asset selection; only refine visual direction and timing):",
       ...params.storyboard.map(
         (s) =>
           `  Scene ${s.sceneNumber}: ${s.summary || "(no summary)"} — images [${s.assetIndexes.join(", ")}]`
@@ -253,7 +253,7 @@ function buildSceneDesignPrompt(
   }
 
   lines.push(
-    "Design scenes, hook, and caption from the approved speaking script, approved storyboard, and requester-provided information."
+    "Design scenes, hook, and caption from the approved speaking script, approved storyboard, and requester-provided information. Never move, add, remove, or substitute the storyboard's selected assets."
   );
   return lines.join("\n");
 }

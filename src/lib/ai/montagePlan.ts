@@ -62,7 +62,11 @@ export function inferMotionFromText(text: string | null | undefined): MotionPres
   if (has("pan", "แพน", "กวาด")) return "pan_right";
   return null;
 }
-import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerationJob";
+import type {
+  MontageSceneAsset,
+  ScenePlan,
+  StoryboardScene,
+} from "@/domain/models/VideoGenerationJob";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 
 /**
@@ -127,6 +131,40 @@ function resolveSceneIndexes(scene: ScenePlan, orderedCount: number): number[] {
 
   if (indexes.length === 0) return orderedCount > 0 ? [0] : [];
   return indexes;
+}
+
+/**
+ * Make the requester's approved Stage-1 storyboard authoritative for the
+ * concrete scene design. The vision model may improve descriptions and timing,
+ * but it must not replace the selected material or scene order.
+ *
+ * Rebuilding from the storyboard (rather than merely overwriting matching
+ * model scenes) also preserves requester-added/removed scenes. `assets` is
+ * cleared so `buildSceneMontageAssets` resolves the exact approved indexes.
+ */
+export function applyApprovedStoryboardSelections(
+  generated: ScenePlan[],
+  storyboard: StoryboardScene[] | null | undefined
+): ScenePlan[] {
+  if (!storyboard || storyboard.length === 0) return generated;
+
+  return storyboard.map((approved, index) => {
+    const modelScene = generated[index];
+    return {
+      ...(modelScene ?? {
+        sceneNumber: index + 1,
+        durationSeconds: approved.roughDurationHint ?? 1,
+        visualDescriptionThai: approved.summary,
+      }),
+      sceneNumber: index + 1,
+      visualDescriptionThai:
+        modelScene?.visualDescriptionThai ||
+        modelScene?.visualDescription ||
+        approved.summary,
+      imageIndexes: [...approved.assetIndexes],
+      assets: undefined,
+    };
+  });
 }
 
 /**
