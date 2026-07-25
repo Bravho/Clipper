@@ -19,6 +19,5 @@ export function CreditPurchaseOptions(props: Props) {
   if (native === null) {
     return <div className="h-32 animate-pulse rounded-xl bg-slate-100" />;
   }
-  return native ? <MobileStoreTopup /> : <PromptPayTopup {...props} />;
+  return native ? <MobileStoreTopup {...props} /> : <PromptPayTopup {...props} />;
 }
-

@@ -38,10 +38,13 @@ export function getKenBurnsKeyframes(motion: MotionPreset): KenBurnsKeyframes {
       return { scaleFrom: 1.0, scaleTo: 1.12, translateXFrom: 0, translateXTo: 0, translateYFrom: 0, translateYTo: 0 };
     case "ken_burns_out":
       return { scaleFrom: 1.12, scaleTo: 1.0, translateXFrom: 0, translateXTo: 0, translateYFrom: 0, translateYTo: 0 };
+    // Camera direction is opposite the oversized image's translation:
+    // moving the image right reveals its left side (camera pans left), while
+    // moving it left reveals its right side (camera pans right).
     case "pan_left":
-      return { scaleFrom: 1.08, scaleTo: 1.08, translateXFrom: 4, translateXTo: -4, translateYFrom: 0, translateYTo: 0 };
-    case "pan_right":
       return { scaleFrom: 1.08, scaleTo: 1.08, translateXFrom: -4, translateXTo: 4, translateYFrom: 0, translateYTo: 0 };
+    case "pan_right":
+      return { scaleFrom: 1.08, scaleTo: 1.08, translateXFrom: 4, translateXTo: -4, translateYFrom: 0, translateYTo: 0 };
     case "static":
     default:
       return { scaleFrom: 1.0, scaleTo: 1.0, translateXFrom: 0, translateXTo: 0, translateYFrom: 0, translateYTo: 0 };

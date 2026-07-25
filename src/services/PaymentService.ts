@@ -60,20 +60,21 @@ export class PaymentService {
     private gateway = { createPromptPayQr, createCardCheckout, getChargeStatus }
   ) {}
 
-  /**
-   * Create a PromptPay top-up. `amountBaht === creditsToAdd` (1:1).
-   */
+  /** Create a PromptPay top-up for an explicitly configured package. */
   async createTopupIntent(
     userId: string,
     amountBaht: number,
-    customerEmail: string
+    customerEmail: string,
+    creditsToAdd: number = Math.round(amountBaht)
   ): Promise<CreateTopupResult> {
     if (!Number.isFinite(amountBaht) || amountBaht <= 0) {
       throw new Error("Top-up amount must be greater than 0.");
     }
+    if (!Number.isInteger(creditsToAdd) || creditsToAdd <= 0) {
+      throw new Error("Top-up credits must be a positive integer.");
+    }
 
     const referenceNo = `RC-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const creditsToAdd = Math.round(amountBaht); // 1 credit = 1 baht
     const expiresAt = new Date(
       Date.now() + PAYMENTS_CONFIG.intentTtlMinutes * 60 * 1000
     );
@@ -114,13 +115,16 @@ export class PaymentService {
   async createCardTopupIntent(
     userId: string,
     amountBaht: number,
-    returnUrl: string
+    returnUrl: string,
+    creditsToAdd: number = Math.round(amountBaht)
   ): Promise<CreateTopupResult> {
     if (!Number.isFinite(amountBaht) || amountBaht <= 0) {
       throw new Error("Top-up amount must be greater than 0.");
     }
+    if (!Number.isInteger(creditsToAdd) || creditsToAdd <= 0) {
+      throw new Error("Top-up credits must be a positive integer.");
+    }
     const referenceNo = `RC-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const creditsToAdd = Math.round(amountBaht);
     const expiresAt = new Date(
       Date.now() + PAYMENTS_CONFIG.intentTtlMinutes * 60 * 1000
     );

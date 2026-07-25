@@ -7,20 +7,13 @@ import { Platform, PLATFORM_LABELS, PLATFORM_ASPECT_RATIOS } from "@/domain/enum
 import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
 import { Share } from "@capacitor/share";
 import { isNativeMobile } from "@/lib/mobile/platform";
+import { ReportAiContent } from "@/features/requests/components/ReportAiContent";
 
 interface Props {
   requestId: string;
   jobId: string;
   /** Per-channel drafts — used only to know which channels this clip was made for. */
   initialDrafts: ChannelPublishingDraft[];
-  /** The video the requester reviewed/approved in the previous step (primary ratio, captioned). */
-  reviewedClipUrl?: string | null;
-  /** Aspect ratio of the reviewed clip (primary channel's ratio), e.g. "9:16". */
-  reviewedRatio?: string | null;
-  /** Distribution channel labels this reviewed clip is formatted for (excludes Travy). */
-  reviewedChannelLabels?: string[];
-  /** Asset id of the reviewed (primary, captioned) clip — for the gated download. */
-  reviewedClipAssetId?: string | null;
   /** The generated (subtitled) video per distribution channel, so each channel's
    *  own clip can be played + downloaded. */
   channelVideos?: {
@@ -48,10 +41,6 @@ export function DistributionReviewPanel({
   requestId,
   jobId,
   initialDrafts,
-  reviewedClipUrl = null,
-  reviewedRatio = null,
-  reviewedChannelLabels = [],
-  reviewedClipAssetId = null,
   channelVideos = [],
   tventVideoStatus = null,
   tventVideoError = null,
@@ -199,45 +188,15 @@ export function DistributionReviewPanel({
 
   return (
     <div className="mt-6 space-y-6">
-      {/* The video the requester approved in the previous step. */}
-      {reviewedClipUrl && (
-        <Card className="border-slate-100">
-          <div className="mb-3">
-            <h3 className="text-base font-semibold text-slate-900">วิดีโอที่คุณอนุมัติแล้ว</h3>
-            <p className="mt-0.5 text-sm text-slate-500">
-              จัดรูปแบบสำหรับ:{" "}
-              <span className="font-medium text-slate-700">
-                {reviewedChannelLabels.length > 0 ? reviewedChannelLabels.join(", ") : "—"}
-              </span>
-              {reviewedRatio ? (
-                <>
-                  {" "}
-                  · อัตราส่วน{" "}
-                  <span className="font-medium text-slate-700">{reviewedRatio}</span>
-                </>
-              ) : null}
-            </p>
-          </div>
-          <div className="flex max-h-[420px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
-            <video
-              src={reviewedClipUrl}
-              controls
-              className="max-h-[400px] w-auto rounded object-contain"
-            />
-          </div>
-          <div className="mt-2">
-            {renderDownloadControl({ assetId: reviewedClipAssetId, ratio: reviewedRatio })}
-          </div>
-          {downloadError && (
-            <p className="mt-1 text-xs text-red-600">{downloadError}</p>
-          )}
-        </Card>
-      )}
-
       <Card className="border-blue-100 bg-blue-50/30">
-        <h3 className="mb-2 text-base font-semibold text-slate-900">
-          วิดีโอของคุณพร้อมแล้ว — ดาวน์โหลดเพื่อโพสต์ได้เลย
-        </h3>
+        <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <h3 className="text-base font-semibold text-slate-900">
+            วิดีโอของคุณพร้อมแล้ว — ดาวน์โหลดเพื่อโพสต์ได้เลย
+          </h3>
+          <span className="text-sm font-medium text-amber-700">
+            (วิดีโอนี้จะถูกจัดเก็บเพียง 7 วัน)
+          </span>
+        </div>
         <p className="mb-4 text-sm text-slate-500">
           เราจัดรูปแบบวิดีโอในอัตราส่วนที่เหมาะกับแต่ละช่องทางให้เรียบร้อยแล้ว
           ดาวน์โหลดไฟล์แล้วนำไปโพสต์บนช่องทางของคุณเองได้ทันที
@@ -281,6 +240,13 @@ export function DistributionReviewPanel({
               </div>
             );
           })}
+        </div>
+        {downloadError && (
+          <p className="mt-3 text-xs text-red-600">{downloadError}</p>
+        )}
+
+        <div className="mt-5 border-t border-blue-100 pt-4">
+          <ReportAiContent requestId={requestId} />
         </div>
 
         {/* Finish — closes out the request. */}

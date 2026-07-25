@@ -4,10 +4,11 @@ import { useI18n } from "@/i18n/client";
 import type { AppLocale } from "@/i18n/config";
 import { useRouter } from "next/navigation";
 
-const LOCALES: Array<{ locale: AppLocale; label: string }> = [
-  { locale: "th", label: "ภาษาไทย" },
-  { locale: "en", label: "English" },
-  { locale: "vi", label: "Tiếng Việt" },
+const LOCALES: Array<{ locale: AppLocale; label: string; showInHeader: boolean }> = [
+  { locale: "th", label: "ภาษาไทย", showInHeader: true },
+  { locale: "en", label: "English", showInHeader: true },
+  // Keep Vietnamese configured so it can be restored without rebuilding its selector behavior.
+  { locale: "vi", label: "Tiếng Việt", showInHeader: false },
 ];
 
 function FlagIcon({ locale }: { locale: AppLocale }) {
@@ -47,7 +48,7 @@ export function LanguageSelector() {
 
   return (
     <div className="flex items-center gap-1" role="group" aria-label={t("language.group")}>
-      {LOCALES.map(({ locale, label }) => (
+      {LOCALES.filter(({ showInHeader }) => showInHeader).map(({ locale, label }) => (
         <button
           key={locale}
           type="button"

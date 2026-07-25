@@ -60,17 +60,28 @@ export async function POST(request: Request) {
   try {
     const origin = new URL(request.url).origin;
     const safeReturnPath = parsed.data.returnPath ?? "/dashboard/credits";
+    const bundle = TOPUP_BUNDLES.find(
+      (candidate) => candidate.baht === parsed.data.amountBaht
+    );
+    if (!bundle) {
+      return NextResponse.json(
+        { error: "ไม่พบแพ็กเกจเครดิตที่เลือก" },
+        { status: 422 }
+      );
+    }
     const result =
       parsed.data.paymentMethod === "card"
         ? await paymentService.createCardTopupIntent(
             session.user.id,
             parsed.data.amountBaht,
-            `${origin}${safeReturnPath}`
+            `${origin}${safeReturnPath}`,
+            bundle.credits
           )
         : await paymentService.createTopupIntent(
             session.user.id,
             parsed.data.amountBaht,
-            session.user.email
+            session.user.email,
+            bundle.credits
           );
     return NextResponse.json(result);
   } catch (err) {

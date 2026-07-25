@@ -1,9 +1,9 @@
 export const MOBILE_STORE_PRODUCTS = [
-  { productId: "com.rclipper.credits.49", credits: 49 },
-  { productId: "com.rclipper.credits.98", credits: 98 },
-  { productId: "com.rclipper.credits.296", credits: 296 },
-  { productId: "com.rclipper.credits.490", credits: 490 },
-  { productId: "com.rclipper.credits.980", credits: 980 },
+  { productId: "com.rclipper.credits.50", credits: 50, priceBaht: 50 },
+  { productId: "com.rclipper.credits.100", credits: 100, priceBaht: 100 },
+  { productId: "com.rclipper.credits.200", credits: 200, priceBaht: 200 },
+  { productId: "com.rclipper.credits.500", credits: 500, priceBaht: 500 },
+  { productId: "com.rclipper.credits.1000", credits: 1000, priceBaht: 1000 },
 ] as const;
 
 export function creditsForStoreProduct(productId: string): number | null {
@@ -12,4 +12,3 @@ export function creditsForStoreProduct(productId: string): number | null {
       ?.credits ?? null
   );
 }
-

@@ -66,12 +66,17 @@ function makeService(opts?: {
 }
 
 describe("PaymentService", () => {
-  it("creates a top-up intent with 1:1 credits and a QR", async () => {
+  it("creates a top-up intent with configured credits and a QR", async () => {
     const { svc } = makeService();
-    const res = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const res = await svc.createTopupIntent(
+      "user-1",
+      50,
+      "user@example.com",
+      50
+    );
 
-    expect(res.amountBaht).toBe(49);
-    expect(res.creditsToAdd).toBe(49);
+    expect(res.amountBaht).toBe(50);
+    expect(res.creditsToAdd).toBe(50);
     expect(res.qrImageDataUrl).toContain("data:image/png");
     expect(res.referenceNo).toMatch(/^RC-/);
   });
@@ -80,12 +85,13 @@ describe("PaymentService", () => {
     const { svc, intents } = makeService();
     const res = await svc.createCardTopupIntent(
       "user-1",
-      98,
-      "https://rclipper.test/dashboard/credits"
+      100,
+      "https://rclipper.test/dashboard/credits",
+      100
     );
 
-    expect(res.amountBaht).toBe(98);
-    expect(res.creditsToAdd).toBe(98);
+    expect(res.amountBaht).toBe(100);
+    expect(res.creditsToAdd).toBe(100);
     expect(res.checkoutUrl).toContain("checkout.stripe.test");
     const stored = await intents.findById(res.intentId);
     expect(stored?.gatewayRef).toBe(`cs_${res.referenceNo}`);

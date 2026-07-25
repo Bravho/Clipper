@@ -1,0 +1,117 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "en_US",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "698D0DBE",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "100.0",
+      "familyShareable" : false,
+      "internalID" : "6794512150",
+      "localizations" : [
+        {
+          "description" : "เติม 100 เครดิตเพื่อใช้สร้างวิดีโอในแอป RClipper",
+          "displayName" : "RClipper Credits 100",
+          "locale" : "th"
+        }
+      ],
+      "productID" : "com.rclipper.credits.100",
+      "referenceName" : "RClipper Credits 100",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "1000.0",
+      "familyShareable" : false,
+      "internalID" : "6794514275",
+      "localizations" : [
+        {
+          "description" : "เติม 1000 เครดิตเพื่อใช้สร้างวิดีโอในแอป RClipper",
+          "displayName" : "RClipper Credits 1000",
+          "locale" : "th"
+        }
+      ],
+      "productID" : "com.rclipper.credits.1000",
+      "referenceName" : "RClipper Credits 1000",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "200.0",
+      "familyShareable" : false,
+      "internalID" : "6794513264",
+      "localizations" : [
+        {
+          "description" : "เติม 200 เครดิตเพื่อใช้สร้างวิดีโอในแอป RClipper",
+          "displayName" : "RClipper Credits 200",
+          "locale" : "th"
+        }
+      ],
+      "productID" : "com.rclipper.credits.200",
+      "referenceName" : "RClipper Credits 200",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "50.0",
+      "familyShareable" : false,
+      "internalID" : "6794509328",
+      "localizations" : [
+        {
+          "description" : "เติม 50 เครดิตเพื่อใช้สร้างวิดีโอในแอป RClipper",
+          "displayName" : "RClipper Credits 50",
+          "locale" : "th"
+        }
+      ],
+      "productID" : "com.rclipper.credits.50",
+      "referenceName" : "RClipper Credits 50",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "500.0",
+      "familyShareable" : false,
+      "internalID" : "6794513840",
+      "localizations" : [
+        {
+          "description" : "เติม 500 เครดิตเพื่อใช้สร้างวิดีโอในแอป RClipper",
+          "displayName" : "RClipper Credits 500",
+          "locale" : "th"
+        }
+      ],
+      "productID" : "com.rclipper.credits.500",
+      "referenceName" : "RClipper Credits 500",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6794319619",
+    "_askToBuyEnabled" : false,
+    "_billingGracePeriodEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_developerTeamID" : "F47AYL2ZMB",
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 806648233.60496795,
+    "_locale" : "th",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "THA",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

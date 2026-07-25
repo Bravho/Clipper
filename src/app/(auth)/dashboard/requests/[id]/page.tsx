@@ -35,7 +35,6 @@ import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { orderSourceAssets } from "@/lib/sourceAssets";
 import type { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
-import { ReportAiContent } from "@/features/requests/components/ReportAiContent";
 
 // Split the interactive workflow steps so a request only downloads the browser
 // code needed for its current pipeline state.
@@ -706,12 +705,6 @@ export default async function RequestDetailPage({
                 requestId={id}
                 jobId={pipelineJob.id}
                 initialDrafts={pipelineJob.publishingDrafts ?? []}
-                reviewedClipUrl={overlayPreviewUrl}
-                reviewedRatio={primaryRatio}
-                reviewedChannelLabels={(request.targetPlatforms ?? [])
-                  .filter((p) => p !== Platform.TventApp)
-                  .map((p) => PLATFORM_LABELS[p as Platform] ?? p)}
-                reviewedClipAssetId={captionedPrimaryAssetId ?? null}
                 channelVideos={channelVideos}
                 tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
                 tventVideoError={pipelineJob.tventVideoError ?? null}
@@ -935,17 +928,6 @@ export default async function RequestDetailPage({
           Status History
         </h2>
         <RequestTimeline history={statusHistory} />
-      </Card>
-
-      <Card className="mb-6">
-        <h2 className="mb-2 text-base font-semibold text-slate-900">
-          Safety and content report
-        </h2>
-        <p className="mb-4 text-sm text-slate-600">
-          Report offensive, unsafe, misleading, infringing, or non-consensual
-          AI-generated content without leaving the app.
-        </p>
-        <ReportAiContent requestId={id} />
       </Card>
 
       {/* Legal reminder */}

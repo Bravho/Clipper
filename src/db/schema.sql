@@ -173,3 +173,31 @@ CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_request_id
 
 CREATE INDEX IF NOT EXISTS idx_video_generation_jobs_current_step
   ON video_generation_jobs(current_step);
+
+-- Combined product feedback and policy-required AI content reports.
+CREATE TABLE IF NOT EXISTS ai_content_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  request_id TEXT NOT NULL,
+  report_type TEXT NOT NULL DEFAULT 'safety'
+    CHECK (report_type IN ('feedback', 'safety')),
+  reason TEXT NOT NULL CHECK (
+    reason IN (
+      'unsafe', 'sexual', 'violent', 'hate', 'privacy',
+      'impersonation', 'copyright', 'misleading', 'other',
+      'video_quality', 'scene_selection', 'motion_direction',
+      'audio_music', 'subtitles', 'aspect_ratio', 'other_feedback'
+    )
+  ),
+  rating SMALLINT CHECK (rating IS NULL OR rating BETWEEN 1 AND 5),
+  details TEXT,
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'reviewing', 'resolved', 'dismissed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_content_reports_status
+  ON ai_content_reports(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_content_reports_type_created
+  ON ai_content_reports(report_type, created_at DESC);

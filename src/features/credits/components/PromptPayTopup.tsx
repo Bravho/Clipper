@@ -39,7 +39,11 @@ export function PromptPayTopup({
   const searchParams = useSearchParams();
   const [method, setMethod] = useState<PaymentMethod>("promptpay");
   const [selected, setSelected] = useState<Bundle>(
-    TOPUP_BUNDLES.find((b) => "popular" in b && b.popular) ?? TOPUP_BUNDLES[0]
+    unlockRequestId
+      ? TOPUP_BUNDLES.find(
+          (b) => b.credits >= Math.max(1, unlockPrice - currentBalance)
+        ) ?? TOPUP_BUNDLES[0]
+      : TOPUP_BUNDLES.find((b) => "popular" in b && b.popular) ?? TOPUP_BUNDLES[0]
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

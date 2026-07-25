@@ -1416,16 +1416,18 @@ export function VideoApprovalPanel({
             })()
           )
         ) : (
-          // Once the subtitle overlay is approved/available, the non-subtitled
-          // base montage is no longer the relevant video — the captioned preview
-          // (overlayPreviewUrl) is shown instead (in its own step cards below),
-          // so suppress this generic base-video card at those steps to avoid
-          // showing the user a video without subtitles.
+          // Once the pipeline reaches subtitle review or any later channel-ratio
+          // stage, the non-subtitled base montage is obsolete. Never fall back
+          // to it—even when the captioned/watermarked preview URL is temporarily
+          // unavailable. The relevant captioned cards below either show the
+          // correct asset or their own preparing/loading state.
           videoUrl &&
           !animationApproving &&
           !finalApproving &&
           !isProcessing &&
-          !((isAwaitingOverlayApproval || isAwaitingAdditionalRatios) && overlayPreviewUrl) && (
+          !isAwaitingOverlayApproval &&
+          !isAwaitingAdditionalRatios &&
+          !isGeneratingAdditionalRatios && (
             <>
               <h2 className="mb-3 text-base font-semibold text-slate-900">
                 วิดีโอฉากที่สร้างจากรูปและคลิปของคุณ
@@ -1844,6 +1846,64 @@ export function VideoApprovalPanel({
                 const primaryClip = finalClips.find((c) => c.videoRatio === primaryRatio) || finalClips[0];
                 return (
                   <div className="space-y-4">
+                    {/* Required choice for the NEXT render. Keep this above the
+                        tall video player so it is immediately visible on mobile. */}
+                    <div className="rounded-xl border-2 border-blue-300 bg-blue-50/70 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                            ขั้นตอนถัดไป · ต้องเลือกก่อนสร้างวิดีโอ
+                          </p>
+                          <h4 className="mt-1 text-base font-semibold text-slate-900">
+                            เลือกภาษาซับไตเติ้ล
+                          </h4>
+                        </div>
+                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                          เลือกแล้ว {subtitleLangs.length}/{MAX_SUBTITLE_LANGS}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-600">
+                        เลือก 1–2 ภาษาสำหรับวิดีโอทุกช่องทางของคุณ จากนั้นกดปุ่มสร้างซับไตเติ้ลด้านล่าง
+                      </p>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {([
+                          { code: "th", label: "ไทย", short: "TH" },
+                          { code: "en", label: "อังกฤษ", short: "EN" },
+                          { code: "zh", label: "จีน", short: "ZH" },
+                        ] as const).map(({ code, label, short }) => {
+                          const selected = subtitleLangs.includes(code);
+                          const atMax = !selected && subtitleLangs.length >= MAX_SUBTITLE_LANGS;
+                          return (
+                            <button
+                              key={code}
+                              type="button"
+                              onClick={() => toggleSubtitleLang(code)}
+                              disabled={atMax}
+                              aria-pressed={selected}
+                              className={`flex min-h-16 flex-col items-center justify-center rounded-lg border px-2 py-2 text-sm font-semibold transition ${
+                                selected
+                                  ? "border-blue-500 bg-blue-600 text-white ring-2 ring-blue-200"
+                                  : atMax
+                                    ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-300"
+                                    : "border-blue-200 bg-white text-slate-700 hover:border-blue-400 hover:bg-blue-50"
+                              }`}
+                            >
+                              <span className="text-xs opacity-75">{short}</span>
+                              <span>{selected ? "✓ " : ""}{label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-xs text-slate-500">
+                        Travy ใช้ซับไตเติ้ลอังกฤษและจีนโดยอัตโนมัติ
+                      </p>
+                      {subtitleLangs.length === 0 && (
+                        <p className="mt-2 text-sm font-medium text-red-600">
+                          กรุณาเลือกอย่างน้อย 1 ภาษา
+                        </p>
+                      )}
+                    </div>
+
                     {/* Preview video at the primary channel's aspect ratio */}
                     <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[500px]">
                       <video
@@ -1852,45 +1912,6 @@ export function VideoApprovalPanel({
                         controls
                         className="max-h-[480px] w-auto object-contain rounded"
                       />
-                    </div>
-
-                    {/* Phase 7 — choose subtitle languages for YOUR channels.
-                        These seed the subtitle + motion-graphic step. (Travy
-                        always gets English + Chinese, handled automatically.) */}
-                    <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <p className="text-sm font-medium text-slate-800">เลือกภาษาซับไตเติ้ลสำหรับช่องทางของคุณ (สูงสุด 2 ภาษา)</p>
-                      <p className="text-xs text-slate-400 mt-0.5 mb-3">
-                        ใช้เป็นข้อมูลตั้งต้นในขั้นตอนเพิ่มซับไตเติ้ลและ Motion Graphic (ช่อง Travy จะมีซับไตเติ้ลอังกฤษ+จีนโดยอัตโนมัติ)
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {([
-                          { code: "th", label: "ไทย" },
-                          { code: "en", label: "อังกฤษ" },
-                          { code: "zh", label: "จีน" },
-                        ] as const).map(({ code, label }) => {
-                          const selected = subtitleLangs.includes(code);
-                          // Once two are chosen, the unselected option is locked
-                          // (max two languages on screen at once).
-                          const atMax = !selected && subtitleLangs.length >= MAX_SUBTITLE_LANGS;
-                          return (
-                            <button
-                              key={code}
-                              type="button"
-                              onClick={() => toggleSubtitleLang(code)}
-                              disabled={atMax}
-                              className={`rounded-md border px-3 py-1.5 text-sm font-medium transition ${
-                                selected
-                                  ? "border-green-300 bg-green-50 text-green-700"
-                                  : atMax
-                                    ? "border-slate-200 bg-slate-50 text-slate-300 cursor-not-allowed"
-                                    : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
-                              }`}
-                            >
-                              {selected ? "✓ " : ""}{label}
-                            </button>
-                          );
-                        })}
-                      </div>
                     </div>
 
                     {/* Phase 7 — motion-graphic template picker (default None). */}
@@ -1943,7 +1964,11 @@ export function VideoApprovalPanel({
                           loading={finalApproving}
                           disabled={finalApproving || audioRevising || subtitleLangs.length === 0}
                         >
-                          อนุมัติและเพิ่มซับไตเติ้ล/Motion Graphic →
+                          สร้างซับไตเติ้ล (
+                          {subtitleLangs
+                            .map((code) => ({ th: "ไทย", en: "อังกฤษ", zh: "จีน" })[code])
+                            .join(" + ")}
+                          ) และ Motion Graphic →
                         </Button>
                       </div>
                     </div>

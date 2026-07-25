@@ -23,11 +23,11 @@ Google Play Console:
 
 | Product ID | Credits |
 |---|---:|
-| `com.rclipper.credits.49` | 49 |
-| `com.rclipper.credits.98` | 98 |
-| `com.rclipper.credits.296` | 296 |
-| `com.rclipper.credits.490` | 490 |
-| `com.rclipper.credits.980` | 980 |
+| `com.rclipper.credits.50` | 50 |
+| `com.rclipper.credits.100` | 100 |
+| `com.rclipper.credits.200` | 200 |
+| `com.rclipper.credits.500` | 500 |
+| `com.rclipper.credits.1000` | 1000 |
 
 Product titles, descriptions, and localized prices displayed in the app come
 from StoreKit/Play Billing. Do not replace them with hard-coded prices.
@@ -91,4 +91,3 @@ so they cannot be generated safely from repository defaults.
 
 Do not submit until both stores' privacy/data-safety forms match the production
 data flows and the signed release builds pass these tests.
-

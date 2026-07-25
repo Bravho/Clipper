@@ -1,7 +1,7 @@
 /**
  * Credit / pricing configuration.
  *
- * Credit unit: **1 credit = 1 THB** (฿). Top-ups are 1:1 — pay ฿100, get 100 credits.
+ * Credit unit: **1 credit = 1 THB** (฿). Top-ups are 1:1.
  *
  * Launch pricing: the full list price of a request is 98 credits (฿98). During the
  * launch window a 50% "founding member" discount applies, so the effective charge
@@ -32,15 +32,16 @@ export const CREDITS_CONFIG = {
 
 /**
  * Prepaid top-up bundles offered at checkout / first-step top-up.
- * `credits === baht` (1:1). Bundling amortises any per-transaction gateway minimum
- * and reduces how often a user has to scan a PromptPay QR.
+ * `credits` is the wallet amount granted; `baht` is the amount charged.
+ * Bundling amortises any per-transaction gateway minimum and reduces how often a
+ * user has to scan a PromptPay QR.
  */
 export const TOPUP_BUNDLES = [
-  { credits: 49, baht: 49, label: "1 คลิป" },
-  { credits: 98, baht: 98, label: "2 คลิป" },
-  { credits: 296, baht: 296, label: "6 คลิป" },
-  { credits: 490, baht: 490, label: "10 คลิป", popular: true },
-  { credits: 980, baht: 980, label: "20 คลิป" },
+  { credits: 50, baht: 50, label: "1 คลิป" },
+  { credits: 100, baht: 100, label: "2 คลิป" },
+  { credits: 200, baht: 200, label: "4 คลิป" },
+  { credits: 500, baht: 500, label: "10 คลิป", popular: true },
+  { credits: 1000, baht: 1000, label: "20 คลิป" },
 ] as const;
 
 /**
