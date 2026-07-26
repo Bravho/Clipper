@@ -111,7 +111,7 @@ describe("PaymentService", () => {
 
   it("is idempotent — a re-delivered webhook does not double-credit", async () => {
     const { svc, creditCalls } = makeService({ paid: true });
-    const intent = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const intent = await svc.createTopupIntent("user-1", 50, "user@example.com");
 
     await svc.settleFromWebhook(`pi_${intent.referenceNo}`);
     await svc.settleFromWebhook(`pi_${intent.referenceNo}`); // duplicate delivery
@@ -122,7 +122,7 @@ describe("PaymentService", () => {
 
   it("marks Failed and does not credit when the gateway reports unpaid", async () => {
     const { svc, creditCalls } = makeService({ paid: false, failed: true });
-    const intent = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const intent = await svc.createTopupIntent("user-1", 50, "user@example.com");
 
     const settled = await svc.settleFromWebhook(`pi_${intent.referenceNo}`);
 
@@ -132,7 +132,7 @@ describe("PaymentService", () => {
 
   it("rejects when the gateway amount does not match the intent", async () => {
     const { svc, creditCalls } = makeService({ paid: true, gatewayAmount: 10 });
-    const intent = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const intent = await svc.createTopupIntent("user-1", 50, "user@example.com");
 
     const settled = await svc.settleFromWebhook(`pi_${intent.referenceNo}`);
 
@@ -161,7 +161,7 @@ describe("PaymentService", () => {
 
   it("poll backstop leaves an unpaid intent Pending — never marks it Failed", async () => {
     const { svc, creditCalls } = makeService({ paid: false });
-    const intent = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const intent = await svc.createTopupIntent("user-1", 50, "user@example.com");
 
     const res = await svc.pollIntentStatus(intent.intentId, "user-1");
 
@@ -171,7 +171,7 @@ describe("PaymentService", () => {
 
   it("poll backstop throttles gateway checks per intent", async () => {
     const { svc, gatewayStats } = makeService({ paid: false });
-    const intent = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const intent = await svc.createTopupIntent("user-1", 50, "user@example.com");
 
     // Three rapid polls within the throttle window → only ONE gateway check.
     await svc.pollIntentStatus(intent.intentId, "user-1");
@@ -183,7 +183,7 @@ describe("PaymentService", () => {
 
   it("returns null for a missing intent or the wrong owner", async () => {
     const { svc } = makeService({ paid: true });
-    const intent = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const intent = await svc.createTopupIntent("user-1", 50, "user@example.com");
 
     expect(await svc.pollIntentStatus("does-not-exist", "user-1")).toBeNull();
     expect(await svc.pollIntentStatus(intent.intentId, "someone-else")).toBeNull();
@@ -191,7 +191,7 @@ describe("PaymentService", () => {
 
   it("concurrent webhook + poll credit the wallet only once", async () => {
     const { svc, creditCalls } = makeService({ paid: true });
-    const intent = await svc.createTopupIntent("user-1", 49, "user@example.com");
+    const intent = await svc.createTopupIntent("user-1", 50, "user@example.com");
 
     await Promise.all([
       svc.settleFromWebhook(`pi_${intent.referenceNo}`),

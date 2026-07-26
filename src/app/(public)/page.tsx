@@ -74,7 +74,7 @@ export default async function HomePage() {
             { value: t("home.statSpeedValue"), label: t("home.statSpeed") },
             { value: t("home.statLanguagesValue"), label: t("home.statLanguages") },
             { value: "Travy", label: t("home.statTravy") },
-            { value: "฿49", label: t("home.statPrice") },
+            { value: "฿50", label: t("home.statPrice") },
           ].map((s) => (
             <div key={s.label} className="flex flex-col gap-0.5">
               <span className="text-xl font-bold text-white">{s.value}</span>

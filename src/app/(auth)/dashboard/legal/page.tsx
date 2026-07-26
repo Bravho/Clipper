@@ -33,7 +33,7 @@ export default async function LegalPage() {
         items={[
           "RClipper is a managed short-video production and distribution service.",
           "You may use the platform to submit clip requests and receive delivered content.",
-          "Eligible first trial videos are free to generate and preview with a watermark; downloading the unwatermarked version currently costs 49 credits.",
+          "Eligible first trial videos are free to generate and preview with a watermark; downloading the unwatermarked version currently costs 50 credits.",
           "Your account, credits, and requests are personal and non-transferable.",
           "We reserve the right to reject any request that violates these terms.",
           "Service timelines are targets, not guarantees. Our standard aim is to complete accepted requests within 2 working days of receiving complete and usable materials.",

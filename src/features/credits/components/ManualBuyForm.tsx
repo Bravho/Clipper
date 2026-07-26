@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/Button";
 
 export function ManualBuyForm() {
   const router = useRouter();
-  const [creditsAmount, setCreditsAmount] = useState<string>("49");
-  const [pricePaidBaht, setPricePaidBaht] = useState<string>("49");
+  const [creditsAmount, setCreditsAmount] = useState<string>("50");
+  const [pricePaidBaht, setPricePaidBaht] = useState<string>("50");
   const [reference, setReference] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);

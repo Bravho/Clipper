@@ -148,6 +148,61 @@ function generateVideoThumbnail(file: File): Promise<string | null> {
   });
 }
 
+/**
+ * Client-side multipart part size — MUST stay ≤ the ~8–15 MB single-request cap
+ * imposed by the HTTPS-inspecting network intermediary (see lib/spaces.ts) and
+ * ≥ the 5 MB S3 minimum part size. Files larger than this upload in chunks;
+ * smaller ones use a single presigned PUT. The server echoes its own partSize on
+ * initiate, which is what actually drives slicing — this is only the threshold.
+ */
+const MULTIPART_THRESHOLD_BYTES = 5 * 1024 * 1024;
+
+/**
+ * PUT a Blob (a whole file, or one multipart chunk) to a presigned Spaces URL via
+ * XMLHttpRequest so we can report real upload progress (fetch() exposes no
+ * upload-progress events). Resolves with the response ETag (needed to complete a
+ * multipart upload; the bucket CORS rule exposes it), rejects otherwise.
+ * `onProgress` receives (loadedBytes, totalBytes) so callers can aggregate across
+ * parts. A network/CORS/CSP block surfaces as xhr.onerror with an empty status,
+ * which we translate to the same "Failed to fetch" wording the diagnostic wrapper
+ * labels. `contentType` is set only for single-file PUTs (whose presign signs it);
+ * multipart part URLs are not signed with a content type, so it's omitted there.
+ */
+function putBlobWithProgress(
+  url: string,
+  blob: Blob,
+  onProgress: (loaded: number, total: number) => void,
+  contentType?: string
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url, true);
+    if (contentType) xhr.setRequestHeader("Content-Type", contentType);
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) onProgress(ev.loaded, ev.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(blob.size, blob.size);
+        resolve(xhr.getResponseHeader("ETag") ?? "");
+      } else {
+        reject(new Error(`upload HTTP ${xhr.status}`));
+      }
+    };
+    // Empty-status onerror is the browser blocking the request (CORS/CSP/network)
+    // — the XHR equivalent of fetch()'s "Failed to fetch".
+    xhr.onerror = () => reject(new Error("Failed to fetch"));
+    xhr.ontimeout = () => reject(new Error("upload timeout"));
+    xhr.send(blob);
+  });
+}
+
+type UploadStage = "pending" | "uploading" | "done" | "error";
+interface UploadItemProgress {
+  pct: number;
+  stage: UploadStage;
+}
+
 type SubmitPhase = "form" | "submitting";
 
 export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnly = false, creditCost, onCreditParamsChange }: NewRequestFormProps) {
@@ -162,6 +217,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const [isDraftSaving, setIsDraftSaving] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [phase, setPhase] = useState<SubmitPhase>("form");
+  const [uploadProgress, setUploadProgress] = useState<Record<string, UploadItemProgress>>({});
   const [mapOpen, setMapOpen] = useState(false);
 
   const {
@@ -358,10 +414,38 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       return;
     }
 
+    // Diagnostic wrapper: fetch() throwing (as opposed to returning a non-ok
+    // response) means the request never completed — a connection reset, CORS,
+    // CSP, or mixed-content block, NOT an HTTP error. The raw message is the
+    // useless "Failed to fetch"; annotate it with the step and target host so
+    // the on-screen error (and console) name exactly which request died.
+    const netFetch = async (
+      label: string,
+      url: string,
+      init: RequestInit
+    ): Promise<Response> => {
+      try {
+        return await fetch(url, init);
+      } catch (e) {
+        let host = url;
+        try {
+          host = new URL(url, window.location.origin).host;
+        } catch {
+          /* keep raw url */
+        }
+        const detail = e instanceof Error ? e.message : String(e);
+        console.error(`[submit] ${label} → ${host} threw:`, e);
+        throw new Error(
+          `เชื่อมต่อไม่สำเร็จที่ขั้นตอน "${label}" (${host}: ${detail}). ` +
+            `การเชื่อมต่อถูกบล็อกหรือขาดหาย ไม่ใช่ข้อผิดพลาดจากเซิร์ฟเวอร์`
+        );
+      }
+    };
+
     try {
       setPhase("submitting");
 
-      const requestRes = await fetch("/api/requests", {
+      const requestRes = await netFetch("สร้างคำขอ", "/api/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -378,11 +462,49 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
       const { requestId } = await requestRes.json();
 
-      const failedUploads: string[] = [];
-      for (const item of pendingFiles.filter((f) => !f.error)) {
-        const metaRes = await fetch(`/api/uploads/${requestId}`, {
+      const uploadItems = pendingFiles.filter((f) => !f.error);
+      // Seed the progress UI so every file shows a 0% bar the moment uploads begin.
+      setUploadProgress(
+        Object.fromEntries(uploadItems.map((i) => [i.id, { pct: 0, stage: "pending" as UploadStage }]))
+      );
+      const setItem = (id: string, patch: Partial<UploadItemProgress>) =>
+        setUploadProgress((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+
+      const jsonHeaders = { "Content-Type": "application/json" };
+      const hostOf = (u: string) => {
+        try {
+          return new URL(u, window.location.origin).host;
+        } catch {
+          return u;
+        }
+      };
+      // PUT one blob (whole file or one part), annotating a thrown network error
+      // with the target host so the on-screen failure names it (e.g. Spaces).
+      const putPart = async (
+        url: string,
+        blob: Blob,
+        onProgress: (loaded: number, total: number) => void,
+        contentType?: string
+      ): Promise<string> => {
+        try {
+          return await putBlobWithProgress(url, blob, onProgress, contentType);
+        } catch (e) {
+          const detail = e instanceof Error ? e.message : String(e);
+          throw new Error(`${hostOf(url)}: ${detail}`);
+        }
+      };
+      const mpAction = (label: string, payload: Record<string, unknown>) =>
+        netFetch(label, `/api/uploads/${requestId}/multipart`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: jsonHeaders,
+          body: JSON.stringify(payload),
+        });
+
+      // Small file → one presigned PUT.
+      const uploadSingle = async (item: PendingFile): Promise<string> => {
+        const metaRes = await netFetch("ขอที่อยู่อัปโหลด", `/api/uploads/${requestId}`, {
+          method: "POST",
+          headers: jsonHeaders,
           body: JSON.stringify({
             fileName: item.file.name,
             fileSizeBytes: item.file.size,
@@ -391,19 +513,109 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         });
         if (!metaRes.ok) {
           const body = await metaRes.json().catch(() => ({}));
-          failedUploads.push(`${item.file.name} (${body.error ?? `error ${metaRes.status}`})`);
-          continue;
+          throw new Error(body.error ?? `error ${metaRes.status}`);
         }
-
         const { assetId, presignedUrl } = await metaRes.json();
+        await putPart(
+          presignedUrl,
+          item.file,
+          (loaded, total) =>
+            setItem(item.id, { pct: Math.min(99, Math.round((loaded / total) * 100)) }),
+          item.file.type
+        );
+        return assetId;
+      };
 
-        const uploadRes = await fetch(presignedUrl, {
-          method: "PUT",
-          headers: { "Content-Type": item.file.type },
-          body: item.file,
+      // Large file → chunked multipart. Each part is its own ≤partSize PUT, so no
+      // single request trips the intermediary's ~8–15 MB body-size cap that made
+      // a whole-file PUT fail with "Failed to fetch".
+      const uploadMultipart = async (item: PendingFile): Promise<string> => {
+        const initRes = await mpAction("เริ่มอัปโหลด", {
+          action: "initiate",
+          fileName: item.file.name,
+          fileSizeBytes: item.file.size,
+          mimeType: item.file.type,
         });
-        if (!uploadRes.ok) {
-          failedUploads.push(`${item.file.name} (อัปโหลดไม่สำเร็จ)`);
+        if (!initRes.ok) {
+          const body = await initRes.json().catch(() => ({}));
+          throw new Error(body.error ?? `error ${initRes.status}`);
+        }
+        const { assetId, key, uploadId, partSize } = await initRes.json();
+        const abort = () =>
+          fetch(`/api/uploads/${requestId}/multipart`, {
+            method: "POST",
+            headers: jsonHeaders,
+            body: JSON.stringify({ action: "abort", key, uploadId }),
+          }).catch(() => {});
+
+        try {
+          const partCount = Math.max(1, Math.ceil(item.file.size / partSize));
+          const signRes = await mpAction("ขอที่อยู่อัปโหลด", {
+            action: "sign",
+            key,
+            uploadId,
+            partCount,
+          });
+          if (!signRes.ok) {
+            const body = await signRes.json().catch(() => ({}));
+            throw new Error(body.error ?? `error ${signRes.status}`);
+          }
+          const { parts: partUrls } = (await signRes.json()) as {
+            parts: { partNumber: number; url: string }[];
+          };
+
+          const etags: { PartNumber: number; ETag: string }[] = [];
+          let uploadedBytes = 0;
+          for (const { partNumber, url } of partUrls) {
+            const start = (partNumber - 1) * partSize;
+            const chunk = item.file.slice(start, Math.min(start + partSize, item.file.size));
+            const etag = await putPart(url, chunk, (loaded) =>
+              setItem(item.id, {
+                pct: Math.min(99, Math.round(((uploadedBytes + loaded) / item.file.size) * 100)),
+              })
+            );
+            if (!etag) throw new Error(`ไม่ได้รับ ETag ของส่วนที่ ${partNumber}`);
+            etags.push({ PartNumber: partNumber, ETag: etag });
+            uploadedBytes += chunk.size;
+          }
+
+          const completeRes = await mpAction("รวมไฟล์", {
+            action: "complete",
+            key,
+            uploadId,
+            parts: etags,
+          });
+          if (!completeRes.ok) {
+            const body = await completeRes.json().catch(() => ({}));
+            throw new Error(body.error ?? `error ${completeRes.status}`);
+          }
+          return assetId;
+        } catch (e) {
+          await abort();
+          throw e;
+        }
+      };
+
+      const failedUploads: string[] = [];
+      for (const item of uploadItems) {
+        console.log(
+          `[submit] uploading ${item.file.name} (${(item.file.size / 1e6).toFixed(1)} MB, ${
+            item.file.size > MULTIPART_THRESHOLD_BYTES ? "multipart" : "single"
+          })`
+        );
+        setItem(item.id, { stage: "uploading", pct: 0 });
+
+        let assetId: string;
+        try {
+          assetId =
+            item.file.size > MULTIPART_THRESHOLD_BYTES
+              ? await uploadMultipart(item)
+              : await uploadSingle(item);
+        } catch (uploadErr) {
+          const detail = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+          console.error(`[submit] upload ${item.file.name} failed:`, uploadErr);
+          setItem(item.id, { stage: "error" });
+          failedUploads.push(`${item.file.name} (อัปโหลดไม่สำเร็จ — ${detail})`);
           continue;
         }
 
@@ -414,15 +626,18 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         const posterDataUrl =
           typeof poster === "string" && poster.startsWith("data:image/") ? poster : undefined;
 
-        const confirmRes = await fetch(`/api/uploads/${requestId}/confirm`, {
+        const confirmRes = await netFetch("ยืนยันไฟล์", `/api/uploads/${requestId}/confirm`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: jsonHeaders,
           body: JSON.stringify({ assetId, posterDataUrl }),
         });
         if (!confirmRes.ok) {
           const body = await confirmRes.json().catch(() => ({}));
+          setItem(item.id, { stage: "error" });
           failedUploads.push(`${item.file.name} (${body.error ?? "ยืนยันไฟล์ไม่สำเร็จ"})`);
+          continue;
         }
+        setItem(item.id, { stage: "done", pct: 100 });
       }
 
       // Surface any rejected files instead of silently dropping them, so the
@@ -435,7 +650,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         return;
       }
 
-      const submitRes = await fetch(`/api/requests/${requestId}/submit`, {
+      const submitRes = await netFetch("ส่งคำขอ", `/api/requests/${requestId}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ creditConfirmed: true, rightsConfirmed: true }),
@@ -449,6 +664,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       router.push(requestDetailPath(requestId));
     } catch (err) {
       setPhase("form");
+      setUploadProgress({});
       setSubmitError(
         err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง"
       );
@@ -478,6 +694,59 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const insufficientCredits = !trialAvailable && creditBalance < COST;
 
   if (phase === "submitting") {
+    const progressEntries = pendingFiles.filter((f) => uploadProgress[f.id]);
+    const uploadsInProgress =
+      progressEntries.length > 0 &&
+      progressEntries.some((f) => {
+        const stage = uploadProgress[f.id]?.stage;
+        return stage === "pending" || stage === "uploading";
+      });
+
+    // While files are still uploading, show a per-file progress list. Once every
+    // file has uploaded (or there were none), fall through to the AI spinner.
+    if (uploadsInProgress) {
+      const doneCount = progressEntries.filter((f) => uploadProgress[f.id]?.stage === "done").length;
+      return (
+        <div className="flex flex-col gap-5 py-10">
+          <div className="text-center">
+            <p className="text-lg font-semibold text-slate-800">กำลังอัปโหลดไฟล์ของคุณ</p>
+            <p className="mt-1 text-sm text-slate-500">
+              อัปโหลดแล้ว {doneCount}/{progressEntries.length} ไฟล์ · กรุณาอย่าปิดหน้านี้
+            </p>
+          </div>
+          <ul className="flex flex-col gap-3">
+            {progressEntries.map((f) => {
+              const p = uploadProgress[f.id];
+              const isError = p.stage === "error";
+              const isDone = p.stage === "done";
+              return (
+                <li key={f.id} className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="truncate text-slate-700">{f.file.name}</span>
+                    <span
+                      className={`tabular-nums ${
+                        isError ? "text-red-600" : isDone ? "text-green-600" : "text-slate-500"
+                      }`}
+                    >
+                      {isError ? "ผิดพลาด" : `${p.pct}%`}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className={`h-full rounded-full transition-all duration-200 ${
+                        isError ? "bg-red-500" : isDone ? "bg-green-500" : "bg-blue-600"
+                      }`}
+                      style={{ width: `${isError ? 100 : p.pct}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center justify-center gap-6 py-24 text-center">
         <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />

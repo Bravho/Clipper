@@ -3,9 +3,10 @@
  *
  * Credit unit: **1 credit = 1 THB** (฿). Top-ups are 1:1.
  *
- * Launch pricing: the full list price of a request is 98 credits (฿98). During the
+ * Launch pricing: the full list price of a request is 100 credits (฿100). During the
  * launch window a 50% "founding member" discount applies, so the effective charge
- * is 49 credits (฿49). No free signup credits are granted at launch.
+ * is 50 credits (฿50), matching the smallest top-up bundle. No free signup credits
+ * are granted at launch.
  *
  * `REQUEST_COST_CREDITS` is the *effective* price charged at submission and is what
  * the rest of the app reads. Toggle `LAUNCH_DISCOUNT_ACTIVE` to end the promotion
@@ -15,9 +16,9 @@ export const CREDITS_CONFIG = {
   /** No free credits granted on signup at launch. */
   SIGNUP_BONUS_CREDITS: 0,
   /** Full (pre-discount) list price of one request, in credits (= ฿). */
-  REQUEST_FULL_PRICE_CREDITS: 98,
+  REQUEST_FULL_PRICE_CREDITS: 100,
   /** Discounted launch price of one request, in credits (= ฿). */
-  REQUEST_LAUNCH_PRICE_CREDITS: 49,
+  REQUEST_LAUNCH_PRICE_CREDITS: 50,
   /** When true, requests are charged the launch price; otherwise the full price. */
   LAUNCH_DISCOUNT_ACTIVE: true,
   /** Effective price charged at submission. Derived from the flag above. */

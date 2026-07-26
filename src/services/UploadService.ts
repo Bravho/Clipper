@@ -1,8 +1,12 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { execFile } from "child_process";
@@ -95,6 +99,26 @@ export interface UploadValidationResult {
 
 /** Presigned URL expiry in seconds (15 minutes). */
 const PRESIGNED_URL_TTL = 15 * 60;
+
+/**
+ * Multipart part size for browser uploads: 5 MB — the S3 minimum part size and,
+ * critically, safely under the ~8–15 MB single-request-body cap imposed by the
+ * HTTPS-inspecting network intermediary documented in lib/spaces.ts. Each part
+ * is its own ≤5 MB PUT that clears the cap, which is why a large video that
+ * fails as one big PUT succeeds when chunked. The browser slices the file into
+ * ceil(size / PART) parts; the server signs part numbers 1..N.
+ */
+export const MULTIPART_PART_SIZE = 5 * 1024 * 1024;
+
+/** Files larger than this use multipart; smaller ones use a single presigned PUT. */
+export const MULTIPART_THRESHOLD = MULTIPART_PART_SIZE;
+
+export interface MultipartInitResult {
+  assetId: string;
+  key: string;
+  uploadId: string;
+  partSize: number;
+}
 
 export class UploadService {
   /**
@@ -246,6 +270,125 @@ export class UploadService {
     });
 
     return { assetId: asset.id, presignedUrl, storageKey: key };
+  }
+
+  /**
+   * Multipart step 1 — initiate.
+   *
+   * Creates the tmp/ multipart upload on Spaces and the Pending asset record
+   * (same shape as createPresignedUpload). The browser then PUTs each ≤5 MB part
+   * to a presigned part URL, calls `signUploadParts` for those URLs, and finally
+   * `completeMultipartUpload`. After completion the object sits at the tmp/ key
+   * exactly as a single PUT would leave it, so the existing confirm flow
+   * (`confirmUpload`) applies unchanged.
+   */
+  async createMultipartUpload(input: {
+    requestId: string;
+    userId: string;
+    fileName: string;
+    fileSizeBytes: number;
+    mimeType: string;
+  }): Promise<MultipartInitResult> {
+    const key = buildTmpKey(input.userId, input.requestId, input.fileName);
+
+    const created = await spacesClient.send(
+      new CreateMultipartUploadCommand({
+        Bucket: SPACES_BUCKET,
+        Key: key,
+        ContentType: input.mimeType,
+      })
+    );
+    if (!created.UploadId) {
+      throw new Error("Spaces did not return an UploadId for the multipart upload.");
+    }
+
+    const isVideo = ACCEPTED_VIDEO_MIME_TYPES.includes(
+      input.mimeType as (typeof ACCEPTED_VIDEO_MIME_TYPES)[number]
+    );
+    const assetType = isVideo ? AssetType.Video : AssetType.Image;
+
+    const scheduledDeletionAt = new Date();
+    scheduledDeletionAt.setDate(scheduledDeletionAt.getDate() + 90);
+
+    const asset = await uploadedAssetRepository.create({
+      requestId: input.requestId,
+      userId: input.userId,
+      fileName: input.fileName,
+      assetType,
+      fileSizeBytes: input.fileSizeBytes,
+      mimeType: input.mimeType,
+      storageKey: key,
+      storageUrl: "",
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Pending,
+      scheduledDeletionAt,
+    });
+
+    return { assetId: asset.id, key, uploadId: created.UploadId, partSize: MULTIPART_PART_SIZE };
+  }
+
+  /**
+   * Multipart step 2 — sign N part-upload URLs. Each is a presigned PUT for one
+   * UploadPart. The browser PUTs a ≤5 MB slice to each and reads the returned
+   * ETag (exposed via the bucket CORS ExposeHeaders rule) to pass to complete.
+   */
+  async signUploadParts(input: {
+    key: string;
+    uploadId: string;
+    partCount: number;
+  }): Promise<{ partNumber: number; url: string }[]> {
+    const urls: { partNumber: number; url: string }[] = [];
+    for (let partNumber = 1; partNumber <= input.partCount; partNumber++) {
+      const url = await getSignedUrl(
+        spacesClient,
+        new UploadPartCommand({
+          Bucket: SPACES_BUCKET,
+          Key: input.key,
+          UploadId: input.uploadId,
+          PartNumber: partNumber,
+        }),
+        { expiresIn: PRESIGNED_URL_TTL }
+      );
+      urls.push({ partNumber, url });
+    }
+    return urls;
+  }
+
+  /**
+   * Multipart step 3 — complete. Assembles the uploaded parts into the final
+   * tmp/ object. Parts are sorted by number as S3/Spaces requires.
+   */
+  async completeMultipartUpload(input: {
+    key: string;
+    uploadId: string;
+    parts: { PartNumber: number; ETag: string }[];
+  }): Promise<void> {
+    const parts = [...input.parts].sort((a, b) => a.PartNumber - b.PartNumber);
+    await spacesClient.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: SPACES_BUCKET,
+        Key: input.key,
+        UploadId: input.uploadId,
+        MultipartUpload: { Parts: parts },
+      })
+    );
+  }
+
+  /**
+   * Multipart cleanup — abort a dangling upload (best-effort) so a failed or
+   * cancelled upload leaves no half-assembled object accruing storage.
+   */
+  async abortMultipartUpload(input: { key: string; uploadId: string }): Promise<void> {
+    await spacesClient
+      .send(
+        new AbortMultipartUploadCommand({
+          Bucket: SPACES_BUCKET,
+          Key: input.key,
+          UploadId: input.uploadId,
+        })
+      )
+      .catch(() => {});
   }
 
   /**

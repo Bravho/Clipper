@@ -30,7 +30,7 @@ function makeRequest(overrides: Partial<ClipRequest> = {}): ClipRequest {
     priceBaht: 500,
     creditsUsed: 1,
     discountBaht: 10,
-    amountPaidBaht: 490,
+    amountPaidBaht: 500,
     revisionCount: 0,
     creditsCost: 10,
     submittedAt: null,

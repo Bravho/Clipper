@@ -44,7 +44,7 @@ export default function TermsPage() {
               If the interface identifies a request as an eligible free trial,
               creating and previewing its watermarked video does not consume credits.
               Downloading the unwatermarked version costs the number of credits shown
-              beside the request confirmation and download control (currently 49
+              beside the request confirmation and download control (currently 50
               credits). For a non-trial request, the applicable credit charge and
               charging point are shown before submission. Credits are personal,
               non-transferable, and have no cash value except where applicable law

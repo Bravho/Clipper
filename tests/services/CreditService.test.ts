@@ -96,9 +96,9 @@ describe("CreditService via MockCreditWalletRepository", () => {
     expect(CREDITS_CONFIG.SIGNUP_BONUS_CREDITS).toBe(0);
   });
 
-  it("request costs 49 credits (launch) and 1 credit = 1 baht", () => {
-    expect(CREDITS_CONFIG.REQUEST_COST_CREDITS).toBe(49);
-    expect(CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS).toBe(98);
+  it("request costs 50 credits (launch) and 1 credit = 1 baht", () => {
+    expect(CREDITS_CONFIG.REQUEST_COST_CREDITS).toBe(50);
+    expect(CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS).toBe(100);
     expect(CREDITS_CONFIG.CREDIT_TO_BAHT_VALUE).toBe(1);
   });
 
