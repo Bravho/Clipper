@@ -30,8 +30,8 @@ export default function DeleteAccountRequestPage() {
           Email support from the address registered to your account using the
           subject “Account deletion request”. We may verify account ownership.
         </p>
-        <a href="mailto:support@rclipper.com?subject=Account%20deletion%20request" className="mt-4 inline-block text-sm font-medium text-blue-700 underline">
-          support@rclipper.com
+        <a href="mailto:pillarth@gmail.com?subject=Account%20deletion%20request" className="mt-4 inline-block text-sm font-medium text-blue-700 underline">
+          pillarth@gmail.com
         </a>
       </Card>
       <p className="mt-6 text-sm text-slate-500">
@@ -42,4 +42,3 @@ export default function DeleteAccountRequestPage() {
     </div>
   );
 }
-

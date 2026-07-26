@@ -29,8 +29,8 @@ export default function PrivacyPage() {
             </h2>
             <p>
               RClipper collects account and authentication information, request
-              briefs, uploaded images and videos, voice recordings, user-entered
-              text, place names, addresses, selected map locations or coordinates,
+              briefs, uploaded images and videos (including audio contained in those
+              videos), user-entered text, place names, addresses, selected map locations or coordinates,
               categories, production choices, approval history, credit and payment
               records, support communications, and technical information needed to
               operate and secure the service. Uploaded media and location information
@@ -150,8 +150,8 @@ export default function PrivacyPage() {
             </p>
             <p>
               Privacy, rights, content-reporting, and removal requests may be sent to{" "}
-              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
-                support@rclipper.com
+              <a href="mailto:pillarth@gmail.com" className="text-blue-700 underline">
+                pillarth@gmail.com
               </a>
               . Please identify the relevant request or published Travy video.
             </p>
@@ -166,8 +166,8 @@ export default function PrivacyPage() {
               Material changes to ownership, data use, or publication rights will be
               presented for renewed acceptance where required. Questions may be sent
               to{" "}
-              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
-                support@rclipper.com
+              <a href="mailto:pillarth@gmail.com" className="text-blue-700 underline">
+                pillarth@gmail.com
               </a>
               .
             </p>

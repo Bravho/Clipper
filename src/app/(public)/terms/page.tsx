@@ -124,8 +124,8 @@ export default function TermsPage() {
               for quality, safety, legal, operational, or policy reasons. Requests to
               report rights violations, privacy concerns, or objectionable content
               may be sent to{" "}
-              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
-                support@rclipper.com
+              <a href="mailto:pillarth@gmail.com" className="text-blue-700 underline">
+                pillarth@gmail.com
               </a>
               . A removal request will be assessed under applicable law and the
               rights of affected people; ownership of RClipper&apos;s production
@@ -160,8 +160,8 @@ export default function TermsPage() {
               providers, and Travy publication. Material changes to ownership or
               publication rights will be presented for renewed acceptance where
               required. Questions may be sent to{" "}
-              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
-                support@rclipper.com
+              <a href="mailto:pillarth@gmail.com" className="text-blue-700 underline">
+                pillarth@gmail.com
               </a>
               .
             </p>

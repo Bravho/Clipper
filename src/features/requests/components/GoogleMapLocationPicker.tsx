@@ -142,7 +142,6 @@ export function GoogleMapLocationPicker({
     initialCoordinates ?? null
   );
   const [loading, setLoading] = useState(false);
-  const [locating, setLocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -267,35 +266,6 @@ export function GoogleMapLocationPicker({
     };
   }, []);
 
-  const useCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setError("อุปกรณ์นี้ไม่รองรับการระบุตำแหน่ง");
-      return;
-    }
-    setLocating(true);
-    setError(null);
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        const next = { latitude: coords.latitude, longitude: coords.longitude };
-        setSelected(next);
-        if (markerRef.current && mapRef.current) {
-          markerRef.current.map = mapRef.current;
-        }
-        if (markerRef.current) {
-          markerRef.current.position = { lat: next.latitude, lng: next.longitude };
-        }
-        mapRef.current?.setCenter({ lat: next.latitude, lng: next.longitude });
-        mapRef.current?.setZoom(17);
-        setLocating(false);
-      },
-      () => {
-        setError("ไม่สามารถเข้าถึงตำแหน่งปัจจุบันได้ กรุณาเลือกบนแผนที่");
-        setLocating(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-    );
-  };
-
   return (
     <div
       className={
@@ -341,11 +311,7 @@ export function GoogleMapLocationPicker({
             : t("map.notSelected")}
         </p>
 
-        <div className="mt-5 flex flex-wrap justify-between gap-3">
-          <Button type="button" variant="outline" onClick={useCurrentLocation} disabled={locating || loading}>
-            {locating ? t("map.locating") : t("map.current")}
-          </Button>
-          <div className="flex gap-3">
+        <div className="mt-5 flex justify-end gap-3">
             <Button type="button" variant="outline" onClick={onClose}>{t("request.cancel")}</Button>
             <Button
               type="button"
@@ -354,7 +320,6 @@ export function GoogleMapLocationPicker({
             >
               {t("map.confirm")}
             </Button>
-          </div>
         </div>
       </div>
     </div>

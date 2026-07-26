@@ -42,7 +42,7 @@ export default function DashboardLayout({
         <div className="border-t border-slate-100 p-4">
           <p className="text-xs text-slate-400">
             {t("sidebar.help")}{" "}
-            <a href="mailto:support@rclipper.com" className="text-blue-600 hover:underline">
+            <a href="mailto:pillarth@gmail.com" className="text-blue-600 hover:underline">
               {t("sidebar.contact")}
             </a>
           </p>

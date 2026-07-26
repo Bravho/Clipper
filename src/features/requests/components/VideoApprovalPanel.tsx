@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import type { MontageSceneAsset, ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
@@ -31,59 +31,6 @@ import {
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).split(",")[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-function base64ToBlob(b64: string, mimeType: string): Blob {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType });
-}
-
-/** Encodes raw mono PCM chunks captured from the Web Audio API into a WAV blob. */
-function encodePcmToWav(chunks: Float32Array[], sampleRate: number): Blob {
-  const numSamples = chunks.reduce((sum, c) => sum + c.length, 0);
-  const bytesPerSample = 2;
-  const dataLength = numSamples * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataLength);
-  const view = new DataView(buffer);
-
-  const write = (offset: number, chars: string) =>
-    chars.split("").forEach((c, i) => view.setUint8(offset + i, c.charCodeAt(0)));
-
-  write(0, "RIFF");
-  view.setUint32(4, 36 + dataLength, true);
-  write(8, "WAVE");
-  write(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);   // PCM
-  view.setUint16(22, 1, true);   // mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, 16, true);
-  write(36, "data");
-  view.setUint32(40, dataLength, true);
-
-  let offset = 44;
-  for (const chunk of chunks) {
-    for (let i = 0; i < chunk.length; i++) {
-      const s = Math.max(-1, Math.min(1, chunk[i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      offset += 2;
-    }
-  }
-
-  return new Blob([buffer], { type: "audio/wav" });
-}
 
 /** Small SVG preview of a template, mirroring the real render. */
 function TemplateThumb({ id }: { id: string }) {
@@ -149,7 +96,6 @@ interface Props {
   /** Null when shown before the base video exists (audio-first voice approval step). */
   videoUrl: string | null;
   isAwaitingApproval: boolean;
-  isAwaitingVoiceRecording?: boolean;
   isAwaitingVoiceApproval?: boolean;
   isAwaitingAnimationApproval?: boolean;
   isAwaitingFinalApproval?: boolean;
@@ -223,14 +169,11 @@ interface Props {
   sceneVideos?: { sceneNumber: number; sceneIndex: number; url: string; assetId: string }[];
 }
 
-type RecorderState = "idle" | "recording" | "recorded" | "converting" | "converted";
-
 export function VideoApprovalPanel({
   requestId,
   jobId,
   videoUrl,
   isAwaitingApproval,
-  isAwaitingVoiceRecording = false,
   isAwaitingVoiceApproval = false,
   isAwaitingAnimationApproval = false,
   isAwaitingFinalApproval = false,
@@ -269,7 +212,6 @@ export function VideoApprovalPanel({
   sceneVideos = [],
 }: Props) {
   const router = useRouter();
-  const pathname = usePathname();
   const [mode, setMode] = useState<"review" | "revise">("review");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isMergingScenes, setIsMergingScenes] = useState(false);
@@ -284,19 +226,6 @@ export function VideoApprovalPanel({
   const [selectedSceneIndex, setSelectedSceneIndex] = useState(activeSceneIndex);
   const safeActiveSceneIndex = Math.min(Math.max(selectedSceneIndex, 0), Math.max(editScenes.length - 1, 0));
   const activeEditScene = editScenes[safeActiveSceneIndex];
-
-  // Voice recorder state
-  const [recorderState, setRecorderState] = useState<RecorderState>("idle");
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
-  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
-  const [elapsed, setElapsed] = useState(0);
-  const [micError, setMicError] = useState<string | null>(null);
-  const [convertedBlob, setConvertedBlob] = useState<Blob | null>(null);
-  const [convertedUrl, setConvertedUrl] = useState<string | null>(null);
-  const [conversionCount, setConversionCount] = useState(0);
-  const [voiceUploading, setVoiceUploading] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);   // conversion errors
-  const [uploadError, setUploadError] = useState<string | null>(null); // submit-button errors
 
   // Music picker state — initialise from job's saved track so approval steps show the current selection
   const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(savedMusicTrack ?? null);
@@ -513,14 +442,6 @@ export function VideoApprovalPanel({
     setDisplayedVoiceAssetId(voiceRecordingAssetId);
   }, [voiceRecordingUrl, voiceRecordingAssetId]);
 
-  // Combined preview modal
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
-  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
-  const previewVoiceRef = useRef<HTMLAudioElement | null>(null);
-  const previewMusicRef = useRef<HTMLAudioElement | null>(null);
-  const previewAudioCtxRef = useRef<AudioContext | null>(null);
-
   const handleApproveVoice = async () => {
     setVoiceApproving(true);
     setError(null);
@@ -624,8 +545,7 @@ export function VideoApprovalPanel({
     setAnimationApproving(true);
     setError(null);
     // Stop every sound source used by this review step before starting the
-    // merge. This includes the standalone music sample, voice player, and the
-    // combined-preview modal's Web Audio elements.
+    // merge. This includes the standalone music sample and voice player.
     if (musicAudioRef.current) {
       musicAudioRef.current.pause();
       musicAudioRef.current.src = "";
@@ -636,24 +556,6 @@ export function VideoApprovalPanel({
       voicePreviewAudioRef.current.pause();
       voicePreviewAudioRef.current.currentTime = 0;
     }
-    if (previewMusicRef.current) {
-      previewMusicRef.current.pause();
-      previewMusicRef.current.currentTime = 0;
-    }
-    if (previewVoiceRef.current) {
-      previewVoiceRef.current.pause();
-      previewVoiceRef.current.currentTime = 0;
-    }
-    if (previewVideoRef.current) {
-      previewVideoRef.current.pause();
-      previewVideoRef.current.currentTime = 0;
-    }
-    if (duckingRafRef.current) {
-      cancelAnimationFrame(duckingRafRef.current);
-      duckingRafRef.current = null;
-    }
-    setShowPreviewModal(false);
-    setIsPreviewPlaying(false);
     try {
       const res = await fetch(`/api/requests/${requestId}/approve-animation`, {
         method: "POST",
@@ -786,23 +688,6 @@ export function VideoApprovalPanel({
       setAdditionalGenerating(false);
     }
   };
-  const previewMusicGainRef = useRef<GainNode | null>(null);
-  const previewAnalyserRef = useRef<AnalyserNode | null>(null);
-  const duckingRafRef = useRef<number | null>(null);
-
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const samplesRef = useRef<Float32Array[]>([]);
-  const sampleRateRef = useRef<number>(44100);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const elapsedRef = useRef(0);
-  // Ref so handleConvert always revokes the live URL, not a stale closure value
-  const convertedUrlRef = useRef<string | null>(null);
-
-  const REC_KEY = `rvc_rec_${requestId}`;
-  const CONV_KEY = `rvc_conv_${requestId}`;
-
   // Auto-save scriptThai + captionThai to the DB 800ms after the user stops typing
   useEffect(() => {
     const t = setTimeout(() => {
@@ -815,179 +700,6 @@ export function VideoApprovalPanel({
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editScriptThai, editCaptionThai]);
-
-  // Keep ref in sync with state so handleConvert always revokes the live URL
-  useEffect(() => { convertedUrlRef.current = convertedUrl; }, [convertedUrl]);
-
-  // Restore recording from sessionStorage on mount
-  useEffect(() => {
-    if (!isAwaitingVoiceRecording) return;
-    try {
-      const recData = sessionStorage.getItem(REC_KEY);
-      const recMeta = sessionStorage.getItem(`${REC_KEY}_meta`);
-      if (!recData || !recMeta) return;
-
-      const { mimeType, elapsed: savedElapsed } = JSON.parse(recMeta) as { mimeType: string; elapsed: number };
-      const blob = base64ToBlob(recData, mimeType);
-      setRecordedBlob(blob);
-      setPlaybackUrl(URL.createObjectURL(blob));
-      elapsedRef.current = savedElapsed;
-      setElapsed(savedElapsed);
-
-      const convData = sessionStorage.getItem(CONV_KEY);
-      if (convData) {
-        const convBlob = base64ToBlob(convData, "audio/wav");
-        const restoredUrl = URL.createObjectURL(convBlob);
-        convertedUrlRef.current = restoredUrl;
-        setConvertedBlob(convBlob);
-        setConvertedUrl(restoredUrl);
-        setConversionCount(1);
-        setRecorderState("converted");
-      } else {
-        setRecorderState("recorded");
-      }
-    } catch { /* ignore corrupt storage */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount only
-
-  // Persist raw recording whenever it changes
-  useEffect(() => {
-    if (!recordedBlob) return;
-    blobToBase64(recordedBlob).then((b64) => {
-      try {
-        sessionStorage.setItem(REC_KEY, b64);
-        sessionStorage.setItem(`${REC_KEY}_meta`, JSON.stringify({
-          mimeType: recordedBlob.type,
-          elapsed: elapsedRef.current,
-        }));
-      } catch { /* storage full — non-critical */ }
-    });
-  }, [recordedBlob, REC_KEY]);
-
-  // Persist converted audio whenever it changes
-  useEffect(() => {
-    if (!convertedBlob) return;
-    blobToBase64(convertedBlob).then((b64) => {
-      try { sessionStorage.setItem(CONV_KEY, b64); } catch { }
-    });
-  }, [convertedBlob, CONV_KEY]);
-
-  // Cleanup object URLs and audio resources on unmount
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (playbackUrl) URL.revokeObjectURL(playbackUrl);
-      processorRef.current?.disconnect();
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      audioCtxRef.current?.close();
-    };
-  }, [playbackUrl]);
-
-  // Build Web Audio graph when preview modal opens; tear it down when it closes.
-  // Voice → AnalyserNode → destination (for speech detection)
-  // Music → GainNode → destination (for real-time ducking)
-  useEffect(() => {
-    if (!showPreviewModal) {
-      if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
-      previewAudioCtxRef.current?.close();
-      previewAudioCtxRef.current = null;
-      previewMusicGainRef.current = null;
-      previewAnalyserRef.current = null;
-      return;
-    }
-
-    // Delay so the <audio> elements finish mounting before we attach them
-    const timer = setTimeout(() => {
-      const voice = previewVoiceRef.current;
-      const music = previewMusicRef.current;
-      if (!voice) return;
-
-      const ctx = new AudioContext();
-      previewAudioCtxRef.current = ctx;
-
-      const voiceSource = ctx.createMediaElementSource(voice);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      voiceSource.connect(analyser);
-      analyser.connect(ctx.destination);
-      previewAnalyserRef.current = analyser;
-
-      if (music) {
-        const musicSource = ctx.createMediaElementSource(music);
-        const gainNode = ctx.createGain();
-        gainNode.gain.value = 0.25;
-        musicSource.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        previewMusicGainRef.current = gainNode;
-      }
-    }, 80);
-
-    return () => {
-      clearTimeout(timer);
-      if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
-      previewAudioCtxRef.current?.close();
-      previewAudioCtxRef.current = null;
-      previewMusicGainRef.current = null;
-      previewAnalyserRef.current = null;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPreviewModal]);
-
-  function formatTime(seconds: number) {
-    const m = Math.floor(seconds / 60).toString().padStart(2, "0");
-    const s = (seconds % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
-  }
-
-  const startRecording = useCallback(async () => {
-    setMicError(null);
-    setVoiceError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      // Web Audio API: capture raw PCM from the microphone — no codec compression
-      const audioCtx = new AudioContext();
-      audioCtxRef.current = audioCtx;
-      sampleRateRef.current = audioCtx.sampleRate;
-      samplesRef.current = [];
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      processor.onaudioprocess = (e) => {
-        samplesRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-      };
-
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-
-      setElapsed(0);
-      setRecorderState("recording");
-      timerRef.current = setInterval(() => setElapsed((s) => { const n = s + 1; elapsedRef.current = n; return n; }), 1000);
-    } catch {
-      setMicError("ไม่สามารถเข้าถึงไมโครโฟนได้ กรุณาอนุญาตการใช้งานไมโครโฟนในเบราว์เซอร์");
-    }
-  }, []);
-
-  const stopRecording = useCallback(() => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-
-    // Disconnect audio graph and stop mic
-    processorRef.current?.disconnect();
-    processorRef.current = null;
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    audioCtxRef.current?.close();
-    audioCtxRef.current = null;
-
-    // Encode all captured PCM chunks directly into a WAV blob
-    const wavBlob = encodePcmToWav(samplesRef.current, sampleRateRef.current);
-    samplesRef.current = [];
-    setRecordedBlob(wavBlob);
-    setPlaybackUrl(URL.createObjectURL(wavBlob));
-    setRecorderState("recorded");
-  }, []);
 
   function handleMusicTrackClick(trackId: string) {
     // Stop any currently playing preview regardless of which track was clicked
@@ -1008,192 +720,6 @@ export function VideoApprovalPanel({
       setPlayingMusicTrack(trackId);
     }
     setSelectedMusicTrack(trackId);
-  }
-
-  function openPreview() {
-    if (musicAudioRef.current) { musicAudioRef.current.pause(); musicAudioRef.current.src = ""; }
-    setPlayingMusicTrack(null);
-    setShowPreviewModal(true);
-    setIsPreviewPlaying(false);
-  }
-
-  function closePreview() {
-    if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
-    setShowPreviewModal(false);
-    setIsPreviewPlaying(false);
-    if (previewVideoRef.current) { previewVideoRef.current.pause(); previewVideoRef.current.currentTime = 0; }
-    if (previewVoiceRef.current) { previewVoiceRef.current.pause(); previewVoiceRef.current.currentTime = 0; }
-    if (previewMusicRef.current) { previewMusicRef.current.pause(); previewMusicRef.current.currentTime = 0; }
-  }
-
-  async function togglePreview() {
-    const video = previewVideoRef.current;
-    const voice = previewVoiceRef.current;
-    const ctx = previewAudioCtxRef.current;
-    if (!video || !voice) return;
-
-    if (isPreviewPlaying) {
-      video.pause();
-      voice.pause();
-      previewMusicRef.current?.pause();
-      if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
-      setIsPreviewPlaying(false);
-    } else {
-      // Browser suspends AudioContext until a user gesture — resume it here
-      if (ctx?.state === "suspended") await ctx.resume();
-
-      video.currentTime = 0;
-      voice.currentTime = 0;
-      const music = previewMusicRef.current;
-      if (music) music.currentTime = 0;
-
-      try {
-        await Promise.all([video.play(), voice.play(), music ? music.play() : Promise.resolve()]);
-        setIsPreviewPlaying(true);
-
-        // Real-time ducking: read voice amplitude via AnalyserNode and adjust music GainNode
-        const analyser = previewAnalyserRef.current;
-        const gainNode = previewMusicGainRef.current;
-        if (analyser && gainNode && ctx) {
-          // Capture as consts so the tick closure sees non-nullable types
-          const _analyser: AnalyserNode = analyser;
-          const _gainNode: GainNode = gainNode;
-          const _ctx: AudioContext = ctx;
-          const bufferLength = _analyser.frequencyBinCount;
-          const dataArray = new Uint8Array(bufferLength);
-
-          function tick() {
-            _analyser.getByteTimeDomainData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-              const v = (dataArray[i] - 128) / 128;
-              sum += v * v;
-            }
-            const rms = Math.sqrt(sum / bufferLength);
-
-            // Speaking: duck music to 4%; silent: restore to 25%
-            // Fast attack (0.05s) so music drops quickly when speech starts;
-            // slow release (0.5s) so it fades back up naturally between sentences.
-            const isSpeaking = rms > 0.02;
-            _gainNode.gain.setTargetAtTime(
-              isSpeaking ? 0.04 : 0.25,
-              _ctx.currentTime,
-              isSpeaking ? 0.05 : 0.5,
-            );
-
-            duckingRafRef.current = requestAnimationFrame(tick);
-          }
-          duckingRafRef.current = requestAnimationFrame(tick);
-        }
-
-        video.onended = () => {
-          voice.pause();
-          previewMusicRef.current?.pause();
-          if (duckingRafRef.current) { cancelAnimationFrame(duckingRafRef.current); duckingRafRef.current = null; }
-          setIsPreviewPlaying(false);
-        };
-      } catch {
-        // Autoplay blocked — user needs to interact again
-      }
-    }
-  }
-
-  const reRecord = useCallback(() => {
-    sessionStorage.removeItem(REC_KEY);
-    sessionStorage.removeItem(`${REC_KEY}_meta`);
-    sessionStorage.removeItem(CONV_KEY);
-    if (playbackUrl) URL.revokeObjectURL(playbackUrl);
-    if (convertedUrlRef.current) URL.revokeObjectURL(convertedUrlRef.current);
-    convertedUrlRef.current = null;
-    setPlaybackUrl(null);
-    setConvertedUrl(null);
-    setRecordedBlob(null);
-    setConvertedBlob(null);
-    setConversionCount(0);
-    elapsedRef.current = 0;
-    setElapsed(0);
-    setRecorderState("idle");
-    setVoiceError(null);
-    setUploadError(null);
-  }, [REC_KEY, CONV_KEY, playbackUrl]);
-
-  async function handleConvert() {
-    if (!recordedBlob) return;
-    setRecorderState("converting");
-    setVoiceError(null);
-
-    try {
-      const form = new FormData();
-      form.append("audio", recordedBlob, "recording.wav");
-
-      const res = await fetch("/api/rvc/convert", { method: "POST", body: form });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `RVC error: ${res.status}`);
-      }
-
-      const buf = await res.arrayBuffer();
-      const blob = new Blob([buf], { type: "audio/wav" });
-      const newUrl = URL.createObjectURL(blob);
-
-      if (convertedUrlRef.current) URL.revokeObjectURL(convertedUrlRef.current);
-      convertedUrlRef.current = newUrl;
-
-      setConvertedBlob(blob);
-      setConvertedUrl(newUrl);
-      setConversionCount((c) => c + 1);
-      setRecorderState("converted");
-    } catch (e) {
-      setVoiceError(e instanceof Error ? e.message : "การแปลงเสียงล้มเหลว กรุณาลองอีกครั้ง");
-      setRecorderState("recorded");
-    }
-  }
-
-  async function handleVoiceUpload() {
-    if (!convertedBlob) return;
-    setVoiceUploading(true);
-    setUploadError(null);
-
-    const file = new File([convertedBlob], `voice-converted.wav`, { type: "audio/wav" });
-
-    try {
-      const initRes = await fetch(`/api/requests/${requestId}/voice-recording`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobId,
-          fileName: file.name,
-          fileSizeBytes: file.size,
-          mimeType: file.type,
-        }),
-      });
-      if (!initRes.ok) throw new Error((await initRes.json()).error);
-      const { assetId, presignedUrl } = await initRes.json();
-
-      const uploadRes = await fetch(presignedUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-      if (!uploadRes.ok) throw new Error("การอัพโหลดไปยัง storage ล้มเหลว");
-
-      const confirmRes = await fetch(`/api/requests/${requestId}/voice-recording/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, assetId, selectedMusicTrack: selectedMusicTrack === "none" ? null : selectedMusicTrack }),
-      });
-      if (!confirmRes.ok) throw new Error((await confirmRes.json()).error);
-
-      // Upload succeeded — clear persisted session data
-      sessionStorage.removeItem(REC_KEY);
-      sessionStorage.removeItem(`${REC_KEY}_meta`);
-      sessionStorage.removeItem(CONV_KEY);
-      router.push(pathname);
-    } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "อัพโหลดล้มเหลว");
-    } finally {
-      setVoiceUploading(false);
-    }
   }
 
   const updateSceneDescription = (index: number, value: string) => {
@@ -2292,30 +1818,6 @@ export function VideoApprovalPanel({
       {/* iAppTTS voice generation notice - shown while AI is generating */}
       {/* (The pipeline poller handles the GeneratingVoice step automatically) */}
 
-      {/* บทพูด + แคปชั่น editable — shown after recorder */}
-      {isAwaitingVoiceRecording && (
-        <Card className="mb-6 flex flex-col gap-4">
-          <div>
-            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">บทพูด</p>
-            <textarea
-              value={editScriptThai}
-              onChange={(e) => setEditScriptThai(e.target.value)}
-              rows={4}
-              className={ta}
-            />
-          </div>
-          <div>
-            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">แคปชั่นโซเชียล</p>
-            <textarea
-              value={editCaptionThai}
-              onChange={(e) => setEditCaptionThai(e.target.value)}
-              rows={3}
-              className={ta}
-            />
-          </div>
-        </Card>
-      )}
-
       {/* Script section — editable in revise mode, read-only otherwise */}
       {mode === "revise" ? (
         <div className="mb-6 flex flex-col gap-4">
@@ -2503,78 +2005,6 @@ export function VideoApprovalPanel({
         </Card>
       )}
 
-      {/* Combined preview modal */}
-      {showPreviewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="relative w-full max-w-2xl rounded-xl bg-white shadow-2xl overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">ตัวอย่างรวม</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {selectedMusicTrack === "none"
-                    ? "วิดีโอ + เสียงพากย์ (ไม่มีเพลงพื้นหลัง)"
-                    : `วิดีโอ + เสียงพากย์ + ${BACKGROUND_MUSIC_TRACKS.find((t) => t.id === selectedMusicTrack)?.label ?? ""}`}
-                </p>
-              </div>
-              <button
-                onClick={closePreview}
-                className="rounded-full p-1.5 hover:bg-slate-100 text-slate-500 transition-colors"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Video — muted because its own audio track is empty */}
-            <div className="bg-black">
-              <video
-                ref={previewVideoRef}
-                src={videoUrl ?? undefined}
-                muted
-                playsInline
-                className="w-full"
-                style={{ maxHeight: 400 }}
-              />
-            </div>
-
-            {/* Hidden audio elements */}
-            {convertedUrl && <audio ref={previewVoiceRef} src={convertedUrl} />}
-            {selectedMusicTrack && selectedMusicTrack !== "none" && (() => {
-              const track = BACKGROUND_MUSIC_TRACKS.find((t) => t.id === selectedMusicTrack);
-              return track ? <audio ref={previewMusicRef} src={track.url} loop /> : null;
-            })()}
-
-            {/* Play controls */}
-            <div className="px-5 py-4 space-y-3">
-              <button
-                onClick={togglePreview}
-                className="flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 text-sm font-medium transition-colors"
-              >
-                {isPreviewPlaying ? (
-                  <>
-                    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                    </svg>
-                    หยุดชั่วคราว
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                    </svg>
-                    เล่นตัวอย่าง
-                  </>
-                )}
-              </button>
-              <p className="text-xs text-slate-400">
-                * เพลงพื้นหลังจะดังอัตโนมัติขึ้นระหว่างช่วงที่ไม่มีการพูด (ระบบ FFmpeg จัดการในขั้นตอนถัดไป)
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

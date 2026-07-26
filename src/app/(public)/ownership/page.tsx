@@ -100,8 +100,8 @@ export default function OwnershipPage() {
               for reasonable backup, legal, audit, and content-integrity retention.
               RClipper may remove a selected video at its discretion. Requests based
               on privacy, safety, or third-party rights may be sent to{" "}
-              <a href="mailto:support@rclipper.com" className="text-blue-700 underline">
-                support@rclipper.com
+              <a href="mailto:pillarth@gmail.com" className="text-blue-700 underline">
+                pillarth@gmail.com
               </a>
               .
             </p>

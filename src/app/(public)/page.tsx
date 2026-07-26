@@ -43,12 +43,7 @@ export default async function HomePage() {
             <span className="text-blue-400">{t("home.headlineAccent")}</span>
           </h1>
           <p className="mx-auto mb-3 max-w-2xl text-lg text-slate-300">
-            {t("home.briefPrefix")}{" "}
-            <span className="font-semibold text-white">{t("home.aiPromise")}</span>{" "}
-            {t("home.or")}{" "}
-            <span className="font-semibold text-white">
-              {t("home.editorPromise")}
-            </span>
+            <span className="font-semibold text-white">{t("home.aiPromise")}</span>
           </p>
           <p className="mx-auto mb-10 max-w-xl text-base text-slate-400">
             {t("home.export")}

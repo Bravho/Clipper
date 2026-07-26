@@ -97,7 +97,7 @@ export default async function LegalPage() {
         <p className="text-sm text-slate-600">
           Have questions about our policies?{" "}
           <a
-            href="mailto:support@rclipper.com"
+            href="mailto:pillarth@gmail.com"
             className="text-blue-600 hover:underline"
           >
             Contact our support team

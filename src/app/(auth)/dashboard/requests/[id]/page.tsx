@@ -673,7 +673,6 @@ export default async function RequestDetailPage({
                 jobId={pipelineJob.id}
                 videoUrl={baseVideoAsset?.storageUrl ?? null}
                 isAwaitingApproval={false}
-                isAwaitingVoiceRecording={false}
                 isAwaitingVoiceApproval
                 isAwaitingAnimationApproval={false}
                 isPipelineFailed={isFailed}
@@ -725,9 +724,6 @@ export default async function RequestDetailPage({
                 isProcessing={isProcessing}
                 isAwaitingApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingVideoApproval
-                }
-                isAwaitingVoiceRecording={
-                  pipelineJob.currentStep === VideoGenerationStep.AwaitingVoiceRecording
                 }
                 isAwaitingVoiceApproval={false}
                 isAwaitingAnimationApproval={
