@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Platform, PLATFORM_LABELS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
-import { Share } from "@capacitor/share";
+import { Browser } from "@capacitor/browser";
 import { isNativeMobile } from "@/lib/mobile/platform";
 import { ReportAiContent } from "@/features/requests/components/ReportAiContent";
 
@@ -84,16 +84,28 @@ export function DistributionReviewPanel({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ดาวน์โหลดไม่สำเร็จ");
       }
-      const { url } = await res.json();
+      // The URL is presigned with Content-Disposition: attachment, so it is
+      // treated as a file download rather than a page to open.
+      const { url, fileName } = (await res.json()) as {
+        url: string;
+        fileName?: string;
+      };
+
       if (isNativeMobile()) {
-        await Share.share({
-          title: "RClipper video",
-          text: "Share or save your finished RClipper video",
-          url,
-          dialogTitle: "Share video",
-        });
+        // Hand the attachment URL to the system browser, which downloads and
+        // saves the video to the device (Files / Downloads).
+        await Browser.open({ url });
       } else {
-        window.open(url, "_blank", "noopener,noreferrer");
+        // Trigger a real, in-page download (no new tab): a programmatic click on
+        // an <a download> anchor. The attachment disposition makes the browser
+        // save the file instead of navigating to it.
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName ?? "";
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
       }
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");

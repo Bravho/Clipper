@@ -2848,12 +2848,33 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // upload 400s, the ratios that already persisted are kept and the job stays at
     // AwaitingFinalApproval. Only the FIRST/primary ratio never landing fails the
     // whole step (there is nothing to review without it).
-    const primaryFirstRatios: ffmpegService.VideoRatio[] = [
-      ...targetRatios.filter((r) => r === primaryRatio),
-      ...targetRatios.filter((r) => r !== primaryRatio),
-    ];
-    // The primary ratio (composed first) is the only fatal one; fall back to the
-    // first required ratio if the primary somehow isn't in the required set.
+    // Compose ONLY the primary ratio's master in THIS step. Previously this step
+    // composed EVERY required ratio, and each non-primary ratio re-rendered a
+    // NATIVE montage base from scratch (`_renderMontageBaseAtRatio` → per-scene
+    // Ken-Burns render + crossfade concat) and then ran a full libx264 re-encode —
+    // all sequentially. That turned a step the UI presents as a ~10-30s "merge
+    // voice + music into the PRIMARY channel's ratio" operation into a multi-minute
+    // one (base ~94s + two more native re-renders + re-encodes), so the requester
+    // sat on the "processing your video…" spinner long past the advertised time
+    // and it looked hung.
+    //
+    // The non-primary masters are NOT needed until the additional-ratios step
+    // captions those channels, and that step already composes any missing master
+    // ON-DEMAND (`_renderCaptionedRatio` → `_composeMasterForRatio` self-heals),
+    // so no ratio is dropped — the expensive per-ratio work simply moves OUT of the
+    // AwaitingFinalApproval review gate the requester is actively waiting on and
+    // into the later "Export 4 ratio" step where it belongs (and is shown with its
+    // own per-channel progress).
+    const primaryFirstRatios: ffmpegService.VideoRatio[] = targetRatios.filter(
+      (r) => r === primaryRatio
+    );
+    // Safety: if the primary ratio somehow isn't in the required set, still compose
+    // the first required ratio so AwaitingFinalApproval has a master to review.
+    if (primaryFirstRatios.length === 0 && targetRatios.length > 0) {
+      primaryFirstRatios.push(targetRatios[0]);
+    }
+    // The single composed ratio is the only fatal one; without it there is nothing
+    // to review.
     const fatalRatio = primaryFirstRatios[0];
 
     // Compose ONE ratio's un-captioned merged master. Extracted to

@@ -306,11 +306,35 @@ export const SIGNED_URL_TTL_SECONDS = 60 * 60;
  */
 export async function spacesSignedUrl(
   key: string,
-  ttlSeconds: number = SIGNED_URL_TTL_SECONDS
+  ttlSeconds: number = SIGNED_URL_TTL_SECONDS,
+  opts?: {
+    /**
+     * When set, the object is served with `Content-Disposition: attachment`
+     * (using this file name), so the browser/OS DOWNLOADS the file instead of
+     * navigating to / rendering it inline. Used by the deliverable-download
+     * endpoint so the requester's "download" button saves a file rather than
+     * opening the video in a new tab.
+     */
+    downloadFileName?: string;
+  }
 ): Promise<string> {
+  // Sanitise the file name for a Content-Disposition header: strip quotes,
+  // control chars, and path separators so it can't break the header or escape
+  // the intended name.
+  const safeName = opts?.downloadFileName
+    ?.replace(/[\r\n"\\/]/g, "")
+    .trim()
+    .slice(0, 200);
+
   return getSignedUrl(
     spacesClient,
-    new GetObjectCommand({ Bucket: SPACES_BUCKET, Key: key }),
+    new GetObjectCommand({
+      Bucket: SPACES_BUCKET,
+      Key: key,
+      ...(safeName
+        ? { ResponseContentDisposition: `attachment; filename="${safeName}"` }
+        : {}),
+    }),
     { expiresIn: ttlSeconds }
   );
 }

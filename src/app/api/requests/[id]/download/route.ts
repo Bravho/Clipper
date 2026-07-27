@@ -65,6 +65,20 @@ export async function GET(
     return NextResponse.json({ error: "Asset not found." }, { status: 404 });
   }
 
-  const url = await spacesSignedUrl(asset.storageKey, DOWNLOAD_URL_TTL_SECONDS);
-  return NextResponse.json({ url, expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS });
+  // Serve the presigned URL with Content-Disposition: attachment so the client
+  // downloads a real file (in-page on web, saved to the device on mobile) rather
+  // than opening the video in a new browser tab. Give it a friendly file name.
+  const ratioSuffix = asset.videoRatio ? `_${asset.videoRatio.replace(":", "x")}` : "";
+  const downloadFileName = asset.fileName?.trim()
+    ? asset.fileName
+    : `rclipper-video${ratioSuffix}.mp4`;
+
+  const url = await spacesSignedUrl(asset.storageKey, DOWNLOAD_URL_TTL_SECONDS, {
+    downloadFileName,
+  });
+  return NextResponse.json({
+    url,
+    fileName: downloadFileName,
+    expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
+  });
 }
