@@ -193,35 +193,62 @@ export const authOptions: NextAuthOptions = {
     error: ROUTES.LOGIN,
   },
 
-  // Sign in with Apple uses response_mode=form_post: Apple POSTs the callback
-  // cross-site, so the CSRF/PKCE cookies must be SameSite=None; Secure or the
-  // callback arrives without them and login fails. Only applied on https
-  // deployments — SameSite=None requires Secure, which would break local
-  // http development for Google/credentials login.
-  ...(process.env.NEXTAUTH_URL?.startsWith("https")
-    ? {
-        cookies: {
-          pkceCodeVerifier: {
-            name: "__Secure-next-auth.pkce.code_verifier",
-            options: {
-              httpOnly: true,
-              sameSite: "none" as const,
-              path: "/",
-              secure: true,
-            },
-          },
-          state: {
-            name: "__Secure-next-auth.state",
-            options: {
-              httpOnly: true,
-              sameSite: "none" as const,
-              path: "/",
-              secure: true,
-            },
-          },
-        },
-      }
-    : {}),
+  // NOTE: no `cookies` override here — the NextAuth defaults (SameSite=Lax) are
+  // correct for Google and credentials sign-in. See authOptionsForProvider()
+  // below for the Apple-only exception.
 
   secret: process.env.NEXTAUTH_SECRET,
 };
+
+/**
+ * Providers whose OAuth callback arrives as a cross-site POST
+ * (`response_mode=form_post`). Only Apple does this — the browser will not
+ * attach a SameSite=Lax cookie to a cross-site POST, so the state/PKCE cookies
+ * must be SameSite=None; Secure for those providers.
+ */
+const CROSS_SITE_CALLBACK_PROVIDERS = new Set(["apple"]);
+
+/**
+ * Per-request auth options for the /api/auth/[...nextauth] route handler.
+ *
+ * NextAuth's `cookies` config is global, but the SameSite=None relaxation is
+ * only safe (and only needed) for Apple. Applying it to Google broke sign-in in
+ * Edge — Edge's tracking prevention drops the SameSite=None state cookie, and
+ * the callback then fails with `OAuthCallbackError: State cookie was missing.`
+ * Google's callback is an ordinary top-level GET redirect, which SameSite=Lax
+ * cookies are sent on, so Google must keep the defaults.
+ *
+ * @param providerId the provider segment of the route (e.g. "google", "apple")
+ */
+export function authOptionsForProvider(
+  providerId?: string
+): NextAuthOptions {
+  const isHttps = process.env.NEXTAUTH_URL?.startsWith("https") ?? false;
+
+  // SameSite=None requires Secure, which would break local http development.
+  if (!isHttps || !providerId || !CROSS_SITE_CALLBACK_PROVIDERS.has(providerId)) {
+    return authOptions;
+  }
+
+  const crossSiteCookie = {
+    httpOnly: true,
+    sameSite: "none" as const,
+    path: "/",
+    secure: true,
+    maxAge: 60 * 15, // matches the NextAuth default
+  };
+
+  return {
+    ...authOptions,
+    cookies: {
+      pkceCodeVerifier: {
+        name: "__Secure-next-auth.pkce.code_verifier",
+        options: crossSiteCookie,
+      },
+      state: {
+        name: "__Secure-next-auth.state",
+        options: crossSiteCookie,
+      },
+    },
+  };
+}
