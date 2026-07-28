@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import dynamic from "next/dynamic";
@@ -158,6 +158,133 @@ function generateVideoThumbnail(file: File): Promise<string | null> {
 const MULTIPART_THRESHOLD_BYTES = 5 * 1024 * 1024;
 
 /**
+ * MUST equal the server's MULTIPART_PART_SIZE (5 MB). On the RESUME path there is
+ * no initiate response to echo the server's partSize, so the client recomputes
+ * part boundaries from this constant — if the two ever diverge, a resumed upload
+ * would slice at different offsets than the already-stored parts and corrupt the
+ * object. Keep this in lockstep with UploadService.MULTIPART_PART_SIZE.
+ */
+const MULTIPART_PART_SIZE = 5 * 1024 * 1024;
+
+// ── Resume support ──────────────────────────────────────────────────────────
+// Uploads are made resumable so a dropped connection (frequent on mobile) does
+// not force a restart. Durable state lives in two places:
+//   • server: the Draft request + confirmed assets (survive anything)
+//   • localStorage: the draft id + per-file multipart session ids (survive a
+//     reload / the app being backgrounded on iOS/Android WebView)
+// The one thing that CANNOT be persisted is the File's bytes — so a file that
+// never finished must be re-selected by the user; we then resume it via ListParts.
+
+/** localStorage helpers — never throw (some WebView configs restrict storage). */
+function lsGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function lsSet(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
+function lsRemove(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Persisted id of the in-progress draft, so a reload/return resumes it instead
+ *  of minting a new request (which previously orphaned already-uploaded files). */
+const DRAFT_ID_KEY = "clipper:newreq:draftId";
+
+/** A resumable multipart session for one file. No bytes — only the ids needed to
+ *  resume via ListParts once the same file is re-selected. */
+interface MpuSession {
+  assetId: string;
+  key: string;
+  uploadId: string;
+}
+
+const mpuMapKey = (draftId: string) => `clipper:newreq:mpu:${draftId}`;
+function loadMpuMap(draftId: string): Record<string, MpuSession> {
+  try {
+    return JSON.parse(lsGet(mpuMapKey(draftId)) || "{}") as Record<string, MpuSession>;
+  } catch {
+    return {};
+  }
+}
+function getMpuSession(draftId: string, sig: string): MpuSession | null {
+  return loadMpuMap(draftId)[sig] ?? null;
+}
+function saveMpuSession(draftId: string, sig: string, s: MpuSession): void {
+  const m = loadMpuMap(draftId);
+  m[sig] = s;
+  lsSet(mpuMapKey(draftId), JSON.stringify(m));
+}
+function clearMpuSession(draftId: string, sig: string): void {
+  const m = loadMpuMap(draftId);
+  delete m[sig];
+  lsSet(mpuMapKey(draftId), JSON.stringify(m));
+}
+function clearDraftPersistence(draftId: string | null): void {
+  lsRemove(DRAFT_ID_KEY);
+  if (draftId) lsRemove(mpuMapKey(draftId));
+}
+
+/** Stable per-file signature (client only) for matching a re-selected file to a
+ *  persisted multipart session. */
+const fileSig = (f: File) => `${f.name}::${f.size}::${f.lastModified}`;
+/** name+size signature — used to match a local file to a server-side asset (the
+ *  server has no access to lastModified). */
+const nameSizeSig = (name: string, size: number) => `${name}::${size}`;
+
+const hostOf = (u: string) => {
+  try {
+    return new URL(u, window.location.origin).host;
+  } catch {
+    return u;
+  }
+};
+
+/** fetch() that annotates a thrown (network/CORS/CSP) failure with the step and
+ *  host, so the on-screen error names exactly which request died — a bare
+ *  "Failed to fetch" otherwise tells the user nothing. */
+async function netFetch(label: string, url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    const host = hostOf(url);
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`[submit] ${label} → ${host} threw:`, e);
+    throw new Error(
+      `เชื่อมต่อไม่สำเร็จที่ขั้นตอน "${label}" (${host}: ${detail}). ` +
+        `การเชื่อมต่อถูกบล็อกหรือขาดหาย ไม่ใช่ข้อผิดพลาดจากเซิร์ฟเวอร์`
+    );
+  }
+}
+
+/** PUT one blob (whole file or one part), annotating a thrown network error with
+ *  the target host so the on-screen failure names it (e.g. Spaces). */
+async function putPart(
+  url: string,
+  blob: Blob,
+  onProgress: (loaded: number, total: number) => void,
+  contentType?: string
+): Promise<string> {
+  try {
+    return await putBlobWithProgress(url, blob, onProgress, contentType);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new Error(`${hostOf(url)}: ${detail}`);
+  }
+}
+
+/**
  * PUT a Blob (a whole file, or one multipart chunk) to a presigned Spaces URL via
  * XMLHttpRequest so we can report real upload progress (fetch() exposes no
  * upload-progress events). Resolves with the response ETag (needed to complete a
@@ -219,6 +346,17 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const [phase, setPhase] = useState<SubmitPhase>("form");
   const [uploadProgress, setUploadProgress] = useState<Record<string, UploadItemProgress>>({});
   const [mapOpen, setMapOpen] = useState(false);
+
+  // Resume state. draftIdRef holds the single reused draft id (never recreated on
+  // retry). canRetry shows the "resume upload" button after a partial failure.
+  // resumeInfo shows the banner when a returning user has an unfinished draft.
+  const draftIdRef = useRef<string | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
+  const [resumeInfo, setResumeInfo] = useState<{ uploadedNames: string[] } | null>(null);
+
+  const setItemProgress = useCallback((id: string, patch: Partial<UploadItemProgress>) => {
+    setUploadProgress((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  }, []);
 
   const {
     register,
@@ -381,6 +519,47 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // On mount, recover an unfinished draft (survives reload / app relaunch on
+  // iOS/Android). If it still exists and has uploaded files or an in-progress
+  // multipart session, adopt its id and show the resume banner; otherwise clear
+  // the stale pointer. Offline is left intact for a later attempt.
+  useEffect(() => {
+    const saved = lsGet(DRAFT_ID_KEY);
+    if (!saved) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/uploads/${saved}`);
+        if (!res.ok) {
+          clearDraftPersistence(saved);
+          return;
+        }
+        const data = (await res.json()) as {
+          status: string;
+          assets: { fileName: string; uploadStatus: string }[];
+        };
+        if (cancelled) return;
+        if (data.status !== "draft") {
+          clearDraftPersistence(saved);
+          return;
+        }
+        const uploaded = (data.assets ?? []).filter((a) => a.uploadStatus === "uploaded");
+        const hasMpu = Object.keys(loadMpuMap(saved)).length > 0;
+        if (uploaded.length === 0 && !hasMpu) {
+          clearDraftPersistence(saved);
+          return;
+        }
+        draftIdRef.current = saved;
+        setResumeInfo({ uploadedNames: uploaded.map((a) => a.fileName) });
+      } catch {
+        /* offline — keep persistence for a later attempt */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const saveDraft = async (data: Partial<SubmitClipRequestValues>) => {
     setIsDraftSaving(true);
     try {
@@ -398,8 +577,276 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       setIsDraftSaving(false);
     }
   };
+  // Create the draft ONCE and reuse its id across retries. Previously every
+  // submit attempt POSTed /api/requests afresh, minting a new request and
+  // orphaning any files already uploaded under the previous id.
+  const ensureDraft = async (data: SubmitClipRequestValues): Promise<string> => {
+    if (draftIdRef.current) return draftIdRef.current;
+    const res = await netFetch("สร้างคำขอ", "/api/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...data, creditConfirmed: true, rightsConfirmed: true }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error ?? "ไม่สามารถสร้างคำขอได้");
+    }
+    const { requestId } = await res.json();
+    draftIdRef.current = requestId;
+    lsSet(DRAFT_ID_KEY, requestId);
+    return requestId;
+  };
+
+  // Small file → one presigned PUT.
+  const uploadSingle = async (requestId: string, item: PendingFile): Promise<string> => {
+    const metaRes = await netFetch("ขอที่อยู่อัปโหลด", `/api/uploads/${requestId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fileName: item.file.name,
+        fileSizeBytes: item.file.size,
+        mimeType: item.file.type,
+      }),
+    });
+    if (!metaRes.ok) {
+      const body = await metaRes.json().catch(() => ({}));
+      throw new Error(body.error ?? `error ${metaRes.status}`);
+    }
+    const { assetId, presignedUrl } = await metaRes.json();
+    await putPart(
+      presignedUrl,
+      item.file,
+      (loaded, total) => setItemProgress(item.id, { pct: Math.min(99, Math.round((loaded / total) * 100)) }),
+      item.file.type
+    );
+    return assetId;
+  };
+
+  // Large file → chunked, RESUMABLE multipart. Each part is its own ≤partSize PUT
+  // (keeps every request under the intermediary's ~8–15 MB body cap). On a repeat
+  // attempt we ask Spaces which parts already landed (`resume`) and re-upload only
+  // the missing ones — a mostly-done video survives a dropped connection instead
+  // of restarting. The session ids are persisted so this also works after the app
+  // is backgrounded/relaunched on iOS/Android, once the file is re-selected.
+  const uploadMultipart = async (requestId: string, item: PendingFile): Promise<string> => {
+    const jsonHeaders = { "Content-Type": "application/json" };
+    const mp = (label: string, payload: Record<string, unknown>) =>
+      netFetch(label, `/api/uploads/${requestId}/multipart`, {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      });
+
+    const sig = fileSig(item.file);
+    const partSize = MULTIPART_PART_SIZE;
+    const partCount = Math.max(1, Math.ceil(item.file.size / partSize));
+
+    // 1) Resume a persisted session if present; otherwise initiate a fresh one.
+    let session = getMpuSession(requestId, sig);
+    let uploadedParts: { PartNumber: number; ETag: string }[] = [];
+
+    if (session) {
+      const res = await mp("ตรวจสอบการอัปโหลดเดิม", {
+        action: "resume",
+        key: session.key,
+        uploadId: session.uploadId,
+      });
+      if (res.ok) {
+        const j = (await res.json()) as {
+          uploadedParts?: { PartNumber: number; ETag: string }[];
+          expired?: boolean;
+        };
+        if (j.expired) {
+          clearMpuSession(requestId, sig);
+          session = null;
+        } else {
+          uploadedParts = j.uploadedParts ?? [];
+        }
+      } else {
+        clearMpuSession(requestId, sig);
+        session = null;
+      }
+    }
+
+    if (!session) {
+      const initRes = await mp("เริ่มอัปโหลด", {
+        action: "initiate",
+        fileName: item.file.name,
+        fileSizeBytes: item.file.size,
+        mimeType: item.file.type,
+      });
+      if (!initRes.ok) {
+        const body = await initRes.json().catch(() => ({}));
+        throw new Error(body.error ?? `error ${initRes.status}`);
+      }
+      const init = (await initRes.json()) as { assetId: string; key: string; uploadId: string };
+      session = { assetId: init.assetId, key: init.key, uploadId: init.uploadId };
+      saveMpuSession(requestId, sig, session);
+      uploadedParts = [];
+    }
+
+    const { key, uploadId, assetId } = session;
+
+    // 2) Which parts are still missing? Seed progress from the resumed bytes.
+    const done = new Set(uploadedParts.map((p) => p.PartNumber));
+    const partBytes = (n: number) => Math.min(partSize, item.file.size - (n - 1) * partSize);
+    let uploadedBytes = 0;
+    for (const p of uploadedParts) uploadedBytes += partBytes(p.PartNumber);
+    const missing: number[] = [];
+    for (let n = 1; n <= partCount; n++) if (!done.has(n)) missing.push(n);
+    setItemProgress(item.id, { pct: Math.min(99, Math.round((uploadedBytes / item.file.size) * 100)) });
+
+    // 3) Sign + upload only the missing parts.
+    const etags: { PartNumber: number; ETag: string }[] = [...uploadedParts];
+    if (missing.length > 0) {
+      const signRes = await mp("ขอที่อยู่อัปโหลด", { action: "sign", key, uploadId, partNumbers: missing });
+      if (!signRes.ok) {
+        const body = await signRes.json().catch(() => ({}));
+        throw new Error(body.error ?? `error ${signRes.status}`);
+      }
+      const { parts: partUrls } = (await signRes.json()) as {
+        parts: { partNumber: number; url: string }[];
+      };
+
+      for (const { partNumber, url } of partUrls) {
+        const start = (partNumber - 1) * partSize;
+        const chunk = item.file.slice(start, Math.min(start + partSize, item.file.size));
+        const etag = await putPart(url, chunk, (loaded) =>
+          setItemProgress(item.id, {
+            pct: Math.min(99, Math.round(((uploadedBytes + loaded) / item.file.size) * 100)),
+          })
+        );
+        if (!etag) throw new Error(`ไม่ได้รับ ETag ของส่วนที่ ${partNumber}`);
+        etags.push({ PartNumber: partNumber, ETag: etag });
+        uploadedBytes += chunk.size;
+      }
+    }
+
+    // 4) Assemble. NOTE: we deliberately do NOT abort on failure above — keeping
+    // the parts is what lets the next attempt resume. Only clear the session once
+    // the object is successfully assembled (abandoned MPUs are swept by the
+    // bucket's AbortIncompleteMultipartUpload lifecycle rule).
+    etags.sort((a, b) => a.PartNumber - b.PartNumber);
+    const completeRes = await mp("รวมไฟล์", { action: "complete", key, uploadId, parts: etags });
+    if (!completeRes.ok) {
+      const body = await completeRes.json().catch(() => ({}));
+      throw new Error(body.error ?? `error ${completeRes.status}`);
+    }
+    clearMpuSession(requestId, sig);
+    return assetId;
+  };
+
+  // Upload every not-yet-stored file, then submit. Reused by both the first
+  // attempt and the retry button — it reconciles against what already landed on
+  // the server so nothing is uploaded twice.
+  const finalizeSubmission = async (requestId: string): Promise<void> => {
+    const uploadItems = pendingFiles.filter((f) => !f.error);
+
+    // Reconcile with the server: skip any file whose name+size is already an
+    // uploaded asset on this request (resume after reload/return).
+    let uploadedSigs = new Set<string>();
+    try {
+      const listRes = await fetch(`/api/uploads/${requestId}`);
+      if (listRes.ok) {
+        const { assets } = (await listRes.json()) as {
+          assets: { fileName: string; fileSizeBytes: number; uploadStatus: string }[];
+        };
+        uploadedSigs = new Set(
+          assets
+            .filter((a) => a.uploadStatus === "uploaded")
+            .map((a) => nameSizeSig(a.fileName, a.fileSizeBytes))
+        );
+      }
+    } catch {
+      /* non-fatal: fall through and (re)upload */
+    }
+
+    // Seed progress: already-uploaded files show done; the rest show 0%.
+    setUploadProgress(
+      Object.fromEntries(
+        uploadItems.map((i) => [
+          i.id,
+          uploadedSigs.has(nameSizeSig(i.file.name, i.file.size))
+            ? { pct: 100, stage: "done" as UploadStage }
+            : { pct: 0, stage: "pending" as UploadStage },
+        ])
+      )
+    );
+
+    const failedUploads: string[] = [];
+    for (const item of uploadItems) {
+      if (uploadedSigs.has(nameSizeSig(item.file.name, item.file.size))) continue; // already stored
+      console.log(
+        `[submit] uploading ${item.file.name} (${(item.file.size / 1e6).toFixed(1)} MB, ${
+          item.file.size > MULTIPART_THRESHOLD_BYTES ? "multipart" : "single"
+        })`
+      );
+      setItemProgress(item.id, { stage: "uploading" });
+
+      let assetId: string;
+      try {
+        assetId =
+          item.file.size > MULTIPART_THRESHOLD_BYTES
+            ? await uploadMultipart(requestId, item)
+            : await uploadSingle(requestId, item);
+      } catch (uploadErr) {
+        const detail = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+        console.error(`[submit] upload ${item.file.name} failed:`, uploadErr);
+        setItemProgress(item.id, { stage: "error" });
+        failedUploads.push(`${item.file.name} (อัปโหลดไม่สำเร็จ — ${detail})`);
+        continue;
+      }
+
+      // Reuse the poster frame already captured for the preview grid (a data: URL
+      // for videos) so the clip's thumbnail is stored at upload — no server ffmpeg.
+      const poster = previews[item.id];
+      const posterDataUrl =
+        typeof poster === "string" && poster.startsWith("data:image/") ? poster : undefined;
+
+      const confirmRes = await netFetch("ยืนยันไฟล์", `/api/uploads/${requestId}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assetId, posterDataUrl }),
+      });
+      if (!confirmRes.ok) {
+        const body = await confirmRes.json().catch(() => ({}));
+        setItemProgress(item.id, { stage: "error" });
+        failedUploads.push(`${item.file.name} (${body.error ?? "ยืนยันไฟล์ไม่สำเร็จ"})`);
+        continue;
+      }
+      setItemProgress(item.id, { stage: "done", pct: 100 });
+    }
+
+    // Partial failure: keep the draft + everything uploaded so far, and offer to
+    // resume. The retry button re-runs this function against the same request.
+    if (failedUploads.length > 0) {
+      setPhase("form");
+      setCanRetry(true);
+      setSubmitError(
+        `ไฟล์บางรายการยังอัปโหลดไม่สำเร็จ กด "ลองอัปโหลดต่อ" เพื่ออัปโหลดเฉพาะไฟล์ที่เหลือ ` +
+          `(ระบบจะอัปโหลดต่อจากจุดที่ค้างไว้ ไม่เริ่มใหม่): ${failedUploads.join(" · ")}`
+      );
+      return;
+    }
+
+    const submitRes = await netFetch("ส่งคำขอ", `/api/requests/${requestId}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ creditConfirmed: true, rightsConfirmed: true }),
+    });
+    if (!submitRes.ok) {
+      const body = await submitRes.json().catch(() => ({}));
+      throw new Error(body.error ?? "ไม่สามารถส่งคำขอได้");
+    }
+
+    clearDraftPersistence(requestId);
+    draftIdRef.current = null;
+    router.push(requestDetailPath(requestId));
+  };
+
   const onSubmit = async (data: SubmitClipRequestValues) => {
     setSubmitError(null);
+    setCanRetry(false);
 
     // The free trial request submits without credits — skip the balance gate.
     if (!trialAvailable && creditBalance < COST) {
@@ -414,261 +861,50 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       return;
     }
 
-    // Diagnostic wrapper: fetch() throwing (as opposed to returning a non-ok
-    // response) means the request never completed — a connection reset, CORS,
-    // CSP, or mixed-content block, NOT an HTTP error. The raw message is the
-    // useless "Failed to fetch"; annotate it with the step and target host so
-    // the on-screen error (and console) name exactly which request died.
-    const netFetch = async (
-      label: string,
-      url: string,
-      init: RequestInit
-    ): Promise<Response> => {
-      try {
-        return await fetch(url, init);
-      } catch (e) {
-        let host = url;
-        try {
-          host = new URL(url, window.location.origin).host;
-        } catch {
-          /* keep raw url */
-        }
-        const detail = e instanceof Error ? e.message : String(e);
-        console.error(`[submit] ${label} → ${host} threw:`, e);
-        throw new Error(
-          `เชื่อมต่อไม่สำเร็จที่ขั้นตอน "${label}" (${host}: ${detail}). ` +
-            `การเชื่อมต่อถูกบล็อกหรือขาดหาย ไม่ใช่ข้อผิดพลาดจากเซิร์ฟเวอร์`
-        );
-      }
-    };
-
     try {
       setPhase("submitting");
-
-      const requestRes = await netFetch("สร้างคำขอ", "/api/requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...data,
-          creditConfirmed: true,
-          rightsConfirmed: true,
-        }),
-      });
-
-      if (!requestRes.ok) {
-        const body = await requestRes.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถสร้างคำขอได้");
-      }
-
-      const { requestId } = await requestRes.json();
-
-      const uploadItems = pendingFiles.filter((f) => !f.error);
-      // Seed the progress UI so every file shows a 0% bar the moment uploads begin.
-      setUploadProgress(
-        Object.fromEntries(uploadItems.map((i) => [i.id, { pct: 0, stage: "pending" as UploadStage }]))
-      );
-      const setItem = (id: string, patch: Partial<UploadItemProgress>) =>
-        setUploadProgress((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
-
-      const jsonHeaders = { "Content-Type": "application/json" };
-      const hostOf = (u: string) => {
-        try {
-          return new URL(u, window.location.origin).host;
-        } catch {
-          return u;
-        }
-      };
-      // PUT one blob (whole file or one part), annotating a thrown network error
-      // with the target host so the on-screen failure names it (e.g. Spaces).
-      const putPart = async (
-        url: string,
-        blob: Blob,
-        onProgress: (loaded: number, total: number) => void,
-        contentType?: string
-      ): Promise<string> => {
-        try {
-          return await putBlobWithProgress(url, blob, onProgress, contentType);
-        } catch (e) {
-          const detail = e instanceof Error ? e.message : String(e);
-          throw new Error(`${hostOf(url)}: ${detail}`);
-        }
-      };
-      const mpAction = (label: string, payload: Record<string, unknown>) =>
-        netFetch(label, `/api/uploads/${requestId}/multipart`, {
-          method: "POST",
-          headers: jsonHeaders,
-          body: JSON.stringify(payload),
-        });
-
-      // Small file → one presigned PUT.
-      const uploadSingle = async (item: PendingFile): Promise<string> => {
-        const metaRes = await netFetch("ขอที่อยู่อัปโหลด", `/api/uploads/${requestId}`, {
-          method: "POST",
-          headers: jsonHeaders,
-          body: JSON.stringify({
-            fileName: item.file.name,
-            fileSizeBytes: item.file.size,
-            mimeType: item.file.type,
-          }),
-        });
-        if (!metaRes.ok) {
-          const body = await metaRes.json().catch(() => ({}));
-          throw new Error(body.error ?? `error ${metaRes.status}`);
-        }
-        const { assetId, presignedUrl } = await metaRes.json();
-        await putPart(
-          presignedUrl,
-          item.file,
-          (loaded, total) =>
-            setItem(item.id, { pct: Math.min(99, Math.round((loaded / total) * 100)) }),
-          item.file.type
-        );
-        return assetId;
-      };
-
-      // Large file → chunked multipart. Each part is its own ≤partSize PUT, so no
-      // single request trips the intermediary's ~8–15 MB body-size cap that made
-      // a whole-file PUT fail with "Failed to fetch".
-      const uploadMultipart = async (item: PendingFile): Promise<string> => {
-        const initRes = await mpAction("เริ่มอัปโหลด", {
-          action: "initiate",
-          fileName: item.file.name,
-          fileSizeBytes: item.file.size,
-          mimeType: item.file.type,
-        });
-        if (!initRes.ok) {
-          const body = await initRes.json().catch(() => ({}));
-          throw new Error(body.error ?? `error ${initRes.status}`);
-        }
-        const { assetId, key, uploadId, partSize } = await initRes.json();
-        const abort = () =>
-          fetch(`/api/uploads/${requestId}/multipart`, {
-            method: "POST",
-            headers: jsonHeaders,
-            body: JSON.stringify({ action: "abort", key, uploadId }),
-          }).catch(() => {});
-
-        try {
-          const partCount = Math.max(1, Math.ceil(item.file.size / partSize));
-          const signRes = await mpAction("ขอที่อยู่อัปโหลด", {
-            action: "sign",
-            key,
-            uploadId,
-            partCount,
-          });
-          if (!signRes.ok) {
-            const body = await signRes.json().catch(() => ({}));
-            throw new Error(body.error ?? `error ${signRes.status}`);
-          }
-          const { parts: partUrls } = (await signRes.json()) as {
-            parts: { partNumber: number; url: string }[];
-          };
-
-          const etags: { PartNumber: number; ETag: string }[] = [];
-          let uploadedBytes = 0;
-          for (const { partNumber, url } of partUrls) {
-            const start = (partNumber - 1) * partSize;
-            const chunk = item.file.slice(start, Math.min(start + partSize, item.file.size));
-            const etag = await putPart(url, chunk, (loaded) =>
-              setItem(item.id, {
-                pct: Math.min(99, Math.round(((uploadedBytes + loaded) / item.file.size) * 100)),
-              })
-            );
-            if (!etag) throw new Error(`ไม่ได้รับ ETag ของส่วนที่ ${partNumber}`);
-            etags.push({ PartNumber: partNumber, ETag: etag });
-            uploadedBytes += chunk.size;
-          }
-
-          const completeRes = await mpAction("รวมไฟล์", {
-            action: "complete",
-            key,
-            uploadId,
-            parts: etags,
-          });
-          if (!completeRes.ok) {
-            const body = await completeRes.json().catch(() => ({}));
-            throw new Error(body.error ?? `error ${completeRes.status}`);
-          }
-          return assetId;
-        } catch (e) {
-          await abort();
-          throw e;
-        }
-      };
-
-      const failedUploads: string[] = [];
-      for (const item of uploadItems) {
-        console.log(
-          `[submit] uploading ${item.file.name} (${(item.file.size / 1e6).toFixed(1)} MB, ${
-            item.file.size > MULTIPART_THRESHOLD_BYTES ? "multipart" : "single"
-          })`
-        );
-        setItem(item.id, { stage: "uploading", pct: 0 });
-
-        let assetId: string;
-        try {
-          assetId =
-            item.file.size > MULTIPART_THRESHOLD_BYTES
-              ? await uploadMultipart(item)
-              : await uploadSingle(item);
-        } catch (uploadErr) {
-          const detail = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
-          console.error(`[submit] upload ${item.file.name} failed:`, uploadErr);
-          setItem(item.id, { stage: "error" });
-          failedUploads.push(`${item.file.name} (อัปโหลดไม่สำเร็จ — ${detail})`);
-          continue;
-        }
-
-        // Reuse the poster frame already captured for the preview grid (a
-        // data: URL for videos) so the clip's thumbnail is stored on cloud at
-        // upload — no dependency on server-side ffmpeg.
-        const poster = previews[item.id];
-        const posterDataUrl =
-          typeof poster === "string" && poster.startsWith("data:image/") ? poster : undefined;
-
-        const confirmRes = await netFetch("ยืนยันไฟล์", `/api/uploads/${requestId}/confirm`, {
-          method: "POST",
-          headers: jsonHeaders,
-          body: JSON.stringify({ assetId, posterDataUrl }),
-        });
-        if (!confirmRes.ok) {
-          const body = await confirmRes.json().catch(() => ({}));
-          setItem(item.id, { stage: "error" });
-          failedUploads.push(`${item.file.name} (${body.error ?? "ยืนยันไฟล์ไม่สำเร็จ"})`);
-          continue;
-        }
-        setItem(item.id, { stage: "done", pct: 100 });
-      }
-
-      // Surface any rejected files instead of silently dropping them, so the
-      // requester knows which media did not make it into the request.
-      if (failedUploads.length > 0) {
-        setPhase("form");
-        setSubmitError(
-          `ไฟล์เหล่านี้อัปโหลดไม่สำเร็จและจะไม่ถูกใช้ในวิดีโอ: ${failedUploads.join(" · ")}`
-        );
-        return;
-      }
-
-      const submitRes = await netFetch("ส่งคำขอ", `/api/requests/${requestId}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ creditConfirmed: true, rightsConfirmed: true }),
-      });
-
-      if (!submitRes.ok) {
-        const body = await submitRes.json().catch(() => ({}));
-        throw new Error(body.error ?? "ไม่สามารถส่งคำขอได้");
-      }
-
-      router.push(requestDetailPath(requestId));
+      const requestId = await ensureDraft(data);
+      await finalizeSubmission(requestId);
     } catch (err) {
       setPhase("form");
-      setUploadProgress({});
-      setSubmitError(
-        err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง"
-      );
+      setCanRetry(Boolean(draftIdRef.current));
+      setSubmitError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
     }
+  };
+
+  // Retry after a partial/failed upload — reuses the existing draft, re-uploads
+  // only what's missing (resuming interrupted multipart parts), then submits.
+  const handleRetryUploads = async () => {
+    const requestId = draftIdRef.current;
+    if (!requestId) {
+      setSubmitError("ไม่พบคำขอที่ค้างอยู่ กรุณาส่งคำขอใหม่");
+      return;
+    }
+    if (pendingFiles.some((f) => f.error)) {
+      setSubmitError("กรุณาลบไฟล์ที่มีข้อผิดพลาดออกก่อน");
+      return;
+    }
+    setSubmitError(null);
+    setCanRetry(false);
+    try {
+      setPhase("submitting");
+      await finalizeSubmission(requestId);
+    } catch (err) {
+      setPhase("form");
+      setCanRetry(true);
+      setSubmitError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+    }
+  };
+
+  // Discard an unfinished draft and start fresh (clears the resume banner and all
+  // persisted state).
+  const handleDiscardResume = () => {
+    clearDraftPersistence(draftIdRef.current);
+    draftIdRef.current = null;
+    setResumeInfo(null);
+    setCanRetry(false);
+    setUploadProgress({});
+    setSubmitError(null);
   };
 
   // If client-side validation fails, react-hook-form doesn't scroll to the
@@ -784,6 +1020,28 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           <p className="mt-1 text-sm text-yellow-700">
             กรุณาเติมเครดิตด้วย PromptPay ที่หน้าเครดิต
           </p>
+        </div>
+      )}
+
+      {/* Resume notice — an unfinished draft was found on return */}
+      {resumeInfo && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-medium text-amber-800">
+            พบคำขอที่ยังไม่เสร็จ — ระบบจะอัปโหลดต่อให้
+          </p>
+          <p className="mt-1 text-sm text-amber-700">
+            {resumeInfo.uploadedNames.length > 0
+              ? `อัปโหลดสำเร็จแล้ว ${resumeInfo.uploadedNames.length} ไฟล์ ระบบจะข้ามให้อัตโนมัติ ` +
+                "กรุณาเลือกเฉพาะไฟล์ที่ยังไม่ได้อัปโหลดอีกครั้ง แล้วกดส่งคำขอ"
+              : "เลือกไฟล์เดิมอีกครั้งแล้วกดส่งคำขอ ระบบจะอัปโหลดต่อจากจุดที่ค้างไว้"}
+          </p>
+          <button
+            type="button"
+            onClick={handleDiscardResume}
+            className="mt-2 text-xs text-amber-700 underline hover:text-amber-900"
+          >
+            เริ่มคำขอใหม่ (ล้างข้อมูลที่ค้างไว้)
+          </button>
         </div>
       )}
 
@@ -1066,10 +1324,19 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         </div>
       </fieldset>
 
-      {/* Submit error */}
+      {/* Submit error (with resume option after a partial upload) */}
       {submitError && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4">
           <p className="text-sm text-red-700">{submitError}</p>
+          {canRetry && (
+            <button
+              type="button"
+              onClick={handleRetryUploads}
+              className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+            >
+              ลองอัปโหลดต่อ
+            </button>
+          )}
         </div>
       )}
 

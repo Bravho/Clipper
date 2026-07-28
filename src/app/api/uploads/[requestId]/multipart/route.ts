@@ -18,9 +18,13 @@ import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
  *
  * One route, four actions (dispatched on body.action):
  *   initiate → { assetId, key, uploadId, partSize }   (creates tmp/ MPU + Pending asset)
+ *   resume   → { uploadedParts: [{ PartNumber, ETag }], expired? } (parts already stored)
  *   sign     → { parts: [{ partNumber, url }] }        (presigned UploadPart URLs)
  *   complete → { ok: true }                            (assembles the object; then call /confirm)
  *   abort    → { ok: true }                            (best-effort cleanup)
+ *
+ * RESUME lets a dropped upload (common on mobile) continue: the client asks which
+ * parts already landed (`resume`), then `sign`s only the missing part numbers.
  *
  * After `complete`, the object sits at the tmp/ key exactly as a single PUT would
  * leave it, so the client finishes with the existing POST /confirm.
@@ -115,17 +119,60 @@ export async function POST(
       return NextResponse.json(result, { status: 201 });
     }
 
+    if (action === "resume") {
+      const { key, uploadId } = body as { key?: unknown; uploadId?: unknown };
+      if (!keyBelongsToCaller(key) || typeof uploadId !== "string") {
+        return NextResponse.json({ error: "Invalid key or uploadId." }, { status: 400 });
+      }
+      try {
+        const uploadedParts = await uploadService.listUploadedParts({ key, uploadId });
+        return NextResponse.json({ uploadedParts }, { status: 200 });
+      } catch (err) {
+        // Unknown/expired/aborted upload id → tell the client to start fresh
+        // rather than surface a 500 for an ordinary "session gone" case.
+        if (err instanceof Error && err.name === "NoSuchUpload") {
+          return NextResponse.json({ uploadedParts: [], expired: true }, { status: 200 });
+        }
+        throw err;
+      }
+    }
+
     if (action === "sign") {
-      const { key, uploadId, partCount } = body as {
+      const { key, uploadId, partCount, partNumbers } = body as {
         key?: unknown;
         uploadId?: unknown;
         partCount?: unknown;
+        partNumbers?: unknown;
       };
       if (!keyBelongsToCaller(key) || typeof uploadId !== "string") {
         return NextResponse.json({ error: "Invalid key or uploadId." }, { status: 400 });
       }
+
+      // RESUME path signs an explicit list of the still-missing part numbers; the
+      // fresh path signs a contiguous 1..partCount range.
+      if (Array.isArray(partNumbers)) {
+        if (
+          partNumbers.length === 0 ||
+          partNumbers.length > 10_000 ||
+          !partNumbers.every(
+            (n) => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 10_000
+          )
+        ) {
+          return NextResponse.json({ error: "Invalid partNumbers (1–10000)." }, { status: 400 });
+        }
+        const parts = await uploadService.signUploadParts({
+          key,
+          uploadId,
+          partNumbers: partNumbers as number[],
+        });
+        return NextResponse.json({ parts }, { status: 200 });
+      }
+
       if (typeof partCount !== "number" || partCount < 1 || partCount > 10_000) {
-        return NextResponse.json({ error: "Invalid partCount (1–10000)." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Provide partCount (1–10000) or partNumbers[]." },
+          { status: 400 }
+        );
       }
       const parts = await uploadService.signUploadParts({ key, uploadId, partCount });
       return NextResponse.json({ parts }, { status: 200 });

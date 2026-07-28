@@ -4,7 +4,54 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { uploadService } from "@/services/UploadService";
 import { clipRequestService } from "@/services/ClipRequestService";
-import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
+import { MAX_UPLOAD_COUNT, AssetUploadStatus } from "@/domain/enums/AssetType";
+
+/**
+ * GET /api/uploads/[requestId]
+ *
+ * Reconciliation endpoint for the RESUME flow. Returns the request's current
+ * status plus its non-deleted assets, so the client can — on re-entry after a
+ * dropped connection or the app being backgrounded/killed on iOS/Android — show
+ * which files already made it and re-upload only the rest.
+ */
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ requestId: string }> }
+) {
+  const { requestId } = await params;
+  const session = await getServerSession(authOptions);
+
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
+  }
+  if (session.user.role !== Role.Requester) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
+  let status: string;
+  try {
+    const req = await clipRequestService.getOwnedRequest(requestId, session.user.id);
+    status = req.status;
+  } catch {
+    return NextResponse.json({ error: "Request not found." }, { status: 404 });
+  }
+
+  const assets = await uploadService.getAssets(requestId);
+  return NextResponse.json({
+    status,
+    assets: assets
+      .filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted)
+      .map((a) => ({
+        id: a.id,
+        fileName: a.fileName,
+        fileSizeBytes: Number(a.fileSizeBytes) || 0,
+        mimeType: a.mimeType,
+        uploadStatus: a.uploadStatus,
+        storageUrl: a.storageUrl,
+        thumbnailUrl: a.thumbnailUrl,
+      })),
+  });
+}
 
 /**
  * POST /api/uploads/[requestId]

@@ -5,9 +5,11 @@ import {
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  ListPartsCommand,
   PutObjectCommand,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
+import type { ListPartsCommandOutput } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -336,10 +338,21 @@ export class UploadService {
   async signUploadParts(input: {
     key: string;
     uploadId: string;
-    partCount: number;
+    partCount?: number;
+    /**
+     * Explicit part numbers to sign. Used by the RESUME path to re-sign only the
+     * parts that never landed. When omitted, signs a contiguous 1..partCount range
+     * (the fresh-upload path).
+     */
+    partNumbers?: number[];
   }): Promise<{ partNumber: number; url: string }[]> {
+    const numbers =
+      input.partNumbers && input.partNumbers.length > 0
+        ? input.partNumbers
+        : Array.from({ length: input.partCount ?? 0 }, (_, i) => i + 1);
+
     const urls: { partNumber: number; url: string }[] = [];
-    for (let partNumber = 1; partNumber <= input.partCount; partNumber++) {
+    for (const partNumber of numbers) {
       const url = await getSignedUrl(
         spacesClient,
         new UploadPartCommand({
@@ -353,6 +366,41 @@ export class UploadService {
       urls.push({ partNumber, url });
     }
     return urls;
+  }
+
+  /**
+   * Multipart RESUME — list the parts already stored for an in-progress upload so
+   * the browser can re-sign and PUT only the MISSING parts instead of restarting
+   * a large video from zero. This is what makes resume cheap on flaky mobile
+   * (iOS/Android) connections. Paginated: Spaces returns ≤1000 parts per page.
+   * Returns parts sorted by number with the ETag Spaces recorded (quoted — the
+   * same form CompleteMultipartUpload expects). Propagates NoSuchUpload so the
+   * caller can fall back to a fresh initiate.
+   */
+  async listUploadedParts(input: {
+    key: string;
+    uploadId: string;
+  }): Promise<{ PartNumber: number; ETag: string }[]> {
+    const parts: { PartNumber: number; ETag: string }[] = [];
+    let marker: string | undefined = undefined;
+    do {
+      const res: ListPartsCommandOutput = await spacesClient.send(
+        new ListPartsCommand({
+          Bucket: SPACES_BUCKET,
+          Key: input.key,
+          UploadId: input.uploadId,
+          PartNumberMarker: marker,
+        })
+      );
+      for (const p of res.Parts ?? []) {
+        if (typeof p.PartNumber === "number" && typeof p.ETag === "string") {
+          parts.push({ PartNumber: p.PartNumber, ETag: p.ETag });
+        }
+      }
+      marker = res.IsTruncated ? res.NextPartNumberMarker : undefined;
+    } while (marker);
+    parts.sort((a, b) => a.PartNumber - b.PartNumber);
+    return parts;
   }
 
   /**
