@@ -136,19 +136,42 @@ Naively flipping it to `https://rclipper.com` **breaks the mobile apps**:
 WebView would treat post-login navigation as external and kick the user out to
 Safari/Chrome.
 
-**Fix: make the origin per-request.** `src/app/api/auth/[...nextauth]/route.ts`
-already resolves options per request (for the Apple SameSite exception), so
-there is a natural hook. Add a host allowlist and set the origin from the
-incoming `X-Forwarded-Host` before delegating to NextAuth:
+**Fix: `AUTH_TRUST_HOST=true`. No code change required.**
 
-- allowlist: `rclipper.com`, `www.rclipper.com`, `app.rclipper.com`,
-  `api.rclipper.com`, plus `localhost:3000` for dev
-- unknown host → fall back to the `NEXTAUTH_URL` env value (fail closed)
-- pass the resolved origin through `authOptionsForProvider(providerId, origin)`
-  so the existing Apple cookie branch is preserved
+Verified against the installed `next-auth@4.24.13`:
 
-Same treatment for the `redirect` callback so `baseUrl` follows the request host
-rather than the env var.
+```js
+// node_modules/next-auth/utils/detect-origin.js
+function detectOrigin(forwardedHost, protocol) {
+  if (process.env.VERCEL ?? process.env.AUTH_TRUST_HOST)
+    return `${protocol === "http" ? "http" : "https"}://${forwardedHost}`;
+  return process.env.NEXTAUTH_URL;
+}
+```
+
+`core/index.js:40` calls this with `headers["x-forwarded-host"] ?? headers.host`
+and `headers["x-forwarded-proto"]`. The result becomes `options.url`
+(`core/init.js:32`), and `core/lib/callback-url.js` passes `baseUrl: url.origin`
+into the `redirect` callback. So with the flag set, every hostname resolves to
+itself and the existing callback at `authOptions.ts:183` needs no edit.
+
+**Security precondition — do not set this flag without both nginx guards:**
+
+1. `proxy_set_header X-Forwarded-Host $host;` in every proxying block, so a
+   client-supplied `X-Forwarded-Host` is overwritten rather than passed through.
+   Without this, nginx forwards the attacker's header verbatim.
+2. A catch-all `default_server` block returning `444`, so `$host` can only ever
+   be one of the real hostnames. Otherwise a forged `Host:` header reaches the
+   app and NextAuth mints callback URLs pointing at it.
+
+With both in place, the trusted-host set is enforced by nginx `server_name`
+matching rather than by application code — which is where it belongs.
+
+**Rollout order matters.** Leave `NEXTAUTH_URL=https://app.rclipper.com` in
+place when first enabling the flag. If `AUTH_TRUST_HOST` somehow fails to take
+effect, the fallback is *today's* behaviour (mobile fine, apex bounces) rather
+than a new outage. Retarget `NEXTAUTH_URL` to the apex only after the flag is
+confirmed working.
 
 Also update `APP_URL` (`.env.local:36`). Note: `grep` shows `APP_URL` is not
 referenced anywhere in `src/` — it is currently cosmetic, so this is

@@ -89,7 +89,12 @@ export class RequesterDashboardService {
       .slice(0, 5)
       .map((r) => this.toRow(r));
 
-    const activeRows = activeRequests.slice(0, 5).map((r) => this.toRow(r));
+    // Dashboard "in progress" section shows the latest 5 requests of ANY status
+    // (drafts, pending, and failed-upload requests included). allRequests is
+    // already sorted newest-first by the repository. To see the rest, the user
+    // clicks "view all". The activeRequestCount stat card still reflects only
+    // truly-active statuses.
+    const activeRows = allRequests.slice(0, 5).map((r) => this.toRow(r));
 
     return {
       creditBalance: balance,
