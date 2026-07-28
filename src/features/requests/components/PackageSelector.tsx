@@ -4,6 +4,8 @@ import dynamic from "next/dynamic";
 import { useState } from "react";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { useI18n } from "@/i18n/client";
+import type { ResumeUploadedAsset } from "./NewRequestForm";
+import type { SubmitClipRequestValues } from "@/features/requests/validation/clipRequestSchema";
 
 const NewRequestForm = dynamic(() =>
   import("./NewRequestForm").then((module) => module.NewRequestForm)
@@ -12,15 +14,25 @@ const ProductionPipeline = dynamic(() =>
   import("./ProductionPipeline").then((module) => module.ProductionPipeline)
 );
 
+/** Data needed to resume an existing draft (opened from the dashboard). */
+export interface ResumeData {
+  requestId: string;
+  initialValues: Partial<SubmitClipRequestValues>;
+  uploadedAssets: ResumeUploadedAsset[];
+}
+
 interface Props {
   creditBalance: number;
   /** True when the user's free trial (first) request is still available. */
   trialAvailable?: boolean;
+  /** When present, skip the track chooser and resume this draft directly. */
+  resume?: ResumeData;
 }
 
-export function PackageSelector({ creditBalance, trialAvailable = false }: Props) {
+export function PackageSelector({ creditBalance, trialAvailable = false, resume }: Props) {
   const { t } = useI18n();
-  const [selected, setSelected] = useState<"ai" | "editor" | null>(null);
+  // Resuming a draft jumps straight into the AI track (the only live track).
+  const [selected, setSelected] = useState<"ai" | "editor" | null>(resume ? "ai" : null);
   // Duration / channels are creative preferences only — they no longer affect
   // the price (a request is a single flat charge). Kept for the pipeline display.
   const [durationSeconds, setDurationSeconds] = useState<number>(15);
@@ -29,13 +41,16 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
   if (selected === "ai") {
     return (
       <div>
-        <button
-          type="button"
-          onClick={() => setSelected(null)}
-          className="mb-6 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
-        >
-          {t("request.changeProduction")}
-        </button>
+        {/* No track switch while resuming — the draft is already an AI request. */}
+        {!resume && (
+          <button
+            type="button"
+            onClick={() => setSelected(null)}
+            className="mb-6 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
+          >
+            {t("request.changeProduction")}
+          </button>
+        )}
 
         <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4 flex items-center gap-3">
           <div className="rounded-full bg-blue-600 p-1.5">
@@ -52,6 +67,9 @@ export function PackageSelector({ creditBalance, trialAvailable = false }: Props
         <NewRequestForm
           creditBalance={creditBalance}
           trialAvailable={trialAvailable}
+          existingRequestId={resume?.requestId}
+          initialValues={resume?.initialValues}
+          uploadedAssets={resume?.uploadedAssets}
           onCreditParamsChange={(d, p) => {
             setDurationSeconds(d);
             setPlatformCount(p);

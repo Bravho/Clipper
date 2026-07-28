@@ -101,7 +101,7 @@ export default async function RequestsPage({
                 <span className="text-sm text-slate-800">{d.title || "แบบร่างไม่มีชื่อ"}</span>
                 <div className="flex items-center gap-4">
                   <DeleteDraftButton requestId={d.id} />
-                  <Link href={requestDetailPath(d.id)} className="text-xs text-blue-600 hover:text-blue-800">
+                  <Link href={`${ROUTES.REQUESTS_NEW}?edit=${d.id}`} className="text-xs text-blue-600 hover:text-blue-800">
                     ดำเนินการต่อ →
                   </Link>
                 </div>

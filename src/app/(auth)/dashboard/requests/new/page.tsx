@@ -5,12 +5,20 @@ import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 import { creditService } from "@/services/CreditService";
 import { clipRequestService } from "@/services/ClipRequestService";
+import { uploadedAssetRepository } from "@/repositories";
+import { RequestStatus } from "@/domain/enums/RequestStatus";
+import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { PackageSelector } from "@/features/requests/components/PackageSelector";
+import type { ResumeData } from "@/features/requests/components/PackageSelector";
 import { getServerI18n } from "@/i18n/server";
 
 export const metadata: Metadata = { title: "คำขอใหม่ — RClipper" };
 
-export default async function NewRequestPage() {
+export default async function NewRequestPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ edit?: string }>;
+}) {
   const { t } = getServerI18n();
   const pageStartedAt = performance.now();
   const timings: Record<string, number> = {};
@@ -24,10 +32,57 @@ export default async function NewRequestPage() {
   };
 
   const user = await timed("auth", () => requireRole(Role.Requester));
+  const { edit: editId } = await searchParams;
   const [balance, trialAvailable] = await Promise.all([
     timed("creditBalance", () => creditService.getBalance(user.id)),
     timed("trialAvailable", () => clipRequestService.isFirstRequest(user.id)),
   ]);
+
+  // Resume flow: when opened as ?edit=<draftId> from the dashboard, load the
+  // owned Draft and its already-uploaded source files so the form can continue
+  // where a failed upload left off instead of starting a new request.
+  let resume: ResumeData | undefined;
+  if (editId) {
+    try {
+      const draft = await timed("resumeDraft", () =>
+        clipRequestService.getOwnedRequest(editId, user.id)
+      );
+      if (draft.status === RequestStatus.Draft) {
+        const assets = await timed("resumeAssets", () =>
+          uploadedAssetRepository.findByRequestId(editId)
+        );
+        resume = {
+          requestId: draft.id,
+          initialValues: {
+            title: draft.title,
+            placeName: draft.placeName,
+            latitude: draft.latitude,
+            longitude: draft.longitude,
+            description: draft.description,
+            targetAudience: draft.targetAudience,
+            targetPlatforms: draft.targetPlatforms,
+            durationSeconds: draft.durationSeconds,
+          },
+          uploadedAssets: assets
+            .filter(
+              (a) =>
+                a.uploadStatus === AssetUploadStatus.Uploaded &&
+                (a.assetType === AssetType.Image || a.assetType === AssetType.Video)
+            )
+            .map((a) => ({
+              fileName: a.fileName,
+              fileSizeBytes: Number(a.fileSizeBytes) || 0,
+              assetType: a.assetType === AssetType.Video ? "video" : "image",
+              thumbnailUrl: a.thumbnailUrl || undefined,
+              storageUrl: a.storageUrl || undefined,
+            })),
+        };
+      }
+    } catch {
+      // Not found / not owned / not a draft → fall through to a fresh form.
+      resume = undefined;
+    }
+  }
 
   if (process.env.NEW_REQUEST_PERF_LOG === "1") {
     console.info("[new-request timing]", {
@@ -53,13 +108,21 @@ export default async function NewRequestPage() {
 
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">{t("request.newTitle")}</h1>
+        <h1 className="text-2xl font-bold text-slate-900">
+          {resume ? "ดำเนินการคำขอต่อ" : t("request.newTitle")}
+        </h1>
         <p className="mt-2 text-slate-500 text-sm">
-          {t("request.newSubtitle")}
+          {resume
+            ? "อัปโหลดไฟล์ที่เหลือให้ครบแล้วส่งคำขอ — ระบบจะอัปโหลดต่อจากจุดที่ค้างไว้"
+            : t("request.newSubtitle")}
         </p>
       </div>
 
-      <PackageSelector creditBalance={balance} trialAvailable={trialAvailable} />
+      <PackageSelector
+        creditBalance={balance}
+        trialAvailable={trialAvailable}
+        resume={resume}
+      />
     </div>
   );
 }

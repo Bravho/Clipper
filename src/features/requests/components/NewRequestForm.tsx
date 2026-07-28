@@ -45,6 +45,15 @@ interface PendingFile {
   error?: string;
 }
 
+/** A source file already uploaded to a resumed draft — shown as done, not re-uploaded. */
+export interface ResumeUploadedAsset {
+  fileName: string;
+  fileSizeBytes: number;
+  assetType: "image" | "video";
+  thumbnailUrl?: string;
+  storageUrl?: string;
+}
+
 interface NewRequestFormProps {
   creditBalance: number;
   /**
@@ -58,6 +67,16 @@ interface NewRequestFormProps {
   creditCost?: number;
   /** Called whenever duration or platform count changes so parent can update the pipeline estimate. */
   onCreditParamsChange?: (durationSeconds: number, platformCount: number) => void;
+  /**
+   * Resume mode (draft opened from the dashboard): reuse this request id instead
+   * of creating a new one, so files already uploaded to it are kept and only the
+   * missing ones are sent.
+   */
+  existingRequestId?: string;
+  /** Prefill values for a resumed draft. */
+  initialValues?: Partial<SubmitClipRequestValues>;
+  /** Files already uploaded to the resumed draft — shown as done; not re-uploaded. */
+  uploadedAssets?: ResumeUploadedAsset[];
 }
 
 const MAX_IMAGE_SIZE_MB = MAX_IMAGE_SIZE_BYTES / (1024 * 1024);
@@ -332,7 +351,7 @@ interface UploadItemProgress {
 
 type SubmitPhase = "form" | "submitting";
 
-export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnly = false, creditCost, onCreditParamsChange }: NewRequestFormProps) {
+export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnly = false, creditCost, onCreditParamsChange, existingRequestId, initialValues, uploadedAssets }: NewRequestFormProps) {
   const { t } = useI18n();
   const COST = creditCost ?? CREDITS_CONFIG.REQUEST_COST_CREDITS;
   const acceptedTypes = imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_MIME_TYPES;
@@ -348,11 +367,16 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const [mapOpen, setMapOpen] = useState(false);
 
   // Resume state. draftIdRef holds the single reused draft id (never recreated on
-  // retry). canRetry shows the "resume upload" button after a partial failure.
+  // retry). When resuming a draft opened from the dashboard, it starts as that
+  // draft's id. canRetry shows the "resume upload" button after a partial failure.
   // resumeInfo shows the banner when a returning user has an unfinished draft.
-  const draftIdRef = useRef<string | null>(null);
+  const draftIdRef = useRef<string | null>(existingRequestId ?? null);
   const [canRetry, setCanRetry] = useState(false);
-  const [resumeInfo, setResumeInfo] = useState<{ uploadedNames: string[] } | null>(null);
+  const [resumeInfo, setResumeInfo] = useState<{ uploadedNames: string[] } | null>(
+    existingRequestId
+      ? { uploadedNames: (uploadedAssets ?? []).map((a) => a.fileName) }
+      : null
+  );
 
   const setItemProgress = useCallback((id: string, patch: Partial<UploadItemProgress>) => {
     setUploadProgress((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -368,8 +392,17 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   } = useForm<SubmitClipRequestValues>({
     resolver: zodResolver(submitClipRequestSchema),
     defaultValues: {
-      targetPlatforms: [Platform.TventApp] as SubmitClipRequestValues["targetPlatforms"],
-      durationSeconds: PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
+      // Prefill from the resumed draft when present, else the standard defaults.
+      title: initialValues?.title,
+      placeName: initialValues?.placeName,
+      latitude: initialValues?.latitude,
+      longitude: initialValues?.longitude,
+      description: initialValues?.description,
+      targetAudience: initialValues?.targetAudience,
+      targetPlatforms: (initialValues?.targetPlatforms ?? [
+        Platform.TventApp,
+      ]) as SubmitClipRequestValues["targetPlatforms"],
+      durationSeconds: initialValues?.durationSeconds ?? PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
       creditConfirmed: undefined,
       rightsConfirmed: undefined,
     },
@@ -524,6 +557,13 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // multipart session, adopt its id and show the resume banner; otherwise clear
   // the stale pointer. Offline is left intact for a later attempt.
   useEffect(() => {
+    // Explicit resume from the dashboard wins — adopt that draft id and don't let
+    // a stale localStorage pointer from an earlier draft override it.
+    if (existingRequestId) {
+      draftIdRef.current = existingRequestId;
+      lsSet(DRAFT_ID_KEY, existingRequestId);
+      return;
+    }
     const saved = lsGet(DRAFT_ID_KEY);
     if (!saved) return;
     let cancelled = false;
@@ -581,7 +621,22 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // submit attempt POSTed /api/requests afresh, minting a new request and
   // orphaning any files already uploaded under the previous id.
   const ensureDraft = async (data: SubmitClipRequestValues): Promise<string> => {
-    if (draftIdRef.current) return draftIdRef.current;
+    if (draftIdRef.current) {
+      // Resuming an existing draft: persist any edits the user made to the brief
+      // before uploading (best-effort — a failure here shouldn't block the upload).
+      if (existingRequestId) {
+        try {
+          await fetch(`/api/requests/${draftIdRef.current}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+          });
+        } catch {
+          /* non-fatal */
+        }
+      }
+      return draftIdRef.current;
+    }
     const res = await netFetch("สร้างคำขอ", "/api/requests", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1035,13 +1090,18 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                 "กรุณาเลือกเฉพาะไฟล์ที่ยังไม่ได้อัปโหลดอีกครั้ง แล้วกดส่งคำขอ"
               : "เลือกไฟล์เดิมอีกครั้งแล้วกดส่งคำขอ ระบบจะอัปโหลดต่อจากจุดที่ค้างไว้"}
           </p>
-          <button
-            type="button"
-            onClick={handleDiscardResume}
-            className="mt-2 text-xs text-amber-700 underline hover:text-amber-900"
-          >
-            เริ่มคำขอใหม่ (ล้างข้อมูลที่ค้างไว้)
-          </button>
+          {/* Only offer "start over" for a locally-recovered draft — when the user
+              deliberately opened a specific draft from the dashboard, clearing it
+              would just orphan that request. */}
+          {!existingRequestId && (
+            <button
+              type="button"
+              onClick={handleDiscardResume}
+              className="mt-2 text-xs text-amber-700 underline hover:text-amber-900"
+            >
+              เริ่มคำขอใหม่ (ล้างข้อมูลที่ค้างไว้)
+            </button>
+          )}
         </div>
       )}
 
@@ -1141,6 +1201,56 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             และจะถูกลบหลังจาก 90 วันตามนโยบายการจัดเก็บข้อมูลของเรา
           </p>
         </div>
+
+        {/* Already-uploaded files (resume mode) — shown so the user knows which
+            files are safe and which still need re-selecting. Not re-uploaded. */}
+        {uploadedAssets && uploadedAssets.length > 0 && (
+          <div className="mb-4">
+            <p className="mb-2 text-xs font-medium text-green-700">
+              อัปโหลดสำเร็จแล้ว {uploadedAssets.length} ไฟล์ (ไม่ต้องอัปโหลดซ้ำ)
+            </p>
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+              {uploadedAssets.map((a, i) => (
+                <li
+                  key={`${a.fileName}-${i}`}
+                  className="relative overflow-hidden rounded-lg border border-green-200 bg-green-50"
+                >
+                  <div className="flex aspect-square items-center justify-center bg-slate-50">
+                    {a.thumbnailUrl || (a.assetType === "image" && a.storageUrl) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={a.thumbnailUrl || a.storageUrl}
+                        alt={a.fileName}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : a.assetType === "video" && a.storageUrl ? (
+                      <video
+                        src={`${a.storageUrl}#t=0.5`}
+                        className="h-full w-full object-cover bg-black"
+                        preload="metadata"
+                        muted
+                        playsInline
+                      />
+                    ) : (
+                      <svg className="h-10 w-10 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.25 9.75L16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" />
+                      </svg>
+                    )}
+                  </div>
+                  <div className="absolute right-1 top-1 rounded-full bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                    ✓ อัปโหลดแล้ว
+                  </div>
+                  <div className="px-2 py-1.5">
+                    <p className="truncate text-xs text-slate-700">{a.fileName}</p>
+                    <p className="text-xs text-slate-400">
+                      {(a.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Drop zone */}
         <div
