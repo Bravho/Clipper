@@ -67,11 +67,15 @@ export async function GET(
 
   // Serve the presigned URL with Content-Disposition: attachment so the client
   // downloads a real file (in-page on web, saved to the device on mobile) rather
-  // than opening the video in a new browser tab. Give it a friendly file name.
-  const ratioSuffix = asset.videoRatio ? `_${asset.videoRatio.replace(":", "x")}` : "";
-  const downloadFileName = asset.fileName?.trim()
-    ? asset.fileName
-    : `rclipper-video${ratioSuffix}.mp4`;
+  // than opening the video in a new browser tab. Name the file after the place
+  // and the distribution channel it was clicked for — e.g. "ร้านกาแฟ - TikTok.mp4"
+  // — so a requester downloading every channel gets clearly-named files.
+  const channelName = request.nextUrl.searchParams.get("channel")?.trim();
+  const ext = asset.fileName?.split(".").pop()?.toLowerCase() || "mp4";
+  const place =
+    clipRequest.placeName?.trim() || clipRequest.title?.trim() || "RClipper";
+  const baseName = [place, channelName].filter(Boolean).join(" - ");
+  const downloadFileName = `${baseName || "rclipper-video"}.${ext}`;
 
   const url = await spacesSignedUrl(asset.storageKey, DOWNLOAD_URL_TTL_SECONDS, {
     downloadFileName,

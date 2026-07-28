@@ -120,8 +120,8 @@ const STATUS_PRESENTATION: Record<RequestStatus, StatusPresentation> = {
     badgeVariant: "green",
   },
   [RequestStatus.Delivered]: {
-    label: "ส่งมอบแล้ว",
-    description: "คลิปของคุณถูกส่งมอบแล้ว ดูและแชร์ลิงก์ด้านล่างได้เลย",
+    label: "เสร็จสิ้น",
+    description: "คลิปของคุณเสร็จสิ้นแล้ว ดาวน์โหลดวิดีโอสำหรับแต่ละช่องทางด้านล่างได้เลย",
     badgeVariant: "green",
   },
   [RequestStatus.OnHold]: {

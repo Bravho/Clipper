@@ -54,7 +54,7 @@ describe("RequestPresentationService.getStatusPresentation", () => {
       [RequestStatus.Editing, "กำลังผลิต"],
       [RequestStatus.ScheduledForPublishing, "กำหนดเผยแพร่แล้ว"],
       [RequestStatus.Published, "เผยแพร่แล้ว"],
-      [RequestStatus.Delivered, "ส่งมอบแล้ว"],
+      [RequestStatus.Delivered, "เสร็จสิ้น"],
       [RequestStatus.OnHold, "พักไว้ชั่วคราว"],
       [RequestStatus.Rejected, "ปฏิเสธ"],
     ];

@@ -711,6 +711,7 @@ export default async function RequestDetailPage({
                 tventAssetId={pipelineJob.finalExport_tvent_assetId ?? null}
                 downloadLocked={!request.downloadUnlocked}
                 unlockPrice={CREDITS_CONFIG.REQUEST_COST_CREDITS}
+                mediaExpired={finalClipAvailabilityNote(request)?.tone === "expired"}
               />
             )}
 

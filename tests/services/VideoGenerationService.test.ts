@@ -756,11 +756,10 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.tventVideoStatus).toBe("ready");
     expect(updated?.finalExport_tvent_assetId).toBeTruthy();
 
-    // NOT delivered until the requester confirms publishing — instead it is
-    // ScheduledForPublishing (an active status → shows under "in progress").
+    // The channel videos are ready, so the request is complete without a
+    // separate requester confirmation step.
     const req = await mockClipRepo.findById(request.id);
-    expect(req?.status).toBe(RequestStatus.ScheduledForPublishing);
-    expect(req?.status).not.toBe(RequestStatus.Delivered);
+    expect(req?.status).toBe(RequestStatus.Delivered);
 
     // The Travy render uses EN+ZH regardless of the requester's choice, and is
     // always at the fixed Travy ratio (16:9), never the primary's ratio.

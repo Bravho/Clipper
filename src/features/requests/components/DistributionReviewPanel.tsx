@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Platform, PLATFORM_LABELS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
-import { Browser } from "@capacitor/browser";
 import { isNativeMobile } from "@/lib/mobile/platform";
+import { saveVideoToDevice } from "@/lib/mobile/nativeDownload";
 import { ReportAiContent } from "@/features/requests/components/ReportAiContent";
 
 interface Props {
@@ -35,6 +35,12 @@ interface Props {
   downloadLocked?: boolean;
   /** Price in credits (= ฿) to unlock all downloads for this request. */
   unlockPrice?: number;
+  /**
+   * True once the 7-day availability window has passed and the generated videos
+   * have been purged from storage. When set, the panel shows a clear
+   * "files were deleted" state for every channel instead of broken players.
+   */
+  mediaExpired?: boolean;
 }
 
 export function DistributionReviewPanel({
@@ -48,6 +54,7 @@ export function DistributionReviewPanel({
   tventAssetId = null,
   downloadLocked = false,
   unlockPrice = 0,
+  mediaExpired = false,
 }: Props) {
   const router = useRouter();
   const channelVideoByPlatform = new Map(channelVideos.map((c) => [c.platform, c]));
@@ -60,12 +67,6 @@ export function DistributionReviewPanel({
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  // Finish action — closes out the request (marks Delivered/Complete). RClipper
-  // does not post the clip to the requester's channels; the requester downloads
-  // and posts it themselves.
-  const [finishing, setFinishing] = useState(false);
-  const [finishError, setFinishError] = useState<string | null>(null);
-
   const handleUnlock = async () => {
     setUnlocking(true);
     setDownloadError(null);
@@ -75,11 +76,17 @@ export function DistributionReviewPanel({
     );
   };
 
-  const handleDownload = async (assetId: string) => {
+  const handleDownload = async (assetId: string, channelName?: string) => {
     setDownloadingId(assetId);
     setDownloadError(null);
     try {
-      const res = await fetch(`/api/requests/${requestId}/download?assetId=${assetId}`);
+      // Pass the channel name so the saved file is named "<place> - <channel>".
+      const channelQuery = channelName
+        ? `&channel=${encodeURIComponent(channelName)}`
+        : "";
+      const res = await fetch(
+        `/api/requests/${requestId}/download?assetId=${assetId}${channelQuery}`
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ดาวน์โหลดไม่สำเร็จ");
@@ -92,9 +99,9 @@ export function DistributionReviewPanel({
       };
 
       if (isNativeMobile()) {
-        // Hand the attachment URL to the system browser, which downloads and
-        // saves the video to the device (Files / Downloads).
-        await Browser.open({ url });
+        // Download the bytes natively (bypassing WebView CORS), write the file
+        // to the device, and open the OS save sheet (Photos / Files / Downloads).
+        await saveVideoToDevice(url, fileName ?? "rclipper-video.mp4");
       } else {
         // Trigger a real, in-page download (no new tab): a programmatic click on
         // an <a download> anchor. The attachment disposition makes the browser
@@ -114,34 +121,18 @@ export function DistributionReviewPanel({
     }
   };
 
-  const handleFinish = async () => {
-    setFinishing(true);
-    setFinishError(null);
-    try {
-      const res = await fetch(`/api/requests/${requestId}/confirm-publishing`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? "ไม่สามารถปิดงานได้");
-      router.refresh();
-    } catch (err) {
-      setFinishError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
-    } finally {
-      setFinishing(false);
-    }
-  };
-
   /** Lock-aware download control for one clip (unlock CTA when locked). */
   const renderDownloadControl = ({
     assetId,
     ratio,
     labelSuffix,
+    channelName,
   }: {
     assetId: string | null;
     ratio?: string | null;
     labelSuffix?: string;
+    /** Distribution-channel name, used to name the downloaded file. */
+    channelName?: string;
   }) => {
     if (!assetId) return null;
     const ratioTxt = ratio ? ` (${ratio})` : "";
@@ -160,7 +151,7 @@ export function DistributionReviewPanel({
     return (
       <button
         type="button"
-        onClick={() => handleDownload(assetId)}
+        onClick={() => handleDownload(assetId, channelName)}
         disabled={downloadingId === assetId}
         className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline disabled:opacity-50"
       >
@@ -203,15 +194,20 @@ export function DistributionReviewPanel({
       <Card className="border-blue-100 bg-blue-50/30">
         <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <h3 className="text-base font-semibold text-slate-900">
-            วิดีโอของคุณพร้อมแล้ว — ดาวน์โหลดเพื่อโพสต์ได้เลย
+            {mediaExpired
+              ? "วิดีโอหมดอายุการดาวน์โหลดแล้ว"
+              : "วิดีโอของคุณพร้อมแล้ว — ดาวน์โหลดเพื่อโพสต์ได้เลย"}
           </h3>
-          <span className="text-sm font-medium text-amber-700">
-            (วิดีโอนี้จะถูกจัดเก็บเพียง 7 วัน)
-          </span>
+          {!mediaExpired && (
+            <span className="text-sm font-medium text-amber-700">
+              (วิดีโอนี้จะถูกจัดเก็บเพียง 7 วัน)
+            </span>
+          )}
         </div>
         <p className="mb-4 text-sm text-slate-500">
-          เราจัดรูปแบบวิดีโอในอัตราส่วนที่เหมาะกับแต่ละช่องทางให้เรียบร้อยแล้ว
-          ดาวน์โหลดไฟล์แล้วนำไปโพสต์บนช่องทางของคุณเองได้ทันที
+          {mediaExpired
+            ? "ไฟล์วิดีโอถูกจัดเก็บไว้ 7 วันหลังส่งมอบและถูกลบออกจากระบบแล้ว จึงไม่สามารถดาวน์โหลดได้อีก"
+            : "เราจัดรูปแบบวิดีโอในอัตราส่วนที่เหมาะกับแต่ละช่องทางให้เรียบร้อยแล้ว ดาวน์โหลดไฟล์แล้วนำไปโพสต์บนช่องทางของคุณเองได้ทันที"}
         </p>
 
         <div className="flex flex-col gap-4">
@@ -226,21 +222,33 @@ export function DistributionReviewPanel({
                   <span className="text-sm font-semibold text-slate-800">{ch.label}</span>
                 </div>
 
-                {/* This channel's generated (subtitled) video — play + download. */}
-                {cv?.url && (
-                  <div className="mb-3">
-                    <div className="flex max-h-[360px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
-                      <video
-                        src={cv.url}
-                        controls
-                        preload="metadata"
-                        className="max-h-[340px] w-auto rounded object-contain"
-                      />
-                    </div>
-                    <div className="mt-2">
-                      {renderDownloadControl({ assetId: cv.assetId, ratio: cv.ratio })}
-                    </div>
+                {mediaExpired ? (
+                  /* Files purged after the 7-day window — say so per channel. */
+                  <div className="mb-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+                    <span aria-hidden>🗑️</span>
+                    <span>ไฟล์วิดีโอสำหรับช่องทางนี้ถูกลบแล้ว (จัดเก็บไว้ 7 วันหลังส่งมอบ)</span>
                   </div>
+                ) : (
+                  /* This channel's generated (subtitled) video — play + download. */
+                  cv?.url && (
+                    <div className="mb-3">
+                      <div className="flex max-h-[360px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
+                        <video
+                          src={cv.url}
+                          controls
+                          preload="metadata"
+                          className="max-h-[340px] w-auto rounded object-contain"
+                        />
+                      </div>
+                      <div className="mt-2">
+                        {renderDownloadControl({
+                          assetId: cv.assetId,
+                          ratio: cv.ratio,
+                          channelName: ch.label,
+                        })}
+                      </div>
+                    </div>
+                  )
                 )}
 
                 {/* Note: no auto-publishing from RClipper — the clip may be featured. */}
@@ -260,19 +268,6 @@ export function DistributionReviewPanel({
         <div className="mt-5 border-t border-blue-100 pt-4">
           <ReportAiContent requestId={requestId} />
         </div>
-
-        {/* Finish — closes out the request. */}
-        <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-blue-100 pt-4">
-          <button
-            type="button"
-            onClick={handleFinish}
-            disabled={finishing}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {finishing ? "กำลังปิดงาน..." : "เสร็จสิ้นและปิดงาน"}
-          </button>
-          {finishError && <span className="text-xs text-red-600">{finishError}</span>}
-        </div>
       </Card>
 
       {/* Background Travy (EN+ZH) render status */}
@@ -281,13 +276,19 @@ export function DistributionReviewPanel({
           <h3 className="mb-2 text-base font-semibold text-slate-900">
             วิดีโอสำหรับช่อง Travy (อังกฤษ + จีน)
           </h3>
-          {tventVideoStatus === "generating" && (
+          {mediaExpired && (
+            <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">
+              <span aria-hidden>🗑️</span>
+              <span>ไฟล์วิดีโอ Travy ถูกลบแล้ว (จัดเก็บไว้ 7 วันหลังส่งมอบ)</span>
+            </div>
+          )}
+          {!mediaExpired && tventVideoStatus === "generating" && (
             <div className="flex items-center gap-3 text-sm text-slate-600">
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
               ระบบกำลังสร้างวิดีโอสำหรับช่อง Travy โดยอัตโนมัติ (ไม่สามารถยกเลิกได้)
             </div>
           )}
-          {tventVideoStatus === "ready" &&
+          {!mediaExpired && tventVideoStatus === "ready" &&
             (tventClipUrl ? (
               <div className="space-y-3">
                 <div className="flex max-h-[420px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
@@ -299,12 +300,13 @@ export function DistributionReviewPanel({
                   // not the reviewed/primary ratio.
                   ratio: PLATFORM_ASPECT_RATIOS[Platform.TventApp],
                   labelSuffix: "วิดีโอ Travy",
+                  channelName: "Travy",
                 })}
               </div>
             ) : (
               <p className="text-sm text-slate-400">วิดีโอ Travy พร้อมแล้ว</p>
             ))}
-          {tventVideoStatus === "failed" && (
+          {!mediaExpired && tventVideoStatus === "failed" && (
             <div className="space-y-2">
               <p className="text-sm font-medium text-red-600">การสร้างวิดีโอ Travy ล้มเหลว</p>
               {tventVideoError && (

@@ -2324,11 +2324,15 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // for the Travy web app), independent of the primary channel's ratio.
     const tventRatio = this._montageCanvasRatio(Platform.TventApp);
 
-    // Editing is complete and publishing is queued — mark the REQUEST accordingly
-    // so it stays under "in progress" (ScheduledForPublishing is an active status)
-    // and is NOT shown as Delivered until the requester confirms publishing.
+    // The captioned videos for every channel are ready to download, so the
+    // request is DONE from the requester's side — mark it Delivered (shown as
+    // "เสร็จสิ้น"). There is no separate requester "finish/confirm publishing"
+    // step anymore; reaching this point IS completion. Delivered also starts the
+    // 7-day final-clip availability window (retention sweep purges media at
+    // Delivered + 7 days), which matches the "จัดเก็บเพียง 7 วัน" promise shown
+    // on the distribution page.
     const { RequestStatus } = await import("@/domain/enums/RequestStatus");
-    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.ScheduledForPublishing);
+    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
 
     // Auto-fill per-channel publishing drafts (Gemini; fail-open to the caption).
     const publishingDrafts = await this._generatePublishingDrafts(job, platforms);
