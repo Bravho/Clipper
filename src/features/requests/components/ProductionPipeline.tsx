@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CREDITS_CONFIG, PIPELINE_PHASES } from "@/config/credits";
+import { CREDITS_CONFIG, PIPELINE_PHASES, STEP_TO_PHASE } from "@/config/credits";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { RenderProgressDetail } from "@/domain/models/VideoGenerationJob";
 
@@ -21,32 +21,6 @@ const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
   VideoGenerationStep.AwaitingOverlayApproval,
   VideoGenerationStep.AwaitingAdditionalRatios,
 ]);
-
-const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
-  [VideoGenerationStep.AnalyzingContent]:          1,
-  [VideoGenerationStep.AwaitingContentApproval]:   1,
-  // Audio-first reorder: voice generation now runs before video generation.
-  [VideoGenerationStep.GeneratingVoice]:            2,
-  [VideoGenerationStep.AwaitingVoiceApproval]:      2,
-  [VideoGenerationStep.GeneratingSceneDesign]:      3,
-  [VideoGenerationStep.AwaitingSceneDesignApproval]: 3,
-  [VideoGenerationStep.AwaitingSceneScriptApproval]: 3,
-  [VideoGenerationStep.GeneratingBaseVideo]:        3,
-  [VideoGenerationStep.AwaitingVideoApproval]:      3,
-  [VideoGenerationStep.GeneratingAnimations]:       3,
-  [VideoGenerationStep.AwaitingAnimationApproval]:  3,
-  [VideoGenerationStep.ComposingFinalVideo]:        4,
-  [VideoGenerationStep.AwaitingFinalApproval]:      4,
-  [VideoGenerationStep.GeneratingOverlay]:          4,
-  [VideoGenerationStep.AwaitingOverlayApproval]:    4,
-  [VideoGenerationStep.AwaitingAdditionalRatios]:   4,
-  [VideoGenerationStep.GeneratingAdditionalRatios]: 4,
-  [VideoGenerationStep.Publishing]:                 5,
-  [VideoGenerationStep.Complete]:                   5,
-  // Legacy steps
-  [VideoGenerationStep.AwaitingVoiceRecording]:     2,
-  [VideoGenerationStep.ProcessingVoice]:            2,
-};
 
 interface Props {
   currentStep?: VideoGenerationStep;

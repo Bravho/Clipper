@@ -135,6 +135,20 @@ export default async function RequestDetailPage({
       )
     : null;
 
+  // Status History shows both request-level milestones AND the AI pipeline
+  // phases the job has passed through. The pipeline drives progress on the job
+  // (not the request status), so without the step history the timeline would
+  // only ever show Draft + Submitted.
+  const stepHistory = pipelineJob
+    ? await timed("stepHistory", () =>
+        videoGenerationJobRepository.listStepHistory(pipelineJob.id)
+      )
+    : [];
+  const timelineEntries = requestPresentationService.buildStatusTimeline(
+    statusHistory,
+    stepHistory
+  );
+
   if (process.env.REQUEST_DETAIL_PERF_LOG === "1") {
     console.info("[request-detail timing]", {
       ...timings,
@@ -924,7 +938,7 @@ export default async function RequestDetailPage({
         <h2 className="mb-4 text-base font-semibold text-slate-900">
           Status History
         </h2>
-        <RequestTimeline history={statusHistory} />
+        <RequestTimeline entries={timelineEntries} />
       </Card>
 
       {/* Legal reminder */}

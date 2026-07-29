@@ -1,18 +1,17 @@
-import { RequestStatusHistory } from "@/domain/models/RequestStatusHistory";
-import { requestPresentationService } from "@/services/RequestPresentationService";
+import type { TimelineEntry } from "@/services/RequestPresentationService";
 
 interface RequestTimelineProps {
-  history: RequestStatusHistory[];
+  entries: TimelineEntry[];
 }
 
 /**
- * Simplified status timeline for requesters.
- * Shows a chronological list of status changes.
- * Internal staff notes are shown only where relevant to the requester
- * (e.g., hold reasons).
+ * Simplified status timeline for requesters. Shows a chronological list of
+ * milestones — both request-level status changes and the AI production
+ * pipeline phases the request has passed through (built by
+ * `requestPresentationService.buildStatusTimeline`).
  */
-export function RequestTimeline({ history }: RequestTimelineProps) {
-  if (history.length === 0) {
+export function RequestTimeline({ entries }: RequestTimelineProps) {
+  if (entries.length === 0) {
     return (
       <p className="text-sm text-slate-400">No status history available.</p>
     );
@@ -20,11 +19,8 @@ export function RequestTimeline({ history }: RequestTimelineProps) {
 
   return (
     <ol className="relative border-l border-slate-200 pl-4 flex flex-col gap-4">
-      {history.map((entry, idx) => {
-        const presentation = requestPresentationService.getStatusPresentation(
-          entry.status
-        );
-        const isLatest = idx === history.length - 1;
+      {entries.map((entry, idx) => {
+        const isLatest = idx === entries.length - 1;
 
         return (
           <li key={entry.id} className="relative">
@@ -36,7 +32,7 @@ export function RequestTimeline({ history }: RequestTimelineProps) {
             />
             <div>
               <p className="text-sm font-medium text-slate-800">
-                {presentation.label}
+                {entry.label}
               </p>
               <p className="text-xs text-slate-400">
                 {entry.changedAt.toLocaleDateString("en-GB", {

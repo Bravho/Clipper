@@ -1660,7 +1660,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // animation. The API route returns promptly; the pipeline-status poller shows
     // the existing "Generating base video" state while it runs.
     const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingBaseVideo,
+      // The concat merge is its own visible pipeline phase ("รวมคลิปแต่ละฉาก")
+      // so its progress shows there rather than being hidden inside the scene-
+      // generation phase. `_runMontageMerge` advances to GeneratingAnimations.
+      currentStep: VideoGenerationStep.MergingScenes,
       videoApprovedBy: userId,
       // While the all-scenes merge is running there is no meaningful single
       // base preview yet. The previous value is only a representative first

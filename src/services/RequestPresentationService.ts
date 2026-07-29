@@ -9,6 +9,8 @@ import {
   PIPELINE_STEP_LABELS,
   PIPELINE_STEP_DESCRIPTIONS,
 } from "@/domain/enums/VideoGenerationStep";
+import type { VideoGenerationStepHistoryEntry } from "@/domain/models/VideoGenerationJob";
+import { PIPELINE_PHASES, STEP_TO_PHASE } from "@/config/credits";
 
 /**
  * RequestPresentationService — converts domain models into requester-facing
@@ -25,6 +27,13 @@ import {
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type BadgeVariant = "default" | "blue" | "green" | "yellow" | "red" | "slate";
+
+/** One row in the requester-facing Status History timeline. */
+export interface TimelineEntry {
+  id: string;
+  label: string;
+  changedAt: Date;
+}
 
 export interface StatusPresentation {
   /** Short human-readable label for badges (e.g., "In Review") */
@@ -341,6 +350,47 @@ export class RequestPresentationService {
       preferredStyle: request.preferredStyle,
       preferredLanguage: request.preferredLanguage,
     };
+  }
+
+  /**
+   * Build the requester Status History timeline. The request-level status
+   * history (Draft, Submitted, Delivered, …) only captures a couple of coarse
+   * milestones because the self-serve AI pipeline drives progress on the
+   * VideoGenerationJob rather than the request status. To show the full
+   * journey, the job's step history is collapsed to one milestone per display
+   * phase (first entry into each phase) and merged chronologically with the
+   * status history.
+   */
+  buildStatusTimeline(
+    statusHistory: RequestStatusHistory[],
+    stepHistory: VideoGenerationStepHistoryEntry[] = []
+  ): TimelineEntry[] {
+    const statusEntries: TimelineEntry[] = statusHistory.map((h) => ({
+      id: h.id,
+      label: this.getStatusPresentation(h.status).label,
+      changedAt: h.changedAt,
+    }));
+
+    // stepHistory is oldest-first; keep the first entry into each phase so the
+    // timeline reads analyze → voice → script/video → merge → subtitle → export.
+    const seenPhases = new Set<number>();
+    const phaseEntries: TimelineEntry[] = [];
+    for (const entry of stepHistory) {
+      const phaseId = STEP_TO_PHASE[entry.step];
+      if (phaseId == null || seenPhases.has(phaseId)) continue;
+      seenPhases.add(phaseId);
+      const phase = PIPELINE_PHASES.find((p) => p.id === phaseId);
+      if (!phase) continue;
+      phaseEntries.push({
+        id: `phase-${phaseId}`,
+        label: phase.label,
+        changedAt: entry.createdAt,
+      });
+    }
+
+    return [...statusEntries, ...phaseEntries].sort(
+      (a, b) => a.changedAt.getTime() - b.changedAt.getTime()
+    );
   }
 
   private formatDate(date: Date): string {

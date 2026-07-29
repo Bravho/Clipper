@@ -21,6 +21,7 @@ export const PROCESSING_STEP_TIMEOUT_SECONDS: Partial<
   [VideoGenerationStep.GeneratingVoice]: 5 * 60,
   [VideoGenerationStep.GeneratingSceneDesign]: 5 * 60,
   [VideoGenerationStep.GeneratingBaseVideo]: 15 * 60,
+  [VideoGenerationStep.MergingScenes]: 15 * 60,
   [VideoGenerationStep.GeneratingAnimations]: 5 * 60,
   [VideoGenerationStep.ComposingFinalVideo]: 25 * 60,
   [VideoGenerationStep.GeneratingOverlay]: 8 * 60,

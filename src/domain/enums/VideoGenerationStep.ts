@@ -24,6 +24,13 @@ export enum VideoGenerationStep {
   GeneratingBaseVideo     = "generating_base_video",
   AwaitingVideoApproval   = "awaiting_video_approval",
 
+  // Step 3.25 - After every per-scene clip is approved, the approved segments
+  // are concatenated into the single base video (FFmpeg concat/crossfade). This
+  // is its OWN visible pipeline phase ("รวมคลิปแต่ละฉาก") so the merge shows its
+  // own progress instead of being hidden inside scene generation or the next
+  // step. Reached from AwaitingVideoApproval; advances to GeneratingAnimations.
+  MergingScenes           = "merging_scenes",
+
   // Step 3.5 - Animation/graphic overlays synced to the voice timeline.
   GeneratingAnimations    = "generating_animations",
   AwaitingAnimationApproval = "awaiting_animation_approval",
@@ -71,6 +78,7 @@ export const POLLING_STEPS: VideoGenerationStep[] = [
   VideoGenerationStep.GeneratingVoice,
   VideoGenerationStep.GeneratingSceneDesign,
   VideoGenerationStep.GeneratingBaseVideo,
+  VideoGenerationStep.MergingScenes,
   VideoGenerationStep.GeneratingAnimations,
   VideoGenerationStep.ComposingFinalVideo,
   VideoGenerationStep.GeneratingOverlay,
@@ -88,6 +96,7 @@ export const PIPELINE_STEP_LABELS: Record<VideoGenerationStep, string> = {
   [VideoGenerationStep.AwaitingSceneScriptApproval]: "Scene ready for review",
   [VideoGenerationStep.GeneratingBaseVideo]:        "Building your video from your photos and clips...",
   [VideoGenerationStep.AwaitingVideoApproval]:      "Scene clip ready for review",
+  [VideoGenerationStep.MergingScenes]:              "Merging your scene clips together...",
   [VideoGenerationStep.GeneratingAnimations]:       "Generating animations...",
   [VideoGenerationStep.AwaitingAnimationApproval]:  "Animation ready for review",
   [VideoGenerationStep.ComposingFinalVideo]:        "Composing final video...",
@@ -115,6 +124,7 @@ export const PIPELINE_STEP_DESCRIPTIONS: Record<VideoGenerationStep, string> = {
   [VideoGenerationStep.AwaitingSceneScriptApproval]: "Review and edit this scene's media, motion, and script before it is built.",
   [VideoGenerationStep.GeneratingBaseVideo]:        "Building this scene from your photos and clips, timed to match your approved voiceover.",
   [VideoGenerationStep.AwaitingVideoApproval]:      "Your scene clip is ready - please review and approve.",
+  [VideoGenerationStep.MergingScenes]:              "Combining every approved scene clip into your full video.",
   [VideoGenerationStep.GeneratingAnimations]:       "AI is adding animations and graphic overlays synced to your voiceover.",
   [VideoGenerationStep.AwaitingAnimationApproval]:  "Your animated video is ready - please review and approve.",
   [VideoGenerationStep.ComposingFinalVideo]:        "Merging your voiceover and background music into the video.",
