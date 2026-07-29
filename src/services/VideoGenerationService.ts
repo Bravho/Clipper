@@ -35,6 +35,7 @@ import {
 import { buildAiVideoKey, buildFinalClipKey, buildWatermarkedPreviewKey } from "@/lib/spacesKeys";
 import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft, RenderProgressDetail } from "@/domain/models/VideoGenerationJob";
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
+import { DEFAULT_LOCALE, type AppLocale } from "@/i18n/config";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeSceneDescription, sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
@@ -2337,8 +2338,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const { RequestStatus } = await import("@/domain/enums/RequestStatus");
     await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
 
-    // Auto-fill per-channel publishing drafts (Gemini; fail-open to the caption).
-    const publishingDrafts = await this._generatePublishingDrafts(job, platforms);
+    // Auto-fill per-channel publishing drafts. Generated in the requester's
+    // content language (Thai — captions are authored in Thai), so this needs NO
+    // extra AI call here; the distribution-review UI regenerates into another
+    // header language on demand. Then attach a per-channel preview image.
+    let publishingDrafts = await this._generatePublishingDrafts(
+      job,
+      platforms,
+      DEFAULT_LOCALE
+    );
+    publishingDrafts = await this._attachChannelPreviews(job, platforms, publishingDrafts);
 
     // Travy EN+ZH reuse: when the requester's own subtitle languages are exactly
     // {en, zh} AND a captioned export at the Travy ratio (16:9) already exists
@@ -2484,25 +2493,22 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
-   * Build a per-channel publishing draft (title/caption/hashtags) DETERMINISTICALLY
-   * from the requester's OWN approved data — NO AI / Gemini call at all:
-   *   - caption  = the approved caption (their words), else the approved script
-   *   - title    = the approved hook, else the caption's first line, else business name
-   *   - hashtags = business profile (name/category/location) + any #tags already
-   *                written in the approved caption
-   * Excludes Travy (background-only) and CDN (internal). Preserves any prior draft
-   * the requester already posted/edited, so a re-finalize is idempotent, and every
-   * field remains editable in the distribution-review UI before posting.
+   * Build ONE base content set (title/caption/hashtags) in `locale`, reusing the
+   * requester's OWN approved marketing copy that the earlier vision/content step
+   * already produced — so NO new content-generation call is made:
+   *   - caption  = approved caption (their words), else approved script
+   *   - title    = approved hook, else the caption's first line, else business name
+   *   - hashtags = any #tags already in the caption + business profile fields
+   *
+   * Language: Thai copy already exists, and English often does too, so those
+   * locales cost zero AI. Only when the target locale has no pre-generated text
+   * (e.g. Vietnamese) is a single cheap Gemini TEXT translation spent — never the
+   * expensive multimodal vision call. Hashtags stay language-neutral (names).
    */
-  private async _generatePublishingDrafts(
+  private async _deriveBaseSet(
     job: VideoGenerationJob,
-    platforms: Platform[]
-  ): Promise<ChannelPublishingDraft[]> {
-    const channels = platforms.filter((p) => isPublishablePlatform(p));
-    if (channels.length === 0) return job.publishingDrafts ?? [];
-
-    const existing = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
-
+    locale: AppLocale
+  ): Promise<{ title: string; caption: string; hashtags: string[] }> {
     const captionThai = job.approvedCaptionThai ?? job.captionThai ?? "";
     const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
     const hookThai = job.approvedHookThai ?? job.hookThai ?? "";
@@ -2522,36 +2528,223 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       /* fail-open — the deterministic fields below don't require the profile */
     }
 
-    // Caption/title come straight from the requester's approved words.
-    const baseCaption = captionThai || scriptThai;
-    const firstLine = baseCaption.split(/\r?\n/)[0]?.trim() ?? "";
-    const derivedTitle = (hookThai || firstLine || businessName || "").slice(0, 100);
+    // Start from the Thai copy (the authored language).
+    let caption = captionThai || scriptThai;
+    let title = (hookThai || caption.split(/\r?\n/)[0]?.trim() || businessName || "").slice(0, 100);
 
-    // Hashtags: any #tags already present in the approved caption, plus the
-    // business profile fields — fully deterministic, no model call.
+    if (locale === "en" && (job.approvedCaptionEnglish || job.captionEnglish)) {
+      // English was already produced upstream — reuse it, no AI call.
+      caption = job.approvedCaptionEnglish ?? job.captionEnglish ?? caption;
+      title = (job.approvedHookEnglish ?? job.hookEnglish ?? title).slice(0, 100);
+    } else if (locale !== "th" && caption.trim()) {
+      // No pre-generated copy in this locale → one cheap Gemini TEXT translation.
+      const { translateMarketingCopy } = await import("@/lib/ai/marketingCopyService");
+      const t = await translateMarketingCopy({ caption, title, targetLanguage: locale });
+      caption = t.caption;
+      title = (t.title || title).slice(0, 100);
+    }
+
     const toTag = (s: string) => s.replace(/[#\s]+/g, "").trim();
-    const captionTags = (baseCaption.match(/#[^\s#]+/g) ?? []).map((t) => t.replace(/^#/, ""));
+    const captionTags = (caption.match(/#[^\s#]+/g) ?? []).map((t) => t.replace(/^#/, ""));
     const profileTags = [businessName, category, location].map(toTag).filter(Boolean);
-    const derivedHashtags = Array.from(
-      new Set([...captionTags, ...profileTags].filter(Boolean))
-    );
+    const hashtags = Array.from(new Set([...captionTags, ...profileTags].filter(Boolean)));
+
+    return { title, caption, hashtags };
+  }
+
+  /**
+   * Shape the single base set to ONE channel's real posting requirements (see the
+   * social services in `src/lib/social/*`): only YouTube uses a distinct title;
+   * TikTok packs caption+hashtags into a 150-char field; IG/Facebook take a
+   * caption with inline hashtags. Content is NOT rewritten per channel — just
+   * trimmed/capped to fit each platform.
+   */
+  private _shapeDraftForChannel(
+    platform: Platform,
+    base: { title: string; caption: string; hashtags: string[] }
+  ): { title: string; caption: string; hashtags: string[] } {
+    const cfg = getPublishFieldConfig(platform);
+    const title = cfg.hasTitle ? base.title : "";
+    let caption = base.caption;
+    let hashtags = base.hashtags;
+
+    switch (platform) {
+      case Platform.TikTok: {
+        // TikTok posts a single ~150-char field (caption + hashtags inline).
+        hashtags = hashtags.slice(0, 4);
+        const tagLen = hashtags.map((h) => `#${h}`).join(" ").length;
+        const room = Math.max(0, 150 - (tagLen ? tagLen + 2 : 0));
+        if (caption.length > room) {
+          caption = caption.slice(0, Math.max(0, room - 1)).trim() + "…";
+        }
+        break;
+      }
+      case Platform.YouTube:
+        hashtags = hashtags.slice(0, 15);
+        break;
+      case Platform.Instagram:
+      case Platform.Facebook:
+        hashtags = hashtags.slice(0, 30);
+        break;
+      default:
+        break;
+    }
+
+    return { title, caption, hashtags };
+  }
+
+  /**
+   * Build per-channel publishing drafts in `locale` from the single base set.
+   * Excludes Travy (background-only) and CDN (internal). Never overwrites a
+   * channel that already posted. When `force` is false a prior draft already in
+   * the SAME locale is kept (idempotent re-finalize preserves requester edits);
+   * `force` (regeneration) always replaces the text with the freshly generated
+   * copy. Preview images are language-independent and preserved either way.
+   */
+  private async _generatePublishingDrafts(
+    job: VideoGenerationJob,
+    platforms: Platform[],
+    locale: AppLocale,
+    force = false
+  ): Promise<ChannelPublishingDraft[]> {
+    const channels = platforms.filter((p) => isPublishablePlatform(p));
+    if (channels.length === 0) return job.publishingDrafts ?? [];
+
+    const existing = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
+    const base = await this._deriveBaseSet(job, locale);
 
     return channels.map((platform) => {
       const prior = existing.get(platform);
       // Never overwrite a channel that already posted successfully.
       if (prior && prior.status === "posted") return prior;
 
-      const cfg = getPublishFieldConfig(platform);
+      const keepPrior = !!prior && !force && (prior.locale ?? "th") === locale;
+      const shaped = this._shapeDraftForChannel(platform, base);
       return {
         platform,
-        title: cfg.hasTitle ? prior?.title || derivedTitle : "",
-        caption: prior?.caption || baseCaption,
+        title: keepPrior ? prior!.title : shaped.title,
+        caption: keepPrior && prior!.caption ? prior!.caption : shaped.caption,
         hashtags:
-          prior?.hashtags && prior.hashtags.length > 0 ? prior.hashtags : derivedHashtags,
+          keepPrior && prior!.hashtags?.length ? prior!.hashtags : shaped.hashtags,
+        locale,
+        previewImageUrl: prior?.previewImageUrl ?? null,
+        previewImageAssetId: prior?.previewImageAssetId ?? null,
         status: prior?.status ?? "pending",
         url: prior?.url ?? null,
         error: prior?.error ?? null,
       };
+    });
+  }
+
+  /**
+   * Attach a per-channel preview image to each draft: a poster frame extracted
+   * from that channel's captioned export (correct per-channel ratio + burned-in
+   * captions), falling back to the requester's best source image when no export
+   * is available (e.g. purged after the 7-day window). Fully fail-open — a
+   * preview error never blocks finalize; the draft simply keeps a null preview.
+   */
+  private async _attachChannelPreviews(
+    job: VideoGenerationJob,
+    platforms: Platform[],
+    drafts: ChannelPublishingDraft[]
+  ): Promise<ChannelPublishingDraft[]> {
+    const channels = new Set(
+      platforms.filter((p) => isPublishablePlatform(p)).map((p) => String(p))
+    );
+    if (channels.size === 0) return drafts;
+
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const req = await clipRequestRepository.findById(job.requestId);
+    const userId = req?.userId ?? "";
+
+    // Fallback source image (first uploaded image, else first asset thumbnail).
+    let fallbackUrl: string | null = null;
+    try {
+      const ordered = await this._orderedSourceAssets(job.requestId);
+      fallbackUrl =
+        ordered.find((a) => a.kind === "image")?.thumbnailUrl ??
+        ordered[0]?.thumbnailUrl ??
+        null;
+    } catch {
+      /* no source assets available — leave fallback null */
+    }
+
+    const [{ buildThumbnailKey }, { generateVideoThumbnail }, { spacesPublicUrl }] =
+      await Promise.all([
+        import("@/lib/spacesKeys"),
+        import("@/lib/thumbnails"),
+        import("@/lib/spaces"),
+      ]);
+
+    const byPlatform = new Map(drafts.map((d) => [d.platform, d]));
+    for (const platform of channels) {
+      const draft = byPlatform.get(platform);
+      if (!draft) continue;
+      // Keep any preview already computed on a prior finalize.
+      if (draft.previewImageUrl) continue;
+
+      let url: string | null = null;
+      try {
+        const ratio = this._montageCanvasRatio(platform as Platform);
+        const assetId = this._captionedAssetIdForRatio(job, ratio);
+        const asset = assetId ? await uploadedAssetRepository.findById(assetId) : null;
+        if (asset) {
+          const key = buildThumbnailKey(
+            userId,
+            job.requestId,
+            `post-${platform}-${ratio.replace(":", "x")}`
+          );
+          await generateVideoThumbnail(asset.storageKey, key);
+          url = spacesPublicUrl(key);
+        }
+      } catch (err) {
+        console.error(`[publishing preview] ${platform} failed:`, err);
+      }
+
+      draft.previewImageUrl = url ?? fallbackUrl;
+    }
+
+    return drafts;
+  }
+
+  /**
+   * Regenerate the per-channel publishing drafts in a new header locale (called
+   * when the requester switches the site language on the distribution-review
+   * step). Reuses existing copy for th/en (no AI); spends one cheap text
+   * translation only for a locale with no pre-generated copy. Preview images and
+   * already-posted channels are preserved. No-op-safe: only valid while the job
+   * is on the distribution-review step.
+   */
+  async regeneratePublishingDrafts(
+    jobId: string,
+    _userId: string,
+    locale: AppLocale
+  ): Promise<VideoGenerationJob> {
+    void _userId;
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingDistributionReview);
+    const job = await this._getJob(jobId);
+
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(job.requestId);
+    const platforms = request?.targetPlatforms ?? [];
+
+    const regenerated = await this._generatePublishingDrafts(
+      job,
+      platforms,
+      locale,
+      true
+    );
+    // Carry preview images forward (language-independent) without re-rendering.
+    const priorPreview = new Map(
+      (job.publishingDrafts ?? []).map((d) => [d.platform, d.previewImageUrl ?? null])
+    );
+    const withPreviews = regenerated.map((d) => ({
+      ...d,
+      previewImageUrl: d.previewImageUrl ?? priorPreview.get(d.platform) ?? null,
+    }));
+
+    return videoGenerationJobRepository.update(jobId, {
+      publishingDrafts: withPreviews,
     });
   }
 
@@ -2572,6 +2765,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         title: d.title ?? prior?.title ?? "",
         caption: d.caption ?? prior?.caption ?? "",
         hashtags: Array.isArray(d.hashtags) ? d.hashtags : prior?.hashtags ?? [],
+        // Locale + preview image are language/asset state, not editable copy:
+        // preserve whatever was generated rather than trusting client input.
+        locale: prior?.locale ?? d.locale ?? null,
+        previewImageUrl: prior?.previewImageUrl ?? d.previewImageUrl ?? null,
+        previewImageAssetId: prior?.previewImageAssetId ?? d.previewImageAssetId ?? null,
         // Editing copy never changes a channel's posting outcome.
         status: prior?.status ?? "pending",
         url: prior?.url ?? null,

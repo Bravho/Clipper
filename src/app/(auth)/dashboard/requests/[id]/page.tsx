@@ -34,6 +34,7 @@ import { StoryboardView } from "@/features/requests/components/StoryboardView";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { orderSourceAssets } from "@/lib/sourceAssets";
+import { getServerLocale } from "@/i18n/server";
 import type { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
 
 // Split the interactive workflow steps so a request only downloads the browser
@@ -304,6 +305,9 @@ export default async function RequestDetailPage({
     "1:1": pipelineJob?.captionedExport_1_1_assetId ?? null,
     "4:5": pipelineJob?.captionedExport_4_5_assetId ?? null,
   };
+  // Header UI language — drives the auto-generated per-channel post copy so it
+  // follows the language shown in the header.
+  const serverLocale = getServerLocale();
   const channelVideos = (request.targetPlatforms ?? [])
     .filter((p) => p !== Platform.TventApp)
     .map((p) => {
@@ -719,6 +723,7 @@ export default async function RequestDetailPage({
                 jobId={pipelineJob.id}
                 initialDrafts={pipelineJob.publishingDrafts ?? []}
                 channelVideos={channelVideos}
+                locale={serverLocale}
                 tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
                 tventVideoError={pipelineJob.tventVideoError ?? null}
                 tventClipUrl={tventClipUrl}

@@ -283,6 +283,22 @@ export interface ChannelPublishingDraft {
   title: string;
   caption: string;
   hashtags: string[];
+  /**
+   * UI locale ("th" | "en" | "vi") the title/caption text is written in. Set
+   * when the draft is generated; used by the distribution-review UI to detect a
+   * header-language switch and auto-regenerate this draft in the new language.
+   * Absent on legacy drafts (treated as Thai).
+   */
+  locale?: string | null;
+  /**
+   * Public URL of a per-channel preview image (a poster frame extracted from
+   * this channel's captioned export, falling back to the requester's source
+   * image). Language-independent, so it survives a locale regeneration. Null
+   * when neither an export nor a source image was available.
+   */
+  previewImageUrl?: string | null;
+  /** Optional asset id backing `previewImageUrl` (when it maps to a stored asset). */
+  previewImageAssetId?: string | null;
   /** Posting outcome, set on confirm. Absent/"pending" before publishing. */
   status?: "pending" | "posted" | "failed";
   /** Public URL of the published post, when posting succeeded. */
