@@ -217,9 +217,12 @@ export function buildSceneMontageAssets(
     // Priority: an explicit panel/AI choice → the script's described move (stills
     // only) → the per-index variety rotation.
     const inferred = src.kind === "image" ? sceneMotion : null;
-    const motion = isMotionPreset(existing?.motion)
-      ? existing!.motion
-      : inferred ?? pickMotionForIndex(assetIndex, src.kind);
+    const motion =
+      src.kind === "clip"
+        ? "static"
+        : isMotionPreset(existing?.motion)
+          ? existing!.motion
+          : inferred ?? pickMotionForIndex(assetIndex, src.kind);
 
     const asset: MontageSceneAsset = {
       assetIndex,
@@ -341,7 +344,14 @@ export function toRenderAssetSpecs(
     const spec: MontageAssetSpec = {
       url: src.url,
       kind: src.kind, // authoritative
-      motion: isMotionPreset(a.motion) ? a.motion : DEFAULT_MOTION_PRESET,
+      // Uploaded clips always play as-shot. Normalize stale plans that stored a
+      // Ken Burns value so the UI, plan, and renderer agree.
+      motion:
+        src.kind === "clip"
+          ? "static"
+          : isMotionPreset(a.motion)
+            ? a.motion
+            : DEFAULT_MOTION_PRESET,
       durationSeconds:
         Number.isFinite(a.durationSeconds) && a.durationSeconds > 0 ? a.durationSeconds : 1,
     };
@@ -359,7 +369,7 @@ export function toRenderAssetSpecs(
     specs.push({
       url: src.url,
       kind: src.kind,
-      motion: DEFAULT_MOTION_PRESET,
+      motion: src.kind === "clip" ? "static" : DEFAULT_MOTION_PRESET,
       durationSeconds: 1,
     });
   }

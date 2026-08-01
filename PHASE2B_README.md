@@ -201,7 +201,7 @@ CREATE TYPE request_status AS ENUM (
 );
 
 CREATE TYPE platform AS ENUM (
-  'tiktok', 'facebook', 'instagram', 'youtube', 'tvent_app', 'cdn'
+  'tiktok', 'facebook', 'instagram', 'youtube', 'travy_app', 'cdn'
 );
 
 CREATE TABLE clip_requests (

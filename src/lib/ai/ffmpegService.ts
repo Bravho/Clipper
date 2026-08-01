@@ -46,7 +46,7 @@ export type VideoRatio = "9:16" | "16:9" | "1:1" | "4:5";
 export function getRequiredRatiosForPlatforms(platforms: string[]): VideoRatio[] {
   const ratios = new Set<VideoRatio>();
   for (const p of platforms) {
-    if (p === "tiktok" || p === "tvent_app") {
+    if (p === "tiktok" || p === "travy_app") {
       ratios.add("9:16");
     } else if (p === "youtube" || p === "facebook" || p === "cdn") {
       ratios.add("16:9");
@@ -77,15 +77,15 @@ export interface ComposeVideoParams {
   /**
    * When set, also render a dedicated export for the Travy App using this
    * (always English + Chinese) subtitle content, separate from the general
-   * export's `assSubtitlesContent`. Result is returned under the "tvent" key
-   * in `exports`. The export uses `tventRatio` (the primary channel's ratio).
+   * export's `assSubtitlesContent`. Result is returned under the "travy" key
+   * in `exports`. The export uses `travyRatio` (the primary channel's ratio).
    */
-  assSubtitlesContentTvent?: string;
+  assSubtitlesContentTravy?: string;
   /**
    * Aspect ratio for the dedicated Travy App export — the primary channel's
    * ratio (so Travy matches the primary, not a forced 9:16). Defaults to "9:16".
    */
-  tventRatio?: VideoRatio;
+  travyRatio?: VideoRatio;
   /**
    * Phase 4 — Remotion-rendered transparent overlay clip (captions +
    * motion graphics) per ratio, keyed by `VideoRatio`. When present for a
@@ -97,11 +97,11 @@ export interface ComposeVideoParams {
   overlayStorageKeys?: Partial<Record<VideoRatio, string>>;
   /**
    * Set when `overlayStorageKeys["9:16"]`'s captions were rendered with
-   * exactly English + Chinese (matching the Tvent App's fixed subtitle
-   * requirement). If true, the Tvent export reuses that 9:16 overlay
-   * instead of burning `assSubtitlesContentTvent` via ASS.
+   * exactly English + Chinese (matching the Travy App's fixed subtitle
+   * requirement). If true, the Travy export reuses that 9:16 overlay
+   * instead of burning `assSubtitlesContentTravy` via ASS.
    */
-  overlayCoversTventSubtitles?: boolean;
+  overlayCoversTravySubtitles?: boolean;
 }
 
 export interface ComposeVideoResult {
@@ -998,42 +998,42 @@ export async function composeAndExport(
 
     // Dedicated Travy App export at the PRIMARY channel's ratio. If that ratio's
     // Remotion overlay already covers Travy's fixed English+Chinese subtitle
-    // requirement (`overlayCoversTventSubtitles`), reuse that overlay instead of
-    // burning `assSubtitlesContentTvent` via ASS. Otherwise, only run an extra
+    // requirement (`overlayCoversTravySubtitles`), reuse that overlay instead of
+    // burning `assSubtitlesContentTravy` via ASS. Otherwise, only run an extra
     // ASS-based pass when its subtitle content actually differs from the general
     // export — avoids a redundant FFmpeg pass when the requester also chose EN+ZH.
-    const tventRatio: VideoRatio = params.tventRatio ?? "9:16";
-    if (overlayPaths[tventRatio] && params.overlayCoversTventSubtitles) {
-      const outPath = path.join(tmpDir, "out-tvent.mp4");
+    const travyRatio: VideoRatio = params.travyRatio ?? "9:16";
+    if (overlayPaths[travyRatio] && params.overlayCoversTravySubtitles) {
+      const outPath = path.join(tmpDir, "out-travy.mp4");
       await composeSingleRatio({
         videoPath,
         audioPath,
-        ratio: tventRatio,
+        ratio: travyRatio,
         outputPath: outPath,
         musicPath,
         coordinates: params.coordinates,
-        overlayPath: overlayPaths[tventRatio],
+        overlayPath: overlayPaths[travyRatio],
         voiceDurationSeconds: voiceDuration,
         videoDurationSeconds: videoDuration,
       });
 
-      const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");
+      const storageKey = buildFinalClipKey(params.userId, params.requestId, "travy");
       await uploadToSpaces(outPath, storageKey);
-      results["tvent"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+      results["travy"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
     } else if (
-      params.assSubtitlesContentTvent &&
-      params.assSubtitlesContentTvent !== params.assSubtitlesContent
+      params.assSubtitlesContentTravy &&
+      params.assSubtitlesContentTravy !== params.assSubtitlesContent
     ) {
-      const tventSubsPath = path.join(tmpDir, "subs-tvent.ass");
-      await fs.writeFile(tventSubsPath, params.assSubtitlesContentTvent, "utf-8");
+      const travySubsPath = path.join(tmpDir, "subs-travy.ass");
+      await fs.writeFile(travySubsPath, params.assSubtitlesContentTravy, "utf-8");
 
-      const outPath = path.join(tmpDir, "out-tvent.mp4");
+      const outPath = path.join(tmpDir, "out-travy.mp4");
       await composeSingleRatio({
         videoPath,
         audioPath,
-        subsPath: tventSubsPath,
+        subsPath: travySubsPath,
         isAss: true,
-        ratio: tventRatio,
+        ratio: travyRatio,
         outputPath: outPath,
         musicPath,
         coordinates: params.coordinates,
@@ -1043,9 +1043,9 @@ export async function composeAndExport(
         // and burning both ASS + overlay captions would duplicate text.
       });
 
-      const storageKey = buildFinalClipKey(params.userId, params.requestId, "tvent");
+      const storageKey = buildFinalClipKey(params.userId, params.requestId, "travy");
       await uploadToSpaces(outPath, storageKey);
-      results["tvent"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+      results["travy"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
     }
 
     return { exports: results };

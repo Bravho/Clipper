@@ -1,20 +1,20 @@
 import { AI_CONFIG } from "@/config/aiTools";
 
-interface TventPublishResponse {
+interface TravyPublishResponse {
   id: string;
   url: string;
 }
 
 /**
- * Publish a video to the Tvent platform using the YouTube video URL.
- * Tvent embeds YouTube videos rather than hosting its own copy.
+ * Publish a video to the Travy platform using the YouTube video URL.
+ * Travy embeds YouTube videos rather than hosting its own copy.
  */
 export async function uploadVideo(params: {
   youtubeUrl: string;
   title: string;
   description: string;
 }): Promise<{ platformVideoId: string; platformUrl: string }> {
-  const { apiKey, apiUrl } = AI_CONFIG.social.tvent;
+  const { apiKey, apiUrl } = AI_CONFIG.social.travy;
 
   const res = await fetch(`${apiUrl}/api/videos`, {
     method: "POST",
@@ -31,10 +31,10 @@ export async function uploadVideo(params: {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Tvent API error ${res.status}: ${text}`);
+    throw new Error(`Travy API error ${res.status}: ${text}`);
   }
 
-  const data = await res.json() as TventPublishResponse;
+  const data = await res.json() as TravyPublishResponse;
   return {
     platformVideoId: data.id,
     platformUrl: data.url,

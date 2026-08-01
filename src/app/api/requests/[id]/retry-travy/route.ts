@@ -41,11 +41,11 @@ export async function POST(
   }
 
   try {
-    const updated = await videoGenerationService.retryTventVideoByRequester(
+    const updated = await videoGenerationService.retryTravyVideoByRequester(
       jobId,
       session.user.id
     );
-    return NextResponse.json({ tventVideoStatus: updated.tventVideoStatus });
+    return NextResponse.json({ travyVideoStatus: updated.travyVideoStatus });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to retry Travy video.";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,13 +1,19 @@
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import {
+  attachmentContentDisposition,
+  sanitizeDownloadFileName,
+} from "@/lib/downloadHeaders";
 
 /**
  * DigitalOcean Spaces S3-compatible client.
@@ -130,6 +136,64 @@ export async function spacesSendWithRetry<T>(
     }
   }
   throw new Error(`Spaces ${label} failed after ${attempts} attempts: ${describeSpacesError(lastErr)}`);
+}
+
+/**
+ * Move an object within the bucket: server-side COPY to a new key, then DELETE
+ * the source. Used to promote a paid Management upload from the 7-day prefix to
+ * the 30-day one — the copy is a brand-new object, so its lifecycle clock starts
+ * fresh (lifecycle expiry counts from creation time).
+ *
+ *   * `MetadataDirective: "COPY"` preserves the content-type so the video still
+ *     plays inline after the move.
+ *   * `ACL: "private"` keeps Management media private (served via signed URLs).
+ *   * COPY-then-DELETE (not DELETE-first): if the delete fails the object still
+ *     exists at the new key and the DB already points there, so no media is lost;
+ *     the stale source is at worst cleaned up by its own lifecycle rule.
+ */
+export async function spacesMoveObject(fromKey: string, toKey: string): Promise<void> {
+  if (fromKey === toKey) return;
+  await spacesSendWithRetry(`copy ${fromKey} -> ${toKey}`, () =>
+    spacesClient.send(
+      new CopyObjectCommand({
+        Bucket: SPACES_BUCKET,
+        // CopySource must be `${bucket}/${key}`, URL-encoded (keys may contain
+        // characters the SDK will not encode for us here).
+        CopySource: `/${SPACES_BUCKET}/${encodeURIComponent(fromKey).replace(/%2F/g, "/")}`,
+        Key: toKey,
+        MetadataDirective: "COPY",
+        ACL: "private",
+      })
+    )
+  );
+  await spacesSendWithRetry(`delete ${fromKey}`, () =>
+    spacesClient.send(
+      new DeleteObjectCommand({ Bucket: SPACES_BUCKET, Key: fromKey })
+    )
+  );
+}
+
+/**
+ * Server-side COPY an object to a new key, leaving the source in place. Used when
+ * a paid RClipper Management transfer promotes a generation export into
+ * `management_retained/`: the generation keeps its own `final_exports/` copy
+ * (which expires on its own short window), while the new object gets a fresh
+ * lifecycle clock at the paid retention window. Same content-type/ACL handling
+ * as {@link spacesMoveObject}.
+ */
+export async function spacesCopyObject(fromKey: string, toKey: string): Promise<void> {
+  if (fromKey === toKey) return;
+  await spacesSendWithRetry(`copy ${fromKey} -> ${toKey}`, () =>
+    spacesClient.send(
+      new CopyObjectCommand({
+        Bucket: SPACES_BUCKET,
+        CopySource: `/${SPACES_BUCKET}/${encodeURIComponent(fromKey).replace(/%2F/g, "/")}`,
+        Key: toKey,
+        MetadataDirective: "COPY",
+        ACL: "private",
+      })
+    )
+  );
 }
 
 /**
@@ -322,9 +386,8 @@ export async function spacesSignedUrl(
   // control chars, and path separators so it can't break the header or escape
   // the intended name.
   const safeName = opts?.downloadFileName
-    ?.replace(/[\r\n"\\/]/g, "")
-    .trim()
-    .slice(0, 200);
+    ? sanitizeDownloadFileName(opts.downloadFileName)
+    : undefined;
 
   return getSignedUrl(
     spacesClient,
@@ -332,7 +395,7 @@ export async function spacesSignedUrl(
       Bucket: SPACES_BUCKET,
       Key: key,
       ...(safeName
-        ? { ResponseContentDisposition: `attachment; filename="${safeName}"` }
+        ? { ResponseContentDisposition: attachmentContentDisposition(safeName) }
         : {}),
     }),
     { expiresIn: ttlSeconds }

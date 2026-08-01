@@ -21,6 +21,8 @@ const TRANSACTION_LABELS: Record<TransactionType, string> = {
   [TransactionType.AdminDebit]: "Credit Deduction",
   [TransactionType.DiscountApplied]: "Discount Applied",
   [TransactionType.TopUp]: "Stripe Top-up",
+  [TransactionType.ManagementPurchase]: "Channel Management",
+  [TransactionType.ManagementRefund]: "Management Refund",
 };
 
 const TRANSACTION_VARIANTS: Record<
@@ -34,6 +36,8 @@ const TRANSACTION_VARIANTS: Record<
   [TransactionType.AdminDebit]: "red",
   [TransactionType.DiscountApplied]: "blue",
   [TransactionType.TopUp]: "green",
+  [TransactionType.ManagementPurchase]: "red",
+  [TransactionType.ManagementRefund]: "green",
 };
 
 export default async function CreditsPage({

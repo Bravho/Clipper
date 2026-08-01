@@ -13,10 +13,9 @@ import { aspectRatioClass } from "@/lib/aspectRatio";
  * of the selected window (out − in), so dragging the handles directly sets how
  * long the clip plays. Emits `onChange({ start, end })` in seconds on release.
  *
- * The true clip length is read client-side from `<video>` metadata (the model's
- * OrderedSourceAsset carries no duration). `playSeconds` seeds the out handle
- * when the clip has no trim yet, so the bar opens reflecting the current
- * on-screen duration rather than the whole file.
+ * The true clip length is read client-side from `<video>` metadata. When the
+ * clip has no saved trim yet, the whole timeline is selected by default so the
+ * user can shorten it from either end.
  */
 
 const MIN_WINDOW_SECONDS = 0.5;
@@ -26,8 +25,6 @@ export interface ClipTrimBarProps {
   url: string;
   trimStartSeconds?: number;
   trimEndSeconds?: number;
-  /** Current on-screen play seconds; seeds the out handle when trims are unset. */
-  playSeconds?: number;
   /** Aspect ratio of the user's selected primary distribution channel (e.g.
    *  "9:16" for TikTok, "16:9" for YouTube). The preview is framed to this so it
    *  matches how the clip will appear in the final channel-shaped video. */
@@ -47,24 +44,28 @@ export function ClipTrimBar({
   url,
   trimStartSeconds,
   trimEndSeconds,
-  playSeconds,
   aspectRatio,
   onChange,
 }: ClipTrimBarProps) {
   const previewRef = useRef<HTMLVideoElement | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<"start" | "end" | null>(null);
+  const pointerIdRef = useRef<number | null>(null);
 
   const [duration, setDuration] = useState<number | null>(null);
   const [start, setStart] = useState<number>(trimStartSeconds ?? 0);
   const [end, setEnd] = useState<number>(trimEndSeconds ?? 0);
+  const trimWindowRef = useRef({
+    start: trimStartSeconds ?? 0,
+    end: trimEndSeconds ?? 0,
+  });
   const [playhead, setPlayhead] = useState<number>(trimStartSeconds ?? 0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [frames, setFrames] = useState<string[]>([]);
   const [filmstripFailed, setFilmstripFailed] = useState(false);
 
-  // Seed the window once we know the real clip length. Prefer explicit trims;
-  // otherwise open on [0, playSeconds] (falling back to the whole clip).
+  // Seed the window once we know the real clip length. Preserve an explicit
+  // saved trim; otherwise select the clip's complete timeline.
   const seededRef = useRef(false);
   const handleLoadedMetadata = useCallback(() => {
     const el = previewRef.current;
@@ -77,22 +78,32 @@ export function ClipTrimBar({
     const seededEnd =
       Number.isFinite(trimEndSeconds) && (trimEndSeconds as number) > s
         ? (trimEndSeconds as number)
-        : s + (Number.isFinite(playSeconds) && (playSeconds as number) > 0 ? (playSeconds as number) : dur);
+        : dur;
     const e = clamp(seededEnd, s + MIN_WINDOW_SECONDS, dur);
+    trimWindowRef.current = { start: s, end: e };
     setStart(s);
     setEnd(e);
     setPlayhead(s);
-  }, [trimStartSeconds, trimEndSeconds, playSeconds]);
+  }, [trimStartSeconds, trimEndSeconds]);
 
   // Reflect external trim edits (e.g. a scene rebuild) once seeded.
   useEffect(() => {
-    if (!seededRef.current || duration == null) return;
-    if (Number.isFinite(trimStartSeconds)) {
-      setStart(clamp(trimStartSeconds as number, 0, Math.max(0, duration - MIN_WINDOW_SECONDS)));
-    }
-    if (Number.isFinite(trimEndSeconds)) {
-      setEnd(clamp(trimEndSeconds as number, MIN_WINDOW_SECONDS, duration));
-    }
+    if (!seededRef.current || duration == null || dragRef.current) return;
+    const nextStart = Number.isFinite(trimStartSeconds)
+      ? clamp(
+        trimStartSeconds as number,
+        0,
+        Math.max(0, duration - MIN_WINDOW_SECONDS)
+      )
+      : 0;
+    const savedEnd =
+      Number.isFinite(trimEndSeconds) && (trimEndSeconds as number) > nextStart
+        ? (trimEndSeconds as number)
+        : duration;
+    const nextEnd = clamp(savedEnd, nextStart + MIN_WINDOW_SECONDS, duration);
+    trimWindowRef.current = { start: nextStart, end: nextEnd };
+    setStart(nextStart);
+    setEnd(nextEnd);
   }, [trimStartSeconds, trimEndSeconds, duration]);
 
   // Sample thumbnail frames for the filmstrip. Uses a detached video+canvas and
@@ -194,42 +205,63 @@ export function ClipTrimBar({
     }
   };
 
-  const timeFromClientX = (clientX: number): number => {
+  const timeFromClientX = useCallback((clientX: number): number => {
     const bar = barRef.current;
     if (!bar || duration == null) return 0;
     const rect = bar.getBoundingClientRect();
     const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
     return ratio * duration;
-  };
+  }, [duration]);
 
   const onHandleMove = useCallback(
     (clientX: number) => {
       if (!dragRef.current || duration == null) return;
       const t = timeFromClientX(clientX);
       if (dragRef.current === "start") {
-        setStart(clamp(t, 0, end - MIN_WINDOW_SECONDS));
+        const nextStart = clamp(
+          t,
+          0,
+          trimWindowRef.current.end - MIN_WINDOW_SECONDS
+        );
+        trimWindowRef.current = {
+          ...trimWindowRef.current,
+          start: nextStart,
+        };
+        setStart(nextStart);
       } else {
-        setEnd(clamp(t, start + MIN_WINDOW_SECONDS, duration));
+        const nextEnd = clamp(
+          t,
+          trimWindowRef.current.start + MIN_WINDOW_SECONDS,
+          duration
+        );
+        trimWindowRef.current = {
+          ...trimWindowRef.current,
+          end: nextEnd,
+        };
+        setEnd(nextEnd);
       }
     },
-    [duration, start, end]
+    [duration, timeFromClientX]
   );
 
-  // Global pointer listeners while dragging a handle.
-  useEffect(() => {
-    const move = (e: PointerEvent) => onHandleMove(e.clientX);
-    const up = () => {
-      if (!dragRef.current) return;
+  // Pointer capture keeps mobile Chrome delivering move/up events even when the
+  // finger leaves the narrow handle. The ref carries the exact last position,
+  // avoiding a stale React-state value on a fast release.
+  const finishDrag = useCallback(
+    (pointerId: number, target: HTMLDivElement) => {
+      if (!dragRef.current || pointerIdRef.current !== pointerId) return;
       dragRef.current = null;
-      onChange({ start: round2(start), end: round2(end) });
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-  }, [onHandleMove, onChange, start, end]);
+      pointerIdRef.current = null;
+      if (target.hasPointerCapture(pointerId)) {
+        target.releasePointerCapture(pointerId);
+      }
+      onChange({
+        start: round2(trimWindowRef.current.start),
+        end: round2(trimWindowRef.current.end),
+      });
+    },
+    [onChange]
+  );
 
   const windowSeconds = Math.max(0, end - start);
   const pct = (t: number) => (duration && duration > 0 ? (t / duration) * 100 : 0);
@@ -307,10 +339,22 @@ export function ClipTrimBar({
               onPointerDown={(e) => {
                 e.preventDefault();
                 dragRef.current = "start";
+                pointerIdRef.current = e.pointerId;
+                trimWindowRef.current = { start, end };
+                e.currentTarget.setPointerCapture(e.pointerId);
               }}
-              className="absolute inset-y-0 -ml-1.5 w-3 cursor-ew-resize rounded-sm bg-blue-500 shadow"
+              onPointerMove={(e) => {
+                if (pointerIdRef.current !== e.pointerId) return;
+                e.preventDefault();
+                onHandleMove(e.clientX);
+              }}
+              onPointerUp={(e) => finishDrag(e.pointerId, e.currentTarget)}
+              onPointerCancel={(e) => finishDrag(e.pointerId, e.currentTarget)}
+              className="absolute inset-y-0 -ml-3 flex w-6 touch-none cursor-ew-resize items-stretch justify-center"
               style={{ left: `${pct(start)}%` }}
-            />
+            >
+              <span className="block h-full w-3 rounded-sm bg-blue-500 shadow" />
+            </div>
             {/* End handle */}
             <div
               role="slider"
@@ -320,10 +364,22 @@ export function ClipTrimBar({
               onPointerDown={(e) => {
                 e.preventDefault();
                 dragRef.current = "end";
+                pointerIdRef.current = e.pointerId;
+                trimWindowRef.current = { start, end };
+                e.currentTarget.setPointerCapture(e.pointerId);
               }}
-              className="absolute inset-y-0 -ml-1.5 w-3 cursor-ew-resize rounded-sm bg-blue-500 shadow"
+              onPointerMove={(e) => {
+                if (pointerIdRef.current !== e.pointerId) return;
+                e.preventDefault();
+                onHandleMove(e.clientX);
+              }}
+              onPointerUp={(e) => finishDrag(e.pointerId, e.currentTarget)}
+              onPointerCancel={(e) => finishDrag(e.pointerId, e.currentTarget)}
+              className="absolute inset-y-0 -ml-3 flex w-6 touch-none cursor-ew-resize items-stretch justify-center"
               style={{ left: `${pct(end)}%` }}
-            />
+            >
+              <span className="block h-full w-3 rounded-sm bg-blue-500 shadow" />
+            </div>
           </div>
 
           <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-slate-500">

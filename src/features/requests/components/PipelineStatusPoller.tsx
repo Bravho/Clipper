@@ -10,7 +10,7 @@ interface Props {
   /** Phase 7 — when "generating", keep polling for the background Travy render
    * even after the job is Complete, so the Travy clip appears without a manual
    * reload. */
-  tventVideoStatus?: string | null;
+  travyVideoStatus?: string | null;
   /**
    * Progressive per-ratio reveal: when true, the job is at AwaitingFinalApproval
    * with more distribution-channel ratios still composing. Keep polling and
@@ -53,7 +53,7 @@ const DEFAULT_POLL_INTERVAL_MS = 5_000;
 export function PipelineStatusPoller({
   requestId,
   currentStep,
-  tventVideoStatus,
+  travyVideoStatus,
   revealRatios = false,
   requiredRatioCount,
   initialReadyRatioCount = 0,
@@ -80,10 +80,10 @@ export function PipelineStatusPoller({
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
 
   useEffect(() => {
-    const tventGenerating = tventVideoStatus === "generating";
+    const travyGenerating = travyVideoStatus === "generating";
     if (
       !POLLING_STEPS.includes(currentStep) &&
-      !tventGenerating &&
+      !travyGenerating &&
       !revealRatios &&
       !revealCaptioned
     )
@@ -163,7 +163,7 @@ export function PipelineStatusPoller({
         // Phase 7 — the Travy render runs in the background while the job is
         // already Complete (no step change), so also refresh when its status
         // flips (generating → ready/failed) to reveal the finished clip.
-        if (tventGenerating && data.tventVideoStatus && data.tventVideoStatus !== "generating") {
+        if (travyGenerating && data.travyVideoStatus && data.travyVideoStatus !== "generating") {
           router.refresh();
         }
       } catch {
@@ -175,7 +175,7 @@ export function PipelineStatusPoller({
   }, [
     requestId,
     currentStep,
-    tventVideoStatus,
+    travyVideoStatus,
     revealRatios,
     requiredRatioCount,
     revealCaptioned,

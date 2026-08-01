@@ -2,25 +2,17 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CREDITS_CONFIG, PIPELINE_PHASES, STEP_TO_PHASE } from "@/config/credits";
+import { CREDITS_CONFIG } from "@/config/credits";
+import {
+  buildPipelinePhaseDisplay,
+  getPipelineStepPresentation,
+} from "@/config/pipelinePresentation";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { RenderProgressDetail } from "@/domain/models/VideoGenerationJob";
 
 /** Fallbacks for display only — duration/channels no longer affect the price. */
 const DEFAULT_DURATION_SECONDS = 15;
 const DEFAULT_CHANNELS = 2;
-
-// Steps where the AI work is done but staff review is pending.
-// The phase shows as "awaiting review" (amber) rather than "in progress" (blue).
-const AWAITING_REVIEW_STEPS = new Set<VideoGenerationStep>([
-  VideoGenerationStep.AwaitingVideoApproval,
-  VideoGenerationStep.AwaitingVoiceApproval,
-  VideoGenerationStep.AwaitingSceneDesignApproval,
-  VideoGenerationStep.AwaitingAnimationApproval,
-  VideoGenerationStep.AwaitingFinalApproval,
-  VideoGenerationStep.AwaitingOverlayApproval,
-  VideoGenerationStep.AwaitingAdditionalRatios,
-]);
 
 interface Props {
   currentStep?: VideoGenerationStep;
@@ -96,9 +88,13 @@ export function ProductionPipeline({
   }
 
   const isFailed = currentStep === VideoGenerationStep.Failed;
-  const failedPhase = isFailed && failedAtStep ? (STEP_TO_PHASE[failedAtStep] ?? 0) : 0;
-  const activePhase = currentStep && !isFailed ? (STEP_TO_PHASE[currentStep] ?? 0) : 0;
-  const isTracking = activePhase > 0 || (isFailed && failedPhase > 0);
+  const phaseDisplay = buildPipelinePhaseDisplay(currentStep, failedAtStep);
+  const currentPresentation =
+    currentStep === VideoGenerationStep.Failed
+      ? getPipelineStepPresentation(failedAtStep)
+      : getPipelineStepPresentation(currentStep);
+  const hasUnknownStep =
+    currentStep != null && phaseDisplay.every(({ status }) => status === "unknown");
 
   return (
     <div className="mb-8 rounded-xl border border-slate-200 bg-white p-5">
@@ -112,21 +108,20 @@ export function ProductionPipeline({
       </div>
 
       <ol className="relative">
-        {PIPELINE_PHASES.map((phase, idx) => {
-          const isLast = idx === PIPELINE_PHASES.length - 1;
-          const isCompletedNormal = !isFailed && isTracking && activePhase > phase.id;
-          const isCompletedBeforeFailure = isFailed && failedPhase > phase.id;
-          const isCompleted = isCompletedNormal || isCompletedBeforeFailure;
-          // "Awaiting review" = AI done, staff reviewing — amber indicator, no spinner.
-          const isAwaitingReview =
-            !isFailed &&
-            isTracking &&
-            activePhase === phase.id &&
-            currentStep != null &&
-            AWAITING_REVIEW_STEPS.has(currentStep);
-          const isActive = !isFailed && isTracking && activePhase === phase.id && !isAwaitingReview;
-          const isFailedPhase = isFailed && failedPhase === phase.id;
-          const isPending = isTracking && !isCompleted && !isActive && !isAwaitingReview && !isFailedPhase;
+        {phaseDisplay.map(({ phase, status }, idx) => {
+          const isLast = idx === phaseDisplay.length - 1;
+          const isCompleted = status === "completed";
+          const isProcessing = status === "processing";
+          const isActionRequired = status === "action_required";
+          const isReady = status === "ready";
+          const isFailedPhase = status === "failed";
+          const isPending = status === "pending" || status === "unknown";
+          const isPreview = status === "preview";
+          const activeStatusLabel =
+            (isProcessing || isActionRequired || isReady) &&
+            currentPresentation?.phaseId === phase.id
+              ? currentPresentation.statusLabel
+              : null;
 
           return (
             <li key={phase.id} className="flex gap-4">
@@ -136,15 +131,19 @@ export function ProductionPipeline({
                   <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-green-500 text-xs font-bold text-white">
                     ✓
                   </div>
+                ) : isReady ? (
+                  <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-green-500 text-xs font-bold text-white">
+                    ✓
+                  </div>
                 ) : isFailedPhase ? (
                   <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
                     ✕
                   </div>
-                ) : isActive ? (
+                ) : isProcessing ? (
                   <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
                     <div className="h-3 w-3 animate-spin rounded-full border-2 border-blue-200 border-t-white" />
                   </div>
-                ) : isAwaitingReview ? (
+                ) : isActionRequired ? (
                   <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-amber-400 text-xs font-bold text-white">
                     ⏸
                   </div>
@@ -153,7 +152,9 @@ export function ProductionPipeline({
                     className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold ${
                       isPending
                         ? "bg-slate-200 text-slate-400"
-                        : "bg-blue-600 text-white"
+                        : isPreview
+                          ? "bg-blue-600 text-white"
+                          : "bg-slate-200 text-slate-400"
                     }`}
                   >
                     {phase.id}
@@ -162,11 +163,11 @@ export function ProductionPipeline({
                 {!isLast && (
                   <div
                     className={`mt-1 w-px flex-1 ${
-                      isCompleted
+                      isCompleted || isReady
                         ? "bg-green-300"
                         : isFailedPhase
                         ? "bg-red-200"
-                        : isAwaitingReview
+                        : isActionRequired
                         ? "bg-amber-200"
                         : "bg-slate-200"
                     }`}
@@ -182,11 +183,11 @@ export function ProductionPipeline({
                     className={`text-sm font-semibold ${
                       isFailedPhase
                         ? "text-red-700"
-                        : isActive
+                        : isProcessing
                         ? "text-blue-700"
-                        : isAwaitingReview
+                        : isActionRequired
                         ? "text-amber-700"
-                        : isCompleted
+                        : isCompleted || isReady
                         ? "text-green-700"
                         : isPending
                         ? "text-slate-400"
@@ -194,14 +195,19 @@ export function ProductionPipeline({
                     }`}
                   >
                     {phase.label}
-                    {isActive && (
-                      <span className="ml-2 text-xs font-normal text-blue-500">กำลังดำเนินการ</span>
+                    {isProcessing && activeStatusLabel && (
+                      <span className="ml-2 text-xs font-normal text-blue-500">
+                        {activeStatusLabel}
+                      </span>
                     )}
-                    {isAwaitingReview && (
+                    {isActionRequired && activeStatusLabel && (
                       <span className="ml-2 text-xs font-normal text-amber-500">
-                        {currentStep === VideoGenerationStep.AwaitingVideoApproval
-                          ? "รอผู้ใช้ตรวจสอบ"
-                          : "รอทีมงานตรวจสอบ"}
+                        {activeStatusLabel}
+                      </span>
+                    )}
+                    {isReady && activeStatusLabel && (
+                      <span className="ml-2 text-xs font-normal text-green-600">
+                        {activeStatusLabel}
                       </span>
                     )}
                     {isCompleted && (
@@ -215,9 +221,9 @@ export function ProductionPipeline({
                     className={`mt-0.5 text-xs ${
                       isFailedPhase
                         ? "text-red-500"
-                        : isActive
+                        : isProcessing
                         ? "text-blue-500"
-                        : isAwaitingReview
+                        : isActionRequired
                         ? "text-amber-500"
                         : isPending
                         ? "text-slate-400"
@@ -227,7 +233,7 @@ export function ProductionPipeline({
                     {phase.desc}
                   </p>
                   {/* Video-gen sub-status: only shown while AI is actively rendering, not after */}
-                  {isActive && currentStep === VideoGenerationStep.GeneratingBaseVideo && phase.id === 3 && (
+                  {isProcessing && currentStep === VideoGenerationStep.GeneratingBaseVideo && phase.id === 4 && (
                     <p className="mt-1 text-xs text-blue-400">
                       {videoGenStatus === "submitted" && "กำลังเตรียมเรนเดอร์วิดีโอจากรูปและคลิป..."}
                       {videoGenStatus === "processing" && "กำลังเรนเดอร์วิดีโอจากรูปและคลิปของคุณ"}
@@ -248,7 +254,7 @@ export function ProductionPipeline({
                       AND the running step reports measurable progress. AI-API
                       steps never write renderProgress, so they keep the spinner
                       alone (no bar, by design). */}
-                  {isActive && renderProgress != null && (
+                  {isProcessing && renderProgress != null && (
                     <div className="mt-2 w-56 max-w-full">
                       <div className="flex items-center gap-2">
                         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
@@ -272,13 +278,13 @@ export function ProductionPipeline({
                 {/* Every step is covered by the single one-time fee. */}
                 <span
                   className={`ml-4 mt-0.5 flex-shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                    isCompleted
+                    isCompleted || isReady
                       ? "bg-green-50 text-green-600"
                       : isFailedPhase
                       ? "bg-red-50 text-red-600"
-                      : isActive
+                      : isProcessing
                       ? "bg-blue-100 text-blue-700"
-                      : isAwaitingReview
+                      : isActionRequired
                       ? "bg-amber-50 text-amber-700"
                       : "bg-slate-50 text-slate-400"
                   }`}
@@ -290,6 +296,14 @@ export function ProductionPipeline({
           );
         })}
       </ol>
+
+      {hasUnknownStep && (
+        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <p className="text-xs font-medium text-red-700">
+            ไม่พบรูปแบบการแสดงผลสำหรับสถานะการผลิตปัจจุบัน กรุณาลองรีเฟรชหรือติดต่อทีมงาน
+          </p>
+        </div>
+      )}
 
       {/* Stalled recovery: the job has sat on this processing step past its
           generous threshold (likely an interrupted render or a worker that went

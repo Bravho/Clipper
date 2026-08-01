@@ -13,7 +13,7 @@ export enum Platform {
   Facebook = "facebook",
   Instagram = "instagram",
   YouTube = "youtube",
-  TventApp = "tvent_app",
+  TravyApp = "travy_app",
   CDN = "cdn",
 }
 
@@ -23,7 +23,7 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
   [Platform.Facebook]: "Facebook",
   [Platform.Instagram]: "Instagram",
   [Platform.YouTube]: "YouTube",
-  [Platform.TventApp]: "Travy",
+  [Platform.TravyApp]: "Travy",
   [Platform.CDN]: "Download / CDN Link",
 };
 
@@ -33,23 +33,23 @@ export const ALL_PLATFORMS: Platform[] = [
   Platform.Facebook,
   Platform.Instagram,
   Platform.YouTube,
-  Platform.TventApp,
+  Platform.TravyApp,
   Platform.CDN,
 ];
 
 /**
  * Platforms shown in the requester request form.
- * TventApp is mandatory (always pre-selected). CDN is excluded (internal only).
+ * TravyApp is mandatory (always pre-selected). CDN is excluded (internal only).
  */
 export const FORM_PLATFORMS: Platform[] = [
-  Platform.TventApp,   // mandatory — always selected, shown first
+  Platform.TravyApp,   // mandatory — always selected, shown first
   Platform.TikTok,
   Platform.Facebook,
   Platform.Instagram,
   Platform.YouTube,
 ];
 
-/** Platforms that the requester may optionally check (Tvent is mandatory, not optional). */
+/** Platforms that the requester may optionally check (Travy is mandatory, not optional). */
 export const OPTIONAL_FORM_PLATFORMS: Platform[] = [
   Platform.TikTok,
   Platform.Facebook,
@@ -73,6 +73,6 @@ export const PLATFORM_ASPECT_RATIOS: Record<Platform, string> = {
   // Travy is FIXED at 16:9 (same as YouTube): the Travy clip is uploaded to
   // YouTube and embedded in the Travy web app, so it never mirrors the
   // primary channel's ratio.
-  [Platform.TventApp]: "16:9",
+  [Platform.TravyApp]: "16:9",
   [Platform.CDN]: "16:9",
 };

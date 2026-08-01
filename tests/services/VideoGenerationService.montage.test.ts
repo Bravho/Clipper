@@ -254,7 +254,7 @@ async function createMontageJob(
     finalExport_16_9_assetId: null,
     finalExport_1_1_assetId: null,
     finalExport_4_5_assetId: null,
-    finalExport_tvent_assetId: null,
+    finalExport_travy_assetId: null,
     failedAtStep: null,
     contentApprovedBy: USER_ID,
     videoApprovedBy: null,
@@ -381,11 +381,18 @@ describe("VideoGenerationService — montage engine (Phase 3)", () => {
     const scene1Segment = before!.sceneVideoAssetIds![1];
     renderSceneMock.mockClear();
 
+    const submittedPlan = MONTAGE_PLAN.map((scene) => ({
+      ...scene,
+      assets: scene.assets?.map((asset) => ({ ...asset })),
+    }));
+    submittedPlan[0].visualDescriptionThai = "ฉากอื่นที่ไม่ควรถูกเขียนทับ";
+    submittedPlan[1].visualDescriptionThai = "ฉากที่ 2 แก้ไขแล้ว";
+
     // Revise scene index 1 only.
     const revised = await service.requestVideoRevisionByRequester(
       job.id,
       USER_ID,
-      { scenePlan: JSON.stringify(MONTAGE_PLAN) },
+      { scenePlan: JSON.stringify(submittedPlan) },
       1
     );
     expect(revised.currentStep).toBe(VideoGenerationStep.GeneratingBaseVideo);
@@ -399,6 +406,9 @@ describe("VideoGenerationService — montage engine (Phase 3)", () => {
     expect(after?.sceneVideoAssetIds).toHaveLength(2);
     expect(after?.sceneVideoAssetIds![0]).toBe(scene0Segment); // scene 0 untouched
     expect(after?.sceneVideoAssetIds![1]).not.toBe(scene1Segment); // scene 1 replaced
+    const persistedPlan = JSON.parse(after!.approvedScenePlan!) as ScenePlan[];
+    expect(persistedPlan[0].visualDescriptionThai).toBe("ฉากที่ 1");
+    expect(persistedPlan[1].visualDescriptionThai).toBe("ฉากที่ 2 แก้ไขแล้ว");
   });
 
   it("retrying a failed batch re-renders all scenes and returns to the review", async () => {

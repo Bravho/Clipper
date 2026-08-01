@@ -86,3 +86,43 @@ import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordR
 
 export const videoGenerationJobRepository = new PostgresVideoGenerationJobRepository();
 export const videoPublishRecordRepository = new MockVideoPublishRecordRepository(); // TODO: PostgresVideoPublishRecordRepository (no Postgres impl / table yet)
+
+// ── RClipper Management — PostgreSQL ─────────────────────────────────────────
+// Videos collected free (transferred from a generation project, or uploaded by
+// the user) and published to the user's own social channels. Payment gates
+// PUBLISHING, not collecting. Requires migration 019.
+import {
+  PostgresManagementProductRepository,
+  PostgresManagementPurchaseRepository,
+  PostgresManagementAccessPassRepository,
+  PostgresManagementPublishEntitlementRepository,
+  PostgresManagementUploadBundleRepository,
+  PostgresManagementContentRepository,
+} from "./postgres/PostgresManagementRepositories";
+
+// Maps our users to accounts connected through the publishing provider. This
+// mapping — not the provider's own filtering — is what enforces ownership.
+import { PostgresSocialConnectionRepository } from "./postgres/PostgresSocialConnectionRepository";
+
+export const socialConnectionRepository = new PostgresSocialConnectionRepository();
+
+export const managementProductRepository = new PostgresManagementProductRepository();
+export const managementPurchaseRepository = new PostgresManagementPurchaseRepository();
+export const managementAccessPassRepository = new PostgresManagementAccessPassRepository();
+export const managementPublishEntitlementRepository =
+  new PostgresManagementPublishEntitlementRepository();
+// Consumable upload-token bundles — the entry product (management_single_video).
+// One token = one video to one channel; consumed atomically at publish time.
+// Requires migration 020.
+export const managementUploadBundleRepository =
+  new PostgresManagementUploadBundleRepository();
+export const managementContentRepository = new PostgresManagementContentRepository();
+
+// Publishing: publications + their per-destination targets, and the async job
+// queue that reconciles provider results. Both back the composer publish path.
+import { PostgresManagementPublicationRepository } from "./postgres/PostgresManagementPublicationRepository";
+import { PostgresManagementJobRepository } from "./postgres/PostgresManagementJobRepository";
+
+export const managementPublicationRepository =
+  new PostgresManagementPublicationRepository();
+export const managementJobRepository = new PostgresManagementJobRepository();

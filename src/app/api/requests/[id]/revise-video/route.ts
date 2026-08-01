@@ -40,6 +40,9 @@ export async function POST(
   if (!jobId || !scenePlan || !hookThai || !scriptThai) {
     return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
   }
+  if (sceneIndex !== undefined && (!Number.isInteger(sceneIndex) || sceneIndex < 0)) {
+    return NextResponse.json({ error: "Invalid sceneIndex." }, { status: 400 });
+  }
   const targetSceneIndex = Number.isInteger(sceneIndex) ? (sceneIndex as number) : undefined;
 
   const job = await videoGenerationJobRepository.findById(jobId);

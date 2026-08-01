@@ -10,7 +10,14 @@ import type { AppLocale } from "@/i18n/config";
 import { useI18n } from "@/i18n/client";
 import { isNativeMobile } from "@/lib/mobile/platform";
 import { saveVideoToDevice } from "@/lib/mobile/nativeDownload";
+import { areAllChannelVideosTransferred } from "@/lib/management/transferState";
 import { ReportAiContent } from "@/features/requests/components/ReportAiContent";
+import {
+  CHANNEL_COPY_POLICIES,
+  parseHashtagText,
+  shapeChannelCopy,
+  validateChannelCopy,
+} from "@/lib/publishing/channelCopyPolicy";
 
 interface Props {
   requestId: string;
@@ -29,13 +36,13 @@ interface Props {
   /** Header UI locale the drafts were rendered for on the server. */
   locale?: AppLocale;
   /** Background Travy render status: 'idle' | 'generating' | 'ready' | 'failed'. */
-  tventVideoStatus?: string | null;
+  travyVideoStatus?: string | null;
   /** Reason the Travy render failed (shown so it isn't an opaque error). */
-  tventVideoError?: string | null;
+  travyVideoError?: string | null;
   /** Travy (EN+ZH) clip URL once ready. */
-  tventClipUrl?: string | null;
+  travyClipUrl?: string | null;
   /** Asset id of the Travy clip — for the gated download. */
-  tventAssetId?: string | null;
+  travyAssetId?: string | null;
   /** True when the download is still locked (unpaid) — gates every download button. */
   downloadLocked?: boolean;
   /** Price in credits (= ฿) to unlock all downloads for this request. */
@@ -45,15 +52,14 @@ interface Props {
    * have been purged from storage.
    */
   mediaExpired?: boolean;
+  /** True when RClipper Management is available to this user (server-decided). */
+  managementEnabled?: boolean;
+  /**
+   * Export asset id → Management content item id, for videos already transferred.
+   * Drives each per-video button between "transfer" and "open in Management".
+   */
+  transferredByAssetId?: Record<string, string>;
 }
-
-/** Soft character guidance per channel (over-limit is warned, not blocked). */
-const CHANNEL_LIMITS: Record<string, { title?: number; combined?: number; caption?: number }> = {
-  [Platform.TikTok]: { combined: 150 },
-  [Platform.YouTube]: { title: 100, caption: 5000 },
-  [Platform.Instagram]: { caption: 2200 },
-  [Platform.Facebook]: { caption: 5000 },
-};
 
 /** Editable working copy of a channel draft (hashtags held as a raw string). */
 interface DraftEdit {
@@ -62,15 +68,77 @@ interface DraftEdit {
   hashtagsText: string;
 }
 
-function parseHashtags(text: string): string[] {
-  return Array.from(
-    new Set(
-      text
-        .split(/[\s,]+/)
-        .map((t) => t.replace(/^#+/, "").trim())
-        .filter(Boolean)
-    )
+function CopyIconButton({
+  copied,
+  label,
+  onClick,
+}: {
+  copied: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  const accessibleLabel = copied ? `${label}แล้ว` : label;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+        copied
+          ? "bg-emerald-50 text-emerald-600"
+          : "text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+      }`}
+    >
+      {copied ? (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+          <path
+            d="m4.5 10.5 3.25 3.25L15.5 6"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4">
+          <rect
+            x="6.5"
+            y="6.5"
+            width="9"
+            height="9"
+            rx="1.5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          />
+          <path
+            d="M13.5 6.5V5A1.5 1.5 0 0 0 12 3.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+    </button>
   );
+}
+
+function applyChannelPolicies(drafts: ChannelPublishingDraft[]): ChannelPublishingDraft[] {
+  return drafts.map((draft) => {
+    if (draft.status === "posted") return draft;
+    const copy = shapeChannelCopy(draft.platform, {
+      title: draft.title ?? "",
+      caption: draft.caption ?? "",
+      hashtags: draft.hashtags ?? [],
+    });
+    return {
+      ...draft,
+      title: copy.title ?? "",
+      caption: copy.caption,
+      hashtags: copy.hashtags,
+    };
+  });
 }
 
 export function DistributionReviewPanel({
@@ -79,13 +147,15 @@ export function DistributionReviewPanel({
   initialDrafts,
   channelVideos = [],
   locale,
-  tventVideoStatus = null,
-  tventVideoError = null,
-  tventClipUrl = null,
-  tventAssetId = null,
+  travyVideoStatus = null,
+  travyVideoError = null,
+  travyClipUrl = null,
+  travyAssetId = null,
   downloadLocked = false,
   unlockPrice = 0,
   mediaExpired = false,
+  managementEnabled = false,
+  transferredByAssetId = {},
 }: Props) {
   const router = useRouter();
   const { locale: headerLocale } = useI18n();
@@ -95,10 +165,14 @@ export function DistributionReviewPanel({
   );
 
   // ── Per-channel editable copy ──────────────────────────────────────────────
-  const [drafts, setDrafts] = useState<ChannelPublishingDraft[]>(initialDrafts);
+  const policyInitialDrafts = useMemo(
+    () => applyChannelPolicies(initialDrafts),
+    [initialDrafts]
+  );
+  const [drafts, setDrafts] = useState<ChannelPublishingDraft[]>(policyInitialDrafts);
   const [edits, setEdits] = useState<Record<string, DraftEdit>>(() =>
     Object.fromEntries(
-      initialDrafts.map((d) => [
+      policyInitialDrafts.map((d) => [
         d.platform,
         {
           title: d.title ?? "",
@@ -112,6 +186,35 @@ export function DistributionReviewPanel({
   const [regenerating, setRegenerating] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Repair pending legacy drafts as soon as review opens. This keeps copy and
+  // Management transfer safe without requiring another AI generation.
+  useEffect(() => {
+    const editableFields = (items: ChannelPublishingDraft[]) =>
+      items.map(({ platform, title, caption, hashtags }) => ({
+        platform,
+        title,
+        caption,
+        hashtags,
+      }));
+    if (
+      JSON.stringify(editableFields(initialDrafts)) ===
+      JSON.stringify(editableFields(policyInitialDrafts))
+    ) {
+      return;
+    }
+
+    fetch(`/api/requests/${requestId}/publishing-drafts`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobId,
+        drafts: editableFields(policyInitialDrafts),
+      }),
+    }).catch(() => {
+      /* display remains safely normalized even if the repair write fails */
+    });
+  }, [initialDrafts, jobId, policyInitialDrafts, requestId]);
 
   const syncEditsFromDrafts = useCallback((next: ChannelPublishingDraft[]) => {
     setDrafts(next);
@@ -140,9 +243,21 @@ export function DistributionReviewPanel({
             platform: d.platform,
             title: e?.title ?? d.title ?? "",
             caption: e?.caption ?? d.caption ?? "",
-            hashtags: e ? parseHashtags(e.hashtagsText) : d.hashtags ?? [],
+            hashtags: e ? parseHashtagText(e.hashtagsText) : d.hashtags ?? [],
           };
         });
+        if (
+          payload.some(
+            (draft) =>
+              !validateChannelCopy(draft.platform, {
+                title: draft.title,
+                caption: draft.caption,
+                hashtags: draft.hashtags,
+              }).valid
+          )
+        ) {
+          return;
+        }
         fetch(`/api/requests/${requestId}/publishing-drafts`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -213,8 +328,8 @@ export function DistributionReviewPanel({
   const [unlocking, setUnlocking] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [retryingTvent, setRetryingTvent] = useState(false);
-  const [tventRetryError, setTventRetryError] = useState<string | null>(null);
+  const [retryingTravy, setRetryingTravy] = useState(false);
+  const [travyRetryError, setTravyRetryError] = useState<string | null>(null);
 
   const handleUnlock = async () => {
     setUnlocking(true);
@@ -237,12 +352,16 @@ export function DistributionReviewPanel({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ดาวน์โหลดไม่สำเร็จ");
       }
-      const { url, fileName } = (await res.json()) as { url: string; fileName?: string };
+      const { url, downloadUrl, fileName } = (await res.json()) as {
+        url: string;
+        downloadUrl: string;
+        fileName?: string;
+      };
       if (isNativeMobile()) {
         await saveVideoToDevice(url, fileName ?? "rclipper-video.mp4");
       } else {
         const a = document.createElement("a");
-        a.href = url;
+        a.href = downloadUrl;
         a.download = fileName ?? "";
         a.rel = "noopener";
         document.body.appendChild(a);
@@ -293,11 +412,11 @@ export function DistributionReviewPanel({
     );
   };
 
-  const handleRetryTvent = async () => {
-    setRetryingTvent(true);
-    setTventRetryError(null);
+  const handleRetryTravy = async () => {
+    setRetryingTravy(true);
+    setTravyRetryError(null);
     try {
-      const res = await fetch(`/api/requests/${requestId}/retry-tvent`, {
+      const res = await fetch(`/api/requests/${requestId}/retry-travy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId }),
@@ -306,9 +425,9 @@ export function DistributionReviewPanel({
       if (!res.ok) throw new Error(body.error ?? "ไม่สามารถลองสร้างใหม่ได้");
       router.refresh();
     } catch (err) {
-      setTventRetryError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+      setTravyRetryError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {
-      setRetryingTvent(false);
+      setRetryingTravy(false);
     }
   };
 
@@ -322,13 +441,72 @@ export function DistributionReviewPanel({
         }));
   const draftByPlatform = new Map(drafts.map((d) => [d.platform, d]));
 
-  const composedFor = (platform: string): string => {
-    const e = edits[platform];
-    const tags = parseHashtags(e?.hashtagsText ?? "")
-      .map((h) => `#${h}`)
-      .join(" ");
-    return [e?.caption ?? "", tags].filter(Boolean).join("\n\n");
+  // ── RClipper Management: per-video transfer (free, optional) ───────────────
+  const [transferred, setTransferred] = useState<Record<string, string>>(
+    transferredByAssetId
+  );
+  // Holds the asset id being transferred, or "all" during a transfer-all.
+  const [transferringId, setTransferringId] = useState<string | null>(null);
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const postTransfer = async (body: Record<string, unknown>) => {
+    const res = await fetch("/api/management/transfers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? "โอนวิดีโอไม่สำเร็จ");
+    return data;
   };
+
+  const transferVideo = async (assetId: string) => {
+    setTransferringId(assetId);
+    setTransferError(null);
+    try {
+      const data = await postTransfer({ sourceRequestId: requestId, videoAssetId: assetId });
+      if (data.content?.id) {
+        setTransferred((prev) => ({ ...prev, [assetId]: data.content.id }));
+      }
+      router.refresh();
+    } catch (err) {
+      setTransferError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setTransferringId(null);
+    }
+  };
+
+  const transferAllVideos = async () => {
+    setTransferringId("all");
+    setTransferError(null);
+    try {
+      const data = await postTransfer({ sourceRequestId: requestId, all: true });
+      if (Array.isArray(data.items)) {
+        setTransferred((prev) => {
+          const next = { ...prev };
+          for (const it of data.items) {
+            if (it.sourceAssetId && it.id) next[it.sourceAssetId] = it.id;
+          }
+          return next;
+        });
+      }
+      router.refresh();
+    } catch (err) {
+      setTransferError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+    } finally {
+      setTransferringId(null);
+    }
+  };
+
+  const anyChannelVideo = channels.some(
+    (ch) => channelVideoByPlatform.get(ch.platform)?.assetId
+  );
+  const allChannelVideosTransferred = areAllChannelVideosTransferred(
+    channelVideos,
+    transferred
+  );
+  // Transfer is hidden until the download is unlocked: a video that has not been
+  // paid to download should not be movable into Management yet.
+  const canTransfer = managementEnabled && !downloadLocked && !mediaExpired;
 
   return (
     <div className="mt-6 space-y-6">
@@ -364,14 +542,18 @@ export function DistributionReviewPanel({
             const draft = draftByPlatform.get(ch.platform);
             const edit = edits[ch.platform];
             const cfg = getPublishFieldConfig(ch.platform);
-            const limits = CHANNEL_LIMITS[ch.platform] ?? {};
+            const limits = CHANNEL_COPY_POLICIES[ch.platform] ?? {};
             const previewUrl = draft?.previewImageUrl ?? null;
             const posted = draft?.status === "posted";
 
-            const captionLen = edit?.caption?.length ?? 0;
-            const tags = parseHashtags(edit?.hashtagsText ?? "");
-            const combinedLen =
-              captionLen + (tags.length ? tags.map((h) => `#${h}`).join(" ").length + 2 : 0);
+            const tags = parseHashtagText(edit?.hashtagsText ?? "");
+            const validation = validateChannelCopy(ch.platform, {
+              title: edit?.title ?? "",
+              caption: edit?.caption ?? "",
+              hashtags: tags,
+            });
+            const captionLen = validation.captionLength;
+            const combinedLen = validation.combinedLength;
 
             return (
               <div
@@ -471,9 +653,9 @@ export function DistributionReviewPanel({
                             onChange={(ev) => updateEdit(ch.platform, { title: ev.target.value })}
                             className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-50"
                           />
-                          {limits.title && (
-                            <p className={`mt-0.5 text-right text-[11px] ${(edit?.title?.length ?? 0) > limits.title ? "text-red-500" : "text-slate-400"}`}>
-                              {edit?.title?.length ?? 0}/{limits.title}
+                          {limits.titleMaximum && (
+                            <p className={`mt-0.5 text-right text-[11px] ${(edit?.title?.length ?? 0) > limits.titleMaximum ? "text-red-500" : "text-slate-400"}`}>
+                              {edit?.title?.length ?? 0}/{limits.titleMaximum}
                             </p>
                           )}
                         </div>
@@ -482,13 +664,11 @@ export function DistributionReviewPanel({
                       <div>
                         <div className="mb-1 flex items-center justify-between">
                           <label className="text-xs font-medium text-slate-600">{cfg.captionLabel}</label>
-                          <button
-                            type="button"
+                          <CopyIconButton
+                            copied={copiedKey === `${ch.platform}-caption`}
+                            label="คัดลอกคำบรรยาย"
                             onClick={() => copy(`${ch.platform}-caption`, edit?.caption ?? "")}
-                            className="text-[11px] font-medium text-blue-600 hover:underline"
-                          >
-                            {copiedKey === `${ch.platform}-caption` ? "คัดลอกแล้ว ✓" : "คัดลอก"}
-                          </button>
+                          />
                         </div>
                         <textarea
                           value={edit?.caption ?? ""}
@@ -498,14 +678,14 @@ export function DistributionReviewPanel({
                           className="w-full resize-y rounded-md border border-slate-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-50"
                         />
                         <p className="mt-0.5 flex justify-between text-[11px] text-slate-400">
-                          {limits.combined ? (
-                            <span className={combinedLen > limits.combined ? "text-red-500" : ""}>
-                              แคปชัน + แฮชแท็ก {combinedLen}/{limits.combined}
+                          {limits.combinedMaximum ? (
+                            <span className={combinedLen > limits.combinedMaximum ? "text-red-500" : ""}>
+                              แคปชัน + แฮชแท็ก {combinedLen}/{limits.combinedMaximum}
                             </span>
                           ) : (
-                            <span className={limits.caption && captionLen > limits.caption ? "text-red-500" : ""}>
+                            <span className={limits.captionMaximum && captionLen > limits.captionMaximum ? "text-red-500" : ""}>
                               {captionLen}
-                              {limits.caption ? `/${limits.caption}` : ""}
+                              {limits.captionMaximum ? `/${limits.captionMaximum}` : ""}
                             </span>
                           )}
                         </p>
@@ -514,18 +694,16 @@ export function DistributionReviewPanel({
                       <div>
                         <div className="mb-1 flex items-center justify-between">
                           <label className="text-xs font-medium text-slate-600">แฮชแท็ก (Hashtags)</label>
-                          <button
-                            type="button"
+                          <CopyIconButton
+                            copied={copiedKey === `${ch.platform}-tags`}
+                            label="คัดลอกแฮชแท็ก"
                             onClick={() =>
                               copy(
                                 `${ch.platform}-tags`,
                                 tags.map((h) => `#${h}`).join(" ")
                               )
                             }
-                            className="text-[11px] font-medium text-blue-600 hover:underline"
-                          >
-                            {copiedKey === `${ch.platform}-tags` ? "คัดลอกแล้ว ✓" : "คัดลอก"}
-                          </button>
+                          />
                         </div>
                         {tags.length > 0 && (
                           <div className="mb-1 flex flex-wrap gap-1">
@@ -549,16 +727,28 @@ export function DistributionReviewPanel({
                         />
                       </div>
 
-                      {!posted && (
-                        <button
-                          type="button"
-                          onClick={() => copy(`${ch.platform}-all`, composedFor(ch.platform))}
-                          className="w-full rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
-                        >
-                          {copiedKey === `${ch.platform}-all`
-                            ? "คัดลอกแคปชัน + แฮชแท็กแล้ว ✓"
-                            : "คัดลอกแคปชัน + แฮชแท็ก"}
-                        </button>
+                      {/* Free, optional: keep THIS video in RClipper Management.
+                          Hidden until the download is unlocked. */}
+                      {canTransfer && cv && cv.assetId && (
+                        transferred[cv.assetId] ? (
+                          <a
+                            href={`/dashboard/management/content/${transferred[cv.assetId]}`}
+                            className="block rounded-md border border-emerald-500 px-3 py-2 text-center text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                          >
+                            อยู่ใน Channel Management แล้ว — เปิด →
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => transferVideo(cv.assetId as string)}
+                            disabled={transferringId === cv.assetId}
+                            className="w-full rounded-md border border-blue-600 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                          >
+                            {transferringId === cv.assetId
+                              ? "กำลังโอน..."
+                              : "นำวีดิโอเข้าสู่การบริหารช่องทางสื่อออนไลน์ (Channel Management)"}
+                          </button>
+                        )
                       )}
                     </div>
                   </div>
@@ -576,13 +766,41 @@ export function DistributionReviewPanel({
         </div>
         {downloadError && <p className="mt-3 text-xs text-red-600">{downloadError}</p>}
 
+        {/* Move EVERY video into RClipper Management at once (free, optional).
+            Hidden until the download is unlocked. */}
+        {canTransfer && anyChannelVideo && (
+          <div className="mt-5 border-t border-blue-100 pt-4">
+            {!allChannelVideosTransferred && (
+              <button
+                type="button"
+                onClick={transferAllVideos}
+                disabled={transferringId === "all"}
+                className="w-full rounded-md bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {transferringId === "all"
+                  ? "กำลังโอนทั้งหมด..."
+                  : "นำวีดิโอเข้าสู่การบริหารช่องทางสื่อออนไลน์ทั้งหมด (Channel Management)"}
+              </button>
+            )}
+            {allChannelVideosTransferred && (
+              <a
+                href="/dashboard/management"
+                className="block rounded-md border border-emerald-500 px-3 py-2 text-center text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+              >
+                เปิด Channel Management เพื่อจัดการวิดีโอของคุณ →
+              </a>
+            )}
+            {transferError && <p className="mt-2 text-xs text-red-600">{transferError}</p>}
+          </div>
+        )}
+
         <div className="mt-5 border-t border-blue-100 pt-4">
           <ReportAiContent requestId={requestId} />
         </div>
       </Card>
 
       {/* Background Travy (EN+ZH) render status */}
-      {tventVideoStatus && tventVideoStatus !== "idle" && (
+      {travyVideoStatus && travyVideoStatus !== "idle" && (
         <Card className="border-slate-100 bg-slate-50/60">
           <h3 className="mb-2 text-base font-semibold text-slate-900">
             วิดีโอสำหรับช่อง Travy (อังกฤษ + จีน)
@@ -593,21 +811,21 @@ export function DistributionReviewPanel({
               <span>ไฟล์วิดีโอ Travy ถูกลบแล้ว (จัดเก็บไว้ 7 วันหลังส่งมอบ)</span>
             </div>
           )}
-          {!mediaExpired && tventVideoStatus === "generating" && (
+          {!mediaExpired && travyVideoStatus === "generating" && (
             <div className="flex items-center gap-3 text-sm text-slate-600">
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
               ระบบกำลังสร้างวิดีโอสำหรับช่อง Travy โดยอัตโนมัติ (ไม่สามารถยกเลิกได้)
             </div>
           )}
-          {!mediaExpired && tventVideoStatus === "ready" &&
-            (tventClipUrl ? (
+          {!mediaExpired && travyVideoStatus === "ready" &&
+            (travyClipUrl ? (
               <div className="space-y-3">
                 <div className="flex max-h-[420px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
-                  <video src={tventClipUrl} controls className="max-h-[400px] w-auto rounded object-contain" />
+                  <video src={travyClipUrl} controls className="max-h-[400px] w-auto rounded object-contain" />
                 </div>
                 {renderDownloadControl({
-                  assetId: tventAssetId,
-                  ratio: PLATFORM_ASPECT_RATIOS[Platform.TventApp],
+                  assetId: travyAssetId,
+                  ratio: PLATFORM_ASPECT_RATIOS[Platform.TravyApp],
                   labelSuffix: "วิดีโอ Travy",
                   channelName: "Travy",
                 })}
@@ -615,24 +833,24 @@ export function DistributionReviewPanel({
             ) : (
               <p className="text-sm text-slate-400">วิดีโอ Travy พร้อมแล้ว</p>
             ))}
-          {!mediaExpired && tventVideoStatus === "failed" && (
+          {!mediaExpired && travyVideoStatus === "failed" && (
             <div className="space-y-2">
               <p className="text-sm font-medium text-red-600">การสร้างวิดีโอ Travy ล้มเหลว</p>
-              {tventVideoError && (
+              {travyVideoError && (
                 <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700 break-words">
-                  สาเหตุ: {tventVideoError}
+                  สาเหตุ: {travyVideoError}
                 </p>
               )}
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleRetryTvent}
-                  disabled={retryingTvent}
+                  onClick={handleRetryTravy}
+                  disabled={retryingTravy}
                   className="rounded-md border border-blue-600 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
                 >
-                  {retryingTvent ? "กำลังลองใหม่..." : "ลองสร้างวิดีโอ Travy อีกครั้ง"}
+                  {retryingTravy ? "กำลังลองใหม่..." : "ลองสร้างวิดีโอ Travy อีกครั้ง"}
                 </button>
-                {tventRetryError && <span className="text-xs text-red-600">{tventRetryError}</span>}
+                {travyRetryError && <span className="text-xs text-red-600">{travyRetryError}</span>}
               </div>
             </div>
           )}

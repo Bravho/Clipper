@@ -6,11 +6,14 @@ import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { PLATFORM_LABELS } from "@/domain/enums/Platform";
 import {
   VideoGenerationStep,
-  PIPELINE_STEP_LABELS,
   PIPELINE_STEP_DESCRIPTIONS,
 } from "@/domain/enums/VideoGenerationStep";
 import type { VideoGenerationStepHistoryEntry } from "@/domain/models/VideoGenerationJob";
-import { PIPELINE_PHASES, STEP_TO_PHASE } from "@/config/credits";
+import {
+  PIPELINE_PHASES,
+  STEP_TO_PHASE,
+  getPipelineStepPresentation,
+} from "@/config/pipelinePresentation";
 
 /**
  * RequestPresentationService — converts domain models into requester-facing
@@ -297,15 +300,24 @@ export class RequestPresentationService {
     }
   }
 
-  /** Build pipeline progress display for the requester (only during Editing). */
+  /**
+   * Build the exact pipeline progress display whenever a job exists.
+   *
+   * The request can already be Delivered while its job intentionally remains at
+   * AwaitingDistributionReview so downloads and publishing copy stay available.
+   * The job step, not the coarse request status, is therefore the source of
+   * truth for this progress line.
+   */
   getPipelineProgress(
-    status: RequestStatus,
+    _status: RequestStatus,
     pipelineStep: VideoGenerationStep | null
   ): RequesterRequestView["pipelineProgress"] {
-    if (status !== RequestStatus.Editing || !pipelineStep) return null;
+    if (!pipelineStep) return null;
+    const presentation = getPipelineStepPresentation(pipelineStep);
+    if (!presentation) return null;
     return {
       step: pipelineStep,
-      label: PIPELINE_STEP_LABELS[pipelineStep],
+      label: presentation.statusLabel,
       description: PIPELINE_STEP_DESCRIPTIONS[pipelineStep],
     };
   }
@@ -357,13 +369,17 @@ export class RequestPresentationService {
    * history (Draft, Submitted, Delivered, …) only captures a couple of coarse
    * milestones because the self-serve AI pipeline drives progress on the
    * VideoGenerationJob rather than the request status. To show the full
-   * journey, the job's step history is collapsed to one milestone per display
-   * phase (first entry into each phase) and merged chronologically with the
-   * status history.
+   * journey, the job's step history is collapsed to one milestone per
+   * requester-facing phase (first entry into each phase) and merged
+   * chronologically with the status history. The current step is accepted
+   * separately as a fallback because history writes are intentionally
+   * best-effort and must never make the current phase disappear from the UI.
    */
   buildStatusTimeline(
     statusHistory: RequestStatusHistory[],
-    stepHistory: VideoGenerationStepHistoryEntry[] = []
+    stepHistory: VideoGenerationStepHistoryEntry[] = [],
+    currentStep: VideoGenerationStep | null = null,
+    currentStepChangedAt: Date | null = null
   ): TimelineEntry[] {
     const statusEntries: TimelineEntry[] = statusHistory.map((h) => ({
       id: h.id,
@@ -371,21 +387,34 @@ export class RequestPresentationService {
       changedAt: h.changedAt,
     }));
 
-    // stepHistory is oldest-first; keep the first entry into each phase so the
-    // timeline reads analyze → voice → script/video → merge → subtitle → export.
+    // stepHistory is oldest-first; keep the first entry into each user-visible
+    // phase. Retries and per-scene loops remain in the audit log without
+    // flooding the requester timeline with duplicate milestones.
     const seenPhases = new Set<number>();
     const phaseEntries: TimelineEntry[] = [];
-    for (const entry of stepHistory) {
-      const phaseId = STEP_TO_PHASE[entry.step];
-      if (phaseId == null || seenPhases.has(phaseId)) continue;
+    const addPhase = (
+      step: VideoGenerationStep,
+      changedAt: Date,
+      idSuffix: string
+    ) => {
+      const phaseId = STEP_TO_PHASE[step];
+      if (phaseId == null || seenPhases.has(phaseId)) return;
       seenPhases.add(phaseId);
       const phase = PIPELINE_PHASES.find((p) => p.id === phaseId);
-      if (!phase) continue;
+      if (!phase) return;
       phaseEntries.push({
-        id: `phase-${phaseId}`,
+        id: `phase-${phaseId}-${idSuffix}`,
         label: phase.label,
-        changedAt: entry.createdAt,
+        changedAt,
       });
+    };
+
+    for (const entry of stepHistory) {
+      addPhase(entry.step, entry.createdAt, entry.id);
+    }
+
+    if (currentStep && currentStepChangedAt) {
+      addPhase(currentStep, currentStepChangedAt, "current");
     }
 
     return [...statusEntries, ...phaseEntries].sort(

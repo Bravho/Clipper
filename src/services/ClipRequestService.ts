@@ -10,6 +10,7 @@ import {
 } from "@/repositories";
 import { creditService } from "@/services/CreditService";
 import { uploadService } from "@/services/UploadService";
+import { paidExportRetentionService } from "@/services/PaidExportRetentionService";
 import type { AppLocale } from "@/i18n/config";
 
 /**
@@ -441,9 +442,26 @@ export class ClipRequestService {
       requestId
     );
 
-    return clipRequestRepository.updateStatus(requestId, existing.status, {
-      downloadUnlocked: true,
-    });
+    const updated = await clipRequestRepository.updateStatus(
+      requestId,
+      existing.status,
+      { downloadUnlocked: true }
+    );
+
+    // Distribution paid: relocate the clean masters out of final_exports/ (short
+    // window) into paid_exports/ (30-day window), resetting the lifecycle clock.
+    // Best-effort — a storage hiccup must never fail an unlock the user paid for;
+    // the master would simply expire on its original short window instead.
+    try {
+      await paidExportRetentionService.promoteForRequest(userId, requestId);
+    } catch (err) {
+      console.error(
+        `[unlockDownload] paid-export promotion failed for ${requestId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+
+    return updated;
   }
 
   /**

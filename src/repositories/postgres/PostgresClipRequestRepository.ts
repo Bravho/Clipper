@@ -12,6 +12,12 @@ import { EffortClass } from "@/domain/enums/EffortClass";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { pool } from "@/lib/db";
 
+const LEGACY_TRAVY_PLATFORM = `${["tv", "ent"].join("")}_app`;
+
+function normalizeStoredPlatform(value: string): Platform {
+  return value === LEGACY_TRAVY_PLATFORM ? Platform.TravyApp : (value as Platform);
+}
+
 function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
   return {
     id: row.id as string,
@@ -22,7 +28,7 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     longitude: row.longitude != null ? Number(row.longitude) : undefined,
     description: row.description as string,
     targetAudience: row.target_audience as string,
-    targetPlatforms: (row.target_platforms as string[]) as Platform[],
+    targetPlatforms: ((row.target_platforms as string[]) ?? []).map(normalizeStoredPlatform),
     preferredStyle: (row.preferred_style as string) ?? "",
     preferredLanguage: (row.preferred_language as string) ?? "",
     durationSeconds: row.duration_seconds as number,

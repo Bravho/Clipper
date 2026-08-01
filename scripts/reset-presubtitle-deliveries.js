@@ -36,7 +36,7 @@ const PHASE7_COLUMNS = [
   "captioned_export_16_9_asset_id",
   "captioned_export_1_1_asset_id",
   "captioned_export_4_5_asset_id",
-  "tvent_video_status",
+  "travy_video_status",
 ];
 
 const NO_CAPTIONS =
@@ -66,7 +66,7 @@ async function main() {
        ADD COLUMN IF NOT EXISTS captioned_export_16_9_asset_id TEXT,
        ADD COLUMN IF NOT EXISTS captioned_export_1_1_asset_id  TEXT,
        ADD COLUMN IF NOT EXISTS captioned_export_4_5_asset_id  TEXT,
-       ADD COLUMN IF NOT EXISTS tvent_video_status TEXT NOT NULL DEFAULT 'idle'`
+       ADD COLUMN IF NOT EXISTS travy_video_status TEXT NOT NULL DEFAULT 'idle'`
   );
   const { rows: cols } = await client.query(
     `SELECT column_name FROM information_schema.columns
@@ -107,8 +107,8 @@ async function main() {
               status = 'active',
               failed_at_step = NULL,
               final_approved_by = NULL,
-              tvent_video_status = 'idle',
-              final_export_tvent_asset_id = NULL,
+              travy_video_status = 'idle',
+              final_export_travy_asset_id = NULL,
               updated_at = NOW()
         WHERE current_step = 'complete' AND ${NO_CAPTIONS}`
     );

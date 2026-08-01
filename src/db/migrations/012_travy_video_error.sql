@@ -1,7 +1,7 @@
--- 012_tvent_video_error.sql
+-- 012_travy_video_error.sql
 --
 -- Persist WHY the automatic background Travy (EN+ZH) render failed. Previously a
--- Travy failure only set tvent_video_status = 'failed' and the requester saw a
+-- Travy failure only set travy_video_status = 'failed' and the requester saw a
 -- generic "contact admin" message, with the real cause buried in server logs.
 --
 -- This column stores the captured error message (truncated) so the reason is
@@ -11,4 +11,4 @@
 -- Nullable: null whenever the Travy render has not failed.
 
 ALTER TABLE video_generation_jobs
-  ADD COLUMN IF NOT EXISTS tvent_video_error TEXT;
+  ADD COLUMN IF NOT EXISTS travy_video_error TEXT;

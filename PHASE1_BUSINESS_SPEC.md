@@ -485,7 +485,7 @@ The clip request form collects the following information:
 | Clip title | Text (short) | Yes | Internal reference title for the request |
 | Clip description | Text (long) | Yes | Describes what the clip should communicate |
 | Target audience | Text | Yes | Who the clip is intended for |
-| Target platform(s) | Multi-select | Yes | e.g., TikTok, Instagram, Facebook, YouTube, Tvent, CDN/Link |
+| Target platform(s) | Multi-select | Yes | e.g., TikTok, Instagram, Facebook, YouTube, Travy, CDN/Link |
 | Preferred style/tone | Text or select | Yes | e.g., energetic, professional, casual, cinematic |
 | Preferred language | Select | Yes | Language for any text/voiceover used in the clip |
 | File uploads | File upload (max 5) | Yes (at least 1) | Video and/or image files |
@@ -735,7 +735,7 @@ This license **does not** include:
 ### 8.5 Operator's Publication Rights
 
 The operator has the right to:
-- Publish the final edited clip on any channel it operates (TikTok, Instagram, Facebook, YouTube, Tvent, CDN, etc.)
+- Publish the final edited clip on any channel it operates (TikTok, Instagram, Facebook, YouTube, Travy, CDN, etc.)
 - Use the final edited clip as part of the operator's content portfolio and marketing
 - Retain the final edited clip indefinitely as an asset on its channels
 
@@ -1335,7 +1335,7 @@ The confirmed due date is the **single source of truth** for the requester. The 
 #### Status and Delivery Information
 - Current status label (with plain-English status description)
 - Visual status progress indicator (e.g., step-by-step indicator showing current stage)
-- Delivery links for completed requests (TikTok, Facebook, Instagram, YouTube, Tvent, CDN/Link)
+- Delivery links for completed requests (TikTok, Facebook, Instagram, YouTube, Travy, CDN/Link)
 
 #### Decisions the Requester Dashboard Supports
 - Understanding where their request is in the process
@@ -1591,7 +1591,7 @@ The following is a complete checklist of decisions that must be confirmed/approv
 - [ ] **Number of staff members in Phase 1:** Confirm how many staff accounts will be set up at launch.
 - [ ] **Maximum file size per upload:** Define the per-file and total upload size limits.
 - [ ] **Accepted file types:** Confirm the list of accepted video and image file formats.
-- [ ] **Social media channels at launch:** Confirm which publishing channels are active at Phase 1 launch (TikTok, Facebook, Instagram, YouTube, Tvent, CDN/Link).
+- [ ] **Social media channels at launch:** Confirm which publishing channels are active at Phase 1 launch (TikTok, Facebook, Instagram, YouTube, Travy, CDN/Link).
 - [ ] **Buffer in estimation formula:** Approve the 0.5-day buffer in the estimation logic or adjust.
 
 ### 16.3 Product Decisions

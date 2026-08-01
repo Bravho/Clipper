@@ -83,7 +83,7 @@ Proposed:
    (the real "step 3.5" — kinetic captions, scene transitions,
    lower-thirds — driven by the same timestamp data)
 7. FFmpeg final composition: concat per-scene clips, burn subtitles +
-   overlays, mix music, export 4 ratios + Tvent variant
+   overlays, mix music, export 4 ratios + Travy variant
 8. Social publishing (unchanged)
 ```
 
@@ -142,7 +142,7 @@ render motion-graphics/caption/transition overlays, driven by
 `voiceTimestamps`/`subtitleTimeline`/`animationSpec`. Key requirements:
 
 - **Multi-aspect-ratio support is required from the start.** The final export
-  step already produces 4 ratios (9:16, 16:9, 1:1, 4:5) + a Tvent-specific
+  step already produces 4 ratios (9:16, 16:9, 1:1, 4:5) + a Travy-specific
   9:16 variant (`getRequiredRatiosForPlatforms`, per the selected
   `targetPlatforms`). Remotion overlays must be rendered per-ratio, since
   caption placement/sizing and any transition graphics need to fit each

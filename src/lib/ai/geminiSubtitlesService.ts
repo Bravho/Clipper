@@ -381,7 +381,7 @@ export function splitSegmentsForDisplay(
  * Chinese). Segments missing a requested language's text (e.g. legacy
  * timelines without textChinese) simply omit that line.
  *
- * Defaults to English + Simplified Chinese, matching the Tvent App
+ * Defaults to English + Simplified Chinese, matching the Travy App
  * requirement.
  */
 export function generateAssSubtitles(

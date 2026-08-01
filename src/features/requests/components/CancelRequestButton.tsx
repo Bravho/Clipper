@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 
 interface CancelRequestButtonProps {
@@ -11,7 +11,6 @@ interface CancelRequestButtonProps {
 
 export function CancelRequestButton({ requestId, status }: CancelRequestButtonProps) {
   const router = useRouter();
-  const pathname = usePathname();
   const [isPending, setIsPending] = useState(false);
 
   const handleCancel = async (e: React.MouseEvent) => {
@@ -21,7 +20,7 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
     const isDraft = status === RequestStatus.Draft;
     const confirmMsg = isDraft
       ? "ลบแบบร่างนี้? ไม่สามารถย้อนกลับได้"
-      : "ยกเลิกคำขอนี้? ไม่สามารถย้อนกลับได้ และเครดิตจะไม่ถูกคืน";
+      : "ลบคำขอนี้? ไม่สามารถย้อนกลับได้ และเครดิตจะไม่ถูกคืน";
 
     if (!confirm(confirmMsg)) return;
 
@@ -34,7 +33,7 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
         router.refresh();
       } else {
         const data = await res.json().catch(() => null);
-        alert(data?.error ?? "ไม่สามารถยกเลิกคำขอได้ กรุณาลองใหม่อีกครั้ง");
+        alert(data?.error ?? "ไม่สามารถลบคำขอได้ กรุณาลองใหม่อีกครั้ง");
       }
     } catch {
       // Network-level failure (e.g. the dev server restarted/was unreachable) —
@@ -51,7 +50,7 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
       disabled={isPending}
       className="text-xs text-red-400 hover:text-red-600 disabled:opacity-50 transition-colors"
     >
-      {isPending ? "กำลังยกเลิก..." : "ยกเลิก"}
+      {isPending ? "กำลังลบ..." : "ลบ"}
     </button>
   );
 }

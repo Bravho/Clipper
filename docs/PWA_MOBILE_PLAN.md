@@ -13,34 +13,20 @@ The app is a **Next.js 14 App Router** project (TypeScript, Tailwind, NextAuth v
 - **Heavy server-side work**: AI video pipeline (Remotion, FFmpeg, Gemini, ElevenLabs), Digital Ocean Spaces storage, email. None of this can run inside a mobile WebView — it must stay on the server.
 - **No PWA today**: no `manifest.json`, no service worker, no offline handling. `public/` has only `logo.png` and a `music/` folder.
 - **No Capacitor** installed.
-- Branding is already **"Travy"** in the display layer (`PLATFORM_LABELS[Platform.TventApp] = "Travy App"`).
+- Branding is already **"Travy"** in the display layer (`PLATFORM_LABELS[Platform.TravyApp] = "Travy App"`).
 
 **Conclusion:** because almost all value lives server-side, the correct mobile strategy is a **WebView shell** that loads the deployed site, not a static re-bundle. This is the fastest path, preserves SSR/auth/API untouched, and still unlocks native capabilities (push, camera, share, secure storage, app-store presence).
 
 ---
 
-## 2. Tvent → Travy rename (DONE this session — user-facing scope)
+## 2. Travy naming (DONE)
 
-Per the chosen scope (**user-facing only**), the following visible strings were changed from "Tvent" to "Travy":
+The Travy name is used consistently in display copy and internal identifiers:
 
-- `src/app/layout.tsx` — SEO meta description.
-- `src/app/(public)/page.tsx` — hero copy, stats strip, distribution section heading/body, and channel chip (5 visible strings + 1 comment).
-
-**Left unchanged on purpose** (internal identifiers, no user impact):
-
-- Enum value `Platform.TventApp = "tvent_app"` — renders as "Travy App" via `PLATFORM_LABELS`.
-- DB columns (`final_export_tvent_asset_id`, `tvent_video_status`), env vars (`TVENT_API_KEY`, `TVENT_API_URL`), filenames (`lib/social/tventService.ts`), Spaces keys, and code identifiers.
-
-### Optional future "deep rename" (not done — would need a migration)
-
-If you later want to erase "tvent" from the codebase entirely:
-
-1. Rename the DB columns via a new migration (`00X_rename_tvent_to_travy.sql`) with `ALTER TABLE ... RENAME COLUMN`, and update `PostgresVideoGenerationJobRepository.ts` column maps.
-2. Change the enum string `"tvent_app"` → `"travy_app"` **and** migrate existing `clip_requests.target_platforms` / stored rows that contain the old value.
-3. Rename env vars `TVENT_*` → `TRAVY_*` in `.env.example`, `src/config/aiTools.ts`, and deployment secrets.
-4. Rename `tventService.ts` → `travyService.ts` and update imports.
-
-This is a coordinated code + data change and should be a dedicated ticket with a backfill/rollback plan. Recommended only once mobile/PWA work is stable.
+- `Platform.TravyApp = "travy_app"` renders through `PLATFORM_LABELS`.
+- Database columns, environment variables, service filenames, storage keys, API routes,
+  and render-state fields use the same `travy` naming.
+- A compatibility migration updates persisted rows created before this naming was standardized.
 
 ---
 
@@ -150,7 +136,7 @@ CI (GitHub Actions / EAS-style) to run `cap sync`, build IPA/AAB, and submit. Ma
 2. **Capacitor shell + auth/deep-link plumbing (B1–B3)** — ~1 week. Get a working signed build on a device.
 3. **Native features + store compliance (B4–B5)** — ~1–2 weeks. Push + camera + share are the difference between approval and rejection.
 4. **Release pipeline (B6)** and **mobile hardening (Phase C)** — ongoing.
-5. **Optional deep Tvent→Travy identifier rename** — separate ticket, after the above is stable.
+5. **Optional deep Travy→Travy identifier rename** — separate ticket, after the above is stable.
 
 ---
 

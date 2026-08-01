@@ -56,7 +56,7 @@ export enum VideoGenerationStep {
   // every selected channel are approved, the requester downloads the finished
   // exports (every ratio) and posts them on their own channels — RClipper does
   // NOT publish on the requester's behalf. The Travy EN+ZH render runs
-  // fire-and-forget in the background here (tventVideoStatus). When the requester
+  // fire-and-forget in the background here (travyVideoStatus). When the requester
   // confirms, the request is simply marked Complete/Delivered. (Featuring select
   // clips on RClipper's own channels is a separate staff/admin curation action.)
   AwaitingDistributionReview = "awaiting_distribution_review",

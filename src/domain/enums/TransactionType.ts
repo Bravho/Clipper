@@ -15,4 +15,8 @@ export enum TransactionType {
   DiscountApplied = "discount_applied",
   /** Credits added by a confirmed PromptPay top-up via Stripe. */
   TopUp = "top_up",
+  /** Credits spent on an RClipper Management package (bundle or access pass). */
+  ManagementPurchase = "management_purchase",
+  /** Credits returned when a Management purchase is refunded. */
+  ManagementRefund = "management_refund",
 }

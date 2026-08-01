@@ -12,8 +12,6 @@
  * the rest of the app reads. Toggle `LAUNCH_DISCOUNT_ACTIVE` to end the promotion
  * and charge the full price.
  */
-import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-
 export const CREDITS_CONFIG = {
   /** No free credits granted on signup at launch. */
   SIGNUP_BONUS_CREDITS: 0,
@@ -93,75 +91,9 @@ export function calcPipelineCost(
   return { step1, step2, step3, step4, step5, extraChannels, base, rework, total: base + rework };
 }
 
-export const PIPELINE_PHASES = [
-  {
-    id: 1,
-    label: "วิเคราะห์เนื้อหา",
-    desc: "AI วิเคราะห์รูปภาพและเขียนบทพูดให้ตรวจสอบ",
-  },
-  {
-    id: 2,
-    label: "เสียงพากย์",
-    desc: "AI สร้างเสียงพากย์จากบทที่อนุมัติ",
-  },
-  {
-    id: 3,
-    label: "สคริปต์วิดีโอและสร้างวิดีโอ",
-    desc: "AI เขียนแผนฉากจากความยาวเสียงพากย์ก่อน แล้วจึงสร้างวิดีโอหลังอนุมัติ",
-  },
-  {
-    id: 4,
-    label: "รวมคลิปแต่ละฉาก",
-    desc: "รวมคลิปแต่ละฉากที่อนุมัติแล้วเข้าเป็นวิดีโอเดียว",
-  },
-  {
-    id: 5,
-    label: "ซับไตเติ้ล",
-    desc: "ใส่ subtitle 3 ภาษา: ไทย · อังกฤษ · จีน",
-  },
-  {
-    id: 6,
-    label: "ปรับขนาดและดาวน์โหลด",
-    desc: "Export 4 ratio ในอัตราส่วนที่เหมาะกับแต่ละช่องทาง พร้อมดาวน์โหลดไปโพสต์เอง",
-  },
-] as const;
-
-/**
- * Maps each pipeline step to the display phase (see PIPELINE_PHASES) it belongs
- * to. Shared by the ProductionPipeline widget and the requester Status History
- * timeline so both group steps identically. Steps not listed here are not shown
- * as a tracked phase (e.g. Failed).
- *
- * Phase 4 ("รวมคลิปแต่ละฉาก") is the post-approval concat merge + animation pass;
- * MergingScenes is the merge itself. GeneratingBaseVideo stays in phase 3
- * (per-scene rendering, before the video-approval gate).
- */
-export const STEP_TO_PHASE: Partial<Record<VideoGenerationStep, number>> = {
-  [VideoGenerationStep.AnalyzingContent]:            1,
-  [VideoGenerationStep.AwaitingContentApproval]:     1,
-  // Audio-first reorder: voice generation now runs before video generation.
-  [VideoGenerationStep.GeneratingVoice]:             2,
-  [VideoGenerationStep.AwaitingVoiceApproval]:       2,
-  [VideoGenerationStep.GeneratingSceneDesign]:       3,
-  [VideoGenerationStep.AwaitingSceneDesignApproval]: 3,
-  [VideoGenerationStep.AwaitingSceneScriptApproval]: 3,
-  [VideoGenerationStep.GeneratingBaseVideo]:         3,
-  [VideoGenerationStep.AwaitingVideoApproval]:       3,
-  [VideoGenerationStep.MergingScenes]:               4,
-  [VideoGenerationStep.GeneratingAnimations]:        4,
-  [VideoGenerationStep.AwaitingAnimationApproval]:   4,
-  [VideoGenerationStep.ComposingFinalVideo]:         5,
-  [VideoGenerationStep.AwaitingFinalApproval]:       5,
-  [VideoGenerationStep.GeneratingOverlay]:           5,
-  [VideoGenerationStep.AwaitingOverlayApproval]:     5,
-  [VideoGenerationStep.AwaitingAdditionalRatios]:    5,
-  [VideoGenerationStep.GeneratingAdditionalRatios]:  5,
-  [VideoGenerationStep.Publishing]:                  6,
-  [VideoGenerationStep.Complete]:                    6,
-  // Legacy steps
-  [VideoGenerationStep.AwaitingVoiceRecording]:      2,
-  [VideoGenerationStep.ProcessingVoice]:             2,
-};
+// Backwards-compatible re-export for callers outside the requester UI. New
+// presentation code should import from pipelinePresentation directly.
+export { PIPELINE_PHASES, STEP_TO_PHASE } from "@/config/pipelinePresentation";
 
 export const AI_TRACK_BASE_COST = calcPipelineCost(
   PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,

@@ -4,7 +4,14 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, uploadedAssetRepository } from "@/repositories/index";
-import { spacesSignedUrl } from "@/lib/spaces";
+import {
+  SPACES_BUCKET,
+  spacesClient,
+  spacesSendWithRetry,
+  spacesSignedUrl,
+} from "@/lib/spaces";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { attachmentContentDisposition } from "@/lib/downloadHeaders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +22,10 @@ const DOWNLOAD_URL_TTL_SECONDS = 5 * 60;
 /**
  * GET /api/requests/[id]/download?assetId=...
  *
- * Returns a short-lived presigned URL to the clean (non-watermarked) final master
- * — but ONLY when the request's download is unlocked (paid). This is the paywall:
- * the clean master is never handed out until `downloadUnlocked` is true.
+ * Returns download metadata or, with `direct=1`, streams the clean
+ * (non-watermarked) final master as a same-origin attachment — but ONLY when the
+ * request's download is unlocked (paid). This is the paywall: the clean master
+ * is never handed out until `downloadUnlocked` is true.
  *
  * The requester may still WATCH the preview via /stream while locked; downloading
  * the clean file requires payment. (Watermarking the streamed preview so the
@@ -65,11 +73,9 @@ export async function GET(
     return NextResponse.json({ error: "Asset not found." }, { status: 404 });
   }
 
-  // Serve the presigned URL with Content-Disposition: attachment so the client
-  // downloads a real file (in-page on web, saved to the device on mobile) rather
-  // than opening the video in a new browser tab. Name the file after the place
-  // and the distribution channel it was clicked for — e.g. "ร้านกาแฟ - TikTok.mp4"
-  // — so a requester downloading every channel gets clearly-named files.
+  // Name the file after the place and the distribution channel it was clicked
+  // for — e.g. "ร้านกาแฟ - TikTok.mp4" — so a requester downloading every
+  // channel gets clearly-named files.
   const channelName = request.nextUrl.searchParams.get("channel")?.trim();
   const ext = asset.fileName?.split(".").pop()?.toLowerCase() || "mp4";
   const place =
@@ -77,11 +83,64 @@ export async function GET(
   const baseName = [place, channelName].filter(Boolean).join(" - ");
   const downloadFileName = `${baseName || "rclipper-video"}.${ext}`;
 
+  // Web browsers download through this same-origin streaming response. A
+  // cross-origin `<a download>` is not reliable because browsers may ignore the
+  // attribute; proxying the object lets this API return a real attachment
+  // response while retaining the authentication and paywall checks above.
+  if (request.nextUrl.searchParams.get("direct") === "1") {
+    try {
+      const obj = await spacesSendWithRetry(`download ${asset.storageKey}`, () =>
+        spacesClient.send(
+          new GetObjectCommand({
+            Bucket: SPACES_BUCKET,
+            Key: asset.storageKey,
+          })
+        )
+      );
+      if (!obj.Body) {
+        throw new Error("Spaces returned an empty response body.");
+      }
+
+      const webStream = (
+        obj.Body as { transformToWebStream: () => ReadableStream }
+      ).transformToWebStream();
+      const headers = new Headers();
+      headers.set(
+        "Content-Type",
+        asset.mimeType || obj.ContentType || "application/octet-stream"
+      );
+      headers.set(
+        "Content-Disposition",
+        attachmentContentDisposition(downloadFileName)
+      );
+      headers.set("Cache-Control", "private, no-store");
+      headers.set("X-Content-Type-Options", "nosniff");
+      if (obj.ContentLength != null) {
+        headers.set("Content-Length", String(obj.ContentLength));
+      }
+
+      return new NextResponse(webStream, { status: 200, headers });
+    } catch (err) {
+      console.error("[download] failed to stream asset:", err);
+      return NextResponse.json(
+        { error: "Failed to download video." },
+        { status: 502 }
+      );
+    }
+  }
+
+  // Native apps still need a presigned URL because their OS-level HTTP client
+  // does not automatically carry the browser session cookie.
   const url = await spacesSignedUrl(asset.storageKey, DOWNLOAD_URL_TTL_SECONDS, {
     downloadFileName,
   });
+  const directParams = new URLSearchParams(request.nextUrl.searchParams);
+  directParams.set("direct", "1");
+  const downloadUrl = `${request.nextUrl.pathname}?${directParams.toString()}`;
+
   return NextResponse.json({
     url,
+    downloadUrl,
     fileName: downloadFileName,
     expiresInSeconds: DOWNLOAD_URL_TTL_SECONDS,
   });

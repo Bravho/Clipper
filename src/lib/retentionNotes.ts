@@ -4,6 +4,7 @@ import {
   INACTIVITY_CANCEL_DAYS,
   addDays,
 } from "@/config/retention";
+import { estimatedSpaceExpiry } from "@/config/spacesLifecycle";
 
 /**
  * Inline retention text notes (Thai) rendered in the page — NOT emails or
@@ -129,5 +130,45 @@ export function uploadedMaterialsNote(): RetentionNote {
     text: "ไฟล์ต้นฉบับที่อัพโหลดจะถูกเก็บไว้จนกว่าคำขอจะส่งมอบ หรือไม่มีการเคลื่อนไหวครบ 30 วัน",
     effectiveAt: null,
     tone: "info",
+  };
+}
+
+/**
+ * Note for a single stored media object, derived from its storage-key lifecycle
+ * window (see {@link estimatedSpaceExpiry}). Used at the final-approval step for
+ * the intermediate un-captioned "master" merged video so the requester knows
+ * when its stored file will be purged and can download / continue before then.
+ *
+ * `baseline` is the object's creation time (the asset's `createdAt`). Returns
+ * null when the key has no lifecycle rule or no baseline is available.
+ */
+export function spaceExpiryNote(
+  storageKey: string | null | undefined,
+  baseline: Date | string | null | undefined,
+  now: Date = new Date()
+): RetentionNote | null {
+  const base =
+    baseline instanceof Date
+      ? baseline
+      : baseline
+        ? new Date(baseline)
+        : null;
+  if (base && Number.isNaN(base.getTime())) return null;
+
+  const expiresAt = estimatedSpaceExpiry(storageKey, base);
+  if (!expiresAt) return null;
+
+  const remaining = daysUntil(expiresAt, now);
+  if (remaining <= 0) {
+    return {
+      text: `ไฟล์วิดีโอนี้หมดอายุการจัดเก็บแล้ว (${formatThaiDate(expiresAt)})`,
+      effectiveAt: expiresAt,
+      tone: "expired",
+    };
+  }
+  return {
+    text: `ไฟล์วิดีโอที่รวมเสียงนี้จะถูกเก็บไว้ถึงประมาณ ${formatThaiDate(expiresAt)} (อีก ${remaining} วัน) — กรุณาดาวน์โหลดหรือดำเนินการขั้นตอนต่อไปก่อนหมดเวลา`,
+    effectiveAt: expiresAt,
+    tone: remaining <= 2 ? "warning" : "info",
   };
 }

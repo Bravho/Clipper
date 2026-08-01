@@ -134,7 +134,9 @@ describe("buildSceneMontageAssets", () => {
         {
           assetIndex: 1,
           kind: "clip",
-          motion: "static",
+          // Legacy jobs may carry a still-image preset on a clip. Rebuilding
+          // must normalize it because clips always play as-shot.
+          motion: "ken_burns_in",
           durationSeconds: 0, // unpinned -> allocated
           trimStartSeconds: 2,
           trimEndSeconds: 5,
@@ -146,6 +148,7 @@ describe("buildSceneMontageAssets", () => {
     expect(assets[0].motion).toBe("pan_left");
     expect(assets[0].durationSeconds).toBe(4); // pinned, preserved
     // Remaining 6s allocated to the unpinned clip; trim preserved.
+    expect(assets[1].motion).toBe("static");
     expect(assets[1].durationSeconds).toBe(6);
     expect(assets[1].trimStartSeconds).toBe(2);
     expect(assets[1].trimEndSeconds).toBe(5);
@@ -161,6 +164,7 @@ describe("toRenderAssetSpecs — cross-pipeline index alignment", () => {
     expect(specs.map((s) => s.url)).toEqual([list[2].url, list[1].url]);
     // The clip keeps its clip kind through the whole resolution.
     expect(specs[1].kind).toBe("clip");
+    expect(specs[1].motion).toBe("static");
   });
 
   it("drops invalid indexes and falls back to the first ordered asset", () => {

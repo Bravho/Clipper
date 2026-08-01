@@ -62,7 +62,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     finalExport_16_9_assetId: null,
     finalExport_1_1_assetId: null,
     finalExport_4_5_assetId: null,
-    finalExport_tvent_assetId: null,
+    finalExport_travy_assetId: null,
 
     subtitleTimeline: null,
     animationSpec: null,
@@ -151,7 +151,7 @@ export const SEED_PIPELINE_JOBS: VideoGenerationJob[] = [
     finalExport_16_9_assetId: null,
     finalExport_1_1_assetId: null,
     finalExport_4_5_assetId: null,
-    finalExport_tvent_assetId: null,
+    finalExport_travy_assetId: null,
 
     subtitleTimeline: null,
     animationSpec: null,

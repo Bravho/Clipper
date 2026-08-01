@@ -25,7 +25,11 @@ import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
-import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
+import type {
+  ChannelPublishingDraft,
+  ScenePlan,
+  VideoGenerationJob,
+} from "@/domain/models/VideoGenerationJob";
 
 // ── Mock repositories module (used via `@/repositories/index` singletons) ──
 jest.mock("@/repositories/index", () => ({
@@ -186,7 +190,11 @@ const {
 };
 
 // Import the service AFTER the mocks are registered.
-import { VideoGenerationService } from "@/services/VideoGenerationService";
+import {
+  PublishingDraftValidationError,
+  VideoGenerationService,
+} from "@/services/VideoGenerationService";
+import { composeChannelCopy } from "@/lib/publishing/channelCopyPolicy";
 
 const STAFF_ID = "user-staff-001";
 
@@ -282,7 +290,7 @@ async function createJobAwaitingVoiceApproval(requestId: string, voiceDurationSe
     finalExport_16_9_assetId: null,
     finalExport_1_1_assetId: null,
     finalExport_4_5_assetId: null,
-    finalExport_tvent_assetId: null,
+    finalExport_travy_assetId: null,
     failedAtStep: null,
     contentApprovedBy: "user-001",
     videoApprovedBy: null,
@@ -390,7 +398,7 @@ describe("VideoGenerationService — Remotion overlay compositing (Phase 4)", ()
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
       finalExport_4_5_assetId: null,
-      finalExport_tvent_assetId: null,
+      finalExport_travy_assetId: null,
       failedAtStep: null,
       contentApprovedBy: "user-001",
       videoApprovedBy: "user-001",
@@ -529,7 +537,7 @@ describe("VideoGenerationService — Remotion overlay compositing (Phase 4)", ()
     // product-coordinate detection.
     expect(composeParams.overlayStorageKeys).toEqual({});
     expect(composeParams.assSubtitlesContent).toBeUndefined();
-    expect(composeParams.assSubtitlesContentTvent).toBeUndefined();
+    expect(composeParams.assSubtitlesContentTravy).toBeUndefined();
     expect(composeParams.coordinates).toBeUndefined();
     // Subtitle generation + auto product positioning must not run here.
     expect(generateAssSubtitlesMock).not.toHaveBeenCalled();
@@ -539,7 +547,7 @@ describe("VideoGenerationService — Remotion overlay compositing (Phase 4)", ()
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingFinalApproval);
     expect(updated?.finalExport_9_16_assetId).toBeTruthy();
     // Travy is no longer produced here — it is rendered in the Phase-7 step.
-    expect(updated?.finalExport_tvent_assetId).toBeNull();
+    expect(updated?.finalExport_travy_assetId).toBeNull();
   });
 });
 
@@ -657,7 +665,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
       finalExport_16_9_assetId: masters["16:9"] ?? null,
       finalExport_1_1_assetId: masters["1:1"] ?? null,
       finalExport_4_5_assetId: masters["4:5"] ?? null,
-      finalExport_tvent_assetId: null,
+      finalExport_travy_assetId: null,
       failedAtStep: null,
       contentApprovedBy: "user-001",
       videoApprovedBy: null,
@@ -668,7 +676,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
   }
 
   it("approveFinalVideoByRequester persists languages and renders the PRIMARY captioned preview (no align/detect, lead-in shifted)", async () => {
-    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
     const master = await createMaster(request.id, "9:16");
     getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
 
@@ -722,7 +730,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
   });
 
   it("approveOverlayByRequester (single ratio, TH subs) lands on distribution-review, renders Travy EN+ZH at 16:9 in background, NOT yet delivered", async () => {
-    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
     const master = await createMaster(request.id, "9:16");
     // Travy always renders at its FIXED 16:9 ratio (not the primary's 9:16), so
     // a 16:9 master is provided here (in prod a missing one is composed on-demand).
@@ -748,13 +756,13 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(afterApprove.publishingDrafts?.map((d) => d.platform)).toEqual([Platform.TikTok]);
 
     await flushBackground(
-      async () => (await mockJobRepo.findById(job.id))?.tventVideoStatus === "ready"
+      async () => (await mockJobRepo.findById(job.id))?.travyVideoStatus === "ready"
     );
 
     const updated = await mockJobRepo.findById(job.id);
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
-    expect(updated?.tventVideoStatus).toBe("ready");
-    expect(updated?.finalExport_tvent_assetId).toBeTruthy();
+    expect(updated?.travyVideoStatus).toBe("ready");
+    expect(updated?.finalExport_travy_assetId).toBeTruthy();
 
     // The channel videos are ready, so the request is complete without a
     // separate requester confirmation step.
@@ -763,17 +771,17 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
 
     // The Travy render uses EN+ZH regardless of the requester's choice, and is
     // always at the fixed Travy ratio (16:9), never the primary's ratio.
-    const tventCall = renderTemplatedVideoMock.mock.calls.find(
+    const travyCall = renderTemplatedVideoMock.mock.calls.find(
       ([p]: any[]) => JSON.stringify(p.subtitleLanguages) === JSON.stringify(["en", "zh"])
     );
-    expect(tventCall).toBeTruthy();
-    expect((tventCall as any[])[0].ratio).toBe("16:9");
+    expect(travyCall).toBeTruthy();
+    expect((travyCall as any[])[0].ratio).toBe("16:9");
   });
 
   it("Travy reuse: when subtitle languages are exactly {en,zh} AND a 16:9 captioned export exists, reuses it instead of re-rendering", async () => {
     // Reuse now requires a captioned export at the FIXED Travy ratio (16:9), so
     // the primary channel here is YouTube (16:9).
-    const request = await createRequestWithPlatforms([Platform.YouTube, Platform.TventApp]);
+    const request = await createRequestWithPlatforms([Platform.YouTube, Platform.TravyApp]);
     const master = await createMaster(request.id, "16:9");
     getRequiredRatiosForPlatformsMock.mockReturnValue(["16:9"]);
 
@@ -791,8 +799,8 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
 
     expect(updated.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
     // Reused immediately — Travy points at the primary captioned export, ready now.
-    expect(updated.tventVideoStatus).toBe("ready");
-    expect(updated.finalExport_tvent_assetId).toBe(captioned.id);
+    expect(updated.travyVideoStatus).toBe("ready");
+    expect(updated.finalExport_travy_assetId).toBe(captioned.id);
     // No separate Travy render was performed.
     expect(renderTemplatedVideoMock).not.toHaveBeenCalled();
   });
@@ -801,7 +809,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     const request = await createRequestWithPlatforms([
       Platform.TikTok,
       Platform.YouTube,
-      Platform.TventApp,
+      Platform.TravyApp,
     ]);
     const master916 = await createMaster(request.id, "9:16");
     const master169 = await createMaster(request.id, "16:9");
@@ -818,23 +826,23 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     const service = new VideoGenerationService();
     const gated = await service.approveOverlayByRequester(job.id, "user-001");
     expect(gated.currentStep).toBe(VideoGenerationStep.AwaitingAdditionalRatios);
-    expect(gated.finalExport_tvent_assetId).toBeNull();
+    expect(gated.finalExport_travy_assetId).toBeNull();
 
     await service.generateAdditionalRatiosByRequester(job.id, "user-001");
     await flushBackground(
-      async () => (await mockJobRepo.findById(job.id))?.tventVideoStatus === "ready"
+      async () => (await mockJobRepo.findById(job.id))?.travyVideoStatus === "ready"
     );
 
     const updated = await mockJobRepo.findById(job.id);
     expect(updated?.captionedExport_16_9_assetId).toBeTruthy();
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
-    expect(updated?.tventVideoStatus).toBe("ready");
-    expect(updated?.finalExport_tvent_assetId).toBeTruthy();
+    expect(updated?.travyVideoStatus).toBe("ready");
+    expect(updated?.finalExport_travy_assetId).toBeTruthy();
   });
 
   // ── Render-queue seam: enqueue for a live Mac worker, else run inline ────────
   it("enqueues the overlay render for a live worker instead of rendering inline", async () => {
-    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
     const master = await createMaster(request.id, "9:16");
     getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
     const job = await createOverlayJob(
@@ -867,7 +875,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
   });
 
   it("runs the overlay render inline when no worker heartbeat is present (fallback)", async () => {
-    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
     const master = await createMaster(request.id, "9:16");
     getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
     const job = await createOverlayJob(
@@ -989,7 +997,7 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
       finalExport_4_5_assetId: null,
-      finalExport_tvent_assetId: null,
+      finalExport_travy_assetId: null,
       failedAtStep: null,
       contentApprovedBy: "user-001",
       videoApprovedBy: null,
@@ -1007,11 +1015,79 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
     return (await mockJobRepo.findById(job.id))!;
   }
 
+  it("repairs a same-locale legacy TikTok draft instead of preserving its overage", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok]);
+    const job = await createReviewJob(request.id, {}, [
+      {
+        platform: Platform.TikTok,
+        title: "",
+        caption:
+          "บ้านไร่ยามเย็น เชียงใหม่ ร้านอาหารเหนือรสชาติต้นตำรับ บรรยากาศดี อาหารอร่อย ต้องมาลอง! " +
+          "#บ้านไร่ยามเย็น #เชียงใหม่ #อาหารเหนือ #ข้าวซอย #ขนมจีนน้ำเงี้ยว",
+        hashtags: [
+          "บ้านไร่ยามเย็น",
+          "เชียงใหม่",
+          "อาหารเหนือ",
+          "ข้าวซอย",
+          "ขนมจีนน้ำเงี้ยว",
+          "บ้านไร่ยามเย็นเชียงใหม่",
+          "ร้านอาหาร",
+        ],
+        locale: "th",
+        status: "pending",
+      },
+    ]);
+
+    const service = new VideoGenerationService();
+    const generated = await (
+      service as unknown as {
+        _generatePublishingDrafts(
+          currentJob: VideoGenerationJob,
+          platforms: Platform[],
+          locale: "th",
+          force: boolean
+        ): Promise<ChannelPublishingDraft[]>;
+      }
+    )._generatePublishingDrafts(job, [Platform.TikTok], "th", false);
+
+    const draft = generated[0];
+    expect(draft.caption).not.toContain("#");
+    expect(draft.hashtags).toHaveLength(4);
+    expect(composeChannelCopy(draft.caption, draft.hashtags).length).toBeLessThanOrEqual(150);
+  });
+
+  it("rejects an over-limit requester edit instead of autosaving invalid TikTok copy", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok]);
+    const job = await createReviewJob(request.id, {}, [
+      {
+        platform: Platform.TikTok,
+        title: "",
+        caption: "valid",
+        hashtags: [],
+        locale: "th",
+        status: "pending",
+      },
+    ]);
+
+    const service = new VideoGenerationService();
+    await expect(
+      service.savePublishingDraftsByRequester(job.id, "user-001", [
+        {
+          platform: Platform.TikTok,
+          title: "",
+          caption: "ก".repeat(151),
+          hashtags: [],
+          status: "pending",
+        },
+      ])
+    ).rejects.toBeInstanceOf(PublishingDraftValidationError);
+  });
+
   it("confirmPublishingByRequester finalizes to Complete/Delivered WITHOUT posting to any channel", async () => {
     // RClipper no longer publishes the requester's clip to their channels — the
     // requester downloads and posts it themselves. Confirming simply closes out
     // the request; no social API is called and no publishing link is recorded.
-    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TventApp]);
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
     const cap = await createCaptioned(request.id, "9:16");
     const drafts = [
       { platform: Platform.TikTok, title: "", caption: "อร่อย", hashtags: ["food"], status: "pending" },
@@ -1034,7 +1110,7 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
   it("confirmPublishingByRequester completes even when a channel export ratio is missing (no posting attempted)", async () => {
     // Instagram would need a 4:5 export; only 9:16 exists. Since nothing is
     // posted, that no longer matters — the request still finalizes.
-    const request = await createRequestWithPlatforms([Platform.Instagram, Platform.TventApp]);
+    const request = await createRequestWithPlatforms([Platform.Instagram, Platform.TravyApp]);
     const cap = await createCaptioned(request.id, "9:16");
     const drafts = [
       { platform: Platform.Instagram, title: "", caption: "อร่อย", hashtags: [], status: "pending" },

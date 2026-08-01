@@ -1,6 +1,8 @@
 import { AI_CONFIG } from "@/config/aiTools";
 import { spacesClient as s3Client } from "@/lib/spaces";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { Platform } from "@/domain/enums/Platform";
+import { CHANNEL_COPY_POLICIES } from "@/lib/publishing/channelCopyPolicy";
 
 interface TikTokInitUploadResponse {
   data: {
@@ -25,6 +27,12 @@ export async function uploadVideo(params: {
   description: string;
 }): Promise<{ platformVideoId: string; platformUrl: string }> {
   const { accessToken } = AI_CONFIG.social.tiktok;
+  const maximum = CHANNEL_COPY_POLICIES[Platform.TikTok].combinedMaximum;
+  if (maximum != null && params.description.length > maximum) {
+    throw new Error(
+      `TikTok publishing copy exceeds RClipper's ${maximum}-character limit.`
+    );
+  }
 
   // Download video from DO Spaces
   const bucket = process.env.DO_SPACES_BUCKET!;
@@ -48,7 +56,9 @@ export async function uploadVideo(params: {
       },
       body: JSON.stringify({
         post_info: {
-          title: params.description.slice(0, 150),
+          // Send the exact text the requester reviewed. Over-limit content is
+          // rejected above instead of being silently cut at publish time.
+          title: params.description,
           privacy_level: "PUBLIC_TO_EVERYONE",
           disable_duet: false,
           disable_comment: false,

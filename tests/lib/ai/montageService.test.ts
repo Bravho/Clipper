@@ -60,9 +60,19 @@ describe("montageService.buildSceneInputProps", () => {
 
   it("keeps a valid clip trim window", () => {
     const props = buildSceneInputProps(
-      params({ assets: [asset({ kind: "clip", trimStartSeconds: 2, trimEndSeconds: 7 })] })
+      params({
+        assets: [
+          asset({
+            kind: "clip",
+            motion: "ken_burns_in",
+            trimStartSeconds: 2,
+            trimEndSeconds: 7,
+          }),
+        ],
+      })
     );
     expect(props.assets[0].kind).toBe("clip");
+    expect(props.assets[0].motion).toBe("static");
     expect(props.assets[0].trimStartSeconds).toBe(2);
     expect(props.assets[0].trimEndSeconds).toBe(7);
   });

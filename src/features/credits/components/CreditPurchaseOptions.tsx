@@ -10,6 +10,7 @@ interface Props {
   unlockRequestId?: string;
   returnTo?: string;
   unlockPrice: number;
+  minimumTopupCredits?: number;
 }
 
 export function CreditPurchaseOptions(props: Props) {

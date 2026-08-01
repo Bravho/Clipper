@@ -7,7 +7,7 @@
 -- untouched so the Travy EN+ZH render and any overlay re-render start clean.
 --
 -- 1. captioned_export_*_asset_id: the delivered captioned clip per ratio.
--- 2. tvent_video_status:          drives the background Travy-render spinner
+-- 2. travy_video_status:          drives the background Travy-render spinner
 --                                 ('idle' | 'generating' | 'ready' | 'failed').
 --
 -- subtitle_languages already exists (migration for the animation step). The
@@ -19,4 +19,4 @@ ALTER TABLE video_generation_jobs
   ADD COLUMN IF NOT EXISTS captioned_export_16_9_asset_id TEXT,
   ADD COLUMN IF NOT EXISTS captioned_export_1_1_asset_id  TEXT,
   ADD COLUMN IF NOT EXISTS captioned_export_4_5_asset_id  TEXT,
-  ADD COLUMN IF NOT EXISTS tvent_video_status TEXT NOT NULL DEFAULT 'idle';
+  ADD COLUMN IF NOT EXISTS travy_video_status TEXT NOT NULL DEFAULT 'idle';

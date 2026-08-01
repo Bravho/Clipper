@@ -4,14 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
-
-const FAILED_STEP_LABELS: Partial<Record<VideoGenerationStep, string>> = {
-  [VideoGenerationStep.AnalyzingContent]:    "การวิเคราะห์เนื้อหา (AI)",
-  [VideoGenerationStep.GeneratingBaseVideo]: "การสร้างวิดีโอ (มอนทาจ)",
-  [VideoGenerationStep.GeneratingVoice]:     "การสร้างเสียงพากย์ (AI)",
-  [VideoGenerationStep.ProcessingVoice]:     "การประมวลผลเสียง",
-  [VideoGenerationStep.ComposingFinalVideo]: "การตัดต่อวิดีโอ (FFmpeg)",
-};
+import {
+  PIPELINE_PHASES,
+  getPipelineStepPresentation,
+} from "@/config/pipelinePresentation";
 
 interface EditedScene {
   visualDescriptionThai: string;
@@ -66,8 +62,11 @@ export function PipelineFailurePanel({
     }))
   );
 
+  const failedPresentation = getPipelineStepPresentation(failedAtStep);
   const failedStepLabel =
-    failedAtStep ? (FAILED_STEP_LABELS[failedAtStep] ?? failedAtStep) : "ไม่ทราบขั้นตอน";
+    PIPELINE_PHASES.find((phase) => phase.id === failedPresentation?.phaseId)?.label ??
+    failedPresentation?.statusLabel ??
+    "ไม่ทราบขั้นตอน";
 
   // Audio-first reorder: GeneratingVoice now runs immediately after content
   // approval, before any video exists. A failure here is just the first

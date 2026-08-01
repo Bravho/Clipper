@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS video_generation_jobs (
   final_export_16_9_asset_id TEXT,
   final_export_1_1_asset_id TEXT,
   final_export_4_5_asset_id TEXT,
-  final_export_tvent_asset_id TEXT,
+  final_export_travy_asset_id TEXT,
 
   content_approved_by TEXT,
   video_approved_by TEXT,

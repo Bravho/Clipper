@@ -1,0 +1,1 @@
+{"url":"https://rclipper.com/api/management/postwebhooks","event_types":["social.post.created","social.post.updated","social.post.deleted","social.post.result.created","social.account.created","social.account.updated"]}

@@ -51,6 +51,12 @@ import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE } from "@/config/renderQueue";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
+import {
+  extractInlineHashtags,
+  normalizeHashtags,
+  shapeChannelCopy,
+  validateChannelCopy,
+} from "@/lib/publishing/channelCopyPolicy";
 
 const execFileAsync = promisify(execFile);
 
@@ -64,6 +70,13 @@ export class NoUsableMediaError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NoUsableMediaError";
+  }
+}
+
+export class PublishingDraftValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PublishingDraftValidationError";
   }
 }
 
@@ -232,7 +245,7 @@ export class VideoGenerationService {
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
       finalExport_4_5_assetId: null,
-      finalExport_tvent_assetId: null,
+      finalExport_travy_assetId: null,
       subtitleLanguages: ["th", "en"],
       failedAtStep: null,
       contentApprovedBy: null,
@@ -567,7 +580,7 @@ export class VideoGenerationService {
     const req = await clipRequestRepository.findById(job.requestId);
     if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
-    const ratio = this._montageCanvasRatio(req.targetPlatforms[0] ?? Platform.TventApp);
+    const ratio = this._montageCanvasRatio(req.targetPlatforms[0] ?? Platform.TravyApp);
     const stored = await this._renderSceneClipAtRatio(job, sceneIndex, ratio, onProgress);
 
     const scheduledDeletionAt = new Date();
@@ -736,10 +749,10 @@ export class VideoGenerationService {
       case RenderStep.AdditionalRatios:
         await this._runAdditionalRatiosOverlay(job);
         break;
-      case RenderStep.TventGeneration:
-        // Soft-failing: _runTventVideoGeneration never throws (a Travy failure
-        // only sets tventVideoStatus), so this step always completes "done".
-        await this._runTventVideoGeneration(job);
+      case RenderStep.TravyGeneration:
+        // Soft-failing: _runTravyVideoGeneration never throws (a Travy failure
+        // only sets travyVideoStatus), so this step always completes "done".
+        await this._runTravyVideoGeneration(job);
         break;
       default: {
         const _exhaustive: never = step;
@@ -757,11 +770,11 @@ export class VideoGenerationService {
     // job on `Failed` with no valid retry handler). Record only the Travy status +
     // reason and leave currentStep where it is (AwaitingDistributionReview), so the
     // requester can retry it. This also guards the worker-guard case, where the
-    // step is rejected before `_runTventVideoGeneration`'s own try/catch runs.
-    if (step === RenderStep.TventGeneration) {
+    // step is rejected before `_runTravyVideoGeneration`'s own try/catch runs.
+    if (step === RenderStep.TravyGeneration) {
       await videoGenerationJobRepository.update(job.id, {
-        tventVideoStatus: "failed",
-        tventVideoError: "การสร้างวิดีโอ Travy ล้มเหลว กรุณากดลองใหม่",
+        travyVideoStatus: "failed",
+        travyVideoError: "การสร้างวิดีโอ Travy ล้มเหลว กรุณากดลองใหม่",
       });
       return;
     }
@@ -797,7 +810,7 @@ export class VideoGenerationService {
     const step = isRenderStep(job.renderStep) ? job.renderStep : null;
     // Travy is soft-failing: a Travy render failure must never hard-fail the
     // whole pipeline (the other channels are already delivered).
-    if (step === RenderStep.TventGeneration) return job;
+    if (step === RenderStep.TravyGeneration) return job;
 
     return videoGenerationJobRepository.update(job.id, {
       status: VideoGenerationJobStatus.Failed,
@@ -1416,7 +1429,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * first) on the request. `targetPlatforms[0]` is the PRIMARY channel and sets
    * the montage base video's aspect ratio (`_montageCanvasRatio` reads it); the
    * rest are export targets, cropped from the base downstream. Invalid entries
-   * are dropped and Travy App (Tvent) is always included as a mandatory channel.
+   * are dropped and Travy App (Travy) is always included as a mandatory channel.
    * No-op on an empty/invalid list. Done at voice approval, BEFORE any render.
    */
   private async _setDistributionChannels(requestId: string, platforms: Platform[]): Promise<void> {
@@ -1425,7 +1438,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const ordered = Array.from(new Set(valid));
     if (ordered.length === 0) return;
     // Travy App is mandatory — always part of the distribution set.
-    if (!ordered.includes(Platform.TventApp)) ordered.push(Platform.TventApp);
+    if (!ordered.includes(Platform.TravyApp)) ordered.push(Platform.TravyApp);
 
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(requestId);
@@ -1550,11 +1563,38 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       hookThai?: string;
       scriptThai?: string;
       captionThai?: string;
-    }
+    },
+    sceneIndex?: number
   ): Promise<void> {
-    const scenePlan = sanitizeScenePlanDescriptions(
+    const submittedPlan = sanitizeScenePlanDescriptions(
       JSON.parse(edits.scenePlan) as ScenePlan[]
     );
+    const normalizeClipMotion = (plan: ScenePlan[]) =>
+      plan.map((scene) => ({
+        ...scene,
+        assets: scene.assets?.map((asset) =>
+          asset.kind === "clip" ? { ...asset, motion: "static" as const } : asset
+        ),
+      }));
+
+    let scenePlan = normalizeClipMotion(submittedPlan);
+    if (sceneIndex !== undefined) {
+      if (!Number.isInteger(sceneIndex) || sceneIndex < 0) {
+        throw new Error(`Invalid scene index: ${sceneIndex}`);
+      }
+      const job = await this._getJob(jobId);
+      const storedPlan = sanitizeScenePlanDescriptions(
+        JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[]
+      );
+      if (sceneIndex >= storedPlan.length || !submittedPlan[sceneIndex]) {
+        throw new Error(`Scene index ${sceneIndex} is outside the approved scene plan`);
+      }
+      // A per-scene revision must never overwrite edits or ordering belonging
+      // to another scene, even though the client submits the complete plan for
+      // backward compatibility.
+      scenePlan = normalizeClipMotion(storedPlan);
+      scenePlan[sceneIndex] = normalizeClipMotion([submittedPlan[sceneIndex]])[0];
+    }
     await videoGenerationJobRepository.update(jobId, {
       approvedScenePlan: JSON.stringify(scenePlan),
       ...(edits.hookThai !== undefined ? { approvedHookThai: edits.hookThai } : {}),
@@ -1684,9 +1724,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * Merge every approved scene segment into the single base video, then advance
    * to animation generation. Heavy FFmpeg concat/crossfade — invoked either by
    * the Mac worker (via `runQueuedRenderStep`) or inline as the droplet fallback.
-   * On failure `_dispatchHeavy`'s `onFail` records `failedAtStep =
-   * GeneratingBaseVideo` (see RENDER_STEP_FAILED_AT), matching the previous
-   * inline behaviour so retry semantics are unchanged.
+   * On failure `_dispatchHeavy` records `failedAtStep = MergingScenes`, so the
+   * production card highlights this exact phase and retry resumes the merge
+   * without re-rendering the already-approved scene clips.
    */
   private async _runMontageMerge(job: VideoGenerationJob): Promise<void> {
     const baseVideoAssetId = await this._concatMontageBaseVideo(job);
@@ -1746,9 +1786,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     sceneIndex?: number
   ): Promise<VideoGenerationJob> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
-    await this._persistSceneEdits(jobId, edits);
-
     const idx = Number.isInteger(sceneIndex) ? (sceneIndex as number) : job.currentSceneIndex ?? 0;
+    await this._persistSceneEdits(jobId, edits, idx);
+
     // Re-derive the camera move from the (edited) scene description so editing the
     // script and re-rendering updates the motion to match the script's intent.
     await this._reinferSceneMotion(jobId, idx);
@@ -1827,7 +1867,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
   /** Distribution ratios for the requester's own channels (excludes Travy). */
   private _userRatios(platforms: Platform[]): VideoRatio[] {
-    const nonTravy = platforms.filter((p) => p !== Platform.TventApp);
+    const nonTravy = platforms.filter((p) => p !== Platform.TravyApp);
     return ffmpegService.getRequiredRatiosForPlatforms(
       nonTravy.length > 0 ? nonTravy : platforms
     );
@@ -2027,6 +2067,34 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       onProgress,
     });
 
+    // Generate a poster still from the finished captioned clip so this video
+    // shows a preview image everywhere it is surfaced — the requester's download
+    // view and, after transfer, the RClipper Management library ("วิดิโอของคุณ").
+    // The poster lives in the public, long-lived `thumbnails/` prefix and is
+    // carried onto the Management item via `asset.thumbnailKey` at transfer time.
+    // Best-effort: a poster failure must never discard the finished render.
+    let posterKey = "";
+    let posterUrl = "";
+    try {
+      const [{ buildThumbnailKey }, { generateVideoThumbnail }, { spacesPublicUrl }] =
+        await Promise.all([
+          import("@/lib/spacesKeys"),
+          import("@/lib/thumbnails"),
+          import("@/lib/spaces"),
+        ]);
+      posterKey = buildThumbnailKey(
+        userId,
+        job.requestId,
+        `poster-${ratio.replace(":", "x")}`
+      );
+      await generateVideoThumbnail(result.storageKey, posterKey);
+      posterUrl = spacesPublicUrl(posterKey);
+    } catch (err) {
+      console.error(`[overlay:${ratio}] poster generation failed (non-fatal):`, err);
+      posterKey = "";
+      posterUrl = "";
+    }
+
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
     const asset = await uploadedAssetRepository.create({
@@ -2038,8 +2106,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       mimeType: "video/mp4",
       storageKey: result.storageKey,
       storageUrl: result.storageUrl,
-      thumbnailKey: "",
-      thumbnailUrl: "",
+      thumbnailKey: posterKey,
+      thumbnailUrl: posterUrl,
       uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt,
       videoRatio: ratio,
@@ -2112,7 +2180,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
     const platforms = request.targetPlatforms ?? [];
-    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TravyApp);
     const languages =
       job.subtitleLanguages && job.subtitleLanguages.length > 0
         ? job.subtitleLanguages
@@ -2197,7 +2265,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
     const platforms = request?.targetPlatforms ?? [];
-    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TravyApp);
     const remaining = this._userRatios(platforms).filter((r) => r !== primaryRatio);
 
     if (remaining.length > 0) {
@@ -2208,7 +2276,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       });
     }
 
-    return this._finalizeAndStartTvent(job, userId);
+    return this._finalizeAndStartTravy(job, userId);
   }
 
   /** Requester triggers generation of the remaining channels' aspect ratios. */
@@ -2237,7 +2305,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
     const platforms = request.targetPlatforms ?? [];
-    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TravyApp);
     const remaining = this._userRatios(platforms).filter((r) => r !== primaryRatio);
     const languages =
       job.subtitleLanguages && job.subtitleLanguages.length > 0
@@ -2297,8 +2365,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // We're inside the additional-ratios worker claim, so render Travy inline and
     // awaited (not as an orphaned background promise) — it must finish before the
     // claim completes, or the worker would tear it down.
-    await this._finalizeAndStartTvent(refreshed, refreshed.finalApprovedBy ?? "", {
-      renderTventInline: true,
+    await this._finalizeAndStartTravy(refreshed, refreshed.finalApprovedBy ?? "", {
+      renderTravyInline: true,
     });
   }
 
@@ -2312,21 +2380,21 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    *      the primary captioned export IS already an EN+ZH clip at the Travy
    *      (= primary) ratio and is REUSED as the Travy export immediately (no
    *      duplicate render). Leaving the page never stops the render.
-   * The request is NOT marked Delivered here — that happens only when the
-   * requester confirms publishing (`confirmPublishingByRequester`).
+   * The request is marked Delivered immediately after the distribution-review
+   * job step is persisted. There is no separate requester completion action.
    */
-  private async _finalizeAndStartTvent(
+  private async _finalizeAndStartTravy(
     job: VideoGenerationJob,
     userId: string,
-    opts: { renderTventInline?: boolean } = {}
+    opts: { renderTravyInline?: boolean } = {}
   ): Promise<VideoGenerationJob> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
     const platforms = request?.targetPlatforms ?? [];
-    const needsTvent = platforms.includes(Platform.TventApp);
+    const needsTravy = platforms.includes(Platform.TravyApp);
     // Travy always renders at its own fixed ratio (16:9 — uploaded to YouTube
     // for the Travy web app), independent of the primary channel's ratio.
-    const tventRatio = this._montageCanvasRatio(Platform.TventApp);
+    const travyRatio = this._montageCanvasRatio(Platform.TravyApp);
 
     // The captioned videos for every channel are ready to download, so the
     // request is DONE from the requester's side — mark it Delivered (shown as
@@ -2335,9 +2403,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // 7-day final-clip availability window (retention sweep purges media at
     // Delivered + 7 days), which matches the "จัดเก็บเพียง 7 วัน" promise shown
     // on the distribution page.
-    const { RequestStatus } = await import("@/domain/enums/RequestStatus");
-    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
-
     // Auto-fill per-channel publishing drafts. Generated in the requester's
     // content language (Thai — captions are authored in Thai), so this needs NO
     // extra AI call here; the distribution-review UI regenerates into another
@@ -2355,44 +2420,50 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // ratio), that export already matches what the Travy clip would be — reuse
     // it instead of rendering a duplicate. Otherwise render Travy separately in
     // background at 16:9.
-    const captionedTventRatioId = this._captionedAssetIdForRatio(job, tventRatio);
-    const canReuseForTvent =
-      needsTvent && this._isEnZhOnly(job.subtitleLanguages) && !!captionedTventRatioId;
+    const captionedTravyRatioId = this._captionedAssetIdForRatio(job, travyRatio);
+    const canReuseForTravy =
+      needsTravy && this._isEnZhOnly(job.subtitleLanguages) && !!captionedTravyRatioId;
 
     const updates: UpdateVideoGenerationJobInput = {
       currentStep: VideoGenerationStep.AwaitingDistributionReview,
       finalApprovedBy: userId || job.finalApprovedBy,
       publishingDrafts,
     };
-    if (needsTvent) {
-      updates.tventVideoError = null; // clear any stale failure from a prior run
-      if (canReuseForTvent) {
-        updates.finalExport_tvent_assetId = captionedTventRatioId;
-        updates.tventVideoStatus = "ready";
+    if (needsTravy) {
+      updates.travyVideoError = null; // clear any stale failure from a prior run
+      if (canReuseForTravy) {
+        updates.finalExport_travy_assetId = captionedTravyRatioId;
+        updates.travyVideoStatus = "ready";
       } else {
-        updates.tventVideoStatus = "generating";
+        updates.travyVideoStatus = "generating";
       }
     }
 
     const updated = await videoGenerationJobRepository.update(job.id, updates);
 
+    // Persist the detailed production milestone before the coarse Delivered
+    // request status so Status History always reads
+    // "สร้างรูปแบบช่องทางและส่งมอบ" → "เสร็จสิ้น", never the reverse.
+    const { RequestStatus } = await import("@/domain/enums/RequestStatus");
+    await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
+
     // Render the Travy (EN+ZH) clip in a SUPERVISED way (never as an orphaned
     // fire-and-forget promise, which the old code did — that promise died when
-    // the worker completed/exited its claim, leaving tventVideoStatus "failed").
-    if (needsTvent && !canReuseForTvent) {
-      if (opts.renderTventInline) {
+    // the worker completed/exited its claim, leaving travyVideoStatus "failed").
+    if (needsTravy && !canReuseForTravy) {
+      if (opts.renderTravyInline) {
         // Called from within the additional-ratios worker step: we're already on
         // the worker inside a live claim, so render inline and AWAIT it so it
-        // finishes before the claim is marked done. _runTventVideoGeneration
+        // finishes before the claim is marked done. _runTravyVideoGeneration
         // never throws, so a Travy failure won't fail the additional-ratios step.
-        await this._runTventVideoGeneration(updated);
+        await this._runTravyVideoGeneration(updated);
       } else {
         // Called from a web request (no-additional-ratios path): enqueue a
         // dedicated, supervised render step for the worker. _dispatchHeavy only
         // returns after the (fast) enqueue write; the heavy render runs on the
         // worker. If no worker is alive it falls back to running inline here.
-        await this._dispatchHeavy(updated, RenderStep.TventGeneration, () =>
-          this._runTventVideoGeneration(updated)
+        await this._dispatchHeavy(updated, RenderStep.TravyGeneration, () =>
+          this._runTravyVideoGeneration(updated)
         );
       }
     }
@@ -2409,48 +2480,48 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    *
    * SOFT-FAILING BY DESIGN: this never throws. The other channels are already
    * delivered by the time Travy runs, so a Travy render error must not fail the
-   * whole pipeline — it only records `tventVideoStatus = "failed"` (surfaced in
+   * whole pipeline — it only records `travyVideoStatus = "failed"` (surfaced in
    * the distribution-review UI). This lets it run either inline on the worker
-   * (awaited) or as its own supervised `RenderStep.TventGeneration` claim without
+   * (awaited) or as its own supervised `RenderStep.TravyGeneration` claim without
    * ever tripping the hard pipeline-failure handlers.
    */
-  private async _runTventVideoGeneration(job: VideoGenerationJob): Promise<void> {
+  private async _runTravyVideoGeneration(job: VideoGenerationJob): Promise<void> {
     try {
       const { clipRequestRepository } = await import("@/repositories/index");
       const request = await clipRequestRepository.findById(job.requestId);
       if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
       // Fixed Travy ratio (16:9) — never the primary channel's ratio.
-      const tventRatio = this._montageCanvasRatio(Platform.TventApp);
+      const travyRatio = this._montageCanvasRatio(Platform.TravyApp);
 
       const inputs = await this._buildOverlayInputs(job);
       // Travy runs while the job already sits on AwaitingDistributionReview, so
       // this % feeds the Travy card (unit "travy"), not the step timeline.
       const writeProgress = this._progressWriter(job.id);
-      const tventAssetId = await this._renderCaptionedRatio(
+      const travyAssetId = await this._renderCaptionedRatio(
         job,
         request.userId,
-        tventRatio,
+        travyRatio,
         ["en", "zh"],
         inputs,
         (f) => writeProgress(f * 95, { unit: "travy" })
       );
 
       await videoGenerationJobRepository.update(job.id, {
-        finalExport_tvent_assetId: tventAssetId,
-        tventVideoStatus: "ready",
-        tventVideoError: null,
+        finalExport_travy_assetId: travyAssetId,
+        travyVideoStatus: "ready",
+        travyVideoError: null,
       });
     } catch (err) {
-      console.error("[TventVideoGeneration] failed:", err);
+      console.error("[TravyVideoGeneration] failed:", err);
       // Persist the reason so the requester sees WHY (not a generic message) and
       // can retry — and so support can diagnose without server logs.
       const reason =
         err instanceof Error ? err.message : String(err ?? "Unknown error");
       await videoGenerationJobRepository
         .update(job.id, {
-          tventVideoStatus: "failed",
-          tventVideoError: reason.slice(0, 500),
+          travyVideoStatus: "failed",
+          travyVideoError: reason.slice(0, 500),
         })
         .catch(() => {});
     }
@@ -2463,7 +2534,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * fallback otherwise). No-op-safe: only valid while the job is on the
    * distribution-review step with a failed Travy.
    */
-  async retryTventVideoByRequester(
+  async retryTravyVideoByRequester(
     jobId: string,
     _userId: string
   ): Promise<VideoGenerationJob> {
@@ -2472,17 +2543,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       jobId,
       VideoGenerationStep.AwaitingDistributionReview
     );
-    if (job.tventVideoStatus !== "failed") {
+    if (job.travyVideoStatus !== "failed") {
       throw new Error("Travy video is not in a failed state");
     }
 
     const updated = await videoGenerationJobRepository.update(jobId, {
-      tventVideoStatus: "generating",
-      tventVideoError: null,
+      travyVideoStatus: "generating",
+      travyVideoError: null,
     });
 
-    await this._dispatchHeavy(updated, RenderStep.TventGeneration, () =>
-      this._runTventVideoGeneration(updated)
+    await this._dispatchHeavy(updated, RenderStep.TravyGeneration, () =>
+      this._runTravyVideoGeneration(updated)
     );
 
     return this._getJob(jobId);
@@ -2545,9 +2616,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
 
     const toTag = (s: string) => s.replace(/[#\s]+/g, "").trim();
-    const captionTags = (caption.match(/#[^\s#]+/g) ?? []).map((t) => t.replace(/^#/, ""));
+    const extracted = extractInlineHashtags(caption);
+    caption = extracted.caption;
+    const captionTags = extracted.hashtags;
     const profileTags = [businessName, category, location].map(toTag).filter(Boolean);
-    const hashtags = Array.from(new Set([...captionTags, ...profileTags].filter(Boolean)));
+    const hashtags = normalizeHashtags([...captionTags, ...profileTags]);
 
     return { title, caption, hashtags };
   }
@@ -2555,9 +2628,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   /**
    * Shape the single base set to ONE channel's real posting requirements (see the
    * social services in `src/lib/social/*`): only YouTube uses a distinct title;
-   * TikTok packs caption+hashtags into a 150-char field; IG/Facebook take a
-   * caption with inline hashtags. Content is NOT rewritten per channel — just
-   * trimmed/capped to fit each platform.
+   * TikTok uses RClipper's compact 150-character caption+hashtag target;
+   * IG/Facebook take a caption with inline hashtags. Content is NOT rewritten
+   * by another AI call per channel — it is deterministically shaped here.
    */
   private _shapeDraftForChannel(
     platform: Platform,
@@ -2565,32 +2638,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): { title: string; caption: string; hashtags: string[] } {
     const cfg = getPublishFieldConfig(platform);
     const title = cfg.hasTitle ? base.title : "";
-    let caption = base.caption;
-    let hashtags = base.hashtags;
-
-    switch (platform) {
-      case Platform.TikTok: {
-        // TikTok posts a single ~150-char field (caption + hashtags inline).
-        hashtags = hashtags.slice(0, 4);
-        const tagLen = hashtags.map((h) => `#${h}`).join(" ").length;
-        const room = Math.max(0, 150 - (tagLen ? tagLen + 2 : 0));
-        if (caption.length > room) {
-          caption = caption.slice(0, Math.max(0, room - 1)).trim() + "…";
-        }
-        break;
-      }
-      case Platform.YouTube:
-        hashtags = hashtags.slice(0, 15);
-        break;
-      case Platform.Instagram:
-      case Platform.Facebook:
-        hashtags = hashtags.slice(0, 30);
-        break;
-      default:
-        break;
-    }
-
-    return { title, caption, hashtags };
+    const copy = shapeChannelCopy(platform, {
+      title,
+      caption: base.caption,
+      hashtags: base.hashtags,
+    });
+    return {
+      title: copy.title ?? "",
+      caption: copy.caption,
+      hashtags: copy.hashtags,
+    };
   }
 
   /**
@@ -2620,12 +2677,22 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
       const keepPrior = !!prior && !force && (prior.locale ?? "th") === locale;
       const shaped = this._shapeDraftForChannel(platform, base);
+      const selected = keepPrior
+        ? {
+            title: prior!.title ?? "",
+            caption: prior!.caption ?? "",
+            hashtags: prior!.hashtags ?? [],
+          }
+        : shaped;
+      // Re-shape even a same-locale prior draft. This repairs legacy generated
+      // drafts that predate the channel policy instead of preserving an
+      // over-limit TikTok caption indefinitely.
+      const copy = shapeChannelCopy(platform, selected);
       return {
         platform,
-        title: keepPrior ? prior!.title : shaped.title,
-        caption: keepPrior && prior!.caption ? prior!.caption : shaped.caption,
-        hashtags:
-          keepPrior && prior!.hashtags?.length ? prior!.hashtags : shaped.hashtags,
+        title: copy.title ?? "",
+        caption: copy.caption,
+        hashtags: copy.hashtags,
         locale,
         previewImageUrl: prior?.previewImageUrl ?? null,
         previewImageAssetId: prior?.previewImageAssetId ?? null,
@@ -2760,11 +2827,27 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const stored = new Map((job.publishingDrafts ?? []).map((d) => [d.platform, d]));
     const merged: ChannelPublishingDraft[] = drafts.map((d) => {
       const prior = stored.get(d.platform);
-      return {
-        platform: d.platform,
+      const candidate = {
         title: d.title ?? prior?.title ?? "",
         caption: d.caption ?? prior?.caption ?? "",
         hashtags: Array.isArray(d.hashtags) ? d.hashtags : prior?.hashtags ?? [],
+      };
+      const validation = validateChannelCopy(d.platform, candidate);
+      if (!validation.valid) {
+        const limit =
+          validation.policy.combinedMaximum ??
+          validation.policy.captionMaximum ??
+          validation.policy.titleMaximum;
+        throw new PublishingDraftValidationError(
+          `${d.platform} publishing copy exceeds its configured limit${limit ? ` (${limit})` : ""}.`
+        );
+      }
+      const copy = shapeChannelCopy(d.platform, candidate);
+      return {
+        platform: d.platform,
+        title: copy.title ?? "",
+        caption: copy.caption,
+        hashtags: copy.hashtags,
         // Locale + preview image are language/asset state, not editable copy:
         // preserve whatever was generated rather than trusting client input.
         locale: prior?.locale ?? d.locale ?? null,
@@ -3026,7 +3109,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     const platforms = request.targetPlatforms ?? [];
     const targetRatios = ffmpegService.getRequiredRatiosForPlatforms(platforms);
-    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TventApp);
+    const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TravyApp);
 
     // This step produces the un-captioned merged MASTERS only (base video + voice
     // + ducked music) for every required ratio. Subtitles and the motion-graphic
@@ -3160,9 +3243,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       renderProgressDetail: null,
     });
     console.log(`[compose] request ${job.requestId}: batch complete → AwaitingFinalApproval`);
-    // The Travy (Tvent) export is NOT produced here — it is rendered with its
+    // The Travy (Travy) export is NOT produced here — it is rendered with its
     // EN+ZH overlay automatically in the Phase-7 background step after the overlay
-    // is approved (`_runTventVideoGeneration`). finalExport_tvent_assetId is left
+    // is approved (`_runTravyVideoGeneration`). finalExport_travy_assetId is left
     // as-is (still null at this step).
   }
 
@@ -3193,7 +3276,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (!request) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
     const primaryRatio = this._montageCanvasRatio(
-      (request.targetPlatforms ?? [])[0] ?? Platform.TventApp
+      (request.targetPlatforms ?? [])[0] ?? Platform.TravyApp
     );
 
     // Native base for THIS ratio (reuse the approved primary base; re-render the
@@ -3275,7 +3358,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
       finalExport_4_5_assetId: null,
-      finalExport_tvent_assetId: null,
+      finalExport_travy_assetId: null,
     });
   }
 
@@ -3416,7 +3499,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,
       finalExport_4_5_assetId: null,
-      finalExport_tvent_assetId: null,
+      finalExport_travy_assetId: null,
       failedAtStep: null,
       contentApprovedBy: requesterId,
       videoApprovedBy: null,
@@ -3568,6 +3651,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         });
         await this._dispatchHeavy(updated, RenderStep.MontageAllSegments, () =>
           this._renderAllSceneSegments(updated)
+        );
+        return updated;
+      }
+
+      case VideoGenerationStep.MergingScenes: {
+        // The scene segments are already valid; retry only their concat/merge
+        // instead of discarding and re-rendering every scene.
+        const updated = await videoGenerationJobRepository.update(jobId, {
+          currentStep: VideoGenerationStep.MergingScenes,
+          baseVideoAssetId: null,
+        });
+        await this._dispatchHeavy(updated, RenderStep.MontageMerge, () =>
+          this._runMontageMerge(updated)
         );
         return updated;
       }

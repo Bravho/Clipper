@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Permit access to the remote development server through the public domain.
+  allowedDevOrigins: ["rclipper.com"],
+
   async headers() {
     return [
       {

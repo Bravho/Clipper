@@ -144,7 +144,76 @@ async function deleteKeys(keys) {
   return deleted;
 }
 
+/**
+ * RClipper Management retention pin.
+ *
+ * A project transferred into RClipper Management keeps its media until
+ * `management_content_items.media_expires_at` (the 30-day paid window once the
+ * user pays; the underlying export's short window while still free). If this
+ * sweep purged on the clip window, Management could find its videos gone before
+ * that.
+ *
+ * The pin is therefore time-bounded, not permanent. A request is exempt while
+ * EITHER:
+ *   * its Management window is still open (media not yet due, not yet purged), OR
+ *   * a publication is still waiting to go out, whatever the window says —
+ *     expiring media out from under a post the user already paid for would be a
+ *     broken promise, not a storage saving.
+ *
+ * Once both are false the media is no longer pinned here and is purged by the
+ * ordinary rules, while the Management RECORD and its history live on.
+ *
+ * Fails OPEN on error — if the check itself breaks we skip the purge rather than
+ * risk deleting pinned media. Over-retaining costs storage; under-retaining
+ * breaks a paid feature.
+ *
+ * Returns the subset of `requestIds` that are pinned.
+ */
+async function pinnedManagementRequestIds(requestIds) {
+  if (requestIds.length === 0) return new Set();
+  try {
+    const { rows } = await db.query(
+      // ::text on the column, because clip_requests.id (and therefore this FK)
+      // may be uuid or text depending on how the database was created — see the
+      // note in migration 019. The existing orphan sweep casts for the same reason.
+      `SELECT DISTINCT c.source_generation_id::text AS id
+         FROM management_content_items c
+        WHERE c.source_generation_id::text = ANY($1::text[])
+          AND c.status <> 'cancelled'
+          AND (
+                -- Management retention window still open
+                (c.media_deleted_at IS NULL
+                 AND (c.media_expires_at IS NULL OR c.media_expires_at > NOW()))
+                -- ...or a post is still in flight (no scheduled-ahead posting)
+                OR EXISTS (
+                     SELECT 1 FROM management_publications p
+                      WHERE p.management_content_id = c.id
+                        AND p.status IN ('draft','publishing')
+                   )
+              )`,
+      [requestIds]
+    );
+    return new Set(rows.map((r) => r.id));
+  } catch (err) {
+    // Migration 019 not applied yet, or the DB is unhappy. Treat every request
+    // as pinned so nothing is deleted on a bad read.
+    console.error(
+      "   ! management pin check failed — skipping purge for safety:",
+      err.message
+    );
+    return new Set(requestIds);
+  }
+}
+
 async function purge(label, userId, requestId) {
+  const pinned = await pinnedManagementRequestIds([requestId]);
+  if (pinned.has(requestId)) {
+    console.log(
+      `   ${label} ${requestId}: SKIPPED — transferred to RClipper Management (retention pinned)`
+    );
+    return 0;
+  }
+
   const keys = await listRequestKeys(userId, requestId);
   if (keys.length === 0) {
     console.log(`   ${label} ${requestId}: no media (already purged)`);
@@ -278,6 +347,13 @@ async function sweepOrphans() {
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
 
+  // Projects transferred into RClipper Management are exempt — a scheduled post
+  // may still need this media. Checked in bulk so [D] stays one extra query.
+  const pinned = await pinnedManagementRequestIds(ids);
+  if (pinned.size > 0) {
+    console.log(`   ${pinned.size} request(s) pinned by RClipper Management — skipping`);
+  }
+
   // 3. Decide per request. Delete only clearly-safe cases.
   const PURGEABLE_TERMINAL = new Set([
     "rejected",
@@ -287,6 +363,7 @@ async function sweepOrphans() {
   ]);
   let total = 0;
   for (const [requestId, keys] of keysByRequest) {
+    if (pinned.has(requestId)) continue;
     const req = byId.get(requestId);
     let reason = null;
     if (!req) {

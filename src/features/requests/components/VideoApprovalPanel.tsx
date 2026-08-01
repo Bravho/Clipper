@@ -21,6 +21,8 @@ function ratioLabel(ratio: string): string {
   return ratio;
 }
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
+import { RetentionNoteText } from "@/features/requests/components/RetentionNoteText";
+import { spaceExpiryNote } from "@/lib/retentionNotes";
 import {
   assetPlaySeconds,
   estimateSuggestedVoiceSeconds,
@@ -130,11 +132,11 @@ interface Props {
   /** Motion template saved on the job (seed the template picker). */
   savedTemplate?: string | null;
   /** Background Travy render status: 'idle' | 'generating' | 'ready' | 'failed'. */
-  tventVideoStatus?: string | null;
+  travyVideoStatus?: string | null;
   /** Reason the Travy render failed (shown instead of an opaque error). */
-  tventVideoError?: string | null;
+  travyVideoError?: string | null;
   /** Travy (EN+ZH) clip URL once its background render is ready. */
-  tventClipUrl?: string | null;
+  travyClipUrl?: string | null;
   /** Pipeline is in Failed state — recovery UI is rendered elsewhere, so hide the processing spinner. */
   isPipelineFailed?: boolean;
   /** True only while an async background step is genuinely running — gates the
@@ -185,9 +187,9 @@ export function VideoApprovalPanel({
   overlayPreviewUrl = null,
   savedSubtitleLanguages,
   savedTemplate = null,
-  tventVideoStatus = null,
-  tventVideoError = null,
-  tventClipUrl = null,
+  travyVideoStatus = null,
+  travyVideoError = null,
+  travyClipUrl = null,
   isPipelineFailed = false,
   isProcessing = false,
   isGeneratingVoice = false,
@@ -215,6 +217,10 @@ export function VideoApprovalPanel({
   const [mode, setMode] = useState<"review" | "revise">("review");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isMergingScenes, setIsMergingScenes] = useState(false);
+  const [regeneratingScene, setRegeneratingScene] = useState<{
+    index: number;
+    previousAssetId: string | null;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [editHookThai, setEditHookThai] = useState(hookThai ?? "");
@@ -227,6 +233,17 @@ export function VideoApprovalPanel({
   const safeActiveSceneIndex = Math.min(Math.max(selectedSceneIndex, 0), Math.max(editScenes.length - 1, 0));
   const activeEditScene = editScenes[safeActiveSceneIndex];
 
+  // Keep the scene-specific generating state visible until the rendered asset
+  // for that exact scene is replaced. This avoids returning to the edit form
+  // while GeneratingBaseVideo is already running.
+  useEffect(() => {
+    if (!regeneratingScene || !isAwaitingApproval) return;
+    const latest = sceneVideos.find((video) => video.sceneIndex === regeneratingScene.index);
+    if (latest && latest.assetId !== regeneratingScene.previousAssetId) {
+      setRegeneratingScene(null);
+    }
+  }, [isAwaitingApproval, regeneratingScene, sceneVideos]);
+
   // Music picker state — initialise from job's saved track so approval steps show the current selection
   const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(savedMusicTrack ?? null);
   const [playingMusicTrack, setPlayingMusicTrack] = useState<string | null>(null);
@@ -236,10 +253,10 @@ export function VideoApprovalPanel({
   // Requester approval states
   // Distribution channels chosen at voice approval, in click order. The FIRST
   // chosen channel is the PRIMARY — it sets the base video's aspect ratio.
-  // Travy App (Tvent) is always included (mandatory, locked) and always exports
+  // Travy App (Travy) is always included (mandatory, locked) and always exports
   // at its own fixed ratio (16:9, same as YouTube).
   const [channelOrder, setChannelOrder] = useState<Platform[]>([]);
-  const primaryChannel: Platform = channelOrder[0] ?? Platform.TventApp;
+  const primaryChannel: Platform = channelOrder[0] ?? Platform.TravyApp;
   const toggleChannel = (p: Platform) =>
     setChannelOrder((prev) =>
       prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
@@ -452,7 +469,7 @@ export function VideoApprovalPanel({
         // Primary channel first (sets the base ratio); Travy App always included.
         body: JSON.stringify({
           jobId,
-          targetPlatforms: [...channelOrder, Platform.TventApp],
+          targetPlatforms: [...channelOrder, Platform.TravyApp],
         }),
       });
       if (!res.ok) {
@@ -831,6 +848,9 @@ export function VideoApprovalPanel({
   };
 
   const handleReviseSubmit = async () => {
+    const targetSceneIndex = safeActiveSceneIndex;
+    const previousAssetId =
+      sceneVideos.find((video) => video.sceneIndex === targetSceneIndex)?.assetId ?? null;
     setIsSubmitting(true);
     setError(null);
     try {
@@ -844,13 +864,15 @@ export function VideoApprovalPanel({
           scriptThai: editScriptThai,
           captionThai: editCaptionThai,
           // Re-render only the scene being edited; others are kept.
-          sceneIndex: safeActiveSceneIndex,
+          sceneIndex: targetSceneIndex,
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ไม่สามารถส่งขอแก้ไขได้");
       }
+      setRegeneratingScene({ index: targetSceneIndex, previousAssetId });
+      setMode("review");
       router.refresh();
       setIsSubmitting(false);
     } catch (err) {
@@ -867,7 +889,17 @@ export function VideoApprovalPanel({
         {/* Combined review: every scene's video, each revised individually,
             then "Approve all" merges them into one. In revise mode only the
             scene being edited is shown, to avoid confusing it with the others. */}
-        {isMergingScenes ? (
+        {regeneratingScene ? (
+          <div className="flex min-h-48 flex-col items-center justify-center text-center">
+            <div className="h-9 w-9 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
+            <h2 className="mt-4 text-base font-semibold text-slate-900">
+              กำลังสร้างฉาก {regeneratingScene.index + 1} ใหม่
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              ระบบกำลังแก้ไขเฉพาะฉากนี้ ฉากอื่นจะยังคงเดิม
+            </p>
+          </div>
+        ) : isMergingScenes ? (
           <div className="flex min-h-48 flex-col items-center justify-center text-center">
             <div className="h-9 w-9 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
             <h2 className="mt-4 text-base font-semibold text-slate-900">
@@ -895,7 +927,12 @@ export function VideoApprovalPanel({
                       </span>
                       <button
                         type="button"
-                        onClick={() => { setSelectedSceneIndex(sv.sceneIndex); setMode("revise"); setError(null); }}
+                        onClick={() => {
+                          setRegeneratingScene(null);
+                          setSelectedSceneIndex(sv.sceneIndex);
+                          setMode("revise");
+                          setError(null);
+                        }}
                         disabled={isSubmitting}
                         className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                       >
@@ -968,7 +1005,7 @@ export function VideoApprovalPanel({
           )
         )}
 
-        {isAwaitingApproval && !isMergingScenes && (
+        {isAwaitingApproval && !isMergingScenes && !regeneratingScene && (
           <div className="mt-4">
             {error && (
               <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3">
@@ -994,20 +1031,15 @@ export function VideoApprovalPanel({
                     className="mr-auto rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     title="กลับไปแก้ไขแผนฉาก (รูป/คลิป ลำดับ ความยาว และบทฉาก) แล้วสร้างวิดีโอใหม่"
                   >
-                    ← แก้ไขวีดิโอ
+                    ← แก้ไขแผนทุกฉาก
                   </button>
                 )}
                 <Button onClick={handleApprove} loading={isSubmitting} disabled={isSubmitting}>
                   {sceneVideos.length > 0 ? "อนุมัติทุกฉากและรวมวิดีโอ" : "อนุมัติวีดิโอนี้"}
                 </Button>
               </div>
-            ) : (
+            ) : sceneVideos.length === 0 ? (
               <div className="flex flex-wrap items-center justify-end gap-3">
-                {sceneVideos.length > 0 && (
-                  <span className="mr-auto text-sm font-medium text-amber-700">
-                    กำลังแก้ไข ฉาก {safeActiveSceneIndex + 1}
-                  </span>
-                )}
                 <button
                   onClick={() => { setMode("review"); setError(null); }}
                   disabled={isSubmitting}
@@ -1016,10 +1048,10 @@ export function VideoApprovalPanel({
                   ยกเลิก
                 </button>
                 <Button onClick={handleReviseSubmit} loading={isSubmitting} disabled={isSubmitting}>
-                  {sceneVideos.length > 0 ? "สร้างฉากนี้ใหม่" : "ส่งขอสร้างวีดิโอใหม่"}
+                  ส่งขอสร้างวีดิโอใหม่
                 </Button>
               </div>
-            )}
+            ) : null}
           </div>
         )}
 
@@ -1198,10 +1230,10 @@ export function VideoApprovalPanel({
                     className="cursor-not-allowed rounded-md border border-slate-300 bg-slate-200 px-3 py-2 text-left text-sm text-slate-700"
                   >
                     <span className="block font-medium">
-                      {PLATFORM_LABELS[Platform.TventApp]}
+                      {PLATFORM_LABELS[Platform.TravyApp]}
                     </span>
                     <span className="block text-xs text-slate-500">
-                      {ratioLabel(PLATFORM_ASPECT_RATIOS[Platform.TventApp])} · ค่าเริ่มต้น
+                      {ratioLabel(PLATFORM_ASPECT_RATIOS[Platform.TravyApp])} · ค่าเริ่มต้น
                     </span>
                   </div>
 
@@ -1439,6 +1471,14 @@ export function VideoApprovalPanel({
                         className="max-h-[480px] w-auto object-contain rounded"
                       />
                     </div>
+
+                    {/* Storage-expiry note for this intermediate merged master:
+                        its stored file lives only for the final_exports/ window,
+                        so tell the requester when it will be purged. */}
+                    <RetentionNoteText
+                      note={spaceExpiryNote(primaryClip.storageKey, primaryClip.createdAt)}
+                      className="text-center"
+                    />
 
                     {/* Phase 7 — motion-graphic template picker (default None). */}
                     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -1713,24 +1753,24 @@ export function VideoApprovalPanel({
         )}
 
         {/* Phase 7 — automatic Travy (EN+ZH) render status */}
-        {tventVideoStatus && tventVideoStatus !== "idle" && (
+        {travyVideoStatus && travyVideoStatus !== "idle" && (
           <Card className="mt-6 border-slate-100 bg-slate-50/60">
             <h3 className="text-base font-semibold text-slate-900 mb-2">วิดีโอสำหรับช่อง Travy (อังกฤษ + จีน)</h3>
-            {tventVideoStatus === "generating" && (
+            {travyVideoStatus === "generating" && (
               <div className="flex items-center gap-3 text-sm text-slate-600">
                 <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
                 ระบบกำลังสร้างวิดีโอสำหรับช่อง Travy โดยอัตโนมัติ (ไม่สามารถยกเลิกได้) คุณสามารถดูได้เมื่อสร้างเสร็จ
               </div>
             )}
-            {tventVideoStatus === "ready" && (
-              tventClipUrl ? (
+            {travyVideoStatus === "ready" && (
+              travyClipUrl ? (
                 <div className="space-y-3">
                   <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[420px]">
-                    <video src={tventClipUrl} controls className="max-h-[400px] w-auto object-contain rounded" />
+                    <video src={travyClipUrl} controls className="max-h-[400px] w-auto object-contain rounded" />
                   </div>
                   <a
-                    href={tventClipUrl}
-                    download="final_tvent.mp4"
+                    href={travyClipUrl}
+                    download="final_travy.mp4"
                     className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
                   >
                     ดาวน์โหลดวิดีโอ Travy
@@ -1740,12 +1780,12 @@ export function VideoApprovalPanel({
                 <p className="text-sm text-slate-400">วิดีโอ Travy พร้อมแล้ว</p>
               )
             )}
-            {tventVideoStatus === "failed" && (
+            {travyVideoStatus === "failed" && (
               <div className="space-y-1">
                 <p className="text-sm font-medium text-red-600">การสร้างวิดีโอ Travy ล้มเหลว</p>
-                {tventVideoError && (
+                {travyVideoError && (
                   <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700 break-words">
-                    สาเหตุ: {tventVideoError}
+                    สาเหตุ: {travyVideoError}
                   </p>
                 )}
                 <p className="text-xs text-slate-500">
@@ -1763,6 +1803,7 @@ export function VideoApprovalPanel({
         {/* Suppressed during GeneratingAdditionalRatios — the per-channel grid
             above carries its own per-channel spinners/progress. */}
         {!isPipelineFailed &&
+          !regeneratingScene &&
           (isProcessing || animationApproving || finalApproving) &&
           !isGeneratingAdditionalRatios && (
           <Card className="mt-6 border-slate-100 bg-slate-50 p-5 flex flex-col items-center justify-center text-center">
@@ -1822,25 +1863,40 @@ export function VideoApprovalPanel({
       {mode === "revise" ? (
         <div className="mb-6 flex flex-col gap-4">
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-            <p className="text-sm font-semibold text-amber-800">แก้ไขสคริปต์วิดีโอที่อนุมัติ</p>
+            <p className="text-sm font-semibold text-amber-800">
+              {sceneVideos.length > 0
+                ? `แก้ไขฉาก ${safeActiveSceneIndex + 1}`
+                : "แก้ไขสคริปต์วิดีโอที่อนุมัติ"}
+            </p>
             <p className="mt-0.5 text-sm text-amber-700">
-              แก้ไขบทพูดและแผนฉากด้านล่าง จากนั้นคลิก{" "}
-              <strong>ส่งขอสร้างวีดิโอใหม่</strong> เพื่อเรนเดอร์วิดีโอฉากนี้จากรูปและคลิปใหม่อีกครั้ง
+              {sceneVideos.length > 0 ? (
+                <>
+                  ปรับรายละเอียด รูป คลิป และช่วงเวลาของฉากนี้ แล้วกด{" "}
+                  <strong>แก้ไขฉากนี้</strong> ระบบจะสร้างใหม่เฉพาะฉากนี้
+                </>
+              ) : (
+                <>
+                  แก้ไขบทพูดและแผนฉากด้านล่าง จากนั้นคลิก{" "}
+                  <strong>ส่งขอสร้างวีดิโอใหม่</strong>
+                </>
+              )}
             </p>
           </div>
 
           {/* Hook */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              ฮุค (3 วินาทีแรก)
-            </h3>
-            <textarea
-              value={editHookThai}
-              onChange={(e) => setEditHookThai(e.target.value)}
-              rows={2}
-              className={`${ta} text-sm text-slate-800`}
-            />
-          </div>
+          {sceneVideos.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-5">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                ฮุค (3 วินาทีแรก)
+              </h3>
+              <textarea
+                value={editHookThai}
+                onChange={(e) => setEditHookThai(e.target.value)}
+                rows={2}
+                className={`${ta} text-sm text-slate-800`}
+              />
+            </div>
+          )}
 
           {/* Scene plan */}
           <div className="rounded-xl border border-slate-200 bg-white p-5">
@@ -1878,51 +1934,77 @@ export function VideoApprovalPanel({
                     orderedAssets={orderedAssets}
                     assets={activeEditScene.assets ?? []}
                     sceneDurationSeconds={activeEditScene.durationSeconds}
+                    aspectRatio={primaryRatio}
                     onChange={(assets) => updateSceneAssets(safeActiveSceneIndex, assets)}
                   />
+                  {sceneVideos.length > 0 && (
+                    <div className="mt-4 flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 pt-4">
+                      <button
+                        type="button"
+                        onClick={() => { setMode("review"); setError(null); }}
+                        disabled={isSubmitting}
+                        className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-white disabled:opacity-50"
+                      >
+                        ยกเลิก
+                      </button>
+                      <Button
+                        onClick={handleReviseSubmit}
+                        loading={isSubmitting}
+                        disabled={isSubmitting}
+                      >
+                        แก้ไขฉากนี้
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           </div>
 
           {/* Script */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              บทพูด
-            </h3>
-            <textarea
-              value={editScriptThai}
-              onChange={(e) => setEditScriptThai(e.target.value)}
-              rows={4}
-              className={`${ta} text-sm text-slate-800`}
-            />
-          </div>
+          {sceneVideos.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-5">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                บทพูด
+              </h3>
+              <textarea
+                value={editScriptThai}
+                onChange={(e) => setEditScriptThai(e.target.value)}
+                rows={4}
+                className={`${ta} text-sm text-slate-800`}
+              />
+            </div>
+          )}
 
           {/* Caption */}
-          <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              แคปชั่นโซเชียล
-            </h3>
-            <textarea
-              value={editCaptionThai}
-              onChange={(e) => setEditCaptionThai(e.target.value)}
-              rows={3}
-              className={`${ta} text-sm text-slate-700`}
-            />
-          </div>
+          {sceneVideos.length === 0 && (
+            <div className="rounded-xl border border-slate-200 bg-white p-5">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                แคปชั่นโซเชียล
+              </h3>
+              <textarea
+                value={editCaptionThai}
+                onChange={(e) => setEditCaptionThai(e.target.value)}
+                rows={3}
+                className={`${ta} text-sm text-slate-700`}
+              />
+            </div>
+          )}
 
-          <div className="flex justify-end gap-3 pb-2">
-            <button
-              onClick={() => { setMode("review"); setError(null); }}
-              disabled={isSubmitting}
-              className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              ยกเลิก
-            </button>
-            <Button onClick={handleReviseSubmit} loading={isSubmitting} disabled={isSubmitting}>
-              ส่งขอสร้างวีดิโอใหม่
-            </Button>
-          </div>
+          {sceneVideos.length === 0 && (
+            <div className="flex justify-end gap-3 pb-2">
+              <button
+                onClick={() => { setMode("review"); setError(null); }}
+                disabled={isSubmitting}
+                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <Button onClick={handleReviseSubmit} loading={isSubmitting} disabled={isSubmitting}>
+                ส่งขอสร้างวีดิโอใหม่
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         /* Read-only approved script */

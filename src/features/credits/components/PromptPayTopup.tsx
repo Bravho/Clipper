@@ -26,6 +26,7 @@ interface Props {
   unlockRequestId?: string;
   returnTo?: string;
   unlockPrice?: number;
+  minimumTopupCredits?: number;
 }
 
 export function PromptPayTopup({
@@ -33,13 +34,17 @@ export function PromptPayTopup({
   unlockRequestId,
   returnTo,
   unlockPrice = 0,
+  minimumTopupCredits,
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [method, setMethod] = useState<PaymentMethod>("promptpay");
   const [selected, setSelected] = useState<Bundle>(
-    unlockRequestId
+    minimumTopupCredits
+      ? TOPUP_BUNDLES.find((b) => b.credits >= minimumTopupCredits) ??
+          TOPUP_BUNDLES[TOPUP_BUNDLES.length - 1]
+      : unlockRequestId
       ? TOPUP_BUNDLES.find(
           (b) => b.credits >= Math.max(1, unlockPrice - currentBalance)
         ) ?? TOPUP_BUNDLES[0]

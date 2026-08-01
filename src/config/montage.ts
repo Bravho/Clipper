@@ -19,7 +19,7 @@
 
 import { MAX_CLIP_DURATION_SECONDS } from "@/domain/enums/AssetType";
 
-/** Per-asset camera motion applied to stills (and optionally clips). */
+/** Per-asset camera motion. Non-static presets are applied to still images only. */
 export type MotionPreset =
   | "ken_burns_in"
   | "ken_burns_out"

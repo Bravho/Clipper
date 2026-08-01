@@ -54,4 +54,5 @@ coverage/
 
 # database local files
 *.sqlite
-*.db
+*.db.fuse_hidden*
+.fuse_hidden* 

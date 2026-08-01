@@ -105,8 +105,8 @@ export async function GET(
       renderProgressDetail: job.renderProgressDetail ?? null,
       // Phase 7 — background Travy render status, so the poller can keep the
       // Travy spinner live while the job is already Complete.
-      tventVideoStatus: job.tventVideoStatus ?? "idle",
-      tventVideoError: job.tventVideoError ?? null,
+      travyVideoStatus: job.travyVideoStatus ?? "idle",
+      travyVideoError: job.travyVideoError ?? null,
     },
     {
       headers: {

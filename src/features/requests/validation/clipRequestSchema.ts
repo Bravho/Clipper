@@ -17,7 +17,7 @@ import { PIPELINE_STEP_COSTS } from "@/config/credits";
  *
  * Business rules enforced:
  * - Max 5 file attachments (validated separately via upload count)
- * - At least 1 target platform required (Tvent always pre-selected in UI)
+ * - At least 1 target platform required (Travy always pre-selected in UI)
  * - Both legal confirmations required before submission
  * - preferredStyle and preferredLanguage are not collected on the form (removed per product decision)
  */

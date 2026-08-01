@@ -400,7 +400,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       description: initialValues?.description,
       targetAudience: initialValues?.targetAudience,
       targetPlatforms: (initialValues?.targetPlatforms ?? [
-        Platform.TventApp,
+        Platform.TravyApp,
       ]) as SubmitClipRequestValues["targetPlatforms"],
       durationSeconds: initialValues?.durationSeconds ?? PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
       creditConfirmed: undefined,

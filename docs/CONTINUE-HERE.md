@@ -37,7 +37,7 @@ easy revert.
    storyboard (Stage-1).
 2. GeneratingVoice → AwaitingVoiceApproval: ElevenLabs voice (eleven_v3, Thai), ffprobe duration,
    Gemini alignment. **At voice approval the requester picks distribution channels** (multi-select;
-   the FIRST clicked = PRIMARY → sets the base video's aspect ratio; "Travy App"/Tvent is mandatory,
+   the FIRST clicked = PRIMARY → sets the base video's aspect ratio; "Travy App"/Travy is mandatory,
    locked, light-grey, and adopts the primary's ratio). Persisted to `clipRequest.targetPlatforms`
    (primary first).
 3. GeneratingSceneDesign → AwaitingSceneDesignApproval: Vision scene plan (all scenes on one page,

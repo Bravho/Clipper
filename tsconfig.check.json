@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "incremental": false, "skipLibCheck": true },
+  "include": [
+    "src/services/social-publishing/post-for-me/posts.ts",
+    "src/services/social-publishing/provider.ts",
+    "src/services/social-publishing/index.ts",
+    "src/services/management/ManagementPublicationService.ts",
+    "src/repositories/postgres/PostgresManagementPublicationRepository.ts",
+    "src/app/api/management/publications/[id]/route.ts",
+    "src/app/(auth)/dashboard/management/posts/page.tsx",
+    "src/features/management/components/PostsManager.tsx",
+    "src/components/layout/DashboardShell.tsx"
+  ]
+}

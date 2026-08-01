@@ -261,7 +261,7 @@ export const SEED_CLIP_REQUESTS: ClipRequest[] = [
     description:
       "A clip version of our monthly newsletter highlights — key stats and community updates.",
     targetAudience: "Existing customers and newsletter subscribers",
-    targetPlatforms: [Platform.YouTube, Platform.TventApp],
+    targetPlatforms: [Platform.YouTube, Platform.TravyApp],
     preferredStyle: "Professional / Corporate",
     preferredLanguage: "English",
     status: RequestStatus.Editing,

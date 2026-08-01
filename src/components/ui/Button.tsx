@@ -2,7 +2,7 @@ import { ButtonHTMLAttributes, forwardRef } from "react";
 import { clsx } from "clsx";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
+  variant?: "primary" | "secondary" | "outline" | "ghost" | "success" | "danger";
   size?: "sm" | "md" | "lg";
   loading?: boolean;
   fullWidth?: boolean;
@@ -17,6 +17,8 @@ const variantClasses = {
     "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 focus-visible:ring-slate-400",
   ghost:
     "bg-transparent text-slate-700 hover:bg-slate-100 focus-visible:ring-slate-400",
+  success:
+    "border border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-200 focus-visible:ring-emerald-500 disabled:bg-emerald-50",
   danger:
     "bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500 disabled:bg-red-300",
 };

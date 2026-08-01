@@ -155,9 +155,9 @@ export interface VideoGenerationJob {
    * distribution exports (any combination of "th"/"en"/"zh"). Selected when
    * approving the animation step. Defaults to ["en", "zh"].
    *
-   * Independent of this, the Tvent App export (finalExport_tvent_assetId)
+   * Independent of this, the Travy App export (finalExport_travy_assetId)
    * always carries English + Chinese subtitles regardless of this choice —
-   * that's a Tvent platform requirement, not a requester preference.
+   * that's a Travy platform requirement, not a requester preference.
    */
   subtitleLanguages: ("th" | "en" | "zh")[];
 
@@ -170,9 +170,9 @@ export interface VideoGenerationJob {
   finalExport_16_9_assetId: string | null;
   finalExport_1_1_assetId: string | null;
   finalExport_4_5_assetId: string | null;
-  /** Travy (Tvent) export, always with English + Chinese subtitles. Rendered
+  /** Travy (Travy) export, always with English + Chinese subtitles. Rendered
    * automatically in the background after the overlay step is approved. */
-  finalExport_tvent_assetId: string | null;
+  finalExport_travy_assetId: string | null;
 
   // Step 4.5: Captioned exports (Phase 7) — the delivered videos, = the merged
   // master for that ratio with the selected-language subtitle + motion-graphic
@@ -185,18 +185,18 @@ export interface VideoGenerationJob {
   /**
    * Status of the automatic background Travy (EN+ZH) render kicked off when the
    * overlay step is approved. Drives the "generating Travy video" spinner; the
-   * Travy clip (finalExport_tvent_assetId) becomes viewable once "ready". The
+   * Travy clip (finalExport_travy_assetId) becomes viewable once "ready". The
    * render cannot be cancelled by the requester. Absent/"idle" before approval.
    */
-  tventVideoStatus?: "idle" | "generating" | "ready" | "failed" | null;
+  travyVideoStatus?: "idle" | "generating" | "ready" | "failed" | null;
 
   /**
-   * When the background Travy render fails (tventVideoStatus === "failed"), the
+   * When the background Travy render fails (travyVideoStatus === "failed"), the
    * captured reason (error message, truncated) so the requester sees WHY instead
    * of a generic "contact admin", and support can diagnose without server logs.
    * Cleared when a retry starts and on success.
    */
-  tventVideoError?: string | null;
+  travyVideoError?: string | null;
 
   /**
    * Motion-graphic template id (Phase 7) chosen by the requester at the

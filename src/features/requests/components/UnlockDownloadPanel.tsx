@@ -26,8 +26,8 @@ interface UnlockDownloadPanelProps {
  * Pay-to-download paywall + gated download buttons.
  *
  * Locked  → shows the unlock CTA (charges `price` credits via /unlock-download).
- * Unlocked → shows per-clip download buttons that fetch a short-lived presigned
- *            URL from /download and open it.
+ * Unlocked → shows per-clip download buttons backed by the authenticated,
+ *            same-origin streaming endpoint.
  */
 export function UnlockDownloadPanel({
   requestId,
@@ -61,8 +61,17 @@ export function UnlockDownloadPanel({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "ดาวน์โหลดไม่สำเร็จ");
       }
-      const { url } = await res.json();
-      window.open(url, "_blank", "noopener,noreferrer");
+      const { downloadUrl, fileName } = (await res.json()) as {
+        downloadUrl: string;
+        fileName?: string;
+      };
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = fileName ?? "";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     } catch (err) {
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
     } finally {

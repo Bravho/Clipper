@@ -36,6 +36,7 @@ import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { orderSourceAssets } from "@/lib/sourceAssets";
 import { getServerLocale } from "@/i18n/server";
 import type { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
+import { buildDistributionTransferView } from "@/features/management/server/buildDistributionTransferView";
 
 // Split the interactive workflow steps so a request only downloads the browser
 // code needed for its current pipeline state.
@@ -147,7 +148,9 @@ export default async function RequestDetailPage({
     : [];
   const timelineEntries = requestPresentationService.buildStatusTimeline(
     statusHistory,
-    stepHistory
+    stepHistory,
+    pipelineJob?.currentStep ?? null,
+    pipelineJob?.stepStartedAt ?? pipelineJob?.updatedAt ?? null
   );
 
   if (process.env.REQUEST_DETAIL_PERF_LOG === "1") {
@@ -205,7 +208,7 @@ export default async function RequestDetailPage({
         pipelineJob?.finalExport_16_9_assetId,
         pipelineJob?.finalExport_1_1_assetId,
         pipelineJob?.finalExport_4_5_assetId,
-        pipelineJob?.finalExport_tvent_assetId,
+        pipelineJob?.finalExport_travy_assetId,
       ].filter((id): id is string => !!id)
     )
   );
@@ -220,7 +223,7 @@ export default async function RequestDetailPage({
 
   // The base + final review use the PRIMARY distribution channel's aspect ratio
   // (targetPlatforms[0]); the final review shows only this ratio (no selector).
-  const primaryPlatform = (request.targetPlatforms?.[0] as Platform) ?? Platform.TventApp;
+  const primaryPlatform = (request.targetPlatforms?.[0] as Platform) ?? Platform.TravyApp;
   const primaryRatio = PLATFORM_ASPECT_RATIOS[primaryPlatform] ?? null;
 
   // Pay-to-download watermark gate: while the download is locked (unpaid), every
@@ -263,10 +266,10 @@ export default async function RequestDetailPage({
       ? assets.find((a) => a.id === captionedPrimaryAssetId)?.storageUrl ?? null
       : null
   );
-  const tventClipUrl = previewUrlFor(
-    pipelineJob?.finalExport_tvent_assetId,
-    pipelineJob?.finalExport_tvent_assetId
-      ? assets.find((a) => a.id === pipelineJob.finalExport_tvent_assetId)?.storageUrl ?? null
+  const travyClipUrl = previewUrlFor(
+    pipelineJob?.finalExport_travy_assetId,
+    pipelineJob?.finalExport_travy_assetId
+      ? assets.find((a) => a.id === pipelineJob.finalExport_travy_assetId)?.storageUrl ?? null
       : null
   );
 
@@ -308,8 +311,18 @@ export default async function RequestDetailPage({
   // Header UI language — drives the auto-generated per-channel post copy so it
   // follows the language shown in the header.
   const serverLocale = getServerLocale();
+
+  // ── RClipper Management (optional add-on) ─────────────────────────────────
+  // Per-video transfer state resolved on the SERVER: whether Management is on
+  // for this user, and which of these videos are already in it. Transferring is
+  // FREE and optional (payment appears later, in the composer), and when the
+  // feature is off the panel renders no transfer controls at all, leaving the
+  // download-only step completely unchanged.
+  const managementTransfer = await timed("management", () =>
+    buildDistributionTransferView(user, request.id)
+  );
   const channelVideos = (request.targetPlatforms ?? [])
-    .filter((p) => p !== Platform.TventApp)
+    .filter((p) => p !== Platform.TravyApp)
     .map((p) => {
       const ratio = PLATFORM_ASPECT_RATIOS[p as Platform] ?? null;
       return {
@@ -535,7 +548,7 @@ export default async function RequestDetailPage({
         // already rendered at the overlay step, so it counts as ready). While
         // ready < required, the poller refreshes as each channel's video lands.
         const nonTravyPlatforms = (request.targetPlatforms ?? []).filter(
-          (p) => p !== Platform.TventApp
+          (p) => p !== Platform.TravyApp
         );
         const userRatios = getRequiredRatiosForPlatforms(
           nonTravyPlatforms.length > 0
@@ -579,16 +592,25 @@ export default async function RequestDetailPage({
         // Requester must approve before video generation starts — show editable script panel
         if (isAwaitingApproval) {
           return (
-            <ContentApprovalPanel
-              requestId={id}
-              initialScriptThai={pipelineJob.scriptThai}
-              initialScriptEnglish={pipelineJob.scriptEnglish}
-              initialCaptionThai={pipelineJob.captionThai}
-              initialCaptionEnglish={pipelineJob.captionEnglish}
-              initialCaptionChinese={pipelineJob.captionChinese}
-              storyboard={storyboard}
-              storyboardAssets={storyboardAssets}
-            />
+            <>
+              <PipelineSection
+                requestId={id}
+                currentStep={pipelineJob.currentStep}
+                failedAtStep={pipelineJob.failedAtStep}
+                durationSeconds={effectiveDurationSeconds}
+                totalChannels={request.targetPlatforms.length}
+              />
+              <ContentApprovalPanel
+                requestId={id}
+                initialScriptThai={pipelineJob.scriptThai}
+                initialScriptEnglish={pipelineJob.scriptEnglish}
+                initialCaptionThai={pipelineJob.captionThai}
+                initialCaptionEnglish={pipelineJob.captionEnglish}
+                initialCaptionChinese={pipelineJob.captionChinese}
+                storyboard={storyboard}
+                storyboardAssets={storyboardAssets}
+              />
+            </>
           );
         }
 
@@ -658,7 +680,7 @@ export default async function RequestDetailPage({
               failedAtStep={pipelineJob.failedAtStep}
               durationSeconds={effectiveDurationSeconds}
               totalChannels={request.targetPlatforms.length}
-              tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
+              travyVideoStatus={pipelineJob.travyVideoStatus ?? null}
               requiredRatioCount={requiredRatioCount}
               readyRatioCount={readyRatioCount}
               requiredCaptionedCount={requiredCaptionedCount}
@@ -724,13 +746,15 @@ export default async function RequestDetailPage({
                 initialDrafts={pipelineJob.publishingDrafts ?? []}
                 channelVideos={channelVideos}
                 locale={serverLocale}
-                tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
-                tventVideoError={pipelineJob.tventVideoError ?? null}
-                tventClipUrl={tventClipUrl}
-                tventAssetId={pipelineJob.finalExport_tvent_assetId ?? null}
+                travyVideoStatus={pipelineJob.travyVideoStatus ?? null}
+                travyVideoError={pipelineJob.travyVideoError ?? null}
+                travyClipUrl={travyClipUrl}
+                travyAssetId={pipelineJob.finalExport_travy_assetId ?? null}
                 downloadLocked={!request.downloadUnlocked}
                 unlockPrice={CREDITS_CONFIG.REQUEST_COST_CREDITS}
                 mediaExpired={finalClipAvailabilityNote(request)?.tone === "expired"}
+                managementEnabled={managementTransfer.enabled}
+                transferredByAssetId={managementTransfer.transferredByAssetId}
               />
             )}
 
@@ -773,9 +797,9 @@ export default async function RequestDetailPage({
                 overlayPreviewUrl={overlayPreviewUrl}
                 savedSubtitleLanguages={pipelineJob.subtitleLanguages}
                 savedTemplate={pipelineJob.selectedMotionTemplate ?? "none"}
-                tventVideoStatus={pipelineJob.tventVideoStatus ?? null}
-                tventVideoError={pipelineJob.tventVideoError ?? null}
-                tventClipUrl={tventClipUrl}
+                travyVideoStatus={pipelineJob.travyVideoStatus ?? null}
+                travyVideoError={pipelineJob.travyVideoError ?? null}
+                travyClipUrl={travyClipUrl}
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
                 finalClips={finalClips}

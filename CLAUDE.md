@@ -71,7 +71,7 @@ Staff triggers the pipeline on a `ClipRequest`. The pipeline is orchestrated by 
 2. **Google Veo 3.1 Lite** image-to-video → one clip per approved scene (scene script + its images + its duration), auto-merged with FFmpeg into a single base video (`GeneratingBaseVideo` → `AwaitingVideoApproval`)
 3. **Staff voice recording** → ElevenLabs Speech-to-Speech conversion (`AwaitingVoiceRecording` → `ProcessingVoice` → `AwaitingVoiceApproval`)
 4. **FFmpeg** composition → subtitles + 4-ratio exports (9:16, 16:9, 1:1, 4:5) (`ComposingFinalVideo` → `AwaitingFinalApproval`)
-5. **Social publishing** → TikTok, Facebook, Instagram, YouTube, Tvent (`Publishing` → `Complete`)
+5. **Social publishing** → TikTok, Facebook, Instagram, YouTube, Travy (`Publishing` → `Complete`)
 
 Polling steps (`POLLING_STEPS`) require the status endpoint to poll the AI provider until completion. Pipeline failures record `failedAtStep` so `retryPipeline()` can resume from the failed step only.
 
@@ -106,7 +106,7 @@ Five groups defined in `.env.example`:
 - **Storage:** `DO_SPACES_KEY/SECRET/ENDPOINT/BUCKET/REGION`
 - **Database:** `PGHOST`, `PGDATABASE`, `PGPORT`, `PG_USER`, `PG_PASSWORD`
 - **AI pipeline:** `GEMINI_API_KEY`, `VEO_API_KEY/MODEL_NAME/RESOLUTION/DURATION/ASPECT_RATIO` (Veo reuses `GEMINI_API_KEY` if `VEO_API_KEY` is unset), `ELEVENLABS_API_KEY/DEFAULT_VOICE_ID`, `FFMPEG_PATH`, `FFMPEG_TMP_DIR`
-- **Social publishing:** `YOUTUBE_*`, `TIKTOK_*`, `INSTAGRAM_*`, `FACEBOOK_*`, `TVENT_*`
+- **Social publishing:** `YOUTUBE_*`, `TIKTOK_*`, `INSTAGRAM_*`, `FACEBOOK_*`, `TRAVY_*`
 
 All AI/social keys are read through `src/config/aiTools.ts` (`AI_CONFIG`).
 

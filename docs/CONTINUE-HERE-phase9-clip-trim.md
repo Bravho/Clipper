@@ -28,7 +28,7 @@ DigitalOcean Spaces (S3-compatible), optionally CDN-fronted.
 1. AnalyzingContent → AwaitingContentApproval — Gemini writes the Thai speaking script. ✅ DONE
 2. GeneratingVoice → AwaitingVoiceApproval — ElevenLabs Thai TTS + ffprobe duration + Gemini
    per-sentence timeline; requester also picks distribution CHANNELS here (first = primary = base
-   ratio; Travy/Tvent is mandatory + locked). ✅ DONE
+   ratio; Travy/Travy is mandatory + locked). ✅ DONE
 3. GeneratingSceneDesign → AwaitingSceneDesignApproval — montage scene plan sized to the real voice
    length; Ken Burns subject-focus via Gemini. ✅ DONE
    (AwaitingSceneScriptApproval — legacy per-scene gate, now DEAD/bypassed by the batch flow.)
@@ -44,7 +44,7 @@ DigitalOcean Spaces (S3-compatible), optionally CDN-fronted.
    template+language" / DOWNLOAD button. ✅ DONE
 8. AwaitingAdditionalRatios → GeneratingAdditionalRatios — explicit button to render the remaining
    selected channels' ratios (shown only when >1 user ratio). ✅ DONE
-9. Travy (compulsory channel) auto EN+ZH render — background, `tventVideoStatus`
+9. Travy (compulsory channel) auto EN+ZH render — background, `travyVideoStatus`
    (idle|generating|ready|failed). REUSE: if the requester's subtitle languages are exactly {en,zh},
    the primary captioned export is reused as the Travy export (no duplicate render). ✅ DONE
 10. AwaitingDistributionReview — NEW (just built). After overlay approval (and any additional ratios),
@@ -68,7 +68,7 @@ OverlayComposition, DecorativeGraphics, CaptionOverlay, SceneLowerThird, animati
 - Added a DOWNLOAD button at the subtitle/overlay review step.
 - Built the whole AwaitingDistributionReview step: enum already existed; added
   `_generatePublishingDrafts`, `confirmPublishingByRequester`, `savePublishingDraftsByRequester`,
-  `_postToChannel`; changed `_finalizeAndStartTvent` to land on the review step (sets
+  `_postToChannel`; changed `_finalizeAndStartTravy` to land on the review step (sets
   `ScheduledForPublishing`, not Delivered) + Travy reuse; new routes `confirm-publishing` and
   `publishing-drafts`; new `DistributionReviewPanel`; `src/config/publishFields.ts`.
 - Updated/added tests in `tests/services/VideoGenerationService.test.ts` (overlay→distribution-review,

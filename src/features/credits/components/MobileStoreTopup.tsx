@@ -17,6 +17,7 @@ interface Props {
   unlockRequestId?: string;
   returnTo?: string;
   unlockPrice?: number;
+  minimumTopupCredits?: number;
 }
 
 interface UnfinishedStoreTransaction {
@@ -36,6 +37,7 @@ export function MobileStoreTopup({
   unlockRequestId,
   returnTo,
   unlockPrice = 0,
+  minimumTopupCredits,
 }: Props) {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
@@ -145,7 +147,8 @@ export function MobileStoreTopup({
         }
         if (active) {
           setProducts(storeProducts);
-          const creditsNeeded = Math.max(1, unlockPrice - currentBalance);
+          const creditsNeeded =
+            minimumTopupCredits ?? Math.max(1, unlockPrice - currentBalance);
           const preferred =
             MOBILE_STORE_PRODUCTS.find(
               (configured) =>
@@ -175,7 +178,7 @@ export function MobileStoreTopup({
     return () => {
       active = false;
     };
-  }, []);
+  }, [currentBalance, minimumTopupCredits, unlockPrice]);
 
   useEffect(() => {
     if (getMobilePlatform() !== "ios") return;

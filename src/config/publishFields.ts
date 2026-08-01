@@ -12,7 +12,7 @@
  *
  * This drives BOTH the Gemini draft-generation prompt (which fields to write per
  * channel) and the DistributionReviewPanel UI (which inputs to render). Travy
- * (TventApp) is intentionally excluded — it is rendered + posted automatically
+ * (TravyApp) is intentionally excluded — it is rendered + posted automatically
  * in the background (EN+ZH), never edited/published from this form. CDN is
  * internal-only.
  */

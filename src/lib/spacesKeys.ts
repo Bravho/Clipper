@@ -39,6 +39,53 @@ function uuid(): string {
 }
 
 /**
+ * Key for a video uploaded directly into RClipper Management.
+ *
+ * Layout is deliberately DIFFERENT from the clip-request folders:
+ *
+ *   management_uploads/{userId}/{managementContentId}/{uuid}-{filename}
+ *
+ * A Management upload has no clip request, so it has no requestId segment. The
+ * retention sweep parses clip-request keys as
+ * `{prefix}/{userId}/{date}/{requestId}/...` and only ever walks the prefixes in
+ * mediaPrefixes.json — `management_uploads` is intentionally NOT in that list,
+ * so the clip sweep never touches these objects. Management media is governed
+ * instead by `management_content_items.media_expires_at`.
+ *
+ * Add a bucket lifecycle backstop for this prefix comfortably LONGER than
+ * RCLIPPER_MANAGEMENT_MEDIA_RETENTION_DAYS, so the backstop never fires before
+ * the app-driven purge.
+ */
+export function buildManagementUploadKey(
+  userId: string,
+  managementContentId: string,
+  fileName: string
+): string {
+  return `management_uploads/${userId}/${managementContentId}/${uuid()}-${sanitize(fileName)}`;
+}
+
+/**
+ * Key for a PAID-EXTENDED Management upload — the object is MOVED here when the
+ * user pays, so it lives under a prefix whose bucket lifecycle keeps it 30 days
+ * instead of the free tier's 7.
+ *
+ *   management_retained/{userId}/{managementContentId}/{uuid}-{filename}
+ *
+ * A FRESH uuid every call is deliberate: the retention window is enforced by the
+ * bucket lifecycle, which counts from an object's creation time. Copying the
+ * object to a NEW key resets that clock — so paying again (or re-extending)
+ * always writes a new key here and restarts the 30 days. The old object is
+ * deleted after the copy (a move).
+ */
+export function buildManagementRetainedKey(
+  userId: string,
+  managementContentId: string,
+  fileName: string
+): string {
+  return `management_retained/${userId}/${managementContentId}/${uuid()}-${sanitize(fileName)}`;
+}
+
+/**
  * Key for a file being uploaded — stored in tmp/ until confirmed.
  * Lifecycle: deleted on upload confirmation; 1-day backstop.
  */
@@ -154,12 +201,12 @@ export function buildAnimatedOverlayKey(
  * Lifecycle: purged at Delivered+7d; 60-day backstop.
  *
  * @param ratio  e.g. "9-16", "16-9", "1-1", "4-5" (slashes replaced with dashes for path safety),
- *               or "tvent" for the dedicated Tvent App export.
+ *               or "travy" for the dedicated Travy App export.
  */
 export function buildFinalClipKey(
   userId: string,
   requestId: string,
-  ratio: "9:16" | "16:9" | "1:1" | "4:5" | "tvent"
+  ratio: "9:16" | "16:9" | "1:1" | "4:5" | "travy"
 ): string {
   const safeRatio = ratio.replace(":", "-");
   return `final_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;
@@ -173,13 +220,35 @@ export function buildFinalClipKey(
  * disposable once the download is unlocked).
  * Lifecycle: purged with request; 60-day backstop (expire-preview-exports-60d).
  *
- * @param ratio  "9:16" | "16:9" | "1:1" | "4:5" or "tvent" for the Tvent export.
+ * @param ratio  "9:16" | "16:9" | "1:1" | "4:5" or "travy" for the Travy export.
  */
 export function buildWatermarkedPreviewKey(
   userId: string,
   requestId: string,
-  ratio: "9:16" | "16:9" | "1:1" | "4:5" | "tvent"
+  ratio: "9:16" | "16:9" | "1:1" | "4:5" | "travy"
 ): string {
   const safeRatio = ratio.replace(":", "-");
   return `preview_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;
+}
+
+/**
+ * Key for a final clip the requester has PAID to distribute/download. On payment
+ * (`ClipRequestService.unlockDownload`) the clean master is MOVED here out of
+ * `final_exports/`, which restarts the Spaces lifecycle clock on the longer
+ * `paid_exports/` window (30 days + a safety day) — expiry counts from creation,
+ * so a re-key is the only way to extend. A fresh uuid every call is deliberate.
+ *
+ * Layout matches the other request folders so the retention sweep can parse the
+ * requestId as the 4th segment:
+ *   paid_exports/{userId}/{YYYY-MM-DD}/{requestId}/{uuid}-{filename}
+ *
+ * NOT listed in src/config/mediaPrefixes.json — the clip purge/orphan sweep must
+ * never touch a paid master; it is governed solely by the bucket lifecycle rule.
+ */
+export function buildPaidExportKey(
+  userId: string,
+  requestId: string,
+  fileName: string
+): string {
+  return `paid_exports/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
 }

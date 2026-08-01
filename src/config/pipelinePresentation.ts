@@ -1,0 +1,285 @@
+import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
+
+/**
+ * The requester-facing production journey.
+ *
+ * These are deliberately broader than the persisted job steps: a phase remains
+ * visible while its processing work and requester approval/action gate alternate.
+ * Both the production card and Status History consume this same definition.
+ */
+export const PIPELINE_PHASES = [
+  {
+    id: 1,
+    label: "วิเคราะห์เนื้อหาและบทพูด",
+    desc: "AI วิเคราะห์สื่อและจัดทำบทพูดให้คุณตรวจสอบ",
+  },
+  {
+    id: 2,
+    label: "สร้างเสียงพากย์",
+    desc: "สร้างเสียงพากย์จากบทพูดที่อนุมัติแล้วให้คุณฟังและตรวจสอบ",
+  },
+  {
+    id: 3,
+    label: "วางแผนฉากและสคริปต์วิดีโอ",
+    desc: "วางแผนฉาก เวลา สื่อ และสคริปต์ให้สอดคล้องกับเสียงพากย์",
+  },
+  {
+    id: 4,
+    label: "สร้างวิดีโอแต่ละฉาก",
+    desc: "สร้างและตรวจสอบวิดีโอของทุกฉากจากรูปภาพและคลิปที่เลือก",
+  },
+  {
+    id: 5,
+    label: "รวมฉากและเลือกเพลง",
+    desc: "รวมฉากที่อนุมัติแล้วเป็นวิดีโอเดียว พร้อมตรวจสอบและเลือกเพลง",
+  },
+  {
+    id: 6,
+    label: "ผสมเสียงและสร้างวิดีโอต้นฉบับ",
+    desc: "ผสมเสียงพากย์กับเพลงและเตรียมวิดีโอต้นฉบับสำหรับช่องทางต่าง ๆ",
+  },
+  {
+    id: 7,
+    label: "เพิ่มซับไตเติ้ลและกราฟิก",
+    desc: "เพิ่มซับไตเติ้ลและกราฟิกตามภาษาและรูปแบบที่คุณเลือก",
+  },
+  {
+    id: 8,
+    label: "สร้างรูปแบบช่องทางและส่งมอบ",
+    desc: "สร้างอัตราส่วนสำหรับทุกช่องทางและเตรียมวิดีโอให้ดาวน์โหลด",
+  },
+] as const;
+
+export type PipelinePhaseId = (typeof PIPELINE_PHASES)[number]["id"];
+
+export type PipelineStepDisplayState =
+  | "processing"
+  | "action_required"
+  | "ready"
+  | "complete"
+  | "failed";
+
+export interface PipelineStepPresentation {
+  phaseId: PipelinePhaseId | null;
+  state: PipelineStepDisplayState;
+  statusLabel: string;
+}
+
+/**
+ * Exhaustive presentation metadata for every persisted pipeline step.
+ *
+ * `satisfies Record<VideoGenerationStep, ...>` is intentional: adding a new
+ * enum value without deciding how it should appear now fails type-checking
+ * instead of silently producing the all-blue/missing-history state.
+ */
+export const PIPELINE_STEP_PRESENTATION = {
+  [VideoGenerationStep.AnalyzingContent]: {
+    phaseId: 1,
+    state: "processing",
+    statusLabel: "กำลังวิเคราะห์เนื้อหาและจัดทำบทพูด",
+  },
+  [VideoGenerationStep.AwaitingContentApproval]: {
+    phaseId: 1,
+    state: "action_required",
+    statusLabel: "รอคุณตรวจสอบและอนุมัติบทพูด",
+  },
+  [VideoGenerationStep.GeneratingVoice]: {
+    phaseId: 2,
+    state: "processing",
+    statusLabel: "กำลังสร้างเสียงพากย์",
+  },
+  [VideoGenerationStep.AwaitingVoiceApproval]: {
+    phaseId: 2,
+    state: "action_required",
+    statusLabel: "รอคุณฟังและอนุมัติเสียงพากย์",
+  },
+  [VideoGenerationStep.GeneratingSceneDesign]: {
+    phaseId: 3,
+    state: "processing",
+    statusLabel: "กำลังวางแผนฉากและสคริปต์วิดีโอ",
+  },
+  [VideoGenerationStep.AwaitingSceneDesignApproval]: {
+    phaseId: 3,
+    state: "action_required",
+    statusLabel: "รอคุณตรวจสอบและอนุมัติแผนฉาก",
+  },
+  [VideoGenerationStep.AwaitingSceneScriptApproval]: {
+    phaseId: 3,
+    state: "action_required",
+    statusLabel: "รอคุณตรวจสอบสคริปต์และสื่อของฉาก",
+  },
+  [VideoGenerationStep.GeneratingBaseVideo]: {
+    phaseId: 4,
+    state: "processing",
+    statusLabel: "กำลังสร้างวิดีโอแต่ละฉาก",
+  },
+  [VideoGenerationStep.AwaitingVideoApproval]: {
+    phaseId: 4,
+    state: "action_required",
+    statusLabel: "รอคุณตรวจสอบและอนุมัติวิดีโอแต่ละฉาก",
+  },
+  [VideoGenerationStep.MergingScenes]: {
+    phaseId: 5,
+    state: "processing",
+    statusLabel: "กำลังรวมคลิปทุกฉาก",
+  },
+  [VideoGenerationStep.GeneratingAnimations]: {
+    phaseId: 5,
+    state: "processing",
+    statusLabel: "กำลังเตรียมวิดีโอรวมสำหรับตรวจสอบ",
+  },
+  [VideoGenerationStep.AwaitingAnimationApproval]: {
+    phaseId: 5,
+    state: "action_required",
+    statusLabel: "รอคุณตรวจสอบวิดีโอรวมและเลือกเพลง",
+  },
+  [VideoGenerationStep.ComposingFinalVideo]: {
+    phaseId: 6,
+    state: "processing",
+    statusLabel: "กำลังผสมเสียงและสร้างวิดีโอต้นฉบับ",
+  },
+  [VideoGenerationStep.AwaitingFinalApproval]: {
+    phaseId: 6,
+    state: "action_required",
+    statusLabel: "รอคุณตรวจสอบวิดีโอต้นฉบับและตั้งค่าซับไตเติ้ล",
+  },
+  [VideoGenerationStep.GeneratingOverlay]: {
+    phaseId: 7,
+    state: "processing",
+    statusLabel: "กำลังเพิ่มซับไตเติ้ลและกราฟิก",
+  },
+  [VideoGenerationStep.AwaitingOverlayApproval]: {
+    phaseId: 7,
+    state: "action_required",
+    statusLabel: "รอคุณตรวจสอบวิดีโอที่มีซับไตเติ้ล",
+  },
+  [VideoGenerationStep.AwaitingAdditionalRatios]: {
+    phaseId: 8,
+    state: "action_required",
+    statusLabel: "พร้อมสร้างรูปแบบสำหรับช่องทางที่เหลือ",
+  },
+  [VideoGenerationStep.GeneratingAdditionalRatios]: {
+    phaseId: 8,
+    state: "processing",
+    statusLabel: "กำลังสร้างวิดีโอสำหรับช่องทางที่เหลือ",
+  },
+  [VideoGenerationStep.AwaitingDistributionReview]: {
+    phaseId: 8,
+    state: "ready",
+    statusLabel: "วิดีโอพร้อมดาวน์โหลดและนำไปเผยแพร่",
+  },
+  [VideoGenerationStep.Publishing]: {
+    phaseId: 8,
+    state: "processing",
+    statusLabel: "กำลังเผยแพร่วิดีโอ",
+  },
+  [VideoGenerationStep.Complete]: {
+    phaseId: 8,
+    state: "complete",
+    statusLabel: "การผลิตเสร็จสิ้น",
+  },
+  [VideoGenerationStep.Failed]: {
+    phaseId: null,
+    state: "failed",
+    statusLabel: "เกิดข้อผิดพลาดในการผลิต",
+  },
+  // Legacy states retained for existing database rows.
+  [VideoGenerationStep.AwaitingVoiceRecording]: {
+    phaseId: 2,
+    state: "action_required",
+    statusLabel: "รอบันทึกเสียงพากย์",
+  },
+  [VideoGenerationStep.ProcessingVoice]: {
+    phaseId: 2,
+    state: "processing",
+    statusLabel: "กำลังประมวลผลเสียงพากย์",
+  },
+} satisfies Record<VideoGenerationStep, PipelineStepPresentation>;
+
+export const STEP_TO_PHASE = Object.fromEntries(
+  Object.entries(PIPELINE_STEP_PRESENTATION).map(([step, presentation]) => [
+    step,
+    presentation.phaseId,
+  ])
+) as Record<VideoGenerationStep, PipelinePhaseId | null>;
+
+export function getPipelineStepPresentation(
+  step: VideoGenerationStep | null | undefined
+): PipelineStepPresentation | null {
+  if (!step) return null;
+  return (
+    PIPELINE_STEP_PRESENTATION[
+      step as keyof typeof PIPELINE_STEP_PRESENTATION
+    ] ?? null
+  );
+}
+
+export type PipelinePhaseDisplayStatus =
+  | "preview"
+  | "pending"
+  | "completed"
+  | "processing"
+  | "action_required"
+  | "ready"
+  | "failed"
+  | "unknown";
+
+export interface PipelinePhaseDisplay {
+  phase: (typeof PIPELINE_PHASES)[number];
+  status: PipelinePhaseDisplayStatus;
+}
+
+/**
+ * Pure state projection used by the production card and covered by a complete
+ * enum matrix in tests.
+ */
+export function buildPipelinePhaseDisplay(
+  currentStep?: VideoGenerationStep | null,
+  failedAtStep?: VideoGenerationStep | null
+): PipelinePhaseDisplay[] {
+  if (!currentStep) {
+    return PIPELINE_PHASES.map((phase) => ({ phase, status: "preview" }));
+  }
+
+  if (currentStep === VideoGenerationStep.Failed) {
+    const failedPhaseId = getPipelineStepPresentation(failedAtStep)?.phaseId ?? null;
+    if (failedPhaseId == null) {
+      return PIPELINE_PHASES.map((phase) => ({ phase, status: "unknown" }));
+    }
+    return PIPELINE_PHASES.map((phase) => ({
+      phase,
+      status:
+        phase.id < failedPhaseId
+          ? "completed"
+          : phase.id === failedPhaseId
+            ? "failed"
+            : "pending",
+    }));
+  }
+
+  const current = getPipelineStepPresentation(currentStep);
+  if (!current || current.phaseId == null) {
+    return PIPELINE_PHASES.map((phase) => ({ phase, status: "unknown" }));
+  }
+
+  if (current.state === "complete") {
+    return PIPELINE_PHASES.map((phase) => ({ phase, status: "completed" }));
+  }
+
+  const activeStatus: PipelinePhaseDisplayStatus =
+    current.state === "processing" ||
+    current.state === "action_required" ||
+    current.state === "ready"
+      ? current.state
+      : "unknown";
+
+  return PIPELINE_PHASES.map((phase) => ({
+    phase,
+    status:
+      phase.id < current.phaseId!
+        ? "completed"
+        : phase.id > current.phaseId!
+          ? "pending"
+          : activeStatus,
+  }));
+}

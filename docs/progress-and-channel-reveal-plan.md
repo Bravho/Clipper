@@ -147,7 +147,7 @@ spinner for this step), reusing the visual language of the existing Travy card:
   — playable immediately while the other ratios keep rendering.
 - Pending: spinner card "กำลังสร้างวิดีโอสำหรับช่องนี้..." + % when
   `renderProgressDetail.unit === thisRatio` (from Part 1).
-- Travy card: unchanged (already progressive via `tventVideoStatus`).
+- Travy card: unchanged (already progressive via `travyVideoStatus`).
 - Generality: the same grid renders at `AwaitingDistributionReview` fully-ready, so any channel
   count/order works; the compose-step master reveal at `AwaitingFinalApproval` (already shipped)
   is untouched.

@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
-import { DeleteDraftButton } from "@/features/requests/components/DeleteDraftButton";
+import { DraftRequestsBanner } from "@/features/requests/components/DraftRequestsBanner";
 import { CancelRequestButton } from "@/features/requests/components/CancelRequestButton";
 import { CREDITS_CONFIG } from "@/config/credits";
 import { creditService } from "@/services/CreditService";
@@ -87,29 +87,7 @@ export default async function RequestsPage({
       </div>
 
       {/* Drafts banner */}
-      {drafts.length > 0 && (
-        <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-medium text-slate-700">
-            คุณมีแบบร่างที่ยังไม่ได้บันทึก {drafts.length} รายการ
-          </p>
-          <div className="mt-3 flex flex-col gap-2">
-            {drafts.map((d) => (
-              <div
-                key={d.id}
-                className="flex items-center justify-between rounded-lg bg-white border border-slate-200 px-4 py-2 hover:shadow-sm transition-shadow"
-              >
-                <span className="text-sm text-slate-800">{d.title || "แบบร่างไม่มีชื่อ"}</span>
-                <div className="flex items-center gap-4">
-                  <DeleteDraftButton requestId={d.id} />
-                  <Link href={`${ROUTES.REQUESTS_NEW}?edit=${d.id}`} className="text-xs text-blue-600 hover:text-blue-800">
-                    ดำเนินการต่อ →
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <DraftRequestsBanner drafts={drafts} />
 
       {/* Filters */}
       <div className="mb-5 flex gap-2 flex-wrap">
@@ -165,14 +143,21 @@ export default async function RequestsPage({
               requestPresentationService.getQueueDisplay(req);
 
             return (
-              <Link key={req.id} href={requestDetailPath(req.id)}>
-                <Card className="cursor-pointer transition-shadow hover:shadow-md">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-slate-900 truncate">
+              <Link
+                key={req.id}
+                href={requestDetailPath(req.id)}
+                className="block min-w-0"
+              >
+                <Card
+                  padding="sm"
+                  className="cursor-pointer transition-shadow hover:shadow-md sm:p-6"
+                >
+                  <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words font-medium leading-6 text-slate-900 sm:truncate">
                         {req.title}
                       </p>
-                      <p className="mt-0.5 text-xs text-slate-400">
+                      <p className="mt-0.5 break-words text-xs leading-5 text-slate-400">
                         {req.submittedAt
                           ? `ส่งเมื่อ ${req.submittedAt.toLocaleDateString("th-TH", {
                               day: "numeric",
@@ -186,7 +171,7 @@ export default async function RequestsPage({
                             })}`}
                       </p>
                       {queueDisplay.show && (
-                        <p className="mt-1.5 text-xs text-slate-500">
+                        <p className="mt-1.5 break-words text-xs leading-5 text-slate-500">
                           {queueDisplay.message}
                         </p>
                       )}
@@ -198,9 +183,12 @@ export default async function RequestsPage({
                           </p>
                         )}
                     </div>
-                    <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <div className="flex min-w-0 flex-col items-start gap-2 border-t border-slate-100 pt-3 sm:flex-shrink-0 sm:items-end sm:border-0 sm:pt-0">
                       <RequestStatusBadge status={req.status} />
-                      <DueDateDisplay display={dueDateDisplay} />
+                      <DueDateDisplay
+                        display={dueDateDisplay}
+                        className="max-w-full break-words sm:max-w-64 sm:text-right"
+                      />
                       <p className="text-xs text-slate-400">
                         {req.creditsCost} เครดิต
                       </p>

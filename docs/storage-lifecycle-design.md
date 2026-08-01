@@ -243,7 +243,7 @@ aws s3api put-bucket-lifecycle-configuration \
     {"ID":"expire-animated-overlays-30d","Status":"Enabled","Filter":{"Prefix":"animated_overlays/"},"Expiration":{"Days":30}},
     {"ID":"expire-processed-audio-30d","Status":"Enabled","Filter":{"Prefix":"processed_audio/"},"Expiration":{"Days":30}},
     {"ID":"expire-voice-recordings-30d","Status":"Enabled","Filter":{"Prefix":"voice_recordings/"},"Expiration":{"Days":30}},
-    {"ID":"expire-final-exports-60d","Status":"Enabled","Filter":{"Prefix":"final_exports/"},"Expiration":{"Days":60}},
+    {"ID":"expire-final-exports-8d","Status":"Enabled","Filter":{"Prefix":"final_exports/"},"Expiration":{"Days":8}},
     {"ID":"expire-preview-exports-60d","Status":"Enabled","Filter":{"Prefix":"preview_exports/"},"Expiration":{"Days":60}},
     {"ID":"expire-clips-60d","Status":"Enabled","Filter":{"Prefix":"clips/"},"Expiration":{"Days":60}},
     {"ID":"expire-thumbnails-2y","Status":"Enabled","Filter":{"Prefix":"thumbnails/"},"Expiration":{"Days":730}}

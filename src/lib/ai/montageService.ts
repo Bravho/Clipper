@@ -91,7 +91,12 @@ export function buildSceneInputProps(params: RenderSceneParams): MontageScenePro
 
   const assets: MontageInputAsset[] = params.assets.map((a) => {
     const kind: "image" | "clip" = a.kind === "clip" ? "clip" : "image";
-    const motion = isMotionPreset(a.motion) ? a.motion : DEFAULT_MOTION_PRESET;
+    const motion =
+      kind === "clip"
+        ? "static"
+        : isMotionPreset(a.motion)
+          ? a.motion
+          : DEFAULT_MOTION_PRESET;
     const dur =
       Number.isFinite(a.durationSeconds) && a.durationSeconds > 0 ? a.durationSeconds : 0;
 

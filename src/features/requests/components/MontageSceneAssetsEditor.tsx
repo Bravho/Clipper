@@ -94,7 +94,7 @@ export function MontageSceneAssetsEditor({
         {
           assetIndex: src.index,
           kind: src.kind,
-          motion: "ken_burns_in",
+          motion: src.kind === "clip" ? "static" : "ken_burns_in",
           durationSeconds: defaultAssetDuration(assets.length + 1, sceneDurationSeconds),
         },
       ]);
@@ -186,24 +186,27 @@ export function MontageSceneAssetsEditor({
                       {i + 1}. {isClip ? "คลิป" : "รูป"} · {round2(assetPlaySeconds(asset))} วินาที
                     </p>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <label className="text-[11px] text-slate-500">การเคลื่อนไหว</label>
-                      <select
-                        value={asset.motion}
-                        onChange={(e) =>
-                          updateAsset(asset.assetIndex, { motion: e.target.value as MotionPreset })
-                        }
-                        className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-700"
-                        disabled={isClip}
-                        title={isClip ? "คลิปจะเล่นตามที่ถ่ายมา" : undefined}
-                      >
-                        {MOTION_PRESETS.map((preset) => (
-                          <option key={preset} value={preset}>
-                            {MOTION_LABELS[preset]}
-                          </option>
-                        ))}
-                      </select>
-                      {isClip && (
+                      {isClip ? (
                         <span className="text-[11px] text-slate-400">ลากที่แถบด้านล่างเพื่อตัดคลิป</span>
+                      ) : (
+                        <>
+                          <label className="text-[11px] text-slate-500">การเคลื่อนไหว</label>
+                          <select
+                            value={asset.motion}
+                            onChange={(e) =>
+                              updateAsset(asset.assetIndex, {
+                                motion: e.target.value as MotionPreset,
+                              })
+                            }
+                            className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-700"
+                          >
+                            {MOTION_PRESETS.map((preset) => (
+                              <option key={preset} value={preset}>
+                                {MOTION_LABELS[preset]}
+                              </option>
+                            ))}
+                          </select>
+                        </>
                       )}
                     </div>
                   </div>
@@ -243,7 +246,6 @@ export function MontageSceneAssetsEditor({
                     url={src.url}
                     trimStartSeconds={asset.trimStartSeconds}
                     trimEndSeconds={asset.trimEndSeconds}
-                    playSeconds={asset.durationSeconds}
                     aspectRatio={aspectRatio}
                     onChange={(trim) => handleTrimChange(asset.assetIndex, trim)}
                   />

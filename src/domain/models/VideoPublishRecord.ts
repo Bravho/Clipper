@@ -15,7 +15,7 @@ export interface VideoPublishRecord {
   status: PublishStatus;
   /** The platform's internal video identifier after a successful upload. */
   platformVideoId: string | null;
-  /** Public URL of the video on the platform. Used by Tvent to embed the YouTube link. */
+  /** Public URL of the video on the platform. Used by Travy to embed the YouTube link. */
   platformUrl: string | null;
   /** Caption text submitted with the video (may differ from AI-generated captions). */
   captionUsed: string | null;

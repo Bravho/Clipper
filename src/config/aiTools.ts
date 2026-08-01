@@ -88,9 +88,9 @@ export const AI_CONFIG = {
       pageToken: process.env.FACEBOOK_PAGE_TOKEN ?? "",
       pageId: process.env.FACEBOOK_PAGE_ID ?? "",
     },
-    tvent: {
-      apiKey: process.env.TVENT_API_KEY ?? "",
-      apiUrl: process.env.TVENT_API_URL ?? "",
+    travy: {
+      apiKey: process.env.TRAVY_API_KEY ?? "",
+      apiUrl: process.env.TRAVY_API_URL ?? "",
     },
   },
 };

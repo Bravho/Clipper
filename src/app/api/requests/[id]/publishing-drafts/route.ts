@@ -3,7 +3,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
-import { videoGenerationService } from "@/services/VideoGenerationService";
+import {
+  PublishingDraftValidationError,
+  videoGenerationService,
+} from "@/services/VideoGenerationService";
 import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
 
 /**
@@ -50,6 +53,7 @@ export async function PATCH(
     return NextResponse.json({ publishingDrafts: updated.publishingDrafts ?? [] });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to save drafts.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = err instanceof PublishingDraftValidationError ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

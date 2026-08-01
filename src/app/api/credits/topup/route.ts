@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { paymentService } from "@/services/PaymentService";
 import { TOPUP_BUNDLES } from "@/config/credits";
+import { appOrigin } from "@/lib/appOrigin";
 import { z } from "zod";
 
 const allowedAmounts = TOPUP_BUNDLES.map((b) => b.baht);
@@ -58,7 +59,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const origin = new URL(request.url).origin;
+    // Not `new URL(request.url).origin` — behind nginx that reads
+    // http://localhost:3000, which would send the payer's browser to port 3000
+    // on their own machine after paying.
+    const origin = appOrigin(request);
     const safeReturnPath = parsed.data.returnPath ?? "/dashboard/credits";
     const bundle = TOPUP_BUNDLES.find(
       (candidate) => candidate.baht === parsed.data.amountBaht

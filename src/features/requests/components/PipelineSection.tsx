@@ -13,7 +13,7 @@ interface Props {
   durationSeconds?: number;
   totalChannels?: number;
   /** Phase 7 — background Travy render status, for live spinner polling. */
-  tventVideoStatus?: string | null;
+  travyVideoStatus?: string | null;
   /**
    * Progressive per-ratio reveal (compose step): how many distribution-channel
    * ratios must be produced, and how many have already landed. When the job is
@@ -49,7 +49,7 @@ export function PipelineSection({
   failedAtStep,
   durationSeconds,
   totalChannels,
-  tventVideoStatus = null,
+  travyVideoStatus = null,
   requiredRatioCount,
   readyRatioCount,
   requiredCaptionedCount,
@@ -93,7 +93,7 @@ export function PipelineSection({
 
   const isPolling =
     POLLING_STEPS.includes(currentStep) ||
-    tventVideoStatus === "generating" ||
+    travyVideoStatus === "generating" ||
     revealRatios ||
     revealCaptioned;
 
@@ -115,7 +115,7 @@ export function PipelineSection({
         <PipelineStatusPoller
           requestId={requestId}
           currentStep={currentStep}
-          tventVideoStatus={tventVideoStatus}
+          travyVideoStatus={travyVideoStatus}
           revealRatios={revealRatios}
           requiredRatioCount={requiredRatioCount}
           initialReadyRatioCount={readyRatioCount}
