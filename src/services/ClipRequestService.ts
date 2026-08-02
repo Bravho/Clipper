@@ -123,7 +123,13 @@ export class ClipRequestService {
     // submission and its download is unlocked immediately.
     const isTrial = await this.isFirstRequest(userId);
 
-    if (!isTrial) {
+    // Idempotent charge: never bill the same request twice. This covers a resumed
+    // or retried submit, and the partial-failure case where a previous attempt
+    // deducted credits but crashed before flipping the status out of Draft — on
+    // the retry the status is still Draft, but the charge already exists.
+    const alreadyCharged = await creditService.hasChargeForRequest(userId, requestId);
+
+    if (!isTrial && !alreadyCharged) {
       const canAfford = await creditService.hasEnoughCredits(
         userId,
         CREDITS_CONFIG.REQUEST_COST_CREDITS

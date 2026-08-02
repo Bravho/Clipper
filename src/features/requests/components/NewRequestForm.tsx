@@ -495,6 +495,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // later makes unreadable (NotReadableError) still uploads from bytes captured
   // while it was readable. A ref (not state) so it's immune to render/closure timing.
   const fileBlobPromises = useRef<Map<string, Promise<Blob>>>(new Map());
+  // Guards against concurrent submits (double-tap / retry racing itself), which
+  // could otherwise double-charge credits.
+  const submittingRef = useRef(false);
   const [canRetry, setCanRetry] = useState(false);
   const [resumeInfo, setResumeInfo] = useState<{ uploadedNames: string[] } | null>(
     existingRequestId
@@ -1164,6 +1167,12 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       return;
     }
 
+    // In-flight guard: a second submit must not fire while one is running, or two
+    // near-simultaneous submits could each pass the server's Draft-status check
+    // and double-charge. The server charge is also idempotent, but this stops the
+    // race at the source.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     try {
       setPhase("submitting");
       const requestId = await ensureDraft(data);
@@ -1172,6 +1181,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       setPhase("form");
       setCanRetry(Boolean(draftIdRef.current));
       setSubmitError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+    } finally {
+      submittingRef.current = false;
     }
   };
 
@@ -1187,6 +1198,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       setSubmitError("กรุณาลบไฟล์ที่มีข้อผิดพลาดออกก่อน");
       return;
     }
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitError(null);
     setCanRetry(false);
     try {
@@ -1196,6 +1209,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       setPhase("form");
       setCanRetry(true);
       setSubmitError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+    } finally {
+      submittingRef.current = false;
     }
   };
 
@@ -1338,6 +1353,13 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                 "กรุณาเลือกเฉพาะไฟล์ที่ยังไม่ได้อัปโหลดอีกครั้ง แล้วกดส่งคำขอ"
               : "เลือกไฟล์เดิมอีกครั้งแล้วกดส่งคำขอ ระบบจะอัปโหลดต่อจากจุดที่ค้างไว้"}
           </p>
+          {/* Single-charge reassurance — credits are only ever taken once per
+              request, at the final submit; resuming never charges again. */}
+          {!trialAvailable && (
+            <p className="mt-2 rounded-md bg-white/70 px-2 py-1 text-xs font-medium text-amber-800">
+              💳 ค่าบริการ {COST} เครดิตจะถูกหักเพียงครั้งเดียวต่อคำขอ — การดำเนินการต่อจะไม่หักเครดิตซ้ำ
+            </p>
+          )}
           {/* Only offer "start over" for a locally-recovered draft — when the user
               deliberately opened a specific draft from the dashboard, clearing it
               would just orphan that request. */}

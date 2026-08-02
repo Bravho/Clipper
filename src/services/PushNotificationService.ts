@@ -1,12 +1,38 @@
 import { SignJWT, importPKCS8 } from "jose";
+import webpush from "web-push";
 import { pool } from "@/lib/db";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 
-type NativePlatform = "ios" | "android";
+type DevicePlatform = "ios" | "android" | "web";
+
+/** Web Push subscription keys (from the browser's PushSubscription). */
+interface WebPushKeys {
+  p256dh: string;
+  auth: string;
+}
 
 interface PushDevice {
   token: string;
-  platform: NativePlatform;
+  platform: DevicePlatform;
+  p256dh: string | null;
+  auth: string | null;
+}
+
+// Configure the VAPID identity once (lazily) for Web Push. Missing keys means
+// web delivery is simply skipped — native (FCM/APNs) is unaffected.
+let vapidConfigured: boolean | null = null;
+function ensureVapidConfigured(): boolean {
+  if (vapidConfigured !== null) return vapidConfigured;
+  const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim();
+  const privateKey = process.env.VAPID_PRIVATE_KEY?.trim();
+  const subject = process.env.VAPID_SUBJECT?.trim() || "mailto:support@rclipper.com";
+  if (!publicKey || !privateKey) {
+    vapidConfigured = false;
+    return false;
+  }
+  webpush.setVapidDetails(subject, publicKey, privateKey);
+  vapidConfigured = true;
+  return true;
 }
 
 interface PipelineNotice {
@@ -51,6 +77,11 @@ const NOTICES: Partial<Record<VideoGenerationStep, PipelineNotice>> = {
     title: "คำบรรยายพร้อมตรวจสอบ",
     body: "คำบรรยายและภาพซ้อนพร้อมตรวจสอบแล้ว",
   },
+  [VideoGenerationStep.AwaitingAdditionalRatios]: {
+    eventKey: "additional-ratios-ready",
+    title: "พร้อมสร้างรูปแบบช่องทางอื่น",
+    body: "เปิดคำขอเพื่อสร้างวิดีโอในอัตราส่วนสำหรับช่องทางที่เหลือ",
+  },
   [VideoGenerationStep.AwaitingFinalApproval]: {
     eventKey: "final-ready",
     title: "วิดีโอฉบับสุดท้ายพร้อมแล้ว",
@@ -71,6 +102,29 @@ const NOTICES: Partial<Record<VideoGenerationStep, PipelineNotice>> = {
     title: "งานวิดีโอเสร็จสมบูรณ์",
     body: "วิดีโอของคุณพร้อมใช้งานแล้ว",
   },
+};
+
+/**
+ * Steps the pipeline reaches once PER SCENE (it loops through them for each scene
+ * via currentSceneIndex). Their dedup key and copy carry the scene number so
+ * EVERY scene's review gate notifies — not just the first. Without this, the
+ * `(job_id, event_key)` uniqueness would suppress scenes 2..N. Re-entering the
+ * same scene's gate (e.g. after a revision the user themself triggered) still
+ * dedupes on the same per-scene key, avoiding spam.
+ */
+const PER_SCENE_NOTICE: Partial<
+  Record<VideoGenerationStep, (sceneNumber: number) => PipelineNotice>
+> = {
+  [VideoGenerationStep.AwaitingSceneScriptApproval]: (n) => ({
+    eventKey: `scene-script-ready-${n}`,
+    title: `บทฉากที่ ${n} พร้อมตรวจสอบ`,
+    body: "กรุณาตรวจสอบบทฉากก่อนสร้างวิดีโอ",
+  }),
+  [VideoGenerationStep.AwaitingVideoApproval]: (n) => ({
+    eventKey: `video-ready-${n}`,
+    title: `วิดีโอฉากที่ ${n} พร้อมตรวจสอบ`,
+    body: "เปิดคำขอเพื่อดูและอนุมัติวิดีโอของฉากนี้",
+  }),
 };
 
 function requestPath(requestId: string): string {
@@ -180,22 +234,52 @@ async function sendIos(
   if (!response.ok) throw new Error(`APNs send failed (${response.status}).`);
 }
 
+/**
+ * Deliver a browser (Web Push) notification via the VAPID protocol. The service
+ * worker (public/sw.js) receives this JSON in its `push` event and renders it.
+ * Throws a WebPushError whose statusCode is 404/410 when the subscription has
+ * expired, so the caller can prune it.
+ */
+async function sendWeb(
+  device: PushDevice,
+  notice: PipelineNotice,
+  requestId: string
+): Promise<void> {
+  if (!ensureVapidConfigured()) throw new Error("VAPID keys are not configured.");
+  if (!device.p256dh || !device.auth) throw new Error("Web Push subscription is missing keys.");
+
+  const payload = JSON.stringify({
+    title: notice.title,
+    body: notice.body,
+    data: { path: requestPath(requestId), requestId, eventKey: notice.eventKey },
+  });
+
+  await webpush.sendNotification(
+    { endpoint: device.token, keys: { p256dh: device.p256dh, auth: device.auth } },
+    payload,
+    { TTL: 60 * 60 * 24 } // keep for a day if the browser is offline
+  );
+}
+
 export class PushNotificationService {
   async registerDevice(
     userId: string,
-    platform: NativePlatform,
-    token: string
+    platform: DevicePlatform,
+    token: string,
+    keys?: WebPushKeys
   ): Promise<void> {
     await pool.query(
-      `INSERT INTO push_devices (user_id, platform, token)
-       VALUES ($1, $2, $3)
+      `INSERT INTO push_devices (user_id, platform, token, p256dh, auth)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (token) DO UPDATE SET
          user_id = EXCLUDED.user_id,
          platform = EXCLUDED.platform,
+         p256dh = EXCLUDED.p256dh,
+         auth = EXCLUDED.auth,
          enabled = TRUE,
          updated_at = NOW(),
          last_seen_at = NOW()`,
-      [userId, platform, token]
+      [userId, platform, token, keys?.p256dh ?? null, keys?.auth ?? null]
     );
   }
 
@@ -208,12 +292,31 @@ export class PushNotificationService {
     );
   }
 
+  /** Disable a device by token alone — used to prune an expired subscription the
+   *  push service reported as gone (404/410) during delivery. */
+  async disableDeviceByToken(token: string): Promise<void> {
+    await pool.query(
+      `UPDATE push_devices SET enabled = FALSE, updated_at = NOW() WHERE token = $1`,
+      [token]
+    );
+  }
+
   async notifyPipelineStep(
     jobId: string,
     requestId: string,
-    step: VideoGenerationStep
+    step: VideoGenerationStep,
+    /**
+     * Zero-based scene index for steps that recur per scene. Drives a per-scene
+     * dedup key + copy so each scene's review gate notifies. Ignored for one-shot
+     * steps.
+     */
+    sceneIndex?: number
   ): Promise<void> {
-    const notice = NOTICES[step];
+    const perScene = PER_SCENE_NOTICE[step];
+    const notice =
+      perScene && typeof sceneIndex === "number"
+        ? perScene(sceneIndex + 1)
+        : NOTICES[step];
     if (!notice) return;
 
     const owner = await pool.query<{ user_id: string }>(
@@ -234,7 +337,7 @@ export class PushNotificationService {
     if (inserted.rowCount === 0) return;
 
     const devices = await pool.query<PushDevice>(
-      `SELECT token, platform
+      `SELECT token, platform, p256dh, auth
        FROM push_devices
        WHERE user_id = $1 AND enabled = TRUE`,
       [userId]
@@ -246,11 +349,23 @@ export class PushNotificationService {
       try {
         if (device.platform === "android") {
           await sendAndroid(device.token, notice, requestId);
+        } else if (device.platform === "web") {
+          await sendWeb(device, notice, requestId);
         } else {
           await sendIos(device.token, notice, requestId);
         }
         delivered = true;
       } catch (err) {
+        // Prune a subscription the push service reports as gone (browser
+        // unsubscribed / token rotated) so we stop trying it. 404/410 for Web
+        // Push; FCM/APNs surface similar "unregistered" errors as HTTP 404/410.
+        const statusCode =
+          typeof (err as { statusCode?: unknown })?.statusCode === "number"
+            ? (err as { statusCode: number }).statusCode
+            : undefined;
+        if (statusCode === 404 || statusCode === 410) {
+          await this.disableDeviceByToken(device.token).catch(() => {});
+        }
         console.error("[push] delivery failed:", err);
       }
     }

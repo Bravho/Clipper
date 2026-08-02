@@ -5,7 +5,7 @@ import { ROUTES } from "@/config/routes";
 
 export const metadata: Metadata = {
   title: "Privacy Policy — RClipper",
-  description: "How RClipper handles account data, uploaded media, AI processing, retention, and selected Travy publication.",
+  description: "How RClipper handles account data, uploaded media, AI processing, connected social accounts, publishing, and retention.",
 };
 
 export default function PrivacyPage() {
@@ -17,7 +17,7 @@ export default function PrivacyPage() {
           RClipper Privacy Policy
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.3.0 — Effective 22 July 2026
+          Version 1.4.0 — Effective 3 August 2026
         </p>
       </div>
 
@@ -33,8 +33,12 @@ export default function PrivacyPage() {
               videos), user-entered text, place names, addresses, selected map locations or coordinates,
               categories, production choices, approval history, credit and payment
               records, support communications, and technical information needed to
-              operate and secure the service. Uploaded media and location information
-              may contain personal data about you or other identifiable people.
+              operate and secure the service. If you use Channel Management, we also
+              collect the identifiers and display information for social accounts you
+              choose to connect, publication settings, captions, hashtags, and post
+              status or error information returned by the social platform. Uploaded
+              media and location information may contain personal data about you or
+              other identifiable people.
             </p>
           </section>
 
@@ -46,8 +50,10 @@ export default function PrivacyPage() {
               We use this data to register and secure accounts, process and deliver
               video requests, generate scripts, audio, subtitles, translations and
               video outputs, administer credits and payments, provide support,
-              moderate content, prevent abuse, comply with law, and improve service
-              reliability. We do not sell personal data.
+              let you organise content and publish it to social accounts you explicitly
+              connect, record publication status, moderate content, prevent abuse,
+              comply with law, and improve service reliability. We do not sell personal
+              data or use connected social-account data for advertising.
             </p>
           </section>
 
@@ -59,15 +65,42 @@ export default function PrivacyPage() {
               RClipper may transmit the request information and media required for a
               production step to contracted hosting, storage, authentication,
               payment, email, AI, voice, video-generation, and media-processing
-              providers. Only data reasonably needed for the relevant service should
-              be transmitted. These providers may process data in other countries
-              under their applicable contractual and security protections.
+              providers. When you use Channel Management, RClipper also uses a
+              contracted social-publishing provider to connect the accounts you
+              authorize and to submit your selected video and post information to the
+              chosen social platform. Only data reasonably needed for the relevant
+              service should be transmitted. These providers and social platforms may
+              process data in other countries under their applicable contractual,
+              privacy, and security terms.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              4. Selected publication through RClipper Channels
+              4. Publishing to accounts you connect
+            </h2>
+            <p>
+              Channel Management does not publish automatically. You must authorize a
+              supported social account, select the destination, review the video and
+              post information, and confirm the publication. RClipper receives the
+              account identifiers, display information, and authorization state needed
+              to provide this feature, but does not receive your social-platform
+              password. The selected platform may make the video, caption, hashtags,
+              account name, and related post information public according to the
+              privacy and visibility settings you choose there.
+            </p>
+            <p>
+              You may disconnect an account through Channel Management. Disconnecting
+              stops new publications through RClipper but does not remove posts already
+              published or records that must be retained for payment, security, audit,
+              dispute, or legal purposes. To remove an existing post, use the controls
+              provided by the relevant social platform or contact support.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-slate-900">
+              5. Selected publication through RClipper Channels
             </h2>
             <p>
               Not every generated video is published. RClipper may select a reviewed
@@ -99,7 +132,7 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              5. Storage and retention
+              6. Storage and retention
             </h2>
             <p>
               Raw source uploads are associated with the request for which they were
@@ -115,11 +148,20 @@ export default function PrivacyPage() {
               where selected, for the duration of RClipper Channel publication plus reasonable
               backup, audit, legal, and content-integrity retention.
             </p>
+            <p>
+              Content placed in Channel Management, connected-account records, and
+              publication records are retained as needed to operate the feature,
+              display history, enforce purchased entitlements, troubleshoot failed
+              publications, and meet security, audit, payment, dispute, and legal
+              obligations. Media files may be deleted separately under the retention
+              period shown in the service even when a publication or purchase record
+              must be kept longer.
+            </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              6. Security
+              7. Security
             </h2>
             <p>
               RClipper uses administrative, technical, and organisational safeguards
@@ -131,7 +173,7 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              7. Your choices and rights
+              8. Your choices and rights
             </h2>
             <p>
               Subject to applicable law, you may request access, correction,
@@ -159,7 +201,7 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              8. Changes and contact
+              9. Changes and contact
             </h2>
             <p>
               We may update this policy to reflect changes in the service or law.

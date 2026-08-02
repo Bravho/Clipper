@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
-import { ROUTES } from "@/config/routes";
+import { ROUTES, requestDetailPath } from "@/config/routes";
 import { creditService } from "@/services/CreditService";
 import { clipRequestService } from "@/services/ClipRequestService";
 import { uploadedAssetRepository } from "@/repositories";
@@ -43,44 +44,53 @@ export default async function NewRequestPage({
   // where a failed upload left off instead of starting a new request.
   let resume: ResumeData | undefined;
   if (editId) {
+    let draft: Awaited<ReturnType<typeof clipRequestService.getOwnedRequest>> | null = null;
     try {
-      const draft = await timed("resumeDraft", () =>
+      draft = await timed("resumeDraft", () =>
         clipRequestService.getOwnedRequest(editId, user.id)
       );
-      if (draft.status === RequestStatus.Draft) {
-        const assets = await timed("resumeAssets", () =>
-          uploadedAssetRepository.findByRequestId(editId)
-        );
-        resume = {
-          requestId: draft.id,
-          initialValues: {
-            title: draft.title,
-            placeName: draft.placeName,
-            latitude: draft.latitude,
-            longitude: draft.longitude,
-            description: draft.description,
-            targetAudience: draft.targetAudience,
-            targetPlatforms: draft.targetPlatforms,
-            durationSeconds: draft.durationSeconds,
-          },
-          uploadedAssets: assets
-            .filter(
-              (a) =>
-                a.uploadStatus === AssetUploadStatus.Uploaded &&
-                (a.assetType === AssetType.Image || a.assetType === AssetType.Video)
-            )
-            .map((a) => ({
-              fileName: a.fileName,
-              fileSizeBytes: Number(a.fileSizeBytes) || 0,
-              assetType: a.assetType === AssetType.Video ? "video" : "image",
-              thumbnailUrl: a.thumbnailUrl || undefined,
-              storageUrl: a.storageUrl || undefined,
-            })),
-        };
-      }
     } catch {
-      // Not found / not owned / not a draft → fall through to a fresh form.
-      resume = undefined;
+      // Not found / not owned → fall through to a fresh form.
+      draft = null;
+    }
+
+    // Already submitted (and therefore already charged): don't re-enter a
+    // chargeable submit flow — send the user to view the live request instead.
+    // redirect() must sit outside the try/catch (it throws NEXT_REDIRECT).
+    if (draft && draft.status !== RequestStatus.Draft) {
+      redirect(requestDetailPath(draft.id));
+    }
+
+    if (draft) {
+      const assets = await timed("resumeAssets", () =>
+        uploadedAssetRepository.findByRequestId(editId)
+      );
+      resume = {
+        requestId: draft.id,
+        initialValues: {
+          title: draft.title,
+          placeName: draft.placeName,
+          latitude: draft.latitude,
+          longitude: draft.longitude,
+          description: draft.description,
+          targetAudience: draft.targetAudience,
+          targetPlatforms: draft.targetPlatforms,
+          durationSeconds: draft.durationSeconds,
+        },
+        uploadedAssets: assets
+          .filter(
+            (a) =>
+              a.uploadStatus === AssetUploadStatus.Uploaded &&
+              (a.assetType === AssetType.Image || a.assetType === AssetType.Video)
+          )
+          .map((a) => ({
+            fileName: a.fileName,
+            fileSizeBytes: Number(a.fileSizeBytes) || 0,
+            assetType: a.assetType === AssetType.Video ? "video" : "image",
+            thumbnailUrl: a.thumbnailUrl || undefined,
+            storageUrl: a.storageUrl || undefined,
+          })),
+      };
     }
   }
 

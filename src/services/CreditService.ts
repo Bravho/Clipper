@@ -288,6 +288,22 @@ export class CreditService {
   }
 
   /**
+   * True if a request-charge transaction already exists for this request.
+   *
+   * Makes request submission idempotent: a resumed or retried submit — and the
+   * partial-failure case where credits were deducted but the status update didn't
+   * complete, leaving the request in Draft — must never charge the same request a
+   * second time. Each RequestCharge records `referenceId = requestId`, so the
+   * presence of one is the authoritative "already paid" signal.
+   */
+  async hasChargeForRequest(userId: string, requestId: string): Promise<boolean> {
+    const transactions = await creditTransactionRepository.findByUserId(userId);
+    return transactions.some(
+      (t) => t.type === TransactionType.RequestCharge && t.referenceId === requestId
+    );
+  }
+
+  /**
    * Apply signup/earned credits as a ฿ discount at checkout.
    *
    * Rules:

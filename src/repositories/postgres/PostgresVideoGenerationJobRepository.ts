@@ -370,7 +370,8 @@ export class PostgresVideoGenerationJobRepository
         await pushNotificationService.notifyPipelineStep(
           updated.id,
           updated.requestId,
-          updated.currentStep
+          updated.currentStep,
+          updated.currentSceneIndex ?? undefined
         );
       } catch (err) {
         console.error("[push] pipeline notification failed:", err);

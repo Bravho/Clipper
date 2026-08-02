@@ -5,6 +5,7 @@ import SessionProvider from "./providers";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
+import { WebPushRegistration } from "@/components/pwa/WebPushRegistration";
 import { NativePushRegistration } from "@/components/mobile/NativePushRegistration";
 import { NativeDeepLinkHandler } from "@/components/mobile/NativeDeepLinkHandler";
 import { initEditorSeedData } from "@/seed/editorSeedData";
@@ -60,6 +61,7 @@ export default async function RootLayout({
         <SessionProvider session={session} locale={locale}>
           <ServiceWorkerRegister />
           <NativePushRegistration />
+          <WebPushRegistration />
           <NativeDeepLinkHandler />
           <Navbar />
           <main className="flex-1">{children}</main>
