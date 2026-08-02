@@ -478,6 +478,12 @@ function VideoRow({
                 className="aspect-video w-full rounded-lg bg-black object-contain"
               />
             )}
+            {/*
+              The preview slot ALWAYS renders. It used to be suppressed whenever a
+              playable video existed, which meant a missing thumbnail collapsed to
+              empty space — indistinguishable from "this card has no preview by
+              design", and the reason a broken poster pipeline went unnoticed.
+            */}
             {video.thumbnailUrl ? (
               <figure className="space-y-1">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -489,11 +495,9 @@ function VideoRow({
                 <figcaption className="text-center text-[11px] text-slate-400">Preview</figcaption>
               </figure>
             ) : (
-              !(video.usable && video.videoUrl) && (
-                <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-slate-100 text-xs text-slate-400">
-                  {video.usable ? "No preview" : "Media unavailable"}
-                </div>
-              )
+              <div className="flex aspect-video w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">
+                {video.usable ? "No preview image" : "Media unavailable"}
+              </div>
             )}
           </div>
 

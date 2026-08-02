@@ -50,6 +50,7 @@ import { AI_CONFIG } from "@/config/aiTools";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE } from "@/config/renderQueue";
+import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
 import {
   extractInlineHashtags,
@@ -88,6 +89,27 @@ function sanitizeScenePlanJson(scenePlanJson: string | null | undefined): string
   } catch {
     return scenePlanJson;
   }
+}
+
+/**
+ * A business profile belongs to the whole requester account, while `placeName`
+ * belongs to one clip request. Never let an account profile for another venue
+ * leak into request-specific copy, hashtags, prompts, or visual styling.
+ */
+function businessProfileMatchesPlace(
+  profileBusinessName: string | null | undefined,
+  requestPlaceName: string | null | undefined
+): boolean {
+  const requested = requestPlaceName?.trim() ?? "";
+  if (!requested) return true;
+
+  const normalize = (value: string | null | undefined) =>
+    (value ?? "")
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[\p{P}\p{S}\s]+/gu, "");
+
+  return normalize(profileBusinessName) === normalize(requested);
 }
 
 function clampPipelineDurationSeconds(value: number): number {
@@ -281,7 +303,7 @@ export class VideoGenerationService {
     if (req) {
       try {
         const profile = await businessProfileService.getProfile(req.userId);
-        if (profile) {
+        if (profile && businessProfileMatchesPlace(profile.businessName, req.placeName)) {
           businessProfileContext = {
             businessName: profile.businessName,
             category: profile.category,
@@ -320,18 +342,28 @@ export class VideoGenerationService {
       storyboard: output.storyboard ? JSON.stringify(output.storyboard) : null,
     });
 
-    // Auto-save/enrich business profile from AI extraction
+    // Auto-save/enrich the account profile only when this request is for that
+    // same business. A requester can make clips for multiple venues, so a
+    // per-video AI extraction must not overwrite an unrelated account profile.
     if (output.businessProfile) {
       try {
         if (req) {
-          await businessProfileService.saveProfile(req.userId, {
-            businessName: output.businessProfile.businessName,
-            category: output.businessProfile.category,
-            location: output.businessProfile.location ?? null,
-            description: output.businessProfile.description ?? null,
-            menuDetails: output.businessProfile.menuDetails ?? null,
-          });
-          console.log(`[AI Profile] Auto-saved business profile for user ${req.userId}`);
+          const existingProfile = await businessProfileService.getProfile(req.userId);
+          const mayUpdateAccountProfile =
+            !existingProfile ||
+            businessProfileMatchesPlace(existingProfile.businessName, req.placeName);
+          if (mayUpdateAccountProfile) {
+            await businessProfileService.saveProfile(req.userId, {
+              // The requester-entered place name is authoritative; do not let
+              // the model rewrite its spelling in the account profile.
+              businessName: req.placeName?.trim() || output.businessProfile.businessName,
+              category: output.businessProfile.category,
+              location: output.businessProfile.location ?? null,
+              description: output.businessProfile.description ?? null,
+              menuDetails: output.businessProfile.menuDetails ?? null,
+            });
+            console.log(`[AI Profile] Auto-saved business profile for user ${req.userId}`);
+          }
         }
       } catch (profileErr) {
         console.error("Failed to auto-save business profile from AI output:", profileErr);
@@ -1307,7 +1339,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     let businessProfileContext = null;
     try {
       const profile = await businessProfileService.getProfile(req.userId);
-      if (profile) {
+      if (profile && businessProfileMatchesPlace(profile.businessName, req.placeName)) {
         businessProfileContext = {
           businessName: profile.businessName,
           category: profile.category,
@@ -1996,9 +2028,13 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const { businessProfileService } = await import("@/services/BusinessProfileService");
       const req = await clipRequestRepository.findById(job.requestId);
       const profile = req ? await businessProfileService.getProfile(req.userId) : null;
+      const matchingProfile =
+        profile && businessProfileMatchesPlace(profile.businessName, req?.placeName)
+          ? profile
+          : null;
       return await derivePalette({
-        businessName: profile?.businessName,
-        category: profile?.category,
+        businessName: req?.placeName?.trim() || matchingProfile?.businessName,
+        category: matchingProfile?.category,
         scriptEnglish: job.approvedScriptEnglish ?? job.scriptEnglish,
         scriptThai: job.approvedScriptThai ?? job.scriptThai,
       });
@@ -2067,34 +2103,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       onProgress,
     });
 
-    // Generate a poster still from the finished captioned clip so this video
-    // shows a preview image everywhere it is surfaced — the requester's download
-    // view and, after transfer, the RClipper Management library ("วิดิโอของคุณ").
-    // The poster lives in the public, long-lived `thumbnails/` prefix and is
-    // carried onto the Management item via `asset.thumbnailKey` at transfer time.
-    // Best-effort: a poster failure must never discard the finished render.
-    let posterKey = "";
-    let posterUrl = "";
-    try {
-      const [{ buildThumbnailKey }, { generateVideoThumbnail }, { spacesPublicUrl }] =
-        await Promise.all([
-          import("@/lib/spacesKeys"),
-          import("@/lib/thumbnails"),
-          import("@/lib/spaces"),
-        ]);
-      posterKey = buildThumbnailKey(
-        userId,
-        job.requestId,
-        `poster-${ratio.replace(":", "x")}`
-      );
-      await generateVideoThumbnail(result.storageKey, posterKey);
-      posterUrl = spacesPublicUrl(posterKey);
-    } catch (err) {
-      console.error(`[overlay:${ratio}] poster generation failed (non-fatal):`, err);
-      posterKey = "";
-      posterUrl = "";
-    }
-
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
     const asset = await uploadedAssetRepository.create({
@@ -2106,12 +2114,20 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       mimeType: "video/mp4",
       storageKey: result.storageKey,
       storageUrl: result.storageUrl,
-      thumbnailKey: posterKey,
-      thumbnailUrl: posterUrl,
+      thumbnailKey: "",
+      thumbnailUrl: "",
       uploadStatus: AssetUploadStatus.Uploaded,
       scheduledDeletionAt,
       videoRatio: ratio,
     });
+
+    // Poster still for the finished captioned clip, so this video shows a preview
+    // image everywhere it is surfaced — the requester's distribution review and,
+    // after transfer, the RClipper Management library ("วิดิโอของคุณ"). The poster
+    // lives in the public, long-lived `thumbnails/` prefix and is carried onto the
+    // Management item via `asset.thumbnailKey` at transfer time. `ensureAssetPoster`
+    // never throws, so a poster failure cannot discard the finished render.
+    await ensureAssetPoster(asset.id, `poster-${ratio.replace(":", "x")}`);
 
     // Pre-render the tiled-watermark preview sibling for the paywall. Runs on the
     // same (worker) claim as this render, so the extra encode stays off the web
@@ -2569,7 +2585,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * already produced — so NO new content-generation call is made:
    *   - caption  = approved caption (their words), else approved script
    *   - title    = approved hook, else the caption's first line, else business name
-   *   - hashtags = any #tags already in the caption + business profile fields
+   *   - hashtags = any #tags already in the caption + this request's place name
+   *     (plus profile category/location only when the profile is for that place)
    *
    * Language: Thai copy already exists, and English often does too, so those
    * locales cost zero AI. Only when the target locale has no pre-generated text
@@ -2584,7 +2601,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const scriptThai = job.approvedScriptThai ?? job.scriptThai ?? "";
     const hookThai = job.approvedHookThai ?? job.hookThai ?? "";
 
-    let businessName = "";
+    let placeName = "";
     let category = "";
     let location = "";
     try {
@@ -2592,16 +2609,23 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const { businessProfileService } = await import("@/services/BusinessProfileService");
       const req = await clipRequestRepository.findById(job.requestId);
       const profile = req ? await businessProfileService.getProfile(req.userId) : null;
-      businessName = profile?.businessName ?? "";
-      category = profile?.category ?? "";
-      location = profile?.location ?? "";
+      const matchingProfile =
+        profile && businessProfileMatchesPlace(profile.businessName, req?.placeName)
+          ? profile
+          : null;
+
+      // The request field is the authoritative identity for this exact video.
+      // Fall back to the account profile only for legacy requests without one.
+      placeName = req?.placeName?.trim() || matchingProfile?.businessName || "";
+      category = matchingProfile?.category ?? "";
+      location = matchingProfile?.location ?? "";
     } catch {
       /* fail-open — the deterministic fields below don't require the profile */
     }
 
     // Start from the Thai copy (the authored language).
     let caption = captionThai || scriptThai;
-    let title = (hookThai || caption.split(/\r?\n/)[0]?.trim() || businessName || "").slice(0, 100);
+    let title = (hookThai || caption.split(/\r?\n/)[0]?.trim() || placeName || "").slice(0, 100);
 
     if (locale === "en" && (job.approvedCaptionEnglish || job.captionEnglish)) {
       // English was already produced upstream — reuse it, no AI call.
@@ -2619,8 +2643,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const extracted = extractInlineHashtags(caption);
     caption = extracted.caption;
     const captionTags = extracted.hashtags;
-    const profileTags = [businessName, category, location].map(toTag).filter(Boolean);
-    const hashtags = normalizeHashtags([...captionTags, ...profileTags]);
+    const requestTags = [placeName, category, location].map(toTag).filter(Boolean);
+    // Put the authoritative place first so compact channel policies (notably
+    // TikTok's combined limit) retain it before optional inline/profile tags.
+    const hashtags = normalizeHashtags([
+      ...requestTags.slice(0, 1),
+      ...captionTags,
+      ...requestTags.slice(1),
+    ]);
 
     return { title, caption, hashtags };
   }
@@ -2720,10 +2750,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     );
     if (channels.size === 0) return drafts;
 
-    const { clipRequestRepository } = await import("@/repositories/index");
-    const req = await clipRequestRepository.findById(job.requestId);
-    const userId = req?.userId ?? "";
-
     // Fallback source image (first uploaded image, else first asset thumbnail).
     let fallbackUrl: string | null = null;
     try {
@@ -2736,13 +2762,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       /* no source assets available — leave fallback null */
     }
 
-    const [{ buildThumbnailKey }, { generateVideoThumbnail }, { spacesPublicUrl }] =
-      await Promise.all([
-        import("@/lib/spacesKeys"),
-        import("@/lib/thumbnails"),
-        import("@/lib/spaces"),
-      ]);
-
     const byPlatform = new Map(drafts.map((d) => [d.platform, d]));
     for (const platform of channels) {
       const draft = byPlatform.get(platform);
@@ -2750,25 +2769,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       // Keep any preview already computed on a prior finalize.
       if (draft.previewImageUrl) continue;
 
-      let url: string | null = null;
-      try {
-        const ratio = this._montageCanvasRatio(platform as Platform);
-        const assetId = this._captionedAssetIdForRatio(job, ratio);
-        const asset = assetId ? await uploadedAssetRepository.findById(assetId) : null;
-        if (asset) {
-          const key = buildThumbnailKey(
-            userId,
-            job.requestId,
-            `post-${platform}-${ratio.replace(":", "x")}`
-          );
-          await generateVideoThumbnail(asset.storageKey, key);
-          url = spacesPublicUrl(key);
-        }
-      } catch (err) {
-        console.error(`[publishing preview] ${platform} failed:`, err);
-      }
+      // REUSE the export's own poster rather than extracting a second frame.
+      // These are the same picture — the channel's captioned clip at the channel's
+      // ratio — so a per-channel render was a duplicate full-video download plus
+      // ffmpeg run. That matters here: on the no-additional-ratios path this
+      // method executes inline in a web request on the droplet, not inside a
+      // worker claim. `ensureAssetPoster` is idempotent, so it's a cheap read
+      // whenever the render step already produced the poster, and a self-heal
+      // when it didn't.
+      const ratio = this._montageCanvasRatio(platform as Platform);
+      const assetId = this._captionedAssetIdForRatio(job, ratio);
+      const poster = assetId ? await ensureAssetPoster(assetId) : null;
 
-      draft.previewImageUrl = url ?? fallbackUrl;
+      draft.previewImageUrl = poster?.url ?? fallbackUrl;
     }
 
     return drafts;
@@ -3325,6 +3338,13 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       scheduledDeletionAt,
       videoRatio: ratio,
     });
+
+    // A master export is user-reachable in its own right: `eligibleExportAssetIds`
+    // falls back to it when a ratio has no captioned render, so it can be the very
+    // asset transferred into Management. It therefore needs a poster too — without
+    // this, such a transfer produced a library item with no preview by construction.
+    await ensureAssetPoster(asset.id, `poster-${ratio.replace(":", "x")}`);
+
     return asset.id;
   }
 

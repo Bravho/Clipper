@@ -8,6 +8,13 @@ import { requireManagementUser, managementErrorResponse } from "../../../_guard"
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Upper bound on the poster the browser sends. A 640px JPEG at q0.7 is tens of
+ * KB; 4 MB is a generous ceiling that still refuses anything pathological
+ * (the server re-compresses to under 20 KB regardless).
+ */
+const MAX_POSTER_DATA_URL_CHARS = 4 * 1024 * 1024;
+
 const bodySchema = z.object({
   storageKey: z.string().min(1).max(500),
   /** Optional metadata the browser can read from the <video> element. */
@@ -15,6 +22,17 @@ const bodySchema = z.object({
   width: z.number().int().positive().max(16384).optional(),
   height: z.number().int().positive().max(16384).optional(),
   originalFilename: z.string().max(300).optional(),
+  /**
+   * Poster frame captured from the video in the browser, as a base64 data URL.
+   * Optional: a codec the browser cannot decode simply yields no preview, which
+   * must not block an otherwise good upload. The shape is validated here so a
+   * malformed value is rejected before it reaches the image decoder.
+   */
+  posterDataUrl: z
+    .string()
+    .max(MAX_POSTER_DATA_URL_CHARS)
+    .regex(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "Expected a base64 image data URL")
+    .optional(),
 });
 
 /**
@@ -59,6 +77,7 @@ export async function POST(
       width: parsed.data.width ?? null,
       height: parsed.data.height ?? null,
       originalFilename: parsed.data.originalFilename ?? null,
+      posterDataUrl: parsed.data.posterDataUrl ?? null,
     });
 
     return NextResponse.json({

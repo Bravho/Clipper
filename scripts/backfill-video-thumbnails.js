@@ -99,14 +99,20 @@ async function extractPoster(videoBuffer) {
 
 (async () => {
   await db.connect();
+  // `final_clip` is included alongside raw `video` uploads: for most of this
+  // project's life only ONE pipeline path generated a poster, so the exported
+  // masters — the very assets a user transfers into RClipper Management — have
+  // no thumbnail and so showed no preview image anywhere.
   const { rows } = await db.query(
     `SELECT id, user_id, request_id, file_name, storage_key
        FROM uploaded_assets
-      WHERE asset_type = 'video'
+      WHERE asset_type IN ('video', 'final_clip')
         AND upload_status = 'uploaded'
-        AND (thumbnail_key IS NULL OR thumbnail_key = '')`
+        AND storage_key <> ''
+        AND (thumbnail_key IS NULL OR thumbnail_key = '')
+      ORDER BY created_at DESC`
   );
-  console.log(`Found ${rows.length} video asset(s) needing a poster.`);
+  console.log(`Found ${rows.length} video/final-clip asset(s) needing a poster.`);
 
   let done = 0;
   let failed = 0;

@@ -46,8 +46,11 @@ describe("classifyDimensions", () => {
   it("snaps real upload dimensions to the nearest supported shape", () => {
     expect(classifyDimensions(1080, 1920)).toBe("9:16");
     expect(classifyDimensions(1920, 1080)).toBe("16:9");
-    expect(classifyDimensions(1080, 1080)).toBe("1:1");
     expect(classifyDimensions(1080, 1350)).toBe("4:5");
+  });
+
+  it("no longer snaps a square to a supported shape (1:1 removed)", () => {
+    expect(classifyDimensions(1080, 1080)).toBeNull();
   });
 
   it("absorbs small rounding but rejects a genuinely odd shape", () => {
@@ -79,7 +82,7 @@ describe("assetAspectRatio", () => {
 });
 
 describe("isManagementAspectRatio", () => {
-  it("recognises the four supported shapes only", () => {
+  it("recognises the three supported shapes only", () => {
     expect(isManagementAspectRatio("9:16")).toBe(true);
     expect(isManagementAspectRatio("21:9")).toBe(false);
     expect(isManagementAspectRatio(null)).toBe(false);

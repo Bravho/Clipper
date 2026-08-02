@@ -34,6 +34,7 @@ import {
   eligibleExportAssetIds,
 } from "@/services/management/ManagementEntitlementService";
 import { managementAuditService } from "@/services/management/ManagementAuditService";
+import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { managementRetainedExpiryFrom } from "@/config/management";
 import { estimatedSpaceExpiry } from "@/config/spacesLifecycle";
 import { ManagementContentStatus } from "@/domain/enums/ManagementStatus";
@@ -116,8 +117,34 @@ export class ManagementTransferService {
     private assets = uploadedAssetRepository,
     private content = managementContentRepository,
     private entitlements = managementEntitlementService,
-    private audit = managementAuditService
+    private audit = managementAuditService,
+    /**
+     * Poster generator. Injected (rather than called directly) so tests exercise
+     * the repair branch without reaching for the global asset repository or DO
+     * Spaces — everything else in this file is injected for the same reason.
+     */
+    private ensurePoster = ensureAssetPoster
   ) {}
+
+  /**
+   * The thumbnail key to record on a Management item for one export asset.
+   *
+   * Prefers the poster the pipeline already made. When the export has none —
+   * a master produced before posters were generated for every path, or a render
+   * whose poster step failed — one is generated NOW, so a video never lands in
+   * the library with a blank preview that nothing would ever fill in.
+   *
+   * Returns null if a poster cannot be produced; transfer continues regardless,
+   * because a missing preview image is not a reason to withhold someone's video.
+   */
+  private async _posterKeyFor(asset: {
+    id: string;
+    thumbnailKey?: string | null;
+  }): Promise<string | null> {
+    if (asset.thumbnailKey) return asset.thumbnailKey;
+    const poster = await this.ensurePoster(asset.id);
+    return poster?.key ?? null;
+  }
 
   /**
    * Transfer one source generation into Management.
@@ -188,8 +215,11 @@ export class ManagementTransferService {
         );
       }
 
+      // First export that already carries a poster; failing that, make one from
+      // the first usable export rather than transferring a previewless item.
       const thumbnailKey =
-        usable.find((u) => u.asset.thumbnailKey)?.asset.thumbnailKey || null;
+        usable.find((u) => u.asset.thumbnailKey)?.asset.thumbnailKey ||
+        (await this._posterKeyFor(usable[0].asset));
 
       // Earliest storage expiry across the transferred exports — a free transfer
       // only lives as long as the underlying generation clips do (their short
@@ -330,8 +360,10 @@ export class ManagementTransferService {
       suggestedDefault?.caption || normalizedDraft?.caption?.trim() || job.captionThai || null;
     const defaultHashtags = suggestedDefault?.hashtags ?? normalizedDraft?.hashtags ?? [];
 
+    const thumbnailStorageKey = await this._posterKeyFor(asset);
+
     try {
-      const { item, created } = await this.content.createOrGetTransferredVideo({
+      const transferred = await this.content.createOrGetTransferredVideo({
         userId: user.id,
         sourceGenerationId,
         sourceAssetId: assetId,
@@ -339,7 +371,7 @@ export class ManagementTransferService {
         description: request.description ?? null,
         defaultCaption,
         defaultHashtags,
-        thumbnailStorageKey: asset.thumbnailKey ?? null,
+        thumbnailStorageKey,
         // A free transfer keeps referencing the generation export, so the item's
         // media only lives as long as that clip's own (short) storage window.
         // Reflect that honestly; a paid promotion into management_retained/ later
@@ -348,6 +380,16 @@ export class ManagementTransferService {
           estimatedSpaceExpiry(asset.storageKey, asset.createdAt) ??
           managementRetainedExpiryFrom(),
       });
+      const created = transferred.created;
+      let item = transferred.item;
+
+      // `createOrGetTransferredVideo` is ON CONFLICT DO NOTHING, so the thumbnail
+      // is only written by the INSERT. An item transferred back when its export
+      // had no poster would therefore stay blank forever — repair it here, on the
+      // next transfer of the same video, now that we have a key.
+      if (!created && !item.thumbnailStorageKey && thumbnailStorageKey) {
+        item = await this.content.update(item.id, { thumbnailStorageKey });
+      }
 
       const assetRows = await this.content.replaceAssets(item.id, [
         {

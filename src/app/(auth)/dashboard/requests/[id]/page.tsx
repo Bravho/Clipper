@@ -743,6 +743,7 @@ export default async function RequestDetailPage({
               <DistributionReviewPanel
                 requestId={id}
                 jobId={pipelineJob.id}
+                placeName={request.placeName}
                 initialDrafts={pipelineJob.publishingDrafts ?? []}
                 channelVideos={channelVideos}
                 locale={serverLocale}

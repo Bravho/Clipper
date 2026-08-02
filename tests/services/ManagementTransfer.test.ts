@@ -77,6 +77,13 @@ interface Opts {
   eligibilityAllowed?: boolean;
   assetById?: (id: string) => unknown;
   generationJob?: unknown;
+  /**
+   * Force the "this video was already transferred" branch, with the item's
+   * thumbnail left as-is — that is the state a pre-poster transfer left behind.
+   */
+  existingItemThumbnail?: string | null;
+  /** Stub poster generator; defaults to one that succeeds. */
+  ensurePoster?: (assetId: string) => Promise<{ key: string; url: string } | null>;
 }
 
 function build(o: Opts = {}) {
@@ -100,6 +107,7 @@ function build(o: Opts = {}) {
       o.assetById ? o.assetById(id) : asset(id)
     ),
   };
+  const preExisting = o.existingItemThumbnail !== undefined;
   const content = {
     createOrGetTransferredVideo: jest.fn(async (input: Record<string, unknown>) => ({
       item: {
@@ -110,13 +118,29 @@ function build(o: Opts = {}) {
         title: input.title,
         status: "ready",
         mediaExpiresAt: new Date(),
+        thumbnailStorageKey: preExisting
+          ? o.existingItemThumbnail
+          : (input.thumbnailStorageKey as string | null),
       },
-      created: true,
+      // An existing row means the INSERT did nothing — the branch where the
+      // thumbnail can only be fixed by a follow-up UPDATE.
+      created: !preExisting,
+    })),
+    update: jest.fn(async (id: string, fields: Record<string, unknown>) => ({
+      id,
+      ...fields,
     })),
     replaceAssets: jest.fn(async (_id: string, rows: unknown[]) => rows),
     replaceChannelSuggestions: jest.fn(async (_id: string, rows: unknown[]) => rows),
     updateStatus: jest.fn(async () => ({})),
   };
+  const ensurePoster = jest.fn(
+    o.ensurePoster ??
+      (async (assetId: string) => ({
+        key: `thumbs/generated-${assetId}.jpg`,
+        url: `https://cdn.example/thumbs/generated-${assetId}.jpg`,
+      }))
+  );
   const entitlements = {
     checkTransferEligibility: jest.fn(async () => ({
       allowed: o.eligibilityAllowed ?? true,
@@ -133,9 +157,10 @@ function build(o: Opts = {}) {
     assets as never,
     content as never,
     entitlements as never,
-    audit as never
+    audit as never,
+    ensurePoster as never
   );
-  return { service, requests, jobs, assets, content, entitlements, audit };
+  return { service, requests, jobs, assets, content, entitlements, audit, ensurePoster };
 }
 
 describe("transferVideo", () => {
@@ -213,6 +238,78 @@ describe("transferVideo", () => {
     await expect(
       h.service.transferVideo({ user: USER, sourceGenerationId: SOURCE, assetId: "asset-916" })
     ).rejects.toBeInstanceOf(ManagementTransferNotAllowedError);
+  });
+
+  describe("preview image", () => {
+    it("reuses the export's existing poster without regenerating one", async () => {
+      const h = build();
+      await h.service.transferVideo({
+        user: USER,
+        sourceGenerationId: SOURCE,
+        assetId: "asset-916",
+      });
+
+      const arg = h.content.createOrGetTransferredVideo.mock.calls[0][0];
+      expect(arg.thumbnailStorageKey).toBe("thumbs/asset-916.jpg");
+      expect(h.ensurePoster).not.toHaveBeenCalled();
+    });
+
+    it("generates a poster when the export has none", async () => {
+      const h = build({
+        assetById: (id) => ({ ...(asset(id) as object), thumbnailKey: "" }),
+      });
+      await h.service.transferVideo({
+        user: USER,
+        sourceGenerationId: SOURCE,
+        assetId: "asset-916",
+      });
+
+      expect(h.ensurePoster).toHaveBeenCalledWith("asset-916");
+      const arg = h.content.createOrGetTransferredVideo.mock.calls[0][0];
+      expect(arg.thumbnailStorageKey).toBe("thumbs/generated-asset-916.jpg");
+    });
+
+    it("transfers anyway when no poster can be produced", async () => {
+      const h = build({
+        assetById: (id) => ({ ...(asset(id) as object), thumbnailKey: "" }),
+        ensurePoster: async () => null,
+      });
+      const result = await h.service.transferVideo({
+        user: USER,
+        sourceGenerationId: SOURCE,
+        assetId: "asset-916",
+      });
+
+      expect(result.content.sourceAssetId).toBe("asset-916");
+      expect(
+        h.content.createOrGetTransferredVideo.mock.calls[0][0].thumbnailStorageKey
+      ).toBeNull();
+    });
+
+    it("repairs an already-transferred item whose thumbnail was never set", async () => {
+      const h = build({ existingItemThumbnail: null });
+      await h.service.transferVideo({
+        user: USER,
+        sourceGenerationId: SOURCE,
+        assetId: "asset-916",
+      });
+
+      // The INSERT was a no-op, so the key can only arrive via UPDATE.
+      expect(h.content.update).toHaveBeenCalledWith("item-asset-916", {
+        thumbnailStorageKey: "thumbs/asset-916.jpg",
+      });
+    });
+
+    it("leaves an already-transferred item's existing thumbnail alone", async () => {
+      const h = build({ existingItemThumbnail: "thumbs/already-there.jpg" });
+      await h.service.transferVideo({
+        user: USER,
+        sourceGenerationId: SOURCE,
+        assetId: "asset-916",
+      });
+
+      expect(h.content.update).not.toHaveBeenCalled();
+    });
   });
 });
 

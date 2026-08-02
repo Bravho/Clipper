@@ -22,6 +22,8 @@ import {
 interface Props {
   requestId: string;
   jobId: string;
+  /** Request-level authoritative place/business name for legacy draft repair. */
+  placeName?: string | null;
   /** Per-channel auto-filled post copy + preview image, editable before posting. */
   initialDrafts: ChannelPublishingDraft[];
   /** The generated (subtitled) video per distribution channel, so each channel's
@@ -144,6 +146,7 @@ function applyChannelPolicies(drafts: ChannelPublishingDraft[]): ChannelPublishi
 export function DistributionReviewPanel({
   requestId,
   jobId,
+  placeName = null,
   initialDrafts,
   channelVideos = [],
   locale,
@@ -186,6 +189,7 @@ export function DistributionReviewPanel({
   const [regenerating, setRegenerating] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const regenerationInFlight = useRef(false);
 
   // Repair pending legacy drafts as soon as review opens. This keeps copy and
   // Management transfer safe without requiring another AI generation.
@@ -281,6 +285,8 @@ export function DistributionReviewPanel({
   // Regenerate copy when the header language differs from the drafts' language.
   const regenerate = useCallback(
     async (targetLocale: AppLocale) => {
+      if (regenerationInFlight.current) return;
+      regenerationInFlight.current = true;
       setRegenerating(true);
       try {
         const res = await fetch(
@@ -298,11 +304,39 @@ export function DistributionReviewPanel({
       } catch {
         /* leave the current copy in place on failure */
       } finally {
+        regenerationInFlight.current = false;
         setRegenerating(false);
       }
     },
     [jobId, requestId, syncEditsFromDrafts]
   );
+
+  // Drafts created before request-level place identity was enforced can contain
+  // another venue from the requester's account profile. Repair those stored
+  // drafts once on load. The regeneration service now derives hashtags from
+  // this request's placeName and keeps posted channels untouched.
+  const attemptedPlaceRepair = useRef(false);
+  useEffect(() => {
+    const expectedTag = (placeName ?? "")
+      .replace(/[#\s]+/g, "")
+      .trim()
+      .normalize("NFKC")
+      .toLowerCase();
+    if (!expectedTag || attemptedPlaceRepair.current || regenerating || mediaExpired) return;
+    if (drafts.some((draft) => draft.status === "posted")) return;
+
+    const hasExpectedPlace = drafts.every((draft) =>
+      (draft.hashtags ?? []).some(
+        (tag) =>
+          tag.replace(/[#\s]+/g, "").trim().normalize("NFKC").toLowerCase() ===
+          expectedTag
+      )
+    );
+    if (hasExpectedPlace) return;
+
+    attemptedPlaceRepair.current = true;
+    void regenerate(headerLocale);
+  }, [drafts, headerLocale, mediaExpired, placeName, regenerate, regenerating]);
 
   // Auto-regenerate on header-language switch (skip already-posted channels).
   useEffect(() => {
@@ -576,29 +610,8 @@ export function DistributionReviewPanel({
                   </div>
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2">
-                    {/* Left: preview image + video + downloads */}
+                    {/* Left: video + the still preview beneath it + downloads */}
                     <div className="space-y-2">
-                      {previewUrl && (
-                        <div>
-                          <div className="flex justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={previewUrl}
-                              alt={`ภาพตัวอย่างสำหรับ ${ch.label}`}
-                              className="max-h-[180px] w-auto object-contain"
-                            />
-                          </div>
-                          {!downloadLocked && (
-                            <a
-                              href={previewUrl}
-                              download={`${ch.label}-cover.jpg`}
-                              className="mt-1 inline-block text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                            >
-                              ดาวน์โหลดภาพปก
-                            </a>
-                          )}
-                        </div>
-                      )}
                       {cv?.url && (
                         <div>
                           <div className="flex max-h-[300px] justify-center overflow-hidden rounded-lg bg-slate-900 p-2">
@@ -618,6 +631,46 @@ export function DistributionReviewPanel({
                             })}
                           </div>
                         </div>
+                      )}
+
+                      {/*
+                        The cover still, BELOW the player. It is also bound to the
+                        <video poster> above, but a poster is only visible until the
+                        browser preloads a frame — so on its own it left this card
+                        looking as though no preview existed. Rendering the image in
+                        its own right is what makes it downloadable and persistent.
+                        When it is missing, say so: a silent blank was exactly what
+                        hid the broken poster pipeline from view.
+                      */}
+                      {previewUrl ? (
+                        <figure>
+                          <div className="flex justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={previewUrl}
+                              alt={`ภาพตัวอย่างสำหรับ ${ch.label}`}
+                              className="max-h-[180px] w-auto object-contain"
+                            />
+                          </div>
+                          <figcaption className="mt-1 flex items-center justify-between gap-2">
+                            <span className="text-[11px] text-slate-400">ภาพปก</span>
+                            {!downloadLocked && (
+                              <a
+                                href={previewUrl}
+                                download={`${ch.label}-cover.jpg`}
+                                className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                              >
+                                ดาวน์โหลดภาพปก
+                              </a>
+                            )}
+                          </figcaption>
+                        </figure>
+                      ) : (
+                        cv?.url && (
+                          <div className="flex h-[90px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">
+                            ยังไม่มีภาพปกสำหรับช่องทางนี้
+                          </div>
+                        )
                       )}
                     </div>
 

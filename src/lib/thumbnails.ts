@@ -184,6 +184,10 @@ export async function generateVideoThumbnail(
       /* unknown duration → grab the first frame */
     }
 
+    // NOTE: a missing binary surfaces here as an ErrnoException with
+    // `code === "ENOENT"`. That is deliberately allowed to propagate UNWRAPPED —
+    // AssetPosterService classifies it as an ops problem (ffmpeg not installed on
+    // this host) rather than a broken clip, which is a distinction worth keeping.
     await execFileAsync(ffmpegPath, [
       "-ss", String(seekSeconds),
       "-i", input,
@@ -193,6 +197,14 @@ export async function generateVideoThumbnail(
     ]);
 
     const frameBuffer = await fs.readFile(output);
+    // ffmpeg can exit 0 having written nothing (e.g. a seek past the end of a
+    // clip whose duration could not be probed). Fail with a clear message here
+    // instead of letting sharp report an opaque decode error further down.
+    if (frameBuffer.byteLength === 0) {
+      throw new Error(
+        `ffmpeg produced an empty frame for ${sourceKey} (seek ${seekSeconds}s)`
+      );
+    }
     // Reuse the image path's resize + <20 KB compression + upload.
     return await compressAndUpload(frameBuffer, destKey);
   } finally {

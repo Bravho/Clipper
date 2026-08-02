@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/Button";
 
 type Phase = "idle" | "starting" | "uploading" | "finishing";
 
+/** Longest edge of the captured poster before it is sent to the server. */
+const POSTER_MAX_EDGE = 640;
+
 /**
  * Bring-your-own-video uploader.
  *
@@ -35,33 +38,108 @@ export function UploadVideoButton({
 
   const busy = phase !== "idle";
 
-  /** Best-effort dimensions/duration read from the file in the browser. */
-  function probeMeta(
-    f: File
-  ): Promise<{ durationSeconds?: number; width?: number; height?: number }> {
+  /**
+   * Best-effort dimensions/duration AND a poster frame, read from the file in
+   * the browser.
+   *
+   * The poster is captured HERE rather than server-side on purpose: the browser
+   * has already decoded the video, so this needs no ffmpeg on the web host and
+   * no second download of a file the user just uploaded. It is the same approach
+   * the requester-side uploader uses, and it is why image assets have always had
+   * thumbnails while uploaded library videos had none.
+   *
+   * Everything is best-effort — a codec the browser cannot decode yields no
+   * poster, and the upload proceeds regardless.
+   */
+  function probeMeta(f: File): Promise<{
+    durationSeconds?: number;
+    width?: number;
+    height?: number;
+    posterDataUrl?: string;
+  }> {
     return new Promise((resolve) => {
+      let settled = false;
+      let url: string | null = null;
+
+      const finish = (
+        meta: {
+          durationSeconds?: number;
+          width?: number;
+          height?: number;
+          posterDataUrl?: string;
+        } = {}
+      ) => {
+        if (settled) return;
+        settled = true;
+        if (url) URL.revokeObjectURL(url);
+        resolve(meta);
+      };
+
       try {
-        const url = URL.createObjectURL(f);
+        url = URL.createObjectURL(f);
         const v = document.createElement("video");
-        v.preload = "metadata";
+        // "auto", not "metadata": some browsers never fire `seeked` — and so never
+        // yield a frame to draw — unless enough data is buffered. The source is a
+        // local blob, so this costs no network.
+        v.preload = "auto";
+        v.muted = true;
+        // Required on iOS Safari, which otherwise refuses to decode frames for
+        // an off-document video element.
+        v.playsInline = true;
+
+        const baseMeta = () => ({
+          durationSeconds: Number.isFinite(v.duration)
+            ? Math.max(1, Math.round(v.duration))
+            : undefined,
+          width: v.videoWidth || undefined,
+          height: v.videoHeight || undefined,
+        });
+
+        // A file the browser can open but never paints would otherwise hang the
+        // upload on its last step; give up and continue without a poster.
+        const timeout = setTimeout(() => finish(baseMeta()), 8000);
+
         v.onloadedmetadata = () => {
-          const meta = {
-            durationSeconds: Number.isFinite(v.duration)
-              ? Math.max(1, Math.round(v.duration))
-              : undefined,
-            width: v.videoWidth || undefined,
-            height: v.videoHeight || undefined,
-          };
-          URL.revokeObjectURL(url);
-          resolve(meta);
+          // Midpoint, not frame zero — many clips open on black or on a fade-in.
+          const target = Number.isFinite(v.duration) && v.duration > 0 ? v.duration / 2 : 0;
+          try {
+            v.currentTime = target;
+          } catch {
+            clearTimeout(timeout);
+            finish(baseMeta());
+          }
         };
+
+        v.onseeked = () => {
+          clearTimeout(timeout);
+          try {
+            const scale = Math.min(
+              1,
+              POSTER_MAX_EDGE / Math.max(v.videoWidth, v.videoHeight)
+            );
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(v.videoWidth * scale));
+            canvas.height = Math.max(1, Math.round(v.videoHeight * scale));
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return finish(baseMeta());
+            ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+            finish({
+              ...baseMeta(),
+              posterDataUrl: canvas.toDataURL("image/jpeg", 0.7),
+            });
+          } catch {
+            // Tainted canvas or a decode failure — metadata is still useful.
+            finish(baseMeta());
+          }
+        };
+
         v.onerror = () => {
-          URL.revokeObjectURL(url);
-          resolve({});
+          clearTimeout(timeout);
+          finish();
         };
         v.src = url;
       } catch {
-        resolve({});
+        finish();
       }
     });
   }

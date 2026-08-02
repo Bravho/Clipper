@@ -1,6 +1,7 @@
 # Preview images missing below the player — analysis + plan
 
-**Status:** plan only, no code written.
+**Status:** Phases 1–5 IMPLEMENTED (2026-08-01). Not yet typechecked or test-run — see
+"Verification owed" at the end.
 **Scope agreed:** full plan, Phases 0–5. Poster stays **server-side (ffmpeg)**, made reliable.
 
 Two UIs show a playable video with no still preview beneath it:
@@ -41,12 +42,16 @@ gated on `video.thumbnailUrl` = `spacesPublicUrl(item.thumbnailStorageKey)`
 Compounding: the "No preview" placeholder is **suppressed** whenever a playable video exists
 (`VideoLibrary.tsx:491-497`), so the failure renders as blank space rather than a visible gap.
 
-### B. Distribution review — the image is generated but never rendered
+### B. Distribution review — the image is generated but was not visible
 
 `_attachChannelPreviews` (`VideoGenerationService.ts:2713-2775`) does extract a per-channel poster
-frame into `draft.previewImageUrl`. `DistributionReviewPanel.tsx:607` binds it **only** to the
-`<video poster>` attribute. There is no `<img>` below the player, and a `poster` disappears the
-moment `preload="metadata"` pulls a frame — so the still is effectively never seen.
+frame into `draft.previewImageUrl`.
+
+> **Correction to the first draft of this analysis.** An `<img>` for it DID already exist — it was
+> rendered *above* the player and gated on `previewUrl`, and in the reported screenshot that value
+> was null. So section B was not purely a rendering bug: the preview genuinely failed to generate,
+> and the only other place the value was used (`<video poster>`) is invisible the moment
+> `preload="metadata"` pulls a frame. Both halves needed fixing.
 
 Secondary: on the no-additional-ratios path `_finalizeAndStartTravy` runs inline in a web request
 (`:2279`), so preview generation executes on the **web droplet**; on the additional-ratios path it
@@ -142,5 +147,41 @@ Distinguishes "call site never ran" from "ffmpeg failed". Aims Phase 1 rather th
 - **Spaces ACL.** Thumbnails are written `public-read` under `thumbnails/` (730-day backstop). If
   the bucket ever blocks public ACLs the `<img>` will 403 rather than be absent — a different
   symptom worth distinguishing during verification.
+---
+
+## 4. What shipped
+
+| File | Change |
+|---|---|
+| `src/services/AssetPosterService.ts` | **New.** `ensureAssetPoster(assetId, baseName?)` — idempotent, never throws, classified `[poster]` logging, skips when `DO_SPACES_BUCKET` is unset. |
+| `src/lib/thumbnails.ts` | ENOENT left unwrapped so it can be classified as "ffmpeg not installed"; explicit error on an empty ffmpeg frame. |
+| `src/services/VideoGenerationService.ts` | `_renderCaptionedRatio` and `_composeRatioExport` both create the asset then call `ensureAssetPoster`; `_attachChannelPreviews` now REUSES that poster instead of extracting a second, duplicate frame. |
+| `src/services/management/ManagementTransferService.ts` | `_posterKeyFor()` generates a poster when the export has none (injectable for tests); repairs an already-transferred item whose `thumbnail_storage_key` is NULL. |
+| `src/features/requests/components/DistributionReviewPanel.tsx` | Cover still moved BELOW the player as a `<figure>` with a download link; dashed placeholder when absent. |
+| `src/features/management/components/VideoLibrary.tsx` | Preview slot always renders; "No preview image" placeholder instead of collapsing to blank. |
+| `src/features/management/components/UploadVideoButton.tsx` | Captures a midpoint frame via canvas (`preload="auto"`, 8s timeout, 640px, q0.7) and sends `posterDataUrl`. |
+| `.../uploads/[contentId]/complete/route.ts` | Validates `posterDataUrl` (data-URL shape, 4 MB cap). |
+| `src/services/management/ManagementUploadService.ts` | Stores it via `storePosterThumbnail` and sets `thumbnail_storage_key`; best-effort. |
+| `scripts/backfill-video-thumbnails.js` | Now covers `final_clip`, not just raw `video` uploads. |
+| `scripts/backfill-management-thumbnails.js` | **New.** Repairs library items with no preview; `--dry-run`, `--limit`. |
+| `tests/services/ManagementTransfer.test.ts` | Five cases covering reuse / generate / give-up / repair / leave-alone. |
+
+## 5. Verification owed
+
+Nothing below could be run from the Linux sandbox — the mount is ~6 MB/s and an `npm install`
+cannot finish inside its per-call limit, so this was reviewed by hand only. Please run:
+
+```bash
+npx tsc --noEmit
+npm test -- tests/services/ManagementTransfer.test.ts
+npm test
+npm run lint
+node scripts/backfill-management-thumbnails.js --dry-run   # against prod, read-only
+```
+
+Then check both pages visually, and confirm `[poster]` does not appear with
+`reason=ffmpeg_missing` in the droplet logs — if it does, the web host still needs ffmpeg and only
+the worker-run paths will produce posters.
+
 - **Toolchain.** The sandbox mount is too slow for tsc/jest; copy `src` to `/tmp` with a minimal
   `npm install` to typecheck and test.

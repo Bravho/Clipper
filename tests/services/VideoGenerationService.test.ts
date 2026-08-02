@@ -30,6 +30,7 @@ import type {
   ScenePlan,
   VideoGenerationJob,
 } from "@/domain/models/VideoGenerationJob";
+import type { BusinessProfile } from "@/domain/models/BusinessProfile";
 
 // ── Mock repositories module (used via `@/repositories/index` singletons) ──
 jest.mock("@/repositories/index", () => ({
@@ -169,10 +170,16 @@ jest.mock("@/lib/ai/chatGptVisionService", () => ({
   generateSceneDesignFromScript: (params: unknown) => mockGenerateSceneDesignFromScript(params),
 }));
 
+const businessProfileGetMock = jest.fn(
+  async (_userId: string): Promise<BusinessProfile | null> => null
+);
+const businessProfileSaveMock = jest.fn(
+  async (..._args: unknown[]): Promise<unknown> => undefined
+);
 jest.mock("@/services/BusinessProfileService", () => ({
   businessProfileService: {
-    getProfile: jest.fn(async () => null),
-    saveProfile: jest.fn(async () => undefined),
+    getProfile: (userId: string) => businessProfileGetMock(userId),
+    saveProfile: (...args: unknown[]) => businessProfileSaveMock(...args),
   },
 }));
 
@@ -912,12 +919,16 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
     instagramUploadMock.mockClear();
     tiktokUploadMock.mockResolvedValue({ platformVideoId: "tt1", platformUrl: "https://www.tiktok.com/@x/video/tt1" });
     youtubeUploadMock.mockResolvedValue({ platformVideoId: "yt1", platformUrl: "https://www.youtube.com/watch?v=yt1" });
+    businessProfileGetMock.mockReset();
+    businessProfileGetMock.mockResolvedValue(null);
+    businessProfileSaveMock.mockReset();
   });
 
-  async function createRequestWithPlatforms(platforms: Platform[]) {
+  async function createRequestWithPlatforms(platforms: Platform[], placeName?: string) {
     const request = await mockClipRepo.create({
       userId: "user-001",
       title: "Phase8 Clip",
+      placeName,
       description: "desc",
       targetAudience: "All",
       targetPlatforms: platforms,
@@ -1054,6 +1065,40 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
     expect(draft.caption).not.toContain("#");
     expect(draft.hashtags).toHaveLength(4);
     expect(composeChannelCopy(draft.caption, draft.hashtags).length).toBeLessThanOrEqual(150);
+  });
+
+  it("uses the request place name for hashtags and rejects an unrelated account profile", async () => {
+    const request = await createRequestWithPlatforms(
+      [Platform.Facebook],
+      "ก๋วยเต๊ยวปู่โย่ง"
+    );
+    const job = await createReviewJob(request.id, {}, []);
+    businessProfileGetMock.mockResolvedValue({
+      id: "profile-1",
+      userId: "user-001",
+      businessName: "ร้านราชรสติ่มซำลำปาง",
+      category: "ร้านอาหาร",
+      location: "ลำปาง",
+      description: null,
+      menuDetails: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const service = new VideoGenerationService();
+    const base = await (
+      service as unknown as {
+        _deriveBaseSet(
+          currentJob: VideoGenerationJob,
+          locale: "th"
+        ): Promise<{ title: string; caption: string; hashtags: string[] }>;
+      }
+    )._deriveBaseSet(job, "th");
+
+    expect(base.hashtags).toEqual(["ก๋วยเต๊ยวปู่โย่ง"]);
+    expect(base.hashtags).not.toContain("ร้านราชรสติ่มซำลำปาง");
+    expect(base.hashtags).not.toContain("ร้านอาหาร");
+    expect(base.hashtags).not.toContain("ลำปาง");
   });
 
   it("rejects an over-limit requester edit instead of autosaving invalid TikTok copy", async () => {

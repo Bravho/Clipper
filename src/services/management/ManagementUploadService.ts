@@ -214,6 +214,8 @@ export class ManagementUploadService {
     width?: number | null;
     height?: number | null;
     originalFilename?: string | null;
+    /** Poster frame captured in the browser, as a base64 image data URL. */
+    posterDataUrl?: string | null;
   }): Promise<ManagementContentItem> {
     const item = await this.content.findById(params.managementContentId);
     if (!item) throw new ManagementUploadError("not_owner", "Upload not found.");
@@ -275,6 +277,21 @@ export class ManagementUploadService {
       },
     ]);
 
+    // Store the browser-captured poster so an uploaded video shows a preview
+    // image in the library exactly like a transferred one. Strictly best-effort:
+    // a failure here must not undo an upload that has already landed, so the
+    // item still goes to `ready` with no thumbnail.
+    const thumbnailStorageKey = await this._storePoster(
+      params.userId,
+      item.id,
+      params.posterDataUrl ?? null
+    );
+    if (thumbnailStorageKey) {
+      await this.content
+        .update(item.id, { thumbnailStorageKey })
+        .catch((err) => console.error(`[poster] upload item=${item.id} persist failed`, err));
+    }
+
     const ready = await this.content.updateStatus(item.id, ManagementContentStatus.Ready);
 
     await this.audit.record("management.upload.completed", {
@@ -284,6 +301,37 @@ export class ManagementUploadService {
     });
 
     return ready;
+  }
+
+  /**
+   * Resize, compress and store a browser-captured poster; returns its Spaces key
+   * or null when there is nothing to store or storing failed.
+   *
+   * `storePosterThumbnail` is imported lazily because it pulls in `sharp`, a
+   * native module with no business in the module graph of an upload request that
+   * may carry no poster at all.
+   */
+  private async _storePoster(
+    userId: string,
+    contentId: string,
+    posterDataUrl: string | null
+  ): Promise<string | null> {
+    if (!posterDataUrl) return null;
+    try {
+      const [{ storePosterThumbnail }, { buildThumbnailKey }] = await Promise.all([
+        import("@/lib/thumbnails"),
+        import("@/lib/spacesKeys"),
+      ]);
+      // The content item id stands in for the request id: an uploaded video has
+      // no clip request, and this keeps every poster under the one `thumbnails/`
+      // prefix (public, exempt from the app purge, 730-day backstop).
+      const key = buildThumbnailKey(userId, contentId, "poster-upload");
+      await storePosterThumbnail(posterDataUrl, key);
+      return key;
+    } catch (err) {
+      console.error(`[poster] upload item=${contentId} reason=generation_failed`, err);
+      return null;
+    }
   }
 }
 

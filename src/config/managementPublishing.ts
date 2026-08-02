@@ -3,14 +3,14 @@
  *
  * WHY THIS EXISTS. One content item is fanned out to several social channels,
  * and the shape a channel wants differs: TikTok is vertical (9:16), YouTube is
- * landscape (16:9), an Instagram feed post is squarish (1:1 / 4:5). The composer
+ * landscape (16:9), an Instagram feed post is portrait (4:5). The composer
  * therefore lets each destination use its own video VARIANT, and this module is
  * the single source of truth for which variants a platform will accept and which
  * one to offer by default.
  *
  * TWO SOURCES, ONE RULE.
  *   * A transferred generation project already carries per-ratio exports
- *     (9:16, 16:9, 1:1, 4:5), so each selected channel is matched to the export
+ *     (9:16, 16:9, 4:5), so each selected channel is matched to the export
  *     that fits it.
  *   * A user upload is ONE video for ONE channel. The uploaded file's aspect
  *     ratio must match the channel it is meant for, and that is checked here.
@@ -27,12 +27,11 @@
 import type { SocialPlatform } from "@/services/social-publishing/types";
 
 /** The video shapes RClipper produces and accepts. */
-export type ManagementAspectRatio = "9:16" | "16:9" | "1:1" | "4:5";
+export type ManagementAspectRatio = "9:16" | "16:9" | "4:5";
 
 export const MANAGEMENT_ASPECT_RATIOS: readonly ManagementAspectRatio[] = [
   "9:16",
   "16:9",
-  "1:1",
   "4:5",
 ] as const;
 
@@ -56,14 +55,14 @@ export function isManagementAspectRatio(v: unknown): v is ManagementAspectRatio 
 const PLATFORM_ACCEPTED_RATIOS: Record<SocialPlatform, readonly ManagementAspectRatio[]> = {
   tiktok: ["9:16"],
   tiktok_business: ["9:16"],
-  instagram: ["9:16", "4:5", "1:1"],
+  instagram: ["9:16", "4:5"],
   youtube: ["16:9", "9:16"],
-  facebook: ["16:9", "9:16", "1:1", "4:5"],
-  x: ["16:9", "1:1", "9:16"],
-  linkedin: ["16:9", "1:1", "9:16", "4:5"],
-  pinterest: ["9:16", "4:5", "1:1"],
-  threads: ["9:16", "4:5", "1:1"],
-  bluesky: ["16:9", "1:1", "9:16"],
+  facebook: ["16:9", "9:16", "4:5"],
+  x: ["16:9", "9:16"],
+  linkedin: ["16:9", "9:16", "4:5"],
+  pinterest: ["9:16", "4:5"],
+  threads: ["9:16", "4:5"],
+  bluesky: ["16:9", "9:16"],
 };
 
 /** The aspect ratios a platform accepts, or an empty list if unknown. */
@@ -155,7 +154,6 @@ export function classifyDimensions(
   const targets: { name: ManagementAspectRatio; value: number }[] = [
     { name: "9:16", value: 9 / 16 },
     { name: "16:9", value: 16 / 9 },
-    { name: "1:1", value: 1 },
     { name: "4:5", value: 4 / 5 },
   ];
 
@@ -168,7 +166,7 @@ export function classifyDimensions(
   }
 
   // ~8 % tolerance — comfortably absorbs real-world rounding without merging
-  // distinct shapes (4:5 = 0.80 and 1:1 = 1.00 are 25 % apart).
+  // distinct shapes (9:16 = 0.5625 and 4:5 = 0.80 are well over 8 % apart).
   if (best && best.delta <= 0.08) return best.name;
   return null;
 }

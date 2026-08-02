@@ -52,7 +52,6 @@ export function getRequiredRatiosForPlatforms(platforms: string[]): VideoRatio[]
       ratios.add("16:9");
     } else if (p === "instagram") {
       ratios.add("4:5");
-      ratios.add("1:1");
     }
   }
   if (ratios.size === 0) {

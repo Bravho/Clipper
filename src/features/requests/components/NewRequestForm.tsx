@@ -287,16 +287,91 @@ async function netFetch(label: string, url: string, init: RequestInit): Promise<
   }
 }
 
+/** A dropped part on a flaky mobile connection surfaces as XHR onerror with an
+ *  empty status → "Failed to fetch" (or a timeout). These are network-layer
+ *  blips, not real rejections from Spaces, so they are safe to retry: re-PUTting
+ *  the same presigned part URL is idempotent within its TTL. A genuine HTTP
+ *  4xx/5xx (e.g. an expired presign → "upload HTTP 403") is NOT matched here and
+ *  is thrown immediately so we don't hammer a truly-failing request. */
+function isTransientNetworkError(msg: string): boolean {
+  return /Failed to fetch|timeout|network error|Load failed|connection|net::/i.test(msg);
+}
+
+/** Snapshot the browser's live network condition. This is the single most useful
+ *  signal for telling upload failures apart: a CORS/preflight block fails INSTANTLY
+ *  with onLine=true, a real connection drop shows onLine flipping false or rtt
+ *  spiking, and a throttled link shows a low downlink. The Network Information API
+ *  is not on every browser (notably Safari/iOS), so this is fully guarded. */
+function connInfo(): string {
+  try {
+    const nav = navigator as Navigator & {
+      connection?: { effectiveType?: string; downlink?: number; rtt?: number; saveData?: boolean };
+    };
+    const online = typeof navigator !== "undefined" ? navigator.onLine : "?";
+    const c = nav.connection;
+    return c
+      ? `onLine=${online} net=${c.effectiveType ?? "?"} down=${c.downlink ?? "?"}Mbps rtt=${c.rtt ?? "?"}ms${c.saveData ? " saveData" : ""}`
+      : `onLine=${online} (no NetworkInformation API)`;
+  } catch {
+    return "conn=?";
+  }
+}
+
+/** Run an upload step with bounded exponential-backoff retries on transient
+ *  network failures. This is what turns a single dropped part on a 4K mobile
+ *  upload (many sequential ≤5 MB PUTs) into an automatic recovery instead of a
+ *  whole-file "Failed to fetch" that forces the user to press the retry button.
+ *  Non-transient errors bubble up on the first occurrence. `label` is threaded
+ *  into the retry log so we can see exactly which part is flaking. */
+async function withNetworkRetry<T>(fn: () => Promise<T>, attempts = 2, label = ""): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (i === attempts - 1 || !isTransientNetworkError(msg)) {
+        console.error(
+          `[upload] ${label} giving up after attempt ${i + 1}/${attempts}: ${msg} — ${connInfo()}`
+        );
+        throw e;
+      }
+      const backoff = 800 * 2 ** i;
+      console.warn(
+        `[upload] ${label} transient error attempt ${i + 1}/${attempts}, retrying in ${backoff}ms: ${msg} — ${connInfo()}`
+      );
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
+
+/** Read a File fully into an in-memory Blob, detached from the on-disk file.
+ *  WHY: on mobile — notably Android/OPPO camera HEVC clips — the file's on-disk
+ *  modification time can shift between selection and the actual PUT (the gallery
+ *  provider re-stats or touches it). Chrome then aborts the upload with
+ *  net::ERR_UPLOAD_FILE_CHANGED, which XHR can only surface as a bare onerror /
+ *  "Failed to fetch" with sent=0 — exactly the symptom seen (one file uploads,
+ *  the next fails instantly on a healthy 4G link). Uploading from an in-memory
+ *  copy removes that send-time re-validation entirely. Done once per file, and
+ *  files upload sequentially, so peak memory is bounded to a single clip. */
+async function materializeFile(file: File): Promise<Blob> {
+  const buf = await file.arrayBuffer();
+  return new Blob([buf], { type: file.type });
+}
+
 /** PUT one blob (whole file or one part), annotating a thrown network error with
  *  the target host so the on-screen failure names it (e.g. Spaces). */
 async function putPart(
   url: string,
   blob: Blob,
   onProgress: (loaded: number, total: number) => void,
-  contentType?: string
+  contentType?: string,
+  ctx = "PUT"
 ): Promise<string> {
   try {
-    return await putBlobWithProgress(url, blob, onProgress, contentType);
+    return await putBlobWithProgress(url, blob, onProgress, contentType, ctx);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     throw new Error(`${hostOf(url)}: ${detail}`);
@@ -318,27 +393,69 @@ function putBlobWithProgress(
   url: string,
   blob: Blob,
   onProgress: (loaded: number, total: number) => void,
-  contentType?: string
+  contentType?: string,
+  ctx = "PUT"
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    const startedAt = Date.now();
+    const elapsed = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+    // Track whether ANY bytes actually left the device before a failure. This is
+    // the key discriminator: a CORS/preflight block fails with sent=0 almost
+    // instantly, whereas a genuine mid-transfer drop fails after sent>0.
+    let sent = 0;
     xhr.open("PUT", url, true);
     if (contentType) xhr.setRequestHeader("Content-Type", contentType);
+    // Bound each part so a dead connection surfaces as a loggable timeout instead
+    // of hanging forever. Scaled to the blob so a slow-but-alive link isn't cut
+    // off: ~40 KB/s floor, minimum 60s (a 5 MB part allows ~125s).
+    xhr.timeout = Math.max(60_000, Math.ceil(blob.size / 40));
     xhr.upload.onprogress = (ev) => {
+      sent = ev.loaded;
       if (ev.lengthComputable) onProgress(ev.loaded, ev.total);
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
+        const etag = xhr.getResponseHeader("ETag") ?? "";
+        console.info(
+          `[upload] ${ctx} OK http=${xhr.status} in ${elapsed()} etag=${etag ? "yes" : "MISSING"} size=${blob.size}B`
+        );
         onProgress(blob.size, blob.size);
-        resolve(xhr.getResponseHeader("ETag") ?? "");
+        resolve(etag);
       } else {
+        // A real HTTP response reached us — status + body ARE the root cause.
+        // 403 = presign expired/invalid or bad signature; 400 with an HTML body =
+        // the ~8-15 MB intermediary/proxy page (see lib/spaces.ts); 4xx AccessDenied
+        // = bucket policy. All far more informative than "Failed to fetch".
+        const body = (xhr.responseText || "").slice(0, 400);
+        const headers = xhr.getAllResponseHeaders().replace(/\r?\n/g, " | ").trim();
+        console.error(
+          `[upload] ${ctx} HTTP ${xhr.status} ${xhr.statusText} in ${elapsed()} sent=${sent}B/${blob.size}B` +
+            `\n  responseHeaders: ${headers}` +
+            `\n  responseBody: ${body}`
+        );
         reject(new Error(`upload HTTP ${xhr.status}`));
       }
     };
-    // Empty-status onerror is the browser blocking the request (CORS/CSP/network)
-    // — the XHR equivalent of fetch()'s "Failed to fetch".
-    xhr.onerror = () => reject(new Error("Failed to fetch"));
-    xhr.ontimeout = () => reject(new Error("upload timeout"));
+    // Empty-status onerror is the browser blocking/aborting the request before any
+    // response — CORS preflight rejection, TLS failure, or a network drop. The
+    // sent-bytes + elapsed + connInfo snapshot below is what tells these apart:
+    //   sent=0 & elapsed≈0 & onLine=true → almost certainly CORS/preflight
+    //   sent>0 (bytes flowed, then died)  → genuine connection drop
+    xhr.onerror = () => {
+      console.error(
+        `[upload] ${ctx} NETWORK-FAIL http=${xhr.status} readyState=${xhr.readyState} ` +
+          `sent=${sent}B/${blob.size}B in ${elapsed()} — ${connInfo()} — ` +
+          `${sent === 0 ? "no bytes left device (suspect ERR_UPLOAD_FILE_CHANGED / file touched on disk, or CORS/preflight/TLS — check the Network tab's net:: reason)" : "bytes flowed then dropped (suspect connection loss)"}`
+      );
+      reject(new Error("Failed to fetch"));
+    };
+    xhr.ontimeout = () => {
+      console.error(
+        `[upload] ${ctx} TIMEOUT after ${elapsed()} sent=${sent}B/${blob.size}B (limit ${xhr.timeout}ms) — ${connInfo()}`
+      );
+      reject(new Error("upload timeout"));
+    };
     xhr.send(blob);
   });
 }
@@ -371,6 +488,13 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // draft's id. canRetry shows the "resume upload" button after a partial failure.
   // resumeInfo shows the banner when a returning user has an unfinished draft.
   const draftIdRef = useRef<string | null>(existingRequestId ?? null);
+  // Per-file in-memory snapshot READ, started at selection while the picker's file
+  // reference is still fresh, keyed by pending-file id. Uploads await THIS promise
+  // (the fresh read) instead of reading the live File at upload time — closing the
+  // race where a fast submit outruns the snapshot, and guaranteeing a file the OS
+  // later makes unreadable (NotReadableError) still uploads from bytes captured
+  // while it was readable. A ref (not state) so it's immune to render/closure timing.
+  const fileBlobPromises = useRef<Map<string, Promise<Blob>>>(new Map());
   const [canRetry, setCanRetry] = useState(false);
   const [resumeInfo, setResumeInfo] = useState<{ uploadedNames: string[] } | null>(
     existingRequestId
@@ -471,6 +595,31 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
     setPendingFiles((prev) => [...prev, ...newItems].slice(0, MAX_UPLOAD_COUNT));
 
+    // Snapshot each accepted file's bytes into memory NOW, while the picker's
+    // reference is fresh. On mobile the OS re-indexes/moves camera clips shortly
+    // after selection, which otherwise makes the live File unreadable minutes
+    // later at upload (NotReadableError) — reading it up front avoids that. The
+    // read promise is stored so the upload awaits THIS read (not a fresh, possibly-
+    // too-late one). A read failure is surfaced immediately so the user can re-pick
+    // the file rather than discovering it mid-upload after a long wait — and it
+    // usually means that specific file isn't fully on the device (a cloud/SD
+    // placeholder), which no retry can fix.
+    for (const item of newItems) {
+      if (item.error) continue;
+      const p = materializeFile(item.file);
+      fileBlobPromises.current.set(item.id, p);
+      p.catch((err) => {
+        console.error(`[upload] snapshot ${item.file.name} failed at selection:`, err);
+        setPendingFiles((prev) =>
+          prev.map((f) =>
+            f.id === item.id
+              ? { ...f, error: "อ่านไฟล์นี้ไม่สำเร็จ (ไฟล์อาจไม่ได้อยู่ในเครื่อง) กรุณาเปิดไฟล์ในแกลเลอรีให้ดาวน์โหลดลงเครื่องก่อน แล้วเลือกใหม่" }
+              : f
+          )
+        );
+      });
+    }
+
     // Generate previews for accepted files: images use an object URL; videos get
     // an async poster-frame capture (data URL) so the grid shows real content.
     for (const item of newItems) {
@@ -522,6 +671,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
   const removeFile = (id: string) => {
     setPendingFiles((prev) => prev.filter((f) => f.id !== id));
+    fileBlobPromises.current.delete(id); // release the in-memory snapshot
   };
 
   // Drop previews for removed files, revoking any blob: object URLs (image
@@ -668,11 +818,22 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       throw new Error(body.error ?? `error ${metaRes.status}`);
     }
     const { assetId, presignedUrl } = await metaRes.json();
-    await putPart(
-      presignedUrl,
-      item.file,
-      (loaded, total) => setItemProgress(item.id, { pct: Math.min(99, Math.round((loaded / total) * 100)) }),
-      item.file.type
+    const ctx = `${item.file.name} single-PUT (${(item.file.size / 1e6).toFixed(1)}MB)`;
+    // Await the selection-time read; fall back to a fresh read only if none exists
+    // (e.g. a resumed draft). Either way the upload runs off in-memory bytes.
+    const body = await (fileBlobPromises.current.get(item.id) ?? materializeFile(item.file));
+    console.info(`[upload] ${ctx} → ${hostOf(presignedUrl)} — ${connInfo()}`);
+    await withNetworkRetry(
+      () =>
+        putPart(
+          presignedUrl,
+          body,
+          (loaded, total) => setItemProgress(item.id, { pct: Math.min(99, Math.round((loaded / total) * 100)) }),
+          item.file.type,
+          ctx
+        ),
+      2,
+      ctx
     );
     return assetId;
   };
@@ -741,39 +902,119 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     }
 
     const { key, uploadId, assetId } = session;
+    // Await the in-memory snapshot READ started at selection (detached from disk) so
+    // no part PUT can be aborted by ERR_UPLOAD_FILE_CHANGED / NotReadableError if the
+    // OS touches the file mid-batch. Fall back to a fresh read only if none exists.
+    const fileBlob = await (fileBlobPromises.current.get(item.id) ?? materializeFile(item.file));
+    console.info(
+      `[upload] ${item.file.name} multipart start: ${(item.file.size / 1e6).toFixed(1)}MB in ${partCount} parts, ` +
+        `${uploadedParts.length} already landed — ${connInfo()}`
+    );
 
-    // 2) Which parts are still missing? Seed progress from the resumed bytes.
-    const done = new Set(uploadedParts.map((p) => p.PartNumber));
+    // 2) Upload the still-missing parts, self-healing across transient outages.
+    //    A marginal mobile connection routinely succeeds on one file and then
+    //    drops part-way through the next (observed: 1 file passes, the next few
+    //    fail). Two layers of recovery keep a whole file from dying on a single
+    //    dropped part:
+    //      • withNetworkRetry re-PUTs an individual part on a blip.
+    //      • the round loop below, if a part still fails, backs off, asks the
+    //        server which parts ACTUALLY landed (resume/ListParts), and re-sends
+    //        only the genuinely-missing ones — up to MAX_ROUNDS times.
+    //    Parts are idempotent, so re-sending never duplicates data, and ListParts
+    //    is the source of truth for ETags so we never trust a part we didn't
+    //    confirm. Only after all rounds are exhausted does the file surface as
+    //    failed (and the manual "retry" button can still resume it later).
     const partBytes = (n: number) => Math.min(partSize, item.file.size - (n - 1) * partSize);
-    let uploadedBytes = 0;
-    for (const p of uploadedParts) uploadedBytes += partBytes(p.PartNumber);
-    const missing: number[] = [];
-    for (let n = 1; n <= partCount; n++) if (!done.has(n)) missing.push(n);
+    const missingParts = (landed: { PartNumber: number }[]): number[] => {
+      const have = new Set(landed.map((p) => p.PartNumber));
+      const out: number[] = [];
+      for (let n = 1; n <= partCount; n++) if (!have.has(n)) out.push(n);
+      return out;
+    };
+    const bytesFor = (landed: { PartNumber: number }[]): number =>
+      landed.reduce((sum, p) => sum + partBytes(p.PartNumber), 0);
+
+    let etags: { PartNumber: number; ETag: string }[] = [...uploadedParts];
+    let missing = missingParts(etags);
+    let uploadedBytes = bytesFor(etags);
     setItemProgress(item.id, { pct: Math.min(99, Math.round((uploadedBytes / item.file.size) * 100)) });
 
-    // 3) Sign + upload only the missing parts.
-    const etags: { PartNumber: number; ETag: string }[] = [...uploadedParts];
-    if (missing.length > 0) {
-      const signRes = await mp("ขอที่อยู่อัปโหลด", { action: "sign", key, uploadId, partNumbers: missing });
-      if (!signRes.ok) {
-        const body = await signRes.json().catch(() => ({}));
-        throw new Error(body.error ?? `error ${signRes.status}`);
-      }
-      const { parts: partUrls } = (await signRes.json()) as {
-        parts: { partNumber: number; url: string }[];
-      };
+    const MAX_ROUNDS = 2;
+    for (let round = 1; missing.length > 0; round++) {
+      console.info(
+        `[upload] ${item.file.name} round ${round}/${MAX_ROUNDS}: ${missing.length} part(s) still missing — ${connInfo()}`
+      );
+      try {
+        const signRes = await mp("ขอที่อยู่อัปโหลด", { action: "sign", key, uploadId, partNumbers: missing });
+        if (!signRes.ok) {
+          const body = await signRes.json().catch(() => ({}));
+          throw new Error(body.error ?? `error ${signRes.status}`);
+        }
+        const { parts: partUrls } = (await signRes.json()) as {
+          parts: { partNumber: number; url: string }[];
+        };
 
-      for (const { partNumber, url } of partUrls) {
-        const start = (partNumber - 1) * partSize;
-        const chunk = item.file.slice(start, Math.min(start + partSize, item.file.size));
-        const etag = await putPart(url, chunk, (loaded) =>
-          setItemProgress(item.id, {
-            pct: Math.min(99, Math.round(((uploadedBytes + loaded) / item.file.size) * 100)),
-          })
+        for (const { partNumber, url } of partUrls) {
+          const start = (partNumber - 1) * partSize;
+          const chunk = fileBlob.slice(start, Math.min(start + partSize, item.file.size));
+          const partCtx = `${item.file.name} part ${partNumber}/${partCount} r${round}`;
+          const etag = await withNetworkRetry(
+            () =>
+              putPart(
+                url,
+                chunk,
+                (loaded) =>
+                  setItemProgress(item.id, {
+                    pct: Math.min(99, Math.round(((uploadedBytes + loaded) / item.file.size) * 100)),
+                  }),
+                undefined,
+                partCtx
+              ),
+            2,
+            partCtx
+          );
+          if (!etag) throw new Error(`ไม่ได้รับ ETag ของส่วนที่ ${partNumber}`);
+          etags.push({ PartNumber: partNumber, ETag: etag });
+          uploadedBytes += chunk.size;
+        }
+        missing = []; // every signed part uploaded — exit the round loop
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (round >= MAX_ROUNDS) {
+          console.error(
+            `[upload] ${item.file.name} FAILED after ${MAX_ROUNDS} rounds (${etags.length}/${partCount} parts landed): ${msg} — ${connInfo()}`
+          );
+          throw err;
+        }
+        console.warn(
+          `[upload] ${item.file.name} round ${round} failed (${msg}); reconciling landed parts then retrying — ${connInfo()}`
         );
-        if (!etag) throw new Error(`ไม่ได้รับ ETag ของส่วนที่ ${partNumber}`);
-        etags.push({ PartNumber: partNumber, ETag: etag });
-        uploadedBytes += chunk.size;
+        // Back off, then reconcile against what actually landed so the next round
+        // re-sends only the genuinely-missing parts.
+        await new Promise((r) => setTimeout(r, 1500 * round));
+        let landed: { PartNumber: number; ETag: string }[] | null = null;
+        try {
+          const res = await mp("ตรวจสอบการอัปโหลดเดิม", { action: "resume", key, uploadId });
+          if (res.ok) {
+            const j = (await res.json()) as {
+              uploadedParts?: { PartNumber: number; ETag: string }[];
+              expired?: boolean;
+            };
+            if (j.expired) throw err; // multipart session gone — give up this file
+            landed = j.uploadedParts ?? [];
+          }
+        } catch (reconcileErr) {
+          if (reconcileErr === err) throw err; // propagate the expired-session case
+          /* transient reconcile failure — ignore and retry the same set next round */
+        }
+        if (landed) {
+          etags = [...landed];
+          missing = missingParts(landed);
+          uploadedBytes = bytesFor(landed);
+          setItemProgress(item.id, {
+            pct: Math.min(99, Math.round((uploadedBytes / item.file.size) * 100)),
+          });
+        }
       }
     }
 
@@ -785,8 +1026,12 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     const completeRes = await mp("รวมไฟล์", { action: "complete", key, uploadId, parts: etags });
     if (!completeRes.ok) {
       const body = await completeRes.json().catch(() => ({}));
+      console.error(
+        `[upload] ${item.file.name} complete/assemble failed: HTTP ${completeRes.status} ${body.error ?? ""}`
+      );
       throw new Error(body.error ?? `error ${completeRes.status}`);
     }
+    console.info(`[upload] ${item.file.name} multipart complete: ${etags.length} parts assembled ✓`);
     clearMpuSession(requestId, sig);
     return assetId;
   };
@@ -846,7 +1091,10 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             : await uploadSingle(requestId, item);
       } catch (uploadErr) {
         const detail = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
-        console.error(`[submit] upload ${item.file.name} failed:`, uploadErr);
+        console.error(
+          `[submit] upload ${item.file.name} failed: ${detail} — ${connInfo()} — scroll up for the per-part [upload] logs that name the root cause`,
+          uploadErr
+        );
         setItemProgress(item.id, { stage: "error" });
         failedUploads.push(`${item.file.name} (อัปโหลดไม่สำเร็จ — ${detail})`);
         continue;

@@ -79,12 +79,6 @@ export function eligibleExportAssetIds(job: VideoGenerationJob): {
       master: job.finalExport_16_9_assetId,
     },
     {
-      variant: "1:1",
-      ratio: "1:1",
-      captioned: job.captionedExport_1_1_assetId,
-      master: job.finalExport_1_1_assetId,
-    },
-    {
       variant: "4:5",
       ratio: "4:5",
       captioned: job.captionedExport_4_5_assetId,

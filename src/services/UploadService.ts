@@ -175,7 +175,14 @@ export class UploadService {
   async sumUploadedBytes(requestId: string): Promise<number> {
     const assets = await uploadedAssetRepository.findByRequestId(requestId);
     return assets
-      .filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted)
+      // Only CONFIRMED (Uploaded) assets count toward the per-request total.
+      // Counting Pending/Failed too made every failed multipart retry leave a
+      // phantom Pending record that still added its full size to the tally, so a
+      // handful of retries on large clips falsely tripped the 500 MB cap with a
+      // 422 on later files ("Total upload size exceeds the 500 MB limit"). Those
+      // records are never actually stored (or are swept from tmp/), so they must
+      // not count.
+      .filter((a) => a.uploadStatus === AssetUploadStatus.Uploaded)
       // Number() guard: some repos surface fileSizeBytes as a string (Postgres
       // BIGINT), and `+` would concatenate rather than add.
       .reduce((sum, a) => sum + (Number(a.fileSizeBytes) || 0), 0);
@@ -646,9 +653,19 @@ export class UploadService {
     await uploadedAssetRepository.deleteByRequestId(requestId);
   }
 
-  /** Count current uploads for a request (for the 5-file limit check). */
+  /**
+   * Count CONFIRMED uploads for a request (for the MAX_UPLOAD_COUNT limit check).
+   *
+   * Only Uploaded assets count. Counting every record made each failed multipart
+   * `initiate` (which creates a Pending asset up front) leave a phantom record
+   * that still counted toward the cap, so a handful of retries on the same draft
+   * eventually tripped "Maximum N files per request." at initiate — blocking the
+   * upload before it even started. Pending/Failed records are never confirmed
+   * stored files, so they must not count. Mirrors sumUploadedBytes().
+   */
   async countAssets(requestId: string): Promise<number> {
-    return uploadedAssetRepository.countByRequestId(requestId);
+    const assets = await uploadedAssetRepository.findByRequestId(requestId);
+    return assets.filter((a) => a.uploadStatus === AssetUploadStatus.Uploaded).length;
   }
 }
 
