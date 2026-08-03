@@ -14,20 +14,20 @@ import { PolicyVersion } from "@/domain/models/PolicyVersion";
 export const CURRENT_POLICY_VERSIONS: Record<PolicyType, PolicyVersion> = {
   [PolicyType.TermsOfService]: {
     type: PolicyType.TermsOfService,
-    version: "1.3.0",
-    effectiveDate: new Date("2026-07-22"),
+    version: "1.4.0",
+    effectiveDate: new Date("2026-08-03"),
     description: "RClipper Terms and Conditions",
   },
   [PolicyType.OwnershipRights]: {
     type: PolicyType.OwnershipRights,
-    version: "1.3.0",
-    effectiveDate: new Date("2026-07-22"),
+    version: "1.4.0",
+    effectiveDate: new Date("2026-08-03"),
     description: "RClipper Content Ownership and Publication Rights Policy",
   },
   [PolicyType.PrivacyPolicy]: {
     type: PolicyType.PrivacyPolicy,
-    version: "1.3.0",
-    effectiveDate: new Date("2026-07-22"),
+    version: "1.4.0",
+    effectiveDate: new Date("2026-08-03"),
     description: "RClipper Privacy Policy",
   },
   [PolicyType.StorageRetention]: {

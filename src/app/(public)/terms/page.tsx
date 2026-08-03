@@ -5,10 +5,10 @@ import { ROUTES } from "@/config/routes";
 
 export const metadata: Metadata = {
   title: "Terms and Conditions — RClipper",
-  description: "RClipper Terms and Conditions — Version 1.3.0",
+  description: "RClipper Terms and Conditions — Version 1.4.0",
 };
 
-const EFFECTIVE_DATE = "22 July 2026";
+const EFFECTIVE_DATE = "3 August 2026";
 
 export default function TermsPage() {
   return (
@@ -19,7 +19,7 @@ export default function TermsPage() {
           RClipper Terms and Conditions
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.3.0 — Effective {EFFECTIVE_DATE}
+          Version 1.4.0 — Effective {EFFECTIVE_DATE}
         </p>
       </div>
 
@@ -92,7 +92,7 @@ export default function TermsPage() {
             <p>
               Not every generated video is published. RClipper may select certain
               reviewed videos for public publication through the “RClipper Channels.”
-              RClipper Channels means the Travy app, Travy.buzz website, and official
+              RClipper Channels means the TravyBuzz app, Travy.buzz website, and official
               accounts owned or controlled by RClipper on Facebook, Instagram,
               TikTok, YouTube, and Xiaohongshu (小红书). Selection is discretionary,
               is not guaranteed, and does not entitle the requester to payment,
@@ -108,10 +108,18 @@ export default function TermsPage() {
               post, place page, listing, caption, search result, map marker, or related
               location feature. RClipper may prepare titles, captions, hashtags,
               subtitles, translations, thumbnails, crops, and technical formats
-              reasonably required for each RClipper Channel.
-              This permission does not authorise paid advertising, publication
-              through accounts that RClipper does not own or control, or unrelated
-              promotional use unless separately disclosed and authorised.
+              reasonably required for each RClipper Channel. RClipper may monetise
+              videos published through the RClipper Channels through platform-displayed
+              advertising, revenue-sharing programmes, creator programmes, subscriptions,
+              gifts, and similar monetisation features. All resulting revenue, including
+              revenue from channels branded as TravyBuzz, belongs exclusively to
+              RClipper, and no revenue share or payment is owed to the requester.
+              Platform monetisation is not considered paid advertising or
+              unrelated promotional use. This permission does not authorise use of the
+              content itself as paid advertising, as an endorsement of an unrelated
+              product or service, publication through accounts that RClipper does not
+              own or control, or publication through other channels unless separately
+              disclosed and authorised.
             </p>
           </section>
 
@@ -157,7 +165,7 @@ export default function TermsPage() {
                 Privacy Policy
               </Link>{" "}
               explains how RClipper handles personal data, media, retention, AI
-              providers, and Travy publication. Material changes to ownership or
+              providers, and TravyBuzz publication. Material changes to ownership or
               publication rights will be presented for renewed acceptance where
               required. Questions may be sent to{" "}
               <a href="mailto:pillarth@gmail.com" className="text-blue-700 underline">

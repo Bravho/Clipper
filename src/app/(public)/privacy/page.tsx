@@ -104,7 +104,7 @@ export default function PrivacyPage() {
             </h2>
             <p>
               Not every generated video is published. RClipper may select a reviewed
-              video for public display through the RClipper Channels: the Travy app,
+              video for public display through the RClipper Channels: the TravyBuzz app,
               Travy.buzz website, and official accounts owned or controlled by
               RClipper on Facebook, Instagram, TikTok, YouTube, and Xiaohongshu
               (小红书). Those platform operators may process published content and
@@ -114,7 +114,7 @@ export default function PrivacyPage() {
               address, selected map location, coordinates, category, business or
               attraction information, and personal data visible or audible in the
               video may become publicly accessible. RClipper may present this
-              information in a Travy post, place page, listing, search result, map
+              information in a TravyBuzz post, place page, listing, search result, map
               marker, or related location feature through the RClipper Channels.
               Public viewers may copy or share
               content outside RClipper&apos;s control.
@@ -136,7 +136,7 @@ export default function PrivacyPage() {
             </h2>
             <p>
               Raw source uploads are associated with the request for which they were
-              supplied and are ordinarily scheduled for deletion 90 days after
+              supplied and are ordinarily scheduled for deletion within 90 days after
               upload, subject to active production, security, legal, dispute, backup,
               and technical requirements. Production records, approval evidence,
               credit records, and policy-acceptance records may be retained for as
