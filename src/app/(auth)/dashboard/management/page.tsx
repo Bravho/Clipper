@@ -218,9 +218,11 @@ export default async function ManagementOverviewPage() {
   const uploadMaxMB = Math.round(MANAGEMENT_UPLOAD_MAX_BYTES / (1024 * 1024));
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
+    <div className="mx-auto w-full min-w-0 max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">{t("management.title")}</h1>
+        <h1 className="break-words text-xl font-bold text-slate-900 sm:text-2xl">
+          {t("management.title")}
+        </h1>
         <p className="mt-1 text-sm text-slate-500">{t("management.subtitle")}</p>
       </header>
 
@@ -233,7 +235,7 @@ export default async function ManagementOverviewPage() {
       </div>
 
       <section>
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-slate-900">วิดิโอของคุณ</h2>
           {access ? (
             <span className="text-xs text-slate-500">

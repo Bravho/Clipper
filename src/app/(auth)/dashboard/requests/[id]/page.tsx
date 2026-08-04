@@ -373,9 +373,9 @@ export default async function RequestDetailPage({
   const isDraft = request.status === RequestStatus.Draft;
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10">
+    <div className="mx-auto w-full min-w-0 max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
       {/* Breadcrumb */}
-      <nav className="mb-6 flex items-center gap-2 text-sm text-slate-500">
+      <nav className="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
         <Link href={ROUTES.DASHBOARD} className="hover:text-slate-700">
           Dashboard
         </Link>
@@ -390,9 +390,11 @@ export default async function RequestDetailPage({
       </nav>
 
       {/* Title + Status */}
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{view.title}</h1>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-bold text-slate-900 sm:text-2xl">
+            {view.title}
+          </h1>
           <p className="mt-1 text-sm text-slate-400">
             {view.submittedAt
               ? `Submitted ${view.submittedAt.toLocaleDateString("en-GB", {

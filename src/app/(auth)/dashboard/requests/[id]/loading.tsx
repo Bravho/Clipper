@@ -1,7 +1,7 @@
 export default function RequestDetailLoading() {
   return (
     <div
-      className="mx-auto max-w-3xl animate-pulse px-4 py-10"
+      className="mx-auto w-full min-w-0 max-w-3xl animate-pulse px-4 py-10"
       role="status"
       aria-label="Loading request details"
     >

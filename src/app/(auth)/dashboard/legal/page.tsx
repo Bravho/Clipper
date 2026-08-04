@@ -11,7 +11,7 @@ export default async function LegalPage() {
   await requireRole(Role.Requester);
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10">
+    <div className="mx-auto w-full min-w-0 max-w-2xl px-4 py-10">
       {/* Breadcrumb */}
       <nav className="mb-6 flex items-center gap-2 text-sm text-slate-500">
         <Link href={ROUTES.DASHBOARD} className="hover:text-slate-700">

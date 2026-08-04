@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import SessionProvider from "./providers";
 import { Navbar } from "@/components/layout/Navbar";
+import { PortalNavProvider } from "@/components/layout/PortalNav";
 import { Footer } from "@/components/layout/Footer";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 import { WebPushRegistration } from "@/components/pwa/WebPushRegistration";
@@ -56,14 +57,19 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className="flex min-h-screen flex-col">
+      <body className="flex min-h-screen w-full flex-col overflow-x-hidden">
         <SessionProvider session={session} locale={locale}>
-          <ServiceWorkerRegister />
-          <WebPushRegistration />
-          <NativeDeepLinkHandler />
-          <Navbar />
-          <main className="flex-1">{children}</main>
-          <Footer />
+          <PortalNavProvider>
+            <ServiceWorkerRegister />
+            <WebPushRegistration />
+            <NativeDeepLinkHandler />
+            <Navbar />
+            {/* min-w-0 lets flex children shrink below their content width,
+                which is what stops wide cards/tables forcing a page-level
+                horizontal scroll on phones. */}
+            <main className="w-full min-w-0 flex-1">{children}</main>
+            <Footer />
+          </PortalNavProvider>
         </SessionProvider>
       </body>
     </html>

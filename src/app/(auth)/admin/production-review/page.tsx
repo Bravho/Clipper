@@ -69,8 +69,8 @@ export default async function ProductionReviewPage() {
             <p className="text-sm text-slate-500">No clips awaiting your review.</p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <table className="w-full min-w-[44rem] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-3">Request</th>
@@ -150,8 +150,8 @@ export default async function ProductionReviewPage() {
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
             Awaiting Publishing Action
           </h2>
-          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <table className="w-full min-w-[44rem] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-3">Request</th>

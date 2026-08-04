@@ -38,7 +38,7 @@ export default async function ManagementConnectionsPage() {
         aria-hidden="true"
       />
 
-      <div className="relative mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+      <div className="relative mx-auto w-full min-w-0 max-w-5xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
         <header className="mb-7 flex items-start gap-4">
           <span className="hidden h-12 w-12 flex-none items-center justify-center rounded-2xl bg-blue-700 text-white shadow-lg shadow-blue-700/20 sm:flex">
             <ConnectionsIcon className="h-6 w-6" />

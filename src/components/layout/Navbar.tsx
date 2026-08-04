@@ -3,13 +3,14 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useSession, signOut } from "next-auth/react";
-import { useState } from "react";
-import { clsx } from "clsx";
+import { useCallback, useState } from "react";
 import { ROUTES } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { LanguageSelector } from "@/components/layout/LanguageSelector";
+import { MobileNavDrawer } from "@/components/layout/MobileNavDrawer";
+import { usePortalNav } from "@/components/layout/PortalNav";
 import { useI18n } from "@/i18n/client";
 
 const roleBadgeVariant: Record<Role, "blue" | "green" | "red"> = {
@@ -24,44 +25,47 @@ export function Navbar() {
   const isLoading = status === "loading";
   const user = session?.user;
 
-  const dashboardHref =
-    user?.role === Role.Admin
-      ? ROUTES.ADMIN
-      : ROUTES.DASHBOARD;
+  // Section navigation registered by the active portal shell (requester
+  // sidebar, admin nav). On desktop those render in their own surface; on
+  // mobile they fold into this hamburger so nothing becomes unreachable.
+  const portalSections = usePortalNav();
+
+  const closeDrawer = useCallback(() => setMobileOpen(false), []);
+
+  const dashboardHref = user?.role === Role.Admin ? ROUTES.ADMIN : ROUTES.DASHBOARD;
 
   return (
-    <nav className="border-b border-slate-200 bg-slate-900">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between">
-          {/* Logo */}
-          <Link href={ROUTES.HOME} className="flex items-center gap-2">
-            <Image src="/logo.png" alt="RClipper logo" width={36} height={36} className="rounded" />
-            <span className="text-xl font-bold tracking-tight text-white">
+    <nav className="app-safe-top sticky top-0 z-30 border-b border-slate-700 bg-slate-900">
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex h-14 items-center justify-between gap-3 sm:h-16">
+          {/* Logo — allowed to shrink so it never pushes the hamburger off-screen */}
+          <Link href={ROUTES.HOME} className="flex min-w-0 items-center gap-2">
+            <Image
+              src="/logo.png"
+              alt="RClipper logo"
+              width={36}
+              height={36}
+              className="h-8 w-8 flex-shrink-0 rounded sm:h-9 sm:w-9"
+            />
+            <span className="truncate text-lg font-bold tracking-tight text-white sm:text-xl">
               RClipper
             </span>
           </Link>
 
-          {/* Desktop nav */}
-          <div className="hidden items-center gap-4 md:flex">
+          {/* Desktop nav — only from lg up, because the tablet width still needs
+              the drawer to reach the section links. */}
+          <div className="hidden items-center gap-4 lg:flex">
             {isLoading ? null : user ? (
               <>
-                <Link
-                  href={dashboardHref}
-                  className="text-sm text-slate-300 hover:text-white"
-                >
+                <Link href={dashboardHref} className="text-sm text-slate-300 hover:text-white">
                   {t("nav.dashboard")}
                 </Link>
-                <Link
-                  href={ROUTES.ACCOUNT}
-                  className="text-sm text-slate-300 hover:text-white"
-                >
+                <Link href={ROUTES.ACCOUNT} className="text-sm text-slate-300 hover:text-white">
                   {t("nav.account")}
                 </Link>
-                <div className="flex items-center gap-3 pl-4 border-l border-slate-700">
-                  <Badge variant={roleBadgeVariant[user.role]}>
-                    {user.role}
-                  </Badge>
-                  <span className="text-sm text-slate-400 max-w-[160px] truncate">
+                <div className="flex items-center gap-3 border-l border-slate-700 pl-4">
+                  <Badge variant={roleBadgeVariant[user.role]}>{user.role}</Badge>
+                  <span className="max-w-[160px] truncate text-sm text-slate-400">
                     {user.name}
                   </span>
                   <Button
@@ -77,10 +81,7 @@ export function Navbar() {
               </>
             ) : (
               <>
-                <Link
-                  href={ROUTES.LOGIN}
-                  className="text-sm text-slate-300 hover:text-white"
-                >
+                <Link href={ROUTES.LOGIN} className="text-sm text-slate-300 hover:text-white">
                   {t("nav.signIn")}
                 </Link>
                 <Link href={ROUTES.SIGNUP}>
@@ -91,56 +92,83 @@ export function Navbar() {
             )}
           </div>
 
-          {/* Mobile menu button */}
+          {/* Mobile / tablet menu button — 44px hit target per iOS HIG */}
           <button
-            className="md:hidden text-slate-300 hover:text-white"
+            type="button"
+            className="-mr-2 flex-shrink-0 rounded p-2.5 text-slate-300 hover:bg-slate-800 hover:text-white lg:hidden"
             onClick={() => setMobileOpen((v) => !v)}
             aria-label="Toggle menu"
+            aria-expanded={mobileOpen}
           >
             <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              {mobileOpen ? (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              )}
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16"
+              />
             </svg>
           </button>
         </div>
       </div>
 
-      {/* Mobile dropdown */}
-      {mobileOpen && (
-        <div className="border-t border-slate-700 bg-slate-900 px-4 py-3 md:hidden">
-          {user ? (
-            <div className="flex flex-col gap-3">
-              <span className="text-sm text-slate-400">{user.name}</span>
-              <Link href={dashboardHref} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                {t("nav.dashboard")}
-              </Link>
-              <Link href={ROUTES.ACCOUNT} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                {t("nav.account")}
-              </Link>
-              <button
-                onClick={() => signOut({ callbackUrl: ROUTES.HOME })}
-                className="text-left text-sm text-red-400 hover:text-red-300"
-              >
-                {t("nav.signOut")}
-              </button>
+      <MobileNavDrawer open={mobileOpen} onClose={closeDrawer} sections={portalSections}>
+        {user ? (
+          <>
+            <div className="flex items-center gap-2 px-3 pb-2">
+              <Badge variant={roleBadgeVariant[user.role]}>{user.role}</Badge>
+              <span className="min-w-0 truncate text-sm text-slate-400">{user.name}</span>
+            </div>
+            <Link
+              href={dashboardHref}
+              className="rounded-md px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
+              onClick={closeDrawer}
+            >
+              {t("nav.dashboard")}
+            </Link>
+            <Link
+              href={ROUTES.ACCOUNT}
+              className="rounded-md px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
+              onClick={closeDrawer}
+            >
+              {t("nav.account")}
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                closeDrawer();
+                signOut({ callbackUrl: ROUTES.HOME });
+              }}
+              className="rounded-md px-3 py-2.5 text-left text-sm text-red-400 hover:bg-slate-800 hover:text-red-300"
+            >
+              {t("nav.signOut")}
+            </button>
+            <div className="px-3 pt-3">
               <LanguageSelector />
             </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <Link href={ROUTES.LOGIN} className="text-sm text-slate-300" onClick={() => setMobileOpen(false)}>
-                {t("nav.signIn")}
-              </Link>
-              <Link href={ROUTES.SIGNUP} className="text-sm text-blue-400" onClick={() => setMobileOpen(false)}>
-                {t("nav.getStarted")}
-              </Link>
+          </>
+        ) : (
+          <>
+            <Link
+              href={ROUTES.LOGIN}
+              className="rounded-md px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
+              onClick={closeDrawer}
+            >
+              {t("nav.signIn")}
+            </Link>
+            <Link
+              href={ROUTES.SIGNUP}
+              className="rounded-md px-3 py-2.5 text-sm text-blue-400 hover:bg-slate-800"
+              onClick={closeDrawer}
+            >
+              {t("nav.getStarted")}
+            </Link>
+            <div className="px-3 pt-3">
               <LanguageSelector />
             </div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+      </MobileNavDrawer>
     </nav>
   );
 }

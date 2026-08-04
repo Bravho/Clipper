@@ -193,8 +193,8 @@ export default async function AdminWorkloadPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <table className="w-full min-w-[44rem] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-3">Staff</th>
@@ -311,8 +311,8 @@ export default async function AdminWorkloadPage() {
           <h2 className="text-sm font-semibold uppercase tracking-wider text-red-400">
             Overdue Requests
           </h2>
-          <div className="overflow-hidden rounded-lg border border-red-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-red-200 bg-white">
+            <table className="w-full min-w-[44rem] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-3">Request</th>

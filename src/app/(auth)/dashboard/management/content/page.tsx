@@ -140,7 +140,7 @@ export default async function ManagementContentPage() {
   const uploadMaxMB = Math.round(MANAGEMENT_UPLOAD_MAX_BYTES / (1024 * 1024));
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8">
+    <div className="mx-auto w-full min-w-0 max-w-4xl px-4 py-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">วิดิโอของคุณ</h1>

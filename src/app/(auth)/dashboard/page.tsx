@@ -28,27 +28,32 @@ export default async function DashboardPage() {
   const canSubmit = trialAvailable || canAfford;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-10">
-      {/* Header */}
-      <div className="mb-8 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+    <div className="mx-auto w-full min-w-0 max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
+      {/* Header — stacks on phones so the CTAs never overflow the viewport. */}
+      <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-bold text-slate-900 sm:text-2xl">
             {t("dashboard.welcome", { name: user.name.split(" ")[0] })}
           </h1>
-          <p className="mt-1 text-slate-500">
+          <p className="mt-1 text-sm text-slate-500 sm:text-base">
             {t("dashboard.subtitle")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
           {trialAvailable && (
-            <Link href={ROUTES.REQUESTS_NEW}>
-              <Button className="bg-green-600 hover:bg-green-700">
+            <Link href={ROUTES.REQUESTS_NEW} className="min-w-0 flex-1 sm:flex-none">
+              <Button fullWidth className="bg-green-600 hover:bg-green-700 sm:w-auto">
                 {t("dashboard.freeTrial")}
               </Button>
             </Link>
           )}
-          <Link href={ROUTES.REQUESTS_NEW}>
-            <Button variant={trialAvailable ? "outline" : undefined} disabled={!canSubmit}>
+          <Link href={ROUTES.REQUESTS_NEW} className="min-w-0 flex-1 sm:flex-none">
+            <Button
+              fullWidth
+              variant={trialAvailable ? "outline" : undefined}
+              disabled={!canSubmit}
+              className="sm:w-auto"
+            >
               {t("dashboard.newRequest")}
             </Button>
           </Link>
@@ -56,13 +61,15 @@ export default async function DashboardPage() {
       </div>
 
       {/* Credits + Stats */}
-      <div className="mb-8 grid gap-4 sm:grid-cols-3">
-        <div className="flex items-center gap-4 rounded-xl border border-blue-200 bg-blue-50 p-5">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-700 text-white font-bold text-lg">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:mb-8 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="flex items-center gap-4 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:col-span-2 sm:p-5 lg:col-span-1">
+          {/* Pill rather than a fixed circle: large balances (e.g. 25,204)
+              would otherwise spill outside a 48px round badge. */}
+          <div className="flex h-12 min-w-[3rem] flex-shrink-0 items-center justify-center rounded-full bg-blue-700 px-3 text-base font-bold tabular-nums text-white">
             {summary.creditBalance}
           </div>
-          <div>
-            <p className="font-semibold text-blue-900">
+          <div className="min-w-0">
+            <p className="break-words font-semibold text-blue-900">
               {t("dashboard.credits", { count: summary.creditBalance })}
             </p>
             <Link href={ROUTES.CREDITS}>
@@ -207,10 +214,10 @@ export default async function DashboardPage() {
           <div className="flex flex-col gap-3">
             {summary.recentlyDelivered.map((row) => (
               <Link key={row.id} href={requestDetailPath(row.id)}>
-                <Card className="cursor-pointer transition-shadow hover:shadow-md">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-slate-900">{row.title}</p>
+                <Card padding="sm" className="cursor-pointer transition-shadow hover:shadow-md sm:p-6">
+                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                    <div className="min-w-0">
+                      <p className="break-words font-medium text-slate-900">{row.title}</p>
                       <p className="text-xs text-slate-400">
                         {t("dashboard.deliveredOn", { date: row.deliveredAt.toLocaleDateString(
                           locale === "th" ? "th-TH" : locale === "vi" ? "vi-VN" : "en-GB", {
@@ -220,7 +227,7 @@ export default async function DashboardPage() {
                         }) })}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-shrink-0 items-center gap-2">
                       <Badge variant="green">{t("dashboard.delivered")}</Badge>
                       <span className="text-xs text-slate-500">
                         {t("dashboard.links", { count: row.linkCount })}

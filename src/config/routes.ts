@@ -16,6 +16,8 @@ export const ROUTES = {
   TERMS: "/terms",
   OWNERSHIP: "/ownership",
   PRIVACY: "/privacy",
+  SUPPORT: "/support",
+  DELETE_ACCOUNT: "/delete-account",
 
   // Email verification
   VERIFY_EMAIL: "/verify-email",

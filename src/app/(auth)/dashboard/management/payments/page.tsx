@@ -43,7 +43,7 @@ export default async function ManagementPaymentsPage({
   ]);
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8">
+    <div className="mx-auto w-full min-w-0 max-w-4xl px-4 py-8">
       <header className="mb-6">
         <Link
           href={returnTo}

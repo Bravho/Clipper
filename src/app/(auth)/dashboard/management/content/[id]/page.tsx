@@ -73,7 +73,7 @@ export default async function ManagementComposerPage({
     }));
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="mx-auto w-full min-w-0 max-w-3xl px-4 py-8">
       <header className="mb-6">
         <Link
           href={ROUTES.MANAGEMENT_CONTENT}

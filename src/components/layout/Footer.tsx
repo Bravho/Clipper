@@ -18,7 +18,10 @@ export function Footer() {
               {t("footer.tagline")}
             </span>
           </div>
-          <nav className="flex gap-4 text-sm text-slate-500">
+          <nav className="flex flex-wrap justify-center gap-4 text-sm text-slate-500">
+            <Link href={ROUTES.SUPPORT} className="hover:text-slate-900">
+              {t("footer.support")}
+            </Link>
             <Link href={ROUTES.TERMS} className="hover:text-slate-900">
               {t("footer.terms")}
             </Link>

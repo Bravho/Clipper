@@ -72,17 +72,21 @@ export default async function RequestsPage({
   const drafts = allRequests.filter((r) => r.status === RequestStatus.Draft);
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-10">
+    <div className="mx-auto w-full min-w-0 max-w-4xl px-4 py-6 sm:px-6 sm:py-10">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">คำขอของฉัน</h1>
-          <p className="mt-1 text-slate-500 text-sm">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-bold text-slate-900 sm:text-2xl">
+            คำขอของฉัน
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
             {allRequests.length} คำขอทั้งหมด
           </p>
         </div>
-        <Link href={ROUTES.REQUESTS_NEW}>
-          <Button disabled={!canAfford}>+ คำขอใหม่</Button>
+        <Link href={ROUTES.REQUESTS_NEW} className="sm:flex-shrink-0">
+          <Button fullWidth disabled={!canAfford} className="sm:w-auto">
+            + คำขอใหม่
+          </Button>
         </Link>
       </div>
 
