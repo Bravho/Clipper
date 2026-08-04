@@ -47,12 +47,12 @@ Register a custom URL scheme / App Link / Universal Link and add the callback to
 NextAuth's allowed redirect URLs. Test the full sign-in and payment-redirect
 round trips on device before store submission.
 
-## 5. Native features to wire (installed, not yet integrated)
+## 5. Native features
 
-- `@capacitor/push-notifications` — request-status + staff alerts (needs FCM/APNs
-  + a server token registry).
-- `@capacitor/camera`, `@capacitor/share`, `@capacitor/network`,
-  `@capacitor/status-bar`, `@capacitor/splash-screen`, `@capacitor/preferences`.
+- Android uses camera, share, network, status-bar, splash-screen, preferences,
+  filesystem, browser, and Google Play Billing integrations.
+- Native Android push is intentionally not included, so Firebase/FCM and
+  `google-services.json` are not required for the Play build.
 
 ## 6. Store compliance
 

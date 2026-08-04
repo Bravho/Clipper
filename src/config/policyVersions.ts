@@ -14,8 +14,8 @@ import { PolicyVersion } from "@/domain/models/PolicyVersion";
 export const CURRENT_POLICY_VERSIONS: Record<PolicyType, PolicyVersion> = {
   [PolicyType.TermsOfService]: {
     type: PolicyType.TermsOfService,
-    version: "1.4.0",
-    effectiveDate: new Date("2026-08-03"),
+    version: "1.5.0",
+    effectiveDate: new Date("2026-08-04"),
     description: "RClipper Terms and Conditions",
   },
   [PolicyType.OwnershipRights]: {

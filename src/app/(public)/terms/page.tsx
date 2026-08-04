@@ -5,10 +5,10 @@ import { ROUTES } from "@/config/routes";
 
 export const metadata: Metadata = {
   title: "Terms and Conditions — RClipper",
-  description: "RClipper Terms and Conditions — Version 1.4.0",
+  description: "RClipper Terms and Conditions — Version 1.5.0",
 };
 
-const EFFECTIVE_DATE = "3 August 2026";
+const EFFECTIVE_DATE = "4 August 2026";
 
 export default function TermsPage() {
   return (
@@ -19,7 +19,7 @@ export default function TermsPage() {
           RClipper Terms and Conditions
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.4.0 — Effective {EFFECTIVE_DATE}
+          Version 1.5.0 — Effective {EFFECTIVE_DATE}
         </p>
       </div>
 
@@ -38,7 +38,21 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              2. Trial video and credits
+              2. Eligibility and minors
+            </h2>
+            <p>
+              You must be at least 13 years old to use RClipper. If you are under
+              the age of legal majority where you live, you may use the service
+              only with permission from a parent or legal guardian, including
+              permission for purchases and submission of media. A parent or legal
+              guardian who permits a minor to use RClipper is responsible for that
+              minor&apos;s use of the service and compliance with these Terms.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-slate-900">
+              3. Trial video and credits
             </h2>
             <p>
               If the interface identifies a request as an eligible free trial,
@@ -54,7 +68,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              3. Your uploaded materials
+              4. Your uploaded materials
             </h2>
             <p>
               You must own or have all licences, releases, consents, and permissions
@@ -70,7 +84,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              4. Ownership and licences
+              5. Ownership and licences
             </h2>
             <p>
               You retain ownership of your original uploaded materials. RClipper owns
@@ -87,7 +101,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              5. Selection for RClipper Channels
+              6. Selection for RClipper Channels
             </h2>
             <p>
               Not every generated video is published. RClipper may select certain
@@ -125,7 +139,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              6. Review, moderation, and removal
+              7. Review, moderation, and removal
             </h2>
             <p>
               RClipper may review, decline, unpublish, or remove content at any time
@@ -143,7 +157,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              7. Service availability and liability
+              8. Service availability and liability
             </h2>
             <p>
               Production estimates are targets rather than guarantees. To the extent
@@ -157,7 +171,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              8. Privacy, changes, and contact
+              9. Privacy, changes, and contact
             </h2>
             <p>
               The{" "}

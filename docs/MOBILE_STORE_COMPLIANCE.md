@@ -1,9 +1,9 @@
 # Mobile store compliance setup
 
 The repository implements the code paths required for native camera capture,
-actionable push notifications, StoreKit / Google Play Billing, AI-content
-reporting, and public account-deletion requests. Store-console configuration and
-signed-device testing are still required before submission.
+StoreKit / Google Play Billing, AI-content reporting, and public account-deletion
+requests. Store-console configuration and signed-device testing are still
+required before submission.
 
 ## 1. Database
 
@@ -40,13 +40,18 @@ Stripe remains available on the website. Native builds append
 `RClipperNative/<platform>` to the user agent, hide Stripe checkout, and the
 Stripe top-up API rejects native requests.
 
-## 3. Push
+## 3. Push (iOS or a future Android release only)
 
-Configure:
+The current Android Play build does not register for native push notifications
+and therefore does not require Firebase, FCM, `google-services.json`, or the
+Google Services Gradle plugin. Do not add Firebase configuration to the Android
+project merely for Play Console submission.
+
+If native push is added in a future release, configure:
 
 - APNs token key, team ID, bundle ID, and production/sandbox environment.
-- Firebase project, Android app, `google-services.json`, and an FCM HTTP v1
-  service account.
+- For Android only: a Firebase project, Android app, `google-services.json`, and
+  an FCM HTTP v1 service account.
 - The iOS Push Notifications capability and provisioning profile.
 
 The user sees an explanatory prompt before the OS permission prompt. Tokens are
@@ -83,7 +88,8 @@ so they cannot be generated safely from repository defaults.
 
 - Camera allowed, denied, and later enabled from Settings.
 - Library selection, large files, interrupted upload, retry, and duplicates.
-- Notification foreground/background/terminated behavior and exact request link.
+- If native push is enabled for the release: notification
+  foreground/background/terminated behavior and exact request link.
 - Store sandbox/internal-track purchase, cancellation, pending payment, network
   failure after purchase, retry, duplicate callback, refund, and repurchase.
 - Account deletion for password, Google, and Apple accounts.

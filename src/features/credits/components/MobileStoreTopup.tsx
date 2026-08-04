@@ -20,18 +20,6 @@ interface Props {
   minimumTopupCredits?: number;
 }
 
-interface UnfinishedStoreTransaction {
-  transactionId: string;
-  productIdentifier: string;
-}
-
-const IOSPurchases = NativePurchases as typeof NativePurchases & {
-  getUnfinishedTransactions(): Promise<{
-    transactions: UnfinishedStoreTransaction[];
-  }>;
-  finishTransaction(options: { transactionId: string }): Promise<void>;
-};
-
 export function MobileStoreTopup({
   currentBalance = 0,
   unlockRequestId,
@@ -82,22 +70,9 @@ export function MobileStoreTopup({
       throw new Error(result.error || "Store verification failed.");
     }
     if (purchase.platform === "ios") {
-      try {
-        await IOSPurchases.finishTransaction({
-          transactionId: purchase.transactionId,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        // During rollout, an older installed binary may load this newer web UI.
-        // That plugin already finishes purchases itself, so only its missing-method
-        // error is safe to ignore. New binaries retain every other failure for retry.
-        if (!/not implemented|does not have an implementation/i.test(message)) {
-          throw err;
-        }
-        console.warn("[Clipper][iap] native transaction finish unavailable", {
-          message,
-        });
-      }
+      await NativePurchases.acknowledgePurchase({
+        purchaseToken: purchase.transactionId,
+      });
     }
     window.localStorage.removeItem(pendingKey);
     return {
@@ -182,8 +157,11 @@ export function MobileStoreTopup({
 
   useEffect(() => {
     if (getMobilePlatform() !== "ios") return;
-    void IOSPurchases.getUnfinishedTransactions()
-      .then(async ({ transactions }) => {
+    void NativePurchases.getPurchases({
+      productType: PURCHASE_TYPE.INAPP,
+      onlyCurrentEntitlements: true,
+    })
+      .then(async ({ purchases: transactions }) => {
         console.info("[Clipper][iap] unfinished store transactions", {
           count: transactions.length,
           productIds: transactions.map((item) => item.productIdentifier),
@@ -251,11 +229,20 @@ export function MobileStoreTopup({
         productIdentifier: product.identifier,
         productType: PURCHASE_TYPE.INAPP,
         quantity: 1,
+        isConsumable: false,
+        autoAcknowledgePurchases: false,
       });
+      const storeTransactionId =
+        platform === "android"
+          ? transaction.purchaseToken
+          : transaction.transactionId;
+      if (!storeTransactionId) {
+        throw new Error("Store did not return a verifiable transaction token.");
+      }
       const pending = {
         platform,
         productId: product.identifier,
-        transactionId: transaction.transactionId,
+        transactionId: storeTransactionId,
       };
       window.localStorage.setItem(pendingKey, JSON.stringify(pending));
       const { creditsGranted, alreadyProcessed } = await verifyTransaction(pending);
