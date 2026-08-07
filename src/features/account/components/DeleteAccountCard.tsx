@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { signOut } from "next-auth/react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ROUTES } from "@/config/routes";
+import { signOutEverywhere } from "@/lib/mobile/signOutEverywhere";
 
 interface DeleteAccountCardProps {
   /** True when the account signs in with email/password (password re-verify). */
@@ -43,8 +43,9 @@ export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
         setLoading(false);
         return;
       }
-      // Account is gone — end the session immediately.
-      await signOut({ callbackUrl: ROUTES.HOME });
+      // Account is gone — end the session immediately, and clear the native
+      // credential state too so a re-signup shows the account picker.
+      await signOutEverywhere(ROUTES.HOME);
     } catch {
       setError("ไม่สามารถเชื่อมต่อได้ กรุณาลองอีกครั้ง");
       setLoading(false);

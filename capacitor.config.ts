@@ -23,9 +23,12 @@ const config: CapacitorConfig = {
   server: {
     url: serverUrl,
     cleartext: false,
-    // Keep third-party identity providers out of WKWebView. Google blocks OAuth
-    // authorization in embedded user agents; startOAuth() opens the provider in
-    // the system Safari authentication surface instead.
+    // Third-party identity providers are never loaded in the WebView: Google
+    // blocks OAuth in embedded user agents. Sign-in is handled natively instead
+    // (Credential Manager / ASAuthorizationController) — a Custom Tab or
+    // SFSafariViewController cannot be used because neither shares a cookie jar
+    // with the WebView, so the session would land in the browser and the app
+    // would stay signed out. See docs/NATIVE_SIGN_IN.md.
     allowNavigation: [
       "app.rclipper.com",
       "*.rclipper.com",

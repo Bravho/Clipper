@@ -33,6 +33,7 @@
     "@capacitor/share": "^8.0.0",
     "@capacitor/splash-screen": "^8.0.0",
     "@capacitor/status-bar": "^8.0.0",
+    "@capgo/capacitor-social-login": "^8.3.40",
     "@capgo/native-purchases": "^8.6.4",
     "@google/genai": "^1.51.0",
     "@hookform/resolvers": "^3.3.4",

@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useSession, signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useCallback, useState } from "react";
 import { ROUTES } from "@/config/routes";
+import { signOutEverywhere } from "@/lib/mobile/signOutEverywhere";
 import { Role } from "@/domain/enums/Role";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -71,7 +72,7 @@ export function Navbar() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => signOut({ callbackUrl: ROUTES.HOME })}
+                    onClick={() => void signOutEverywhere(ROUTES.HOME)}
                     className="border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
                   >
                     {t("nav.signOut")}
@@ -137,7 +138,7 @@ export function Navbar() {
               type="button"
               onClick={() => {
                 closeDrawer();
-                signOut({ callbackUrl: ROUTES.HOME });
+                void signOutEverywhere(ROUTES.HOME);
               }}
               className="rounded-md px-3 py-2.5 text-left text-sm text-red-400 hover:bg-slate-800 hover:text-red-300"
             >

@@ -7,6 +7,74 @@ import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { authService } from "@/services/AuthService";
 import { ROUTES, getRoleHomePath } from "@/config/routes";
 import { logAuthEvent } from "@/lib/auth/diagnostics";
+import { verifyGoogleIdToken } from "@/lib/auth/googleIdToken";
+import { verifyAppleIdToken } from "@/lib/auth/appleIdToken";
+
+/**
+ * Provider ids used by the native in-app sign-in flows (Android Credential
+ * Manager, iOS ASAuthorizationController).
+ *
+ * They are Credentials providers rather than the OAuth providers because the
+ * authorization step already happened natively — the app hands us an ID token,
+ * verified here against the issuer's JWKS, instead of an authorization code.
+ *
+ * These exist because Chrome Custom Tabs and SFSafariViewController do not share
+ * a cookie jar with the Capacitor WebView, so the redirect flow signs the user
+ * in *in the browser* and leaves the app signed out.
+ */
+export const GOOGLE_NATIVE_PROVIDER_ID = "google-native";
+export const APPLE_NATIVE_PROVIDER_ID = "apple-native";
+
+/**
+ * Shared authorize() body for the native providers: verify the ID token, then
+ * resolve it through the exact same account logic the redirect flow uses, so a
+ * user who signed up on the web lands on the identical account in the app.
+ *
+ * Returns `null` (rather than throwing) on verification failure so NextAuth
+ * reports a generic CredentialsSignin error and no detail leaks to the client.
+ * `findOrCreateOAuthUser` is deliberately left to throw — "AccountDeleted" is a
+ * message the UI needs to surface.
+ */
+async function authorizeNativeIdToken({
+  providerId,
+  authProvider,
+  verify,
+}: {
+  providerId: string;
+  authProvider: AuthProvider.Google | AuthProvider.Apple;
+  verify: () => Promise<{
+    providerAccountId: string;
+    email: string;
+    name: string;
+  }>;
+}) {
+  let identity: Awaited<ReturnType<typeof verify>>;
+  try {
+    identity = await verify();
+  } catch (error) {
+    logAuthEvent("native_signin_rejected", {
+      providerId,
+      reason: error instanceof Error ? error.message : "verification_error",
+    });
+    return null;
+  }
+
+  const user = await authService.findOrCreateOAuthUser(authProvider, identity);
+
+  logAuthEvent("native_signin_accepted", {
+    providerId,
+    userId: user.id,
+    role: user.role,
+  });
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    provider: authProvider,
+  };
+}
 
 /**
  * NextAuth configuration for Clipper.
@@ -45,6 +113,42 @@ export const authOptions: NextAuthOptions = {
     AppleProvider({
       clientId: process.env.APPLE_CLIENT_ID ?? "",
       clientSecret: process.env.APPLE_CLIENT_SECRET ?? "",
+    }),
+
+    // ---- Native Google Sign-In (Android) ------------------------------------
+    // See docs/NATIVE_SIGN_IN.md.
+    CredentialsProvider({
+      id: GOOGLE_NATIVE_PROVIDER_ID,
+      name: "Google (native)",
+      credentials: {
+        idToken: { label: "Google ID token", type: "text" },
+      },
+      authorize: (credentials) =>
+        authorizeNativeIdToken({
+          providerId: GOOGLE_NATIVE_PROVIDER_ID,
+          authProvider: AuthProvider.Google,
+          verify: () => verifyGoogleIdToken(credentials?.idToken ?? ""),
+        }),
+    }),
+
+    // ---- Native Sign in with Apple (iOS) ------------------------------------
+    // Apple never puts a name in the identity token and only reveals it to the
+    // client on the first authorization, so the client forwards it separately.
+    // It is sanitised server-side and used only as a display name.
+    CredentialsProvider({
+      id: APPLE_NATIVE_PROVIDER_ID,
+      name: "Apple (native)",
+      credentials: {
+        idToken: { label: "Apple identity token", type: "text" },
+        name: { label: "Display name", type: "text" },
+      },
+      authorize: (credentials) =>
+        authorizeNativeIdToken({
+          providerId: APPLE_NATIVE_PROVIDER_ID,
+          authProvider: AuthProvider.Apple,
+          verify: () =>
+            verifyAppleIdToken(credentials?.idToken ?? "", credentials?.name),
+        }),
     }),
 
     // ---- Credentials (email + password) -------------------------------------

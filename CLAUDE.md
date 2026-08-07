@@ -62,6 +62,14 @@ Role home paths are defined in `src/config/routes.ts` → `getRoleHomePath()`.
 
 JWT session contains: `id`, `email`, `name`, `role`, `provider`. Server components use `src/lib/auth/helpers.ts` → `requireAuth()`, `requireRole()`, `getCurrentUser()`.
 
+**Mobile sign-in is native, not a browser redirect.** Chrome Custom Tabs and
+SFSafariViewController do not share a cookie jar with the Capacitor WebView, so
+the redirect flow signs the user in *in the browser* and leaves the app signed
+out. The apps use Android Credential Manager / iOS ASAuthorizationController and
+exchange the resulting ID token through the `google-native` / `apple-native`
+Credentials providers. Sign-out must go through `signOutEverywhere()` — plain
+`signOut()` leaves the native credential cached. See `docs/NATIVE_SIGN_IN.md`.
+
 ### AI video pipeline
 
 Staff triggers the pipeline on a `ClipRequest`. The pipeline is orchestrated by `VideoGenerationService` and tracked on a `VideoGenerationJob` record.
@@ -101,7 +109,7 @@ const service = new AccountService(userRepo, ...);
 ## Environment variables
 
 Five groups defined in `.env.example`:
-- **Auth:** `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `GOOGLE_CLIENT_ID/SECRET`
+- **Auth:** `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `GOOGLE_CLIENT_ID/SECRET`, `APPLE_CLIENT_ID/SECRET`; native mobile sign-in adds `NEXT_PUBLIC_GOOGLE_CLIENT_ID` and `APPLE_NATIVE_CLIENT_ID` (see `docs/NATIVE_SIGN_IN.md`)
 - **Email:** `SMTP_*`, `EMAIL_FROM`
 - **Storage:** `DO_SPACES_KEY/SECRET/ENDPOINT/BUCKET/REGION`
 - **Database:** `PGHOST`, `PGDATABASE`, `PGPORT`, `PG_USER`, `PG_PASSWORD`

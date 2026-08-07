@@ -30,7 +30,24 @@ const config = {
         },
       },
     ],
+    // `jose` v6 ships ESM only. Jest runs CJS here, so it must be transpiled
+    // rather than skipped like the rest of node_modules (see below).
+    "^.+\\.m?js$": [
+      "ts-jest",
+      {
+        tsconfig: {
+          allowJs: true,
+          module: "commonjs",
+          target: "ES2021",
+          esModuleInterop: true,
+          noEmit: false,
+        },
+      },
+    ],
   },
+
+  // node_modules is normally left untransformed; `jose` is the one exception.
+  transformIgnorePatterns: ["/node_modules/(?!jose/)"],
   collectCoverageFrom: [
     "src/services/**/*.ts",
     "src/repositories/**/*.ts",

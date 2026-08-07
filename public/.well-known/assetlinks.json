@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.rclipper.app",
+      "sha256_cert_fingerprints": [
+        "6D:93:07:E2:97:64:44:7B:16:2A:D9:9D:F9:F4:0B:E6:8A:99:49:E0:8A:0E:09:5B:1B:89:BC:10:67:8A:C5:B9",
+        "AD:FF:D6:04:33:94:0F:42:6F:14:37:DF:CB:64:AD:A9:38:04:26:09:46:9D:9A:16:E2:38:37:B9:A1:24:30:0B"
+      ]
+    }
+  }
+]
