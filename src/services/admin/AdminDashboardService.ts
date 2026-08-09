@@ -1,10 +1,14 @@
 import { RequestStatus, ACTIVE_STATUSES } from "@/domain/enums/RequestStatus";
 import { ProductionReviewStatus } from "@/domain/enums/ProductionReviewStatus";
 import { ClipRequest } from "@/domain/models/ClipRequest";
+import { RenderTask } from "@/domain/models/RenderTask";
 import {
   clipRequestRepository,
   productionReviewRepository,
+  renderTaskRepository,
+  videoGenerationJobRepository,
 } from "@/repositories";
+import { RENDER_QUEUE } from "@/config/renderQueue";
 
 /**
  * AdminDashboardService — aggregates operational summary data for the admin dashboard.
@@ -47,6 +51,17 @@ export interface AdminQueueSnapshot {
   publishedRequests: ClipRequest[];
   onHoldRequests: ClipRequest[];
   overdueRequests: ClipRequest[];
+}
+
+/**
+ * Live view of the Mac Mini render worker's FIFO line: whether a worker is
+ * currently alive (fresh heartbeat), and the ordered active tasks (the claimed
+ * one rendering now is at the front). Unlike the requester view, admins DO see
+ * which requester + step each task is.
+ */
+export interface RenderQueueSnapshot {
+  workerOnline: boolean;
+  tasks: RenderTask[];
 }
 
 export class AdminDashboardService {
@@ -112,6 +127,18 @@ export class AdminDashboardService {
       onHoldRequests: onHold,
       overdueRequests: overdue,
     };
+  }
+
+  /**
+   * Snapshot of the Mac Mini render-worker FIFO line for the admin monitor:
+   * worker liveness + the ordered active tasks (rendering-now task at the front).
+   */
+  async getRenderQueueSnapshot(): Promise<RenderQueueSnapshot> {
+    const [workerOnline, tasks] = await Promise.all([
+      videoGenerationJobRepository.isRenderWorkerAlive(RENDER_QUEUE.workerFreshSeconds),
+      renderTaskRepository.listActive(),
+    ]);
+    return { workerOnline, tasks };
   }
 
   /**

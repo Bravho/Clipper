@@ -6,6 +6,7 @@ import {
   clipRequestRepository,
   uploadedAssetRepository,
   videoGenerationJobRepository,
+  renderTaskRepository,
 } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 import { isJobStalled } from "@/config/stallThresholds";
@@ -50,6 +51,15 @@ export async function GET(
   // No-op unless renderState === "failed" (legitimate long renders keep loading).
   job = await videoGenerationService.reconcileFailedRender(job);
 
+  // FIFO render-queue standing for THIS request's active heavy step (if any).
+  // `position` is the honest count of steps AHEAD in the shared Mac worker line
+  // (0 = next up / rendering now); `state` is "queued" (waiting) or "claimed"
+  // (rendering). Only a count is exposed — never other requesters' names/steps.
+  const activeTask = await renderTaskRepository.findActiveByJob(job.id);
+  const renderQueuePosition = activeTask
+    ? await renderTaskRepository.countAhead(activeTask.id)
+    : null;
+
   // The montage engine renders each scene segment in a background task that
   // advances the step itself, so there is nothing to poll here — the poller
   // simply reads the current step below.
@@ -69,7 +79,14 @@ export async function GET(
       // A job stranded on a processing step (interrupted inline render / abandoned
       // claim) past its generous per-step threshold. The page uses this to offer a
       // manual retry instead of spinning forever. Never auto-fails.
-      stalled: isJobStalled(job),
+      stalled: isJobStalled(job, activeTask),
+      // FIFO render-queue standing for this request's current heavy step.
+      // position: steps ahead in the shared Mac worker line (0 = rendering/next);
+      // null when the step isn't queued (AI steps, gates, inline fallback).
+      renderQueue: {
+        position: renderQueuePosition,
+        state: activeTask?.state ?? null,
+      },
       voiceError,
       processedVoiceAssetId: job.processedVoiceAssetId,
       processedVoiceUrl: processedVoiceAsset?.storageUrl ?? null,

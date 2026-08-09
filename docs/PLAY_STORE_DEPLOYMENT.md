@@ -7,7 +7,7 @@ Updated: 4 August 2026
 - App name: RClipper
 - Package: `com.rclipper.app`
 - Play Console app ID: `4972504518557350406`
-- Current Android version: version code `2`, version name `1.0.1`
+- Current Android version: version code `3`, version name `1.0.2`
 - Minimum Android API: 24
 - Target and compile API: 36
 - Intended audience: ages 13–15, 16–17, and 18+ (13+)

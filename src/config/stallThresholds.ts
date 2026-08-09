@@ -1,6 +1,7 @@
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { RENDER_QUEUE } from "@/config/renderQueue";
 import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
+import type { RenderTask } from "@/domain/models/RenderTask";
 
 /**
  * How long a job may sit on a given "processing" step before the requester page
@@ -38,25 +39,25 @@ export const STALLABLE_STEPS: VideoGenerationStep[] = Object.keys(
  * AND no worker is actively making progress on it. Pure and side-effect free, so
  * both the status API and the server-rendered page can call it.
  *
- * "Actively making progress" = the render claim is queued/claimed with a keep-alive
- * (heartbeat, else claim time) newer than the stale-claim window. That protects a
- * genuinely long worker render (fresh heartbeats) from ever looking stalled. An
- * INLINE render leaves render_state at its previous value (e.g. "done") with no
- * heartbeat, so once past the threshold it correctly surfaces as stalled.
+ * "Actively making progress" = the job has an ACTIVE render task (queued/claimed)
+ * on the FIFO line whose keep-alive (heartbeat, else claim time) is newer than the
+ * stale-claim window. That protects a genuinely long worker render (fresh
+ * heartbeats) from ever looking stalled. An INLINE render (no worker) has no task,
+ * so once past the threshold it correctly surfaces as stalled — as does a task
+ * whose worker crashed (keep-alive gone stale). Pass `activeTask` from
+ * `renderTaskRepository.findActiveByJob(job.id)` (null when none).
  */
 export function isJobStalled(
-  job: Pick<
-    VideoGenerationJob,
-    "currentStep" | "stepStartedAt" | "updatedAt" | "renderState" | "renderHeartbeatAt" | "claimedAt"
-  >,
+  job: Pick<VideoGenerationJob, "currentStep" | "stepStartedAt" | "updatedAt">,
+  activeTask?: Pick<RenderTask, "state" | "heartbeatAt" | "claimedAt"> | null,
   now: number = Date.now()
 ): boolean {
   const timeoutSeconds = PROCESSING_STEP_TIMEOUT_SECONDS[job.currentStep];
   if (timeoutSeconds == null) return false; // not a processing step
 
   // A worker actively rendering (fresh keep-alive) is making progress → not stalled.
-  if (job.renderState === "queued" || job.renderState === "claimed") {
-    const keepAlive = job.renderHeartbeatAt ?? job.claimedAt;
+  if (activeTask && (activeTask.state === "queued" || activeTask.state === "claimed")) {
+    const keepAlive = activeTask.heartbeatAt ?? activeTask.claimedAt;
     if (keepAlive && now - keepAlive.getTime() < RENDER_QUEUE.staleClaimSeconds * 1000) {
       return false;
     }

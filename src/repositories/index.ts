@@ -87,6 +87,12 @@ import { MockVideoPublishRecordRepository } from "./mock/MockVideoPublishRecordR
 export const videoGenerationJobRepository = new PostgresVideoGenerationJobRepository();
 export const videoPublishRecordRepository = new MockVideoPublishRecordRepository(); // TODO: PostgresVideoPublishRecordRepository (no Postgres impl / table yet)
 
+// Flat FIFO render-task queue (Mac Mini worker). One row per enqueued heavy
+// step, mixed across all requesters. Requires migration 025.
+import { PostgresRenderTaskRepository } from "./postgres/PostgresRenderTaskRepository";
+
+export const renderTaskRepository = new PostgresRenderTaskRepository();
+
 // ── RClipper Management — PostgreSQL ─────────────────────────────────────────
 // Videos collected free (transferred from a generation project, or uploaded by
 // the user) and published to the user's own social channels. Payment gates

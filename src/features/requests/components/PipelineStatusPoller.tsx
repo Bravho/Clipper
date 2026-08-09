@@ -43,6 +43,13 @@ interface Props {
     pct: number | null,
     detail: { unit?: string; unitsDone?: number; unitsTotal?: number } | null
   ) => void;
+  /**
+   * FIFO render-queue standing for this request's current heavy step. `position`
+   * is the count of steps AHEAD in the shared Mac worker line (0 = next up /
+   * rendering); `state` is "queued" | "claimed" | null. Client state only, same
+   * pattern as onProgress — never includes other requesters' identities.
+   */
+  onQueue?: (q: { position: number | null; state: string | null }) => void;
 }
 
 // All async steps (montage render, GPT, FFmpeg) complete within ~30s–2min, and
@@ -63,10 +70,12 @@ export function PipelineStatusPoller({
   initialStalled = false,
   onVideoGenStatus,
   onProgress,
+  onQueue,
 }: Props) {
   const router = useRouter();
   const onVideoGenStatusRef = useRef(onVideoGenStatus);
   const onProgressRef = useRef(onProgress);
+  const onQueueRef = useRef(onQueue);
   // Highest ratio count we've already refreshed for — starts at what the server
   // rendered, so we only refresh when a NEW ratio lands.
   const revealedCountRef = useRef(initialReadyRatioCount);
@@ -78,6 +87,7 @@ export function PipelineStatusPoller({
 
   useEffect(() => { onVideoGenStatusRef.current = onVideoGenStatus; }, [onVideoGenStatus]);
   useEffect(() => { onProgressRef.current = onProgress; }, [onProgress]);
+  useEffect(() => { onQueueRef.current = onQueue; }, [onQueue]);
 
   useEffect(() => {
     const travyGenerating = travyVideoStatus === "generating";
@@ -117,6 +127,13 @@ export function PipelineStatusPoller({
             typeof data.renderProgress === "number" ? data.renderProgress : null,
             data.renderProgressDetail ?? null
           );
+        }
+
+        // FIFO render-queue standing: push the position count into client state
+        // every poll so "N ahead of you / rendering now" updates live without an
+        // RSC refresh (same pattern as onProgress).
+        if (onQueueRef.current && data.renderQueue) {
+          onQueueRef.current(data.renderQueue);
         }
 
         // Keep refreshing until the server-rendered currentStep prop actually

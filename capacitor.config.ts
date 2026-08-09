@@ -43,6 +43,14 @@ const config: CapacitorConfig = {
     appendUserAgent: " RClipperNative/android",
   },
   plugins: {
+    SocialLogin: {
+      providers: {
+        google: true,
+        facebook: false,
+        apple: true,
+        twitter: false,
+      },
+    },
     SplashScreen: {
       launchShowDuration: 1500,
       backgroundColor: "#0f172aff",

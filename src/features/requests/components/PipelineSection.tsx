@@ -63,6 +63,11 @@ export function PipelineSection({
   const [renderProgress, setRenderProgress] = useState<number | null>(initialRenderProgress);
   const [renderProgressDetail, setRenderProgressDetail] =
     useState<RenderProgressDetail | null>(initialRenderProgressDetail);
+  // FIFO render-queue standing (count only — never other requesters' details).
+  const [queue, setQueue] = useState<{ position: number | null; state: string | null }>({
+    position: null,
+    state: null,
+  });
 
   // Reset the % bar when the step changes (render-phase adjustment): the server
   // nulls renderProgress on each heavy dispatch, and the previous step's 95%
@@ -97,6 +102,16 @@ export function PipelineSection({
     revealRatios ||
     revealCaptioned;
 
+  // Requester-facing queue line. Only ever a COUNT of steps ahead — no other
+  // requester's name or step. Shown only while this request has an active step
+  // on the shared Mac worker line (position != null).
+  const queueMessage =
+    queue.position == null
+      ? null
+      : queue.state === "claimed" || queue.position === 0
+        ? "กำลังประมวลผลวิดีโอของคุณอยู่ในขณะนี้"
+        : `มีงานอยู่ก่อนหน้าคุณ ${queue.position} รายการในคิวประมวลผล`;
+
   return (
     <>
       <ProductionPipeline
@@ -111,6 +126,12 @@ export function PipelineSection({
         requestId={requestId}
         stalled={stalled}
       />
+      {queueMessage && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
+          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-orange-400" />
+          <span>{queueMessage}</span>
+        </div>
+      )}
       {isPolling && (
         <PipelineStatusPoller
           requestId={requestId}
@@ -135,6 +156,7 @@ export function PipelineSection({
             );
             if (detail) setRenderProgressDetail(detail);
           }}
+          onQueue={(q) => setQueue(q)}
         />
       )}
     </>

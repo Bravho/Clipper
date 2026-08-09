@@ -1,12 +1,16 @@
 /**
  * RClipper render worker — Mac Mini processing unit.
  *
- * Long-running, OUTBOUND-ONLY process. It polls managed Postgres for queued
- * heavy pipeline steps (montage render, animation/overlay render, FFmpeg
- * composition, additional-ratios), runs each by reusing the EXISTING compute in
- * VideoGenerationService (which streams its own inputs from DO Spaces and pushes
- * outputs back with ACL:"public-read" unchanged), then marks the job done. No
- * inbound port, static IP, or tunnel is needed.
+ * Long-running, OUTBOUND-ONLY process. It polls managed Postgres for the next
+ * queued heavy pipeline STEP on the flat FIFO render-task line (render_tasks),
+ * runs each by reusing the EXISTING compute in VideoGenerationService (which
+ * streams its own inputs from DO Spaces and pushes outputs back with
+ * ACL:"public-read" unchanged), then marks the task done. One step at a time
+ * (RENDER_CONCURRENCY, default 1) so the Mac is never overloaded. No inbound
+ * port, static IP, or tunnel is needed.
+ *
+ * The queue is ONE line mixed across all requesters — e.g. #1 user B's overlay,
+ * #2 user A's merge, #3 user C's compose — claimed strictly oldest-first.
  *
  * Run (on the Mac, from the repo root, with .env.local populated — see
  * docs/mac-worker-setup.md):
@@ -23,11 +27,14 @@ import "./bootstrapEnv";
 import * as os from "os";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { videoGenerationJobRepository } from "@/repositories/index";
+import {
+  videoGenerationJobRepository,
+  renderTaskRepository,
+} from "@/repositories/index";
 import { VideoGenerationService } from "@/services/VideoGenerationService";
 import { RENDER_QUEUE } from "@/config/renderQueue";
 import { AI_CONFIG } from "@/config/aiTools";
-import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
+import type { RenderTask } from "@/domain/models/RenderTask";
 
 const RUN_ONCE = process.argv.includes("--once");
 const WORKER_ID = `${os.hostname()}#${process.pid}`;
@@ -37,7 +44,7 @@ const service = new VideoGenerationService();
 
 let shuttingDown = false;
 let active = 0;
-/** jobIds currently being processed — kept alive by the heartbeat loop. */
+/** taskIds currently being processed — kept alive by the heartbeat loop. */
 const inFlight = new Set<string>();
 
 function log(msg: string, extra?: Record<string, unknown>): void {
@@ -73,24 +80,16 @@ function describeErr(err: unknown): Record<string, unknown> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Release every in-flight claim back to the queue (render_state → "queued") so a
+ * Release every in-flight claim back to the queue (state → "queued") so a
  * restarting worker re-claims it IMMEDIATELY instead of waiting out
  * RENDER_STALE_CLAIM_SECONDS. Safe because every heavy step is idempotent
  * (compose/additional-ratios skip ratios already persisted), so redoing a
- * partially-done step produces no duplicate/partial artifacts.
+ * partially-done step produces no duplicate/partial artifacts. FIFO position is
+ * preserved — release keeps the original enqueued_at.
  */
 async function releaseInFlightClaims(): Promise<void> {
   await Promise.all(
-    [...inFlight].map((jobId) =>
-      videoGenerationJobRepository
-        .update(jobId, {
-          renderState: "queued",
-          claimedBy: null,
-          claimedAt: null,
-          renderHeartbeatAt: null,
-        })
-        .catch(() => {})
-    )
+    [...inFlight].map((taskId) => renderTaskRepository.release(taskId).catch(() => {}))
   );
 }
 
@@ -103,9 +102,7 @@ async function heartbeatTick(): Promise<void> {
   try {
     await videoGenerationJobRepository.recordWorkerHeartbeat(WORKER_ID);
     await Promise.all(
-      [...inFlight].map((jobId) =>
-        videoGenerationJobRepository.touchRenderClaim(jobId).catch(() => {})
-      )
+      [...inFlight].map((taskId) => renderTaskRepository.touch(taskId).catch(() => {}))
     );
   } catch (err) {
     log("heartbeat failed", { error: String(err) });
@@ -127,30 +124,55 @@ async function sweepScratch(): Promise<void> {
   }
 }
 
-async function processJob(job: VideoGenerationJob): Promise<void> {
+async function processTask(task: RenderTask): Promise<void> {
   active += 1;
-  inFlight.add(job.id);
-  const scratch = path.join(SCRATCH_ROOT, `job-${job.id}`);
+  inFlight.add(task.id);
+  const scratch = path.join(SCRATCH_ROOT, `job-${task.jobId}`);
   const startedAt = Date.now();
-  log("claimed step", { job: job.id, step: job.renderStep, request: job.requestId });
+  // Log which STEP and which USER this worker is processing (requesterId is the
+  // requesting user's id, denormalised onto the task — never shown to other
+  // requesters, who only ever see a position count).
+  log("claimed step", {
+    task: task.id,
+    step: task.step,
+    user: task.requesterId,
+    request: task.requestId,
+    job: task.jobId,
+  });
   try {
+    const job = await videoGenerationJobRepository.findById(task.jobId);
+    if (!job) throw new Error(`Job not found for render task: ${task.jobId}`);
+
     await fs.mkdir(scratch, { recursive: true });
     // The compute reused from VideoGenerationService streams its own inputs from
     // Spaces and uploads outputs back, so pull/render/push all happen inside this
     // call. We time the whole step; transfer is a small fraction of compute (see
     // docs/storage-lifecycle-design.md Addendum B).
-    await service.runQueuedRenderStep(job);
-    await videoGenerationJobRepository.completeRenderClaim(job.id, "done");
-    log("step done", { job: job.id, step: job.renderStep, seconds: sec(startedAt) });
+    await service.runQueuedRenderStep(job, task.step, task.payload);
+    await renderTaskRepository.complete(task.id, "done");
+    log("step done", {
+      task: task.id,
+      step: task.step,
+      user: task.requesterId,
+      seconds: sec(startedAt),
+    });
   } catch (err) {
-    log("step FAILED", { job: job.id, step: job.renderStep, seconds: sec(startedAt), ...describeErr(err) });
-    await videoGenerationJobRepository.completeRenderClaim(job.id, "failed").catch(() => {});
+    log("step FAILED", {
+      task: task.id,
+      step: task.step,
+      user: task.requesterId,
+      seconds: sec(startedAt),
+      ...describeErr(err),
+    });
+    const message = err instanceof Error ? err.message : String(err);
+    await renderTaskRepository.complete(task.id, "failed", message).catch(() => {});
     // Mirror the inline `.catch`: mark the pipeline failed at the right step so
     // the UI shows the error and retryPipeline can resume from it.
-    await service.recordRenderStepFailure(job).catch(() => {});
+    const job = await videoGenerationJobRepository.findById(task.jobId).catch(() => null);
+    if (job) await service.recordRenderStepFailure(job, task.step).catch(() => {});
   } finally {
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
-    inFlight.delete(job.id);
+    inFlight.delete(task.id);
     active -= 1;
   }
 }
@@ -159,12 +181,12 @@ function sec(sinceMs: number): number {
   return Math.round((Date.now() - sinceMs) / 100) / 10;
 }
 
-/** One worker slot: claim → run → repeat; idle-sleep when the queue is empty. */
+/** One worker slot: claim → run → repeat; idle-sleep when the line is empty. */
 async function workerSlot(slot: number): Promise<void> {
   while (!shuttingDown) {
-    let job: VideoGenerationJob | null = null;
+    let task: RenderTask | null = null;
     try {
-      job = await videoGenerationJobRepository.claimNextQueuedRenderStep(
+      task = await renderTaskRepository.claimNext(
         WORKER_ID,
         RENDER_QUEUE.staleClaimSeconds
       );
@@ -174,12 +196,12 @@ async function workerSlot(slot: number): Promise<void> {
       await sleep(RENDER_QUEUE.pollIntervalMs);
       continue;
     }
-    if (!job) {
+    if (!task) {
       if (RUN_ONCE) return;
       await sleep(RENDER_QUEUE.pollIntervalMs);
       continue;
     }
-    await processJob(job);
+    await processTask(task);
     if (RUN_ONCE) return;
   }
 }

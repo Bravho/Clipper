@@ -2,6 +2,7 @@ import {
   videoGenerationJobRepository,
   uploadedAssetRepository,
   clipRequestRepository,
+  renderTaskRepository,
 } from "@/repositories/index";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -722,13 +723,17 @@ export class VideoGenerationService {
             RENDER_QUEUE.workerFreshSeconds
           )
         ) {
-          await videoGenerationJobRepository.update(job.id, {
-            renderState: "queued",
-            renderStep,
-            renderPayload: payload ?? null,
-            claimedBy: null,
-            claimedAt: null,
-            renderHeartbeatAt: null,
+          // Enqueue this step onto the flat FIFO render-task line. requesterId is
+          // denormalised so the worker log can name whose step it is; it is never
+          // surfaced to other requesters (they only ever get a position count).
+          const requesterId =
+            (await clipRequestRepository.findById(job.requestId))?.userId ?? null;
+          await renderTaskRepository.enqueue({
+            jobId: job.id,
+            requestId: job.requestId,
+            requesterId,
+            step: renderStep,
+            payload: payload ?? null,
           });
           return;
         }
@@ -748,15 +753,18 @@ export class VideoGenerationService {
    * reimplemented. Throws on failure so the worker can mark the claim 'failed'
    * (see `recordRenderStepFailure`).
    */
-  async runQueuedRenderStep(job: VideoGenerationJob): Promise<void> {
-    const step = job.renderStep;
+  async runQueuedRenderStep(
+    job: VideoGenerationJob,
+    step: RenderStep,
+    payload: Record<string, unknown> | null = null
+  ): Promise<void> {
     if (!isRenderStep(step)) {
       throw new Error(`Job ${job.id} has no valid render step: ${String(step)}`);
     }
     switch (step) {
       case RenderStep.MontageSceneSegment: {
         const sceneIndex = Number(
-          (job.renderPayload as { sceneIndex?: unknown } | null)?.sceneIndex ??
+          (payload as { sceneIndex?: unknown } | null)?.sceneIndex ??
             job.currentSceneIndex ??
             0
         );
@@ -794,8 +802,11 @@ export class VideoGenerationService {
   }
 
   /** Failure bookkeeping for a worker-run step (mirrors the inline `.catch`). */
-  async recordRenderStepFailure(job: VideoGenerationJob): Promise<void> {
-    const step = isRenderStep(job.renderStep) ? job.renderStep : null;
+  async recordRenderStepFailure(
+    job: VideoGenerationJob,
+    renderStep: RenderStep | string | null
+  ): Promise<void> {
+    const step = isRenderStep(renderStep) ? renderStep : null;
 
     // Travy is SOFT-FAILING: the other channels are already delivered, so a Travy
     // step failure must never hard-fail the whole pipeline (which would strand the
@@ -837,9 +848,14 @@ export class VideoGenerationService {
    */
   async reconcileFailedRender(job: VideoGenerationJob): Promise<VideoGenerationJob> {
     if (job.currentStep === VideoGenerationStep.Failed) return job;
-    if (job.renderState !== "failed") return job;
 
-    const step = isRenderStep(job.renderStep) ? job.renderStep : null;
+    // Consult the FIFO render-task line: only a genuinely FAILED latest task for
+    // this job triggers reconcile. A job merely still rendering has a
+    // queued/claimed task (never "failed"), so long renders keep showing loading.
+    const task = await renderTaskRepository.findLatestByJob(job.id);
+    if (!task || task.state !== "failed") return job;
+
+    const step = isRenderStep(task.step) ? task.step : null;
     // Travy is soft-failing: a Travy render failure must never hard-fail the
     // whole pipeline (the other channels are already delivered).
     if (step === RenderStep.TravyGeneration) return job;
@@ -3790,7 +3806,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         `Job is not on a retryable processing step: ${job.currentStep}`
       );
     }
-    if (!isJobStalled(job)) {
+    const activeTask = await renderTaskRepository.findActiveByJob(job.id);
+    if (!isJobStalled(job, activeTask)) {
       throw new Error(
         "Job is still processing — retry becomes available only once it has stalled."
       );

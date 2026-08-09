@@ -11,6 +11,26 @@ export default async function AdminQueuePage() {
   await requireRole(Role.Admin);
 
   const snapshot = await adminDashboardService.getQueueSnapshot();
+  const renderQueue = await adminDashboardService.getRenderQueueSnapshot();
+
+  // Admin-only labels for each heavy render step (requesters never see these).
+  const RENDER_STEP_LABELS: Record<string, string> = {
+    montage_scene_segment: "Scene segment",
+    montage_all_segments: "All scene segments",
+    montage_merge: "Merge scenes",
+    animation_generation: "Animation",
+    ffmpeg_composition: "Compose",
+    overlay_composition: "Subtitle overlay",
+    additional_ratios: "Additional ratios",
+    travy_generation: "Travy render",
+  };
+  const nowMs = Date.now();
+  const waitedLabel = (since: Date): string => {
+    const mins = Math.max(0, Math.floor((nowMs - since.getTime()) / 60000));
+    if (mins < 1) return "<1 min";
+    if (mins < 60) return `${mins} min`;
+    return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  };
 
   const sections = [
     {
@@ -67,6 +87,86 @@ export default async function AdminQueuePage() {
         <p className="mt-1 text-sm text-slate-500">
           Full system view across all production stages.
         </p>
+      </div>
+
+      {/* Mac Mini render worker — FIFO line */}
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+            Render Worker Queue
+            <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">
+              {renderQueue.tasks.length}
+            </span>
+          </h2>
+          <span
+            className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+              renderQueue.workerOnline ? "text-green-600" : "text-red-600"
+            }`}
+          >
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                renderQueue.workerOnline ? "bg-green-500" : "bg-red-500"
+              }`}
+            />
+            {renderQueue.workerOnline ? "Worker online" : "Worker offline — steps run inline"}
+          </span>
+        </div>
+
+        {renderQueue.tasks.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-white px-4 py-6 text-center">
+            <p className="text-sm text-slate-400">Render line is empty.</p>
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="px-4 py-3">#</th>
+                  <th className="px-4 py-3">Step</th>
+                  <th className="px-4 py-3">Requester</th>
+                  <th className="px-4 py-3">State</th>
+                  <th className="px-4 py-3">Waiting</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {renderQueue.tasks.map((task, i) => (
+                  <tr key={task.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium text-slate-900">{i + 1}</td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {RENDER_STEP_LABELS[task.step] ?? task.step}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">
+                      {task.requesterId ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          task.state === "claimed"
+                            ? "bg-orange-100 text-orange-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {task.state === "claimed" ? "Rendering" : "Queued"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {waitedLabel(task.enqueuedAt)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Link
+                        href={`/admin/requests/${task.requestId}`}
+                        className="text-xs font-medium text-blue-600 hover:underline"
+                      >
+                        Open →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Stage counts */}

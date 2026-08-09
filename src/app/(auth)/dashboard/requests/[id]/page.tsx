@@ -13,6 +13,7 @@ import {
   publishingLinkRepository,
   requestStatusHistoryRepository,
   videoGenerationJobRepository,
+  renderTaskRepository,
 } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform, PLATFORM_ASPECT_RATIOS, PLATFORM_LABELS } from "@/domain/enums/Platform";
@@ -135,6 +136,13 @@ export default async function RequestDetailPage({
     ? await timed("reconcileFailedRender", () =>
         videoGenerationService.reconcileFailedRender(rawPipelineJob)
       )
+    : null;
+
+  // Active render-task for the job (if its current heavy step is on the Mac
+  // worker line). Fetched here — not inside the synchronous JSX IIFE below — so
+  // isJobStalled can tell a live worker render from a genuinely stranded step.
+  const activeRenderTask = pipelineJob
+    ? await renderTaskRepository.findActiveByJob(pipelineJob.id)
     : null;
 
   // Status History shows both request-level milestones AND the AI pipeline
@@ -563,8 +571,9 @@ export default async function RequestDetailPage({
         ).length;
 
         // Stranded on a processing step past its threshold → offer a manual retry
-        // (never auto-fails; a legitimately long render just keeps loading).
-        const stalled = isJobStalled(pipelineJob);
+        // (never auto-fails; a legitimately long render just keeps loading). The
+        // active render task (if any) tells isJobStalled a worker is progressing.
+        const stalled = isJobStalled(pipelineJob, activeRenderTask);
 
         // Parse scene plan — prefer approved version; fall back to raw AI output
         let scenePlan: ScenePlan[] = [];
