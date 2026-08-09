@@ -26,8 +26,8 @@ describe("Channel Management package return paths", () => {
       "/dashboard/management?publish=video-1#management-video-video-1"
     );
     expect(
-      safeManagementReturnPath("/dashboard/management/content/video-1")
-    ).toBe("/dashboard/management/content/video-1");
+      safeManagementReturnPath("/dashboard/management/content")
+    ).toBe("/dashboard/management/content");
   });
 
   it.each([

@@ -785,7 +785,7 @@ export function DistributionReviewPanel({
                       {canTransfer && cv && cv.assetId && (
                         transferred[cv.assetId] ? (
                           <a
-                            href={`/dashboard/management/content/${transferred[cv.assetId]}`}
+                            href="/dashboard/management"
                             className="block rounded-md border border-emerald-500 px-3 py-2 text-center text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
                           >
                             อยู่ใน Channel Management แล้ว — เปิด →

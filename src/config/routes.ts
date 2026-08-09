@@ -49,12 +49,13 @@ export function requestDetailPath(requestId: string): string {
   return `/dashboard/requests/${requestId}`;
 }
 
-/** Build a Management content detail URL. */
-export function managementContentPath(contentId: string): string {
-  return `/dashboard/management/content/${contentId}`;
-}
-
-/** Return to Channel Management with the publishing flow reopened for one item. */
+/**
+ * Return to Channel Management with the publishing flow reopened for one item.
+ *
+ * There is no per-video composer page: publishing happens in the library's
+ * publish modal, so every "open this video" link lands in Channel Management
+ * itself rather than a standalone route.
+ */
 export function managementPublishReturnPath(contentId: string): string {
   const query = new URLSearchParams({ publish: contentId });
   return `${ROUTES.MANAGEMENT}?${query.toString()}#management-video-${contentId}`;
