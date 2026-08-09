@@ -167,6 +167,13 @@ export const DEFAULT_COMPOSE_DURATION_SECONDS = 15;
 /** Background-music bed level (pre-ducking), 0..1. */
 export const MUSIC_BED_VOLUME = 0.3;
 /**
+ * Sidechain compression ratio for ducking the music under the voiceover.
+ * Higher = music drops further while speech plays. Affects ONLY the speaking
+ * period — the music-only intro, sentence gaps and ending stay at
+ * {@link MUSIC_BED_VOLUME}. Lower this to make the bed louder under speech.
+ */
+export const MUSIC_DUCK_RATIO = 2.5;
+/**
  * Short music-only lead-in before the voiceover starts, so the clip opens with
  * the background track for a beat before narration. The voice is delayed by
  * this amount and the export duration is extended to match (no voice clipped).
@@ -222,9 +229,11 @@ export function buildMusicMixFilters(params: {
     `[${params.musicInputIdx}:a]aloop=-1:size=2147483647,atrim=0:${totalDur},asetpts=PTS-STARTPTS,volume=${vol}[music]`,
     // Gentle, quick-recover ducking (Phase 6): a fast attack drops the music
     // promptly when speech starts and a fast release (300ms) lets it return
-    // between sentences. ratio=4 keeps the bed clearly audible UNDER speech
-    // (was ratio=8, which dropped it too far) while narration stays on top.
-    `[music][sc]sidechaincompress=threshold=0.03:ratio=4:attack=20:release=300[music_ducked]`,
+    // between sentences. The ratio sets how FAR the bed drops under speech —
+    // ratio=2.5 (was 4, before that 8) keeps the music clearly present while
+    // narration plays, instead of nearly disappearing. Only the ducked (speech)
+    // level changes; the music-only intro/gaps/ending stay at MUSIC_BED_VOLUME.
+    `[music][sc]sidechaincompress=threshold=0.03:ratio=${MUSIC_DUCK_RATIO}:attack=20:release=300[music_ducked]`,
     `[voice][music_ducked]amix=inputs=2:normalize=0,alimiter=limit=0.95:level=false[aout]`,
   ];
 }

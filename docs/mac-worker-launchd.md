@@ -105,9 +105,16 @@ step done {"job":"…","step":"…","seconds":NN.N}
 and the web UI advancing through the approval gates to a final clip in all required ratios.
 
 Resilience checks:
-- **Kill mid-job** (`launchctl kickstart -k …` or `kill` the tsx pid): the claim's keep-alive
-  goes stale after `RENDER_STALE_CLAIM_SECONDS` (default 600s) and another worker run reclaims
-  and resumes it.
+- **Restart mid-job** (`launchctl kickstart -k …`, or any SIGTERM/SIGINT): the worker logs
+  `step INTERRUPTED by shutdown — releasing claim for reclaim` and puts the task back to
+  `queued` with its original place in line, so the restarted worker picks it straight up.
+  The requester's job stays on its processing step — a restart never fails a job.
+  Note the SIGTERM reaches the render's child processes too (Remotion's compositor, ffmpeg),
+  so the step does NOT finish during the drain grace; it is always redone from the start of
+  that step. Redo is safe: compose and additional-ratios skip units already persisted, and
+  overlay/merge recompute a single output. Scene rendering redoes its whole batch.
+- **Hard kill** (`kill -9` the tsx pid): no chance to release, so the claim's keep-alive goes
+  stale after `RENDER_STALE_CLAIM_SECONDS` (default 120s) and the next worker run reclaims it.
 - **Worker off past the heartbeat window** (`launchctl bootout …`): after
   `RENDER_WORKER_FRESH_SECONDS` (default 45s) with no heartbeat, the droplet stops enqueuing
   and runs the step itself (fallback) — the pipeline still completes.

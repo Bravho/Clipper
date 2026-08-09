@@ -27,6 +27,7 @@ import {
   buildMusicMixFilters,
   DEFAULT_COMPOSE_DURATION_SECONDS,
   MUSIC_BED_VOLUME,
+  MUSIC_DUCK_RATIO,
 } from "@/lib/ai/ffmpegService";
 
 describe("resolveComposeDuration", () => {
@@ -83,10 +84,11 @@ describe("buildMusicMixFilters", () => {
     const duck = filters.find((f) => f.includes("sidechaincompress"))!;
     expect(duck).toContain("attack=20");
     expect(duck).toContain("release=300");
-    expect(duck).toContain("ratio=4");
-    // Sanity: the slow legacy release + harsh ratio must be gone.
+    expect(duck).toContain(`ratio=${MUSIC_DUCK_RATIO}`);
+    // Sanity: the slow legacy release + harsher ratios must be gone.
     expect(duck).not.toContain("release=1500");
     expect(duck).not.toContain("ratio=8");
+    expect(duck).not.toContain("ratio=4");
   });
 
   it("exposes the final mix on [aout]", () => {

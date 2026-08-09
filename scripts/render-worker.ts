@@ -163,6 +163,32 @@ async function processTask(task: RenderTask): Promise<void> {
     // for every other job. Never throws.
     await service.afterRenderStepCompleted(task.jobId);
   } catch (err) {
+    // Shutdown, not breakage. launchd signals the whole job, so a SIGTERM also
+    // reaches the render's CHILD processes — Remotion's compositor and ffmpeg die
+    // instantly and surface here as "Compositor quit with signal SIGTERM". Marking
+    // that as a real failure would push a requester's job to Failed because an
+    // operator restarted the worker, and it would beat the drain-grace release in
+    // main() to the punch (the step "finished", so allSlotsDone resolves and
+    // releaseInFlightClaims never runs — the release path could never fire for a
+    // render, since being signalled is exactly what makes it exit early).
+    //
+    // Release the claim instead: state goes back to 'queued' with its original
+    // enqueued_at, so the restarted worker re-claims it and the job keeps sitting
+    // on its processing step, which is the truth. Every heavy step is safe to
+    // redo — compose and additional-ratios skip units already persisted; overlay
+    // and merge recompute a single output and overwrite it. (Scene rendering
+    // redoes the whole batch from scene 1: correct, just slower.)
+    if (shuttingDown) {
+      log("step INTERRUPTED by shutdown — releasing claim for reclaim", {
+        task: task.id,
+        step: task.step,
+        user: task.requesterId,
+        seconds: sec(startedAt),
+      });
+      await renderTaskRepository.release(task.id).catch(() => {});
+      return;
+    }
+
     log("step FAILED", {
       task: task.id,
       step: task.step,
