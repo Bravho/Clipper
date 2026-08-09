@@ -101,6 +101,7 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     selectedMotionTemplate: (row.selected_motion_template as string) ?? "none",
     publishingDrafts: parseJsonField<ChannelPublishingDraft[] | null>(row.publishing_drafts, null),
     subtitleLanguages: ((row.subtitle_languages as string[]) ?? ["en", "zh"]) as ("th" | "en" | "zh")[],
+    autoApproveRemaining: (row.auto_approve_remaining as boolean) ?? false,
     subtitleTimeline: (row.subtitle_timeline as string) ?? null,
     animationSpec: (row.animation_spec as string) ?? null,
     animatedVideoAssetId: (row.animated_video_asset_id as string) ?? null,
@@ -134,6 +135,17 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     updatedAt: new Date(row.updated_at as string),
   };
 }
+
+/**
+ * Gates the step-5 express lane approves on the requester's behalf. Reaching one
+ * of these on an `autoApproveRemaining` job is a pass-through, not a request for
+ * attention, so no push notice is sent for it.
+ */
+const AUTO_APPROVED_GATES: VideoGenerationStep[] = [
+  VideoGenerationStep.AwaitingFinalApproval,
+  VideoGenerationStep.AwaitingOverlayApproval,
+  VideoGenerationStep.AwaitingAdditionalRatios,
+];
 
 const JOB_UPDATE_COLS: Record<string, string> = {
   status: "status",
@@ -189,6 +201,7 @@ const JOB_UPDATE_COLS: Record<string, string> = {
   selectedMotionTemplate: "selected_motion_template",
   publishingDrafts: "publishing_drafts",
   subtitleLanguages: "subtitle_languages",
+  autoApproveRemaining: "auto_approve_remaining",
   subtitleTimeline: "subtitle_timeline",
   animationSpec: "animation_spec",
   animatedVideoAssetId: "animated_video_asset_id",
@@ -363,18 +376,29 @@ export class PostgresVideoGenerationJobRepository
       );
       // Push is best-effort and idempotent. A notification outage must never
       // roll back a successfully persisted pipeline transition.
-      try {
-        const { pushNotificationService } = await import(
-          "@/services/PushNotificationService"
-        );
-        await pushNotificationService.notifyPipelineStep(
-          updated.id,
-          updated.requestId,
-          updated.currentStep,
-          updated.currentSceneIndex ?? undefined
-        );
-      } catch (err) {
-        console.error("[push] pipeline notification failed:", err);
+      //
+      // Express lane ("approve everything from here"): the gates below are
+      // approved automatically within seconds, so a "ready for review" push
+      // would summon the requester to a screen that is already gone. Stay
+      // silent until the download step, which still notifies.
+      const suppressedByAutoApproval =
+        updated.autoApproveRemaining === true &&
+        AUTO_APPROVED_GATES.includes(updated.currentStep);
+
+      if (!suppressedByAutoApproval) {
+        try {
+          const { pushNotificationService } = await import(
+            "@/services/PushNotificationService"
+          );
+          await pushNotificationService.notifyPipelineStep(
+            updated.id,
+            updated.requestId,
+            updated.currentStep,
+            updated.currentSceneIndex ?? undefined
+          );
+        } catch (err) {
+          console.error("[push] pipeline notification failed:", err);
+        }
       }
     }
 

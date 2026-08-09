@@ -31,6 +31,12 @@ interface Props {
   requestId?: string;
   /** True when the job has been stuck on this processing step past its threshold. */
   stalled?: boolean;
+  /**
+   * The requester took the step-5 express lane. The remaining approval gates are
+   * then shown as work in progress rather than as "waiting for you", and a note
+   * explains that nothing more is needed until the download step.
+   */
+  autoApproveRemaining?: boolean;
 }
 
 export function ProductionPipeline({
@@ -44,6 +50,7 @@ export function ProductionPipeline({
   renderProgressDetail = null,
   requestId,
   stalled = false,
+  autoApproveRemaining = false,
 }: Props) {
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
@@ -88,11 +95,12 @@ export function ProductionPipeline({
   }
 
   const isFailed = currentStep === VideoGenerationStep.Failed;
-  const phaseDisplay = buildPipelinePhaseDisplay(currentStep, failedAtStep);
+  const displayOptions = { autoApproveRemaining };
+  const phaseDisplay = buildPipelinePhaseDisplay(currentStep, failedAtStep, displayOptions);
   const currentPresentation =
     currentStep === VideoGenerationStep.Failed
       ? getPipelineStepPresentation(failedAtStep)
-      : getPipelineStepPresentation(currentStep);
+      : getPipelineStepPresentation(currentStep, displayOptions);
   const hasUnknownStep =
     currentStep != null && phaseDisplay.every(({ status }) => status === "unknown");
 
@@ -106,6 +114,24 @@ export function ProductionPipeline({
           {durationSeconds} วินาที · {totalChannels} ช่องทาง
         </span>
       </div>
+
+      {/* Express lane: the requester opted out of the remaining approval screens,
+          so say so — otherwise a pipeline that keeps advancing on its own looks
+          like something they forgot to click. */}
+      {autoApproveRemaining && !isFailed && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5">
+          <span className="mt-1.5 inline-block h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-blue-500" />
+          <div>
+            <p className="text-xs font-semibold text-blue-800">
+              ระบบกำลังดำเนินการขั้นตอนที่เหลือให้อัตโนมัติ
+            </p>
+            <p className="mt-0.5 text-xs text-blue-600">
+              คุณเลือกอนุมัติทุกขั้นตอนถัดไปไว้แล้ว ไม่ต้องกดอนุมัติอีก
+              ติดตามความคืบหน้าได้จากรายการด้านล่าง และจะแจ้งเตือนเมื่อวิดีโอพร้อมดาวน์โหลด
+            </p>
+          </div>
+        </div>
+      )}
 
       <ol className="relative">
         {phaseDisplay.map(({ phase, status }, idx) => {

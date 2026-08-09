@@ -19,6 +19,7 @@ import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform, PLATFORM_ASPECT_RATIOS, PLATFORM_LABELS } from "@/domain/enums/Platform";
 import { getRequiredRatiosForPlatforms } from "@/lib/ai/ffmpegService";
 import { isJobStalled } from "@/config/stallThresholds";
+import { isAutoApprovedGate } from "@/config/pipelinePresentation";
 import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
@@ -524,17 +525,25 @@ export default async function RequestDetailPage({
         // Phase 8 — distribution-review step (auto-filled per-channel publish form).
         const isAwaitingDistributionReview =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingDistributionReview;
+        // Express lane (step-5 "approve everything from here"): the remaining
+        // gates are cleared by the server, so the requester must see progress —
+        // not approval buttons that vanish under their cursor mid-click.
+        const autoApproveRemaining = pipelineJob.autoApproveRemaining === true;
+        const autoAdvancingGate =
+          autoApproveRemaining && isAutoApprovedGate(pipelineJob.currentStep);
+
         // Steps where an async background job is genuinely in progress — drives the
         // VideoApprovalPanel processing spinner (must NOT show at terminal/review
         // states like Complete/Delivered/AwaitingDistributionReview).
-        const isProcessing = [
-          VideoGenerationStep.GeneratingVoice,
-          VideoGenerationStep.GeneratingBaseVideo,
-          VideoGenerationStep.GeneratingAnimations,
-          VideoGenerationStep.ComposingFinalVideo,
-          VideoGenerationStep.GeneratingOverlay,
-          VideoGenerationStep.GeneratingAdditionalRatios,
-        ].includes(pipelineJob.currentStep);
+        const isProcessing =
+          [
+            VideoGenerationStep.GeneratingVoice,
+            VideoGenerationStep.GeneratingBaseVideo,
+            VideoGenerationStep.GeneratingAnimations,
+            VideoGenerationStep.ComposingFinalVideo,
+            VideoGenerationStep.GeneratingOverlay,
+            VideoGenerationStep.GeneratingAdditionalRatios,
+          ].includes(pipelineJob.currentStep) || autoAdvancingGate;
         const effectiveDurationSeconds = Math.round(
           pipelineJob.voiceDurationSeconds ?? request.durationSeconds
         );
@@ -699,6 +708,7 @@ export default async function RequestDetailPage({
               initialRenderProgress={pipelineJob.renderProgress ?? null}
               initialRenderProgressDetail={pipelineJob.renderProgressDetail ?? null}
               stalled={stalled}
+              autoApproveRemaining={autoApproveRemaining}
             />
 
             {!isFailed && isGeneratingSceneDesign && (
@@ -770,7 +780,11 @@ export default async function RequestDetailPage({
               />
             )}
 
-            {/* Generated base video + script — shown once video generation completes */}
+            {/* Generated base video + script — shown once video generation completes.
+                On an express-lane job the three review gates below
+                (final / overlay / additional-ratios) are passed `false`: the server
+                approves them itself, so the requester gets the processing spinner
+                instead of buttons that vanish under their cursor. */}
             {!isFailed && !isAwaitingVoiceApproval && !isAwaitingDistributionReview && baseVideoAsset?.storageUrl && (
               <VideoApprovalPanel
                 requestId={id}
@@ -778,6 +792,7 @@ export default async function RequestDetailPage({
                 videoUrl={baseVideoAsset.storageUrl}
                 sceneVideos={sceneVideos}
                 isProcessing={isProcessing}
+                isAutoAdvancing={autoAdvancingGate}
                 isAwaitingApproval={
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingVideoApproval
                 }
@@ -791,15 +806,18 @@ export default async function RequestDetailPage({
                 savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
                 primaryRatio={primaryRatio}
                 isAwaitingFinalApproval={
+                  !autoApproveRemaining &&
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingFinalApproval
                 }
                 isAwaitingOverlayApproval={
+                  !autoApproveRemaining &&
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingOverlayApproval
                 }
                 isGeneratingOverlay={
                   pipelineJob.currentStep === VideoGenerationStep.GeneratingOverlay
                 }
                 isAwaitingAdditionalRatios={
+                  !autoApproveRemaining &&
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingAdditionalRatios
                 }
                 isGeneratingAdditionalRatios={

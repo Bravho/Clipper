@@ -4,6 +4,8 @@ import {
   PIPELINE_PHASES,
   PIPELINE_STEP_PRESENTATION,
   buildPipelinePhaseDisplay,
+  getPipelineStepPresentation,
+  isAutoApprovedGate,
 } from "@/config/pipelinePresentation";
 
 describe("pipeline presentation configuration", () => {
@@ -50,6 +52,58 @@ describe("pipeline presentation configuration", () => {
         expect(item.status).toBe("pending");
       }
     }
+  });
+
+  // ── Step-5 express lane ("approve everything from here") ────────────────────
+  describe("express lane display", () => {
+    const AUTO_GATES = [
+      VideoGenerationStep.AwaitingFinalApproval,
+      VideoGenerationStep.AwaitingOverlayApproval,
+      VideoGenerationStep.AwaitingAdditionalRatios,
+    ];
+
+    it.each(AUTO_GATES)(
+      "%s shows as work in progress, not as waiting for the requester",
+      (step) => {
+        // Default: this gate is genuinely waiting on a click.
+        expect(PIPELINE_STEP_PRESENTATION[step].state).toBe("action_required");
+        expect(isAutoApprovedGate(step)).toBe(true);
+
+        const auto = getPipelineStepPresentation(step, { autoApproveRemaining: true })!;
+        expect(auto.state).toBe("processing");
+        // …and the copy must not tell them to do something.
+        expect(auto.statusLabel).not.toBe(PIPELINE_STEP_PRESENTATION[step].statusLabel);
+        expect(auto.statusLabel).toContain("อัตโนมัติ");
+        // The phase it belongs to is unchanged — only how it reads.
+        expect(auto.phaseId).toBe(PIPELINE_STEP_PRESENTATION[step].phaseId);
+
+        const display = buildPipelinePhaseDisplay(step, null, {
+          autoApproveRemaining: true,
+        });
+        expect(
+          display.find(({ phase }) => phase.id === auto.phaseId)?.status
+        ).toBe("processing");
+      }
+    );
+
+    it("leaves the download gate alone — it still needs the requester", () => {
+      const step = VideoGenerationStep.AwaitingDistributionReview;
+      expect(isAutoApprovedGate(step)).toBe(false);
+      expect(getPipelineStepPresentation(step, { autoApproveRemaining: true })).toEqual(
+        PIPELINE_STEP_PRESENTATION[step]
+      );
+    });
+
+    it("changes nothing for a job that did not take the express lane", () => {
+      for (const step of AUTO_GATES) {
+        expect(getPipelineStepPresentation(step)).toEqual(
+          PIPELINE_STEP_PRESENTATION[step]
+        );
+        expect(buildPipelinePhaseDisplay(step, null)).toEqual(
+          buildPipelinePhaseDisplay(step, null, { autoApproveRemaining: false })
+        );
+      }
+    });
   });
 
   it("shows distribution review as ready with all prior stages complete", () => {

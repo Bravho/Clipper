@@ -35,6 +35,9 @@ export async function POST(
       : undefined;
   const selectedMusicTrack = body?.selectedMusicTrack ?? null;
   const subtitleLanguages = body?.subtitleLanguages as ("th" | "en" | "zh")[] | undefined;
+  // Express lane: approve every remaining gate automatically, Thai subtitles only
+  // (Travy still gets EN+ZH — enforced in the service, not here).
+  const autoApproveRemaining = body?.autoApproveRemaining === true;
 
   if (!jobId) {
     return NextResponse.json({ error: "Missing jobId." }, { status: 400 });
@@ -59,7 +62,8 @@ export async function POST(
       session.user.id,
       targetPlatforms,
       selectedMusicTrack,
-      subtitleLanguages
+      subtitleLanguages,
+      autoApproveRemaining
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

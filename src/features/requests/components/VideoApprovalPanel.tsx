@@ -143,6 +143,13 @@ interface Props {
    *  processing spinner so it never shows at terminal/review states
    *  (Complete/Delivered/Publishing/AwaitingDistributionReview). */
   isProcessing?: boolean;
+  /**
+   * Express lane: the job is sitting on an approval gate the server is clearing
+   * on the requester's behalf. The review panel for that gate is hidden by the
+   * page, so the spinner explains what is happening instead of describing a
+   * render step that isn't the one running.
+   */
+  isAutoAdvancing?: boolean;
   /** Pipeline is generating the AI voiceover — show voice-specific processing text. */
   isGeneratingVoice?: boolean;
   voiceRecordingUrl?: string | null;
@@ -192,6 +199,7 @@ export function VideoApprovalPanel({
   travyClipUrl = null,
   isPipelineFailed = false,
   isProcessing = false,
+  isAutoAdvancing = false,
   isGeneratingVoice = false,
   voiceRecordingUrl = null,
   voiceRecordingAssetId = null,
@@ -558,7 +566,13 @@ export function VideoApprovalPanel({
     }
   };
 
-  const handleApproveAnimation = async () => {
+  /**
+   * Approve the merge-and-music gate. `autoApproveRemaining` takes the express
+   * lane: the server approves every gate after this one as it is reached and
+   * pins the requester's own subtitles to Thai, so the next thing the requester
+   * sees is the finished video ready to download.
+   */
+  const handleApproveAnimation = async (autoApproveRemaining = false) => {
     setAnimationApproving(true);
     setError(null);
     // Stop every sound source used by this review step before starting the
@@ -580,6 +594,7 @@ export function VideoApprovalPanel({
         body: JSON.stringify({
           jobId,
           selectedMusicTrack,
+          autoApproveRemaining,
         }),
       });
       if (!res.ok) {
@@ -1376,14 +1391,30 @@ export function VideoApprovalPanel({
               {/* Phase 7 (deferred): subtitle-language picker removed — captions
                   return with the Phase 7 caption/timeline pipeline. */}
 
-              <div className="flex gap-3 justify-end pt-2 border-t border-slate-100">
+              <div className="flex flex-col items-stretch gap-2 pt-2 border-t border-slate-100 sm:items-end">
                 <Button
-                  onClick={handleApproveAnimation}
+                  onClick={() => handleApproveAnimation(false)}
                   loading={animationApproving}
                   disabled={animationApproving || selectedMusicTrack === null}
+                  className="sm:self-end"
                 >
                   อนุมัติและรวมเสียงเข้าในวีดิโอ →
                 </Button>
+
+                {/* Express lane: no further approval screens, Thai subtitles. */}
+                <Button
+                  variant="outline"
+                  onClick={() => handleApproveAnimation(true)}
+                  loading={animationApproving}
+                  disabled={animationApproving || selectedMusicTrack === null}
+                  className="sm:self-end"
+                >
+                  อนุมัติทุกขั้นตอนถัดไปอัตโนมัติ (ซับไตเติ้ลภาษาไทย) →
+                </Button>
+                <p className="text-xs text-slate-400 sm:text-right">
+                  ระบบจะดำเนินการทุกขั้นตอนที่เหลือให้โดยไม่ต้องกดอนุมัติอีก
+                  และใส่ซับไตเติ้ลภาษาไทยในวิดีโอของคุณ แจ้งเตือนอีกครั้งเมื่อวิดีโอพร้อมดาวน์โหลด
+                </p>
               </div>
             </Card>
           </div>
@@ -1808,7 +1839,17 @@ export function VideoApprovalPanel({
           !isGeneratingAdditionalRatios && (
           <Card className="mt-6 border-slate-100 bg-slate-50 p-5 flex flex-col items-center justify-center text-center">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600 mb-4" />
-            {isGeneratingOverlay || finalApproving ? (
+            {isAutoAdvancing ? (
+              <>
+                <h4 className="text-sm font-semibold text-slate-800">
+                  ระบบกำลังดำเนินการขั้นตอนถัดไปให้อัตโนมัติ...
+                </h4>
+                <p className="mt-1 text-xs text-slate-400 max-w-[320px]">
+                  คุณเลือกอนุมัติทุกขั้นตอนถัดไปไว้แล้ว ระบบกำลังอนุมัติและเริ่มขั้นตอนต่อไปให้
+                  ดูความคืบหน้าแต่ละขั้นตอนได้ที่ “ขั้นตอนการผลิต” ด้านบน
+                </p>
+              </>
+            ) : isGeneratingOverlay || finalApproving ? (
               <>
                 <h4 className="text-sm font-semibold text-slate-800">
                   กำลังรวมซับไตเติ้ลและ Motion Graphic...

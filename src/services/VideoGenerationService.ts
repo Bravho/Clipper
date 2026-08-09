@@ -744,7 +744,26 @@ export class VideoGenerationService {
       }
     }
 
-    void inlineFn().catch(onFail);
+    // Inline path: the step owns no queue row, so the express lane can advance
+    // as soon as the compute resolves. (Worker path: the equivalent call lives
+    // in the worker AFTER it marks the claim done — see afterRenderStepCompleted.)
+    void inlineFn()
+      .then(() => this.afterRenderStepCompleted(job.id))
+      .catch(onFail);
+  }
+
+  /**
+   * Post-step hook: run whatever should happen once a heavy step has FULLY
+   * finished — currently only the "approve everything from here" express lane.
+   *
+   * Must be called AFTER the render task is marked done, never from inside the
+   * step: a job may hold at most one active render task
+   * (`uq_render_tasks_active_job`), so enqueuing the next step while the current
+   * one is still claimed would replace the claimed row in place and the worker
+   * would then mark the *newly queued* step done without ever running it.
+   */
+  async afterRenderStepCompleted(jobId: string): Promise<void> {
+    await this._autoAdvanceIfEnabled(jobId);
   }
 
   /**
@@ -1274,13 +1293,22 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     });
   }
 
-  /** Requester approves the animated video, selects target platforms, and triggers FFmpeg final composition. */
+  /**
+   * Requester approves the animated video, selects target platforms, and triggers
+   * FFmpeg final composition.
+   *
+   * `autoApproveRemaining` is the express lane offered as a second button at this
+   * gate: every remaining requester approval is then granted automatically as the
+   * pipeline reaches it (see {@link _autoAdvanceIfEnabled}) and the requester's own
+   * subtitles are pinned to Thai only. The Travy export still renders EN+ZH.
+   */
   async approveAnimationByRequester(
     jobId: string,
     userId: string,
     targetPlatforms?: Platform[],
     selectedMusicTrack: string | null = null,
-    subtitleLanguages?: ("th" | "en" | "zh")[]
+    subtitleLanguages?: ("th" | "en" | "zh")[],
+    autoApproveRemaining = false
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
 
@@ -1292,6 +1320,21 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await clipRequestRepository.update(job.requestId, { targetPlatforms });
     }
 
+    // Express lane pins the requester's own subtitles to Thai only — it is chosen
+    // INSTEAD of the language picker they would have seen at the merged-review
+    // gate, so it must win over any language set earlier.
+    const effectiveSubtitleLanguages: ("th" | "en" | "zh")[] | undefined =
+      autoApproveRemaining ? ["th"] : subtitleLanguages;
+
+    // The merged-review gate is also where the motion-graphic template is
+    // picked. Skipping it would ship the bare "none" look, so choose one of the
+    // decorated templates at random instead.
+    const { pickRandomMotionTemplateId } = await import("@/config/motionTemplates");
+    const autoTemplate = autoApproveRemaining ? pickRandomMotionTemplateId() : null;
+    if (autoTemplate) {
+      console.log(`[auto-approve] job ${jobId}: motion template "${autoTemplate}" chosen at random`);
+    }
+
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.ComposingFinalVideo,
       animationApprovedBy: userId,
@@ -1299,7 +1342,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       // Do not expose it as if it were the in-progress audio-merged result.
       animatedVideoAssetId: null,
       ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
-      ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
+      ...(effectiveSubtitleLanguages && effectiveSubtitleLanguages.length > 0
+        ? { subtitleLanguages: effectiveSubtitleLanguages }
+        : {}),
+      ...(autoApproveRemaining ? { autoApproveRemaining: true } : {}),
+      ...(autoTemplate ? { selectedMotionTemplate: autoTemplate } : {}),
     });
 
     await this._dispatchHeavy(updated, RenderStep.FfmpegComposition, () =>
@@ -1913,6 +1960,62 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   // so every overlay render (incl. re-renders and Travy) starts from them.
   // ──────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Express lane ("approve everything from here", chosen at the step-5 gate):
+   * grant the requester approval for whichever gate the job has just landed on,
+   * so the pipeline keeps moving without a human click. Called at the END of the
+   * compute step that reaches each gate — i.e. the gate is already persisted, so
+   * a crash between the two simply leaves the job waiting for a manual click
+   * rather than losing work.
+   *
+   * Only the three intermediate gates are automated. The final download step
+   * (AwaitingDistributionReview) is deliberately NOT auto-confirmed: it is where
+   * the requester actually collects the video.
+   *
+   * Never throws: the express lane is a convenience, so a failure here must not
+   * fail the render step that just succeeded — the job is left on its gate,
+   * which the requester can approve by hand.
+   */
+  private async _autoAdvanceIfEnabled(jobId: string): Promise<void> {
+    try {
+      const job = await this._getJob(jobId);
+      if (!job.autoApproveRemaining) return;
+
+      // The express lane was started by the requester at the step-5 gate, so
+      // their id is on animationApprovedBy; fall back to any earlier approver so
+      // the *_approvedBy audit columns are never blanked by an auto-approval.
+      const userId =
+        job.animationApprovedBy ?? job.finalApprovedBy ?? job.voiceApprovedBy ?? "";
+
+      switch (job.currentStep) {
+        case VideoGenerationStep.AwaitingFinalApproval:
+          console.log(`[auto-approve] job ${jobId}: merged video (subtitles: th)`);
+          // Languages/template are already persisted (Thai pinned when the lane
+          // was chosen), so approve with what the job carries.
+          await this.approveFinalVideoByRequester(jobId, userId);
+          return;
+        case VideoGenerationStep.AwaitingOverlayApproval:
+          console.log(`[auto-approve] job ${jobId}: subtitled video`);
+          await this.approveOverlayByRequester(jobId, userId);
+          return;
+        case VideoGenerationStep.AwaitingAdditionalRatios:
+          console.log(`[auto-approve] job ${jobId}: remaining channel ratios`);
+          await this.generateAdditionalRatiosByRequester(jobId, userId);
+          return;
+        default:
+          return;
+      }
+    } catch (err) {
+      console.error(`[auto-approve] job ${jobId}: auto-approval failed, handing the gate back:`, err);
+      // Turn the express lane OFF so the requester gets their approval buttons
+      // back. Review gates are never "stalled" (see stallThresholds), so leaving
+      // the flag on would strand them on a spinner with no way forward.
+      await videoGenerationJobRepository
+        .update(jobId, { autoApproveRemaining: false })
+        .catch(() => {});
+    }
+  }
+
   /** Distribution ratios for the requester's own channels (excludes Travy). */
   private _userRatios(platforms: Platform[]): VideoRatio[] {
     const nonTravy = platforms.filter((p) => p !== Platform.TravyApp);
@@ -2250,6 +2353,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.GeneratingOverlay,
+      // Manual re-render — the requester is reviewing by hand again.
+      autoApproveRemaining: false,
       ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
     });
 
@@ -2274,6 +2379,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
     return videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.AwaitingFinalApproval,
+      // The requester has stepped back in to change the template/languages by
+      // hand, so stop auto-approving on their behalf — otherwise their new
+      // choices would be approved out from under them the moment they render.
+      autoApproveRemaining: false,
       captionedExport_9_16_assetId: null,
       captionedExport_16_9_assetId: null,
       captionedExport_1_1_assetId: null,
@@ -2302,10 +2411,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     if (remaining.length > 0) {
       // More channel formats to produce — wait for the explicit button.
-      return videoGenerationJobRepository.update(jobId, {
+      const gated = await videoGenerationJobRepository.update(jobId, {
         currentStep: VideoGenerationStep.AwaitingAdditionalRatios,
         finalApprovedBy: userId,
       });
+      // Express lane: press that button for them. Guarded on the flag here (not
+      // only inside the helper) so a manual approval never recurses.
+      if (gated.autoApproveRemaining) {
+        await this._autoAdvanceIfEnabled(jobId);
+        return this._getJob(jobId);
+      }
+      return gated;
     }
 
     return this._finalizeAndStartTravy(job, userId);
@@ -3390,6 +3506,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
     return videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.AwaitingAnimationApproval,
+      // Back at the step-5 gate, where the express lane is offered again — so
+      // drop it here rather than silently re-applying a choice made last time.
+      autoApproveRemaining: false,
       finalExport_9_16_assetId: null,
       finalExport_16_9_assetId: null,
       finalExport_1_1_assetId: null,

@@ -33,6 +33,13 @@ interface Props {
   initialReadyCaptionedCount?: number;
   /** Whether the job already looked stalled at server render — the refresh baseline. */
   initialStalled?: boolean;
+  /**
+   * Express lane: the job is sitting on an approval gate the SERVER will clear
+   * by itself within seconds. Such gates aren't in POLLING_STEPS (nothing
+   * normally moves without a click), so poll on this flag or the page would sit
+   * on a step the job has already left.
+   */
+  autoAdvancing?: boolean;
   onVideoGenStatus?: (status: "submitted" | "processing", polledAt: Date) => void;
   /**
    * Per-step % stream: called on every poll with the server's renderProgress
@@ -68,6 +75,7 @@ export function PipelineStatusPoller({
   requiredCaptionedCount,
   initialReadyCaptionedCount = 0,
   initialStalled = false,
+  autoAdvancing = false,
   onVideoGenStatus,
   onProgress,
   onQueue,
@@ -95,7 +103,8 @@ export function PipelineStatusPoller({
       !POLLING_STEPS.includes(currentStep) &&
       !travyGenerating &&
       !revealRatios &&
-      !revealCaptioned
+      !revealCaptioned &&
+      !autoAdvancing
     )
       return;
 
@@ -197,6 +206,7 @@ export function PipelineStatusPoller({
     requiredRatioCount,
     revealCaptioned,
     requiredCaptionedCount,
+    autoAdvancing,
     router,
   ]);
 

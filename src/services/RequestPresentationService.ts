@@ -103,12 +103,12 @@ const STATUS_PRESENTATION: Record<RequestStatus, StatusPresentation> = {
   },
   [RequestStatus.Submitted]: {
     label: "ส่งแล้ว",
-    description: "คำขอของคุณถูกส่งแล้วและรอทีมงานเริ่มตรวจสอบ",
+    description: "คำขอของคุณถูกส่งแล้ว",
     badgeVariant: "blue",
   },
   [RequestStatus.UnderReview]: {
     label: "กำลังตรวจสอบ",
-    description: "ทีมงานกำลังตรวจสอบ brief และไฟล์ที่อัพโหลด",
+    description: "ระบบกำลังประมวลผล brief และไฟล์ที่อัพโหลด",
     badgeVariant: "blue",
   },
   [RequestStatus.AcceptedForProduction]: {
@@ -118,7 +118,7 @@ const STATUS_PRESENTATION: Record<RequestStatus, StatusPresentation> = {
   },
   [RequestStatus.Editing]: {
     label: "กำลังผลิต",
-    description: "คลิปของคุณกำลังถูกตัดต่อโดยทีมงาน",
+    description: "คลิปของคุณกำลังถูกตัดต่อ",
     badgeVariant: "green",
   },
   [RequestStatus.ScheduledForPublishing]: {
@@ -221,7 +221,7 @@ export class RequestPresentationService {
         show: true,
         formattedDate: formatted,
         message: isPast
-          ? `คาดว่าเสร็จภายใน ${formatted} — ทีมงานกำลังสรุปคลิปของคุณ`
+          ? `คาดว่าเสร็จภายใน ${formatted} — ระบบกำลังสรุปคลิปของคุณ`
           : `คาดว่าเสร็จภายใน: ${formatted}`,
       };
     }
@@ -231,7 +231,7 @@ export class RequestPresentationService {
       show: true,
       formattedDate: null,
       message:
-        "คำขอของคุณอยู่ระหว่างการตรวจสอบ วันที่คาดว่าจะเสร็จจะแสดงที่นี่เมื่อทีมงานยืนยันกำหนดการผลิต",
+        "คำขอของคุณอยู่ระหว่างการประมวลผล วันที่คาดว่าจะเสร็จจะแสดงที่นี่เมื่อระบบยืนยันกำหนดการผลิต",
     };
   }
 
@@ -247,18 +247,19 @@ export class RequestPresentationService {
         return { show: false, message: "" };
 
       case RequestStatus.Submitted:
+        // Do NOT show a "N requests ahead" count here: this is the pre-production
+        // stage before the render pipeline runs, and that number does not reflect
+        // the Mac worker line (the real render position is shown per-step during
+        // processing). Just confirm the submission is received.
         return {
           show: true,
-          message:
-            queuePosition != null
-              ? `คำขอของคุณอยู่ในคิว (มีประมาณ ${queuePosition} คำขออยู่ก่อนหน้า)`
-              : "คำขอของคุณถูกส่งแล้วและรอการตรวจสอบ",
+          message: "คำขอของคุณถูกส่งแล้ว",
         };
 
       case RequestStatus.UnderReview:
         return {
           show: true,
-          message: "ทีมงานกำลังตรวจสอบ brief และไฟล์ของคุณ",
+          message: "ระบบกำลังประมวลผล brief และไฟล์ของคุณ",
         };
 
       case RequestStatus.AcceptedForProduction:
@@ -273,7 +274,7 @@ export class RequestPresentationService {
       case RequestStatus.Editing:
         return {
           show: true,
-          message: "คลิปของคุณกำลังถูกผลิตโดยทีมงาน",
+          message: "คลิปของคุณกำลังถูกผลิต",
         };
 
       case RequestStatus.ScheduledForPublishing:

@@ -68,6 +68,12 @@ export function PipelineFailurePanel({
     failedPresentation?.statusLabel ??
     "ไม่ทราบขั้นตอน";
 
+  // A voice-step failure is recovered by "สร้างเสียงพากย์ใหม่" (regenerate voice)
+  // right next to the script. The generic "ลองอีกครั้ง" would re-run the exact
+  // same voice generation, so we hide it here to avoid two buttons that do the
+  // same thing; it stays for every other failed step.
+  const isVoiceFailure = failedAtStep === VideoGenerationStep.GeneratingVoice;
+
   // Audio-first reorder: GeneratingVoice now runs immediately after content
   // approval, before any video exists. A failure here is just the first
   // generative step failing — handled by the generic retry panel below
@@ -224,7 +230,9 @@ export function PipelineFailurePanel({
           เกิดข้อผิดพลาดในขั้นตอน: {failedStepLabel}
         </p>
         <p className="mt-1 text-sm text-red-700">
-          กระบวนการผลิตหยุดชะงัก ตรวจสอบข้อมูลที่ส่งด้านล่างแล้วกด &quot;ลองอีกครั้ง&quot;
+          {isVoiceFailure
+            ? "กระบวนการผลิตหยุดชะงัก แก้ไขบทพูดด้านล่าง (ถ้าต้องการ) แล้วกด \"สร้างเสียงพากย์ใหม่\""
+            : "กระบวนการผลิตหยุดชะงัก ตรวจสอบข้อมูลที่ส่งด้านล่างแล้วกด \"ลองอีกครั้ง\""}
         </p>
       </div>
 
@@ -429,15 +437,20 @@ export function PipelineFailurePanel({
         </div>
       )}
 
-      <div className="flex justify-end">
-        <button
-          onClick={handleRetry}
-          disabled={isRetrying}
-          className="rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isRetrying ? "กำลังลองอีกครั้ง..." : "ลองอีกครั้ง →"}
-        </button>
-      </div>
+      {/* Generic retry — hidden on a voice-step failure, where "สร้างเสียงพากย์ใหม่"
+          above already re-runs the same voice generation (avoids two buttons
+          doing the same thing). */}
+      {!isVoiceFailure && (
+        <div className="flex justify-end">
+          <button
+            onClick={handleRetry}
+            disabled={isRetrying}
+            className="rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isRetrying ? "กำลังลองอีกครั้ง..." : "ลองอีกครั้ง →"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

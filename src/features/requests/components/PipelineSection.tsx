@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { VideoGenerationStep, POLLING_STEPS } from "@/domain/enums/VideoGenerationStep";
+import { isAutoApprovedGate } from "@/config/pipelinePresentation";
 import type { RenderProgressDetail } from "@/domain/models/VideoGenerationJob";
 import { ProductionPipeline } from "./ProductionPipeline";
 import { PipelineStatusPoller } from "./PipelineStatusPoller";
@@ -35,6 +36,8 @@ interface Props {
   initialRenderProgressDetail?: RenderProgressDetail | null;
   /** True when the job has been stuck on a processing step past its threshold. */
   stalled?: boolean;
+  /** The job took the step-5 express lane — see ProductionPipeline. */
+  autoApproveRemaining?: boolean;
 }
 
 /**
@@ -57,6 +60,7 @@ export function PipelineSection({
   initialRenderProgress = null,
   initialRenderProgressDetail = null,
   stalled = false,
+  autoApproveRemaining = false,
 }: Props) {
   const [videoGenStatus, setVideoGenStatus] = useState<"submitted" | "processing" | null>(null);
   const [videoGenLastPolledAt, setVideoGenLastPolledAt] = useState<Date | null>(null);
@@ -96,11 +100,18 @@ export function PipelineSection({
     requiredCaptionedCount != null &&
     (readyCaptionedCount ?? 0) < requiredCaptionedCount;
 
+  // Express lane: the approval gates are NOT in POLLING_STEPS (normally nothing
+  // moves until the requester clicks), but here the server advances them on its
+  // own within seconds. Without this the page would freeze on a gate the job has
+  // already left, until a manual reload.
+  const autoAdvancing = autoApproveRemaining && isAutoApprovedGate(currentStep);
+
   const isPolling =
     POLLING_STEPS.includes(currentStep) ||
     travyVideoStatus === "generating" ||
     revealRatios ||
-    revealCaptioned;
+    revealCaptioned ||
+    autoAdvancing;
 
   // Requester-facing queue line. Only ever a COUNT of steps ahead — no other
   // requester's name or step. Shown only while this request has an active step
@@ -125,6 +136,7 @@ export function PipelineSection({
         renderProgressDetail={renderProgressDetail}
         requestId={requestId}
         stalled={stalled}
+        autoApproveRemaining={autoApproveRemaining}
       />
       {queueMessage && (
         <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
@@ -144,6 +156,7 @@ export function PipelineSection({
           requiredCaptionedCount={requiredCaptionedCount}
           initialReadyCaptionedCount={readyCaptionedCount}
           initialStalled={stalled}
+          autoAdvancing={autoAdvancing}
           onVideoGenStatus={(status, polledAt) => {
             setVideoGenStatus(status);
             setVideoGenLastPolledAt(polledAt);

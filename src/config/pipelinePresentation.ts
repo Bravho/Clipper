@@ -196,6 +196,28 @@ export const PIPELINE_STEP_PRESENTATION = {
   },
 } satisfies Record<VideoGenerationStep, PipelineStepPresentation>;
 
+/**
+ * The gates the step-5 express lane ("อนุมัติทุกขั้นตอนถัดไปอัตโนมัติ") approves on
+ * the requester's behalf, with the copy shown INSTEAD of the normal "waiting for
+ * you" label. On an express-lane job these are pass-throughs, not requests for
+ * attention: showing them as `action_required` (amber, paused) would tell the
+ * requester to act on a screen that is about to disappear, so they render as
+ * `processing` — the pipeline genuinely IS working through them.
+ */
+const AUTO_APPROVED_GATE_LABELS: Partial<Record<VideoGenerationStep, string>> = {
+  [VideoGenerationStep.AwaitingFinalApproval]:
+    "อนุมัติอัตโนมัติแล้ว — กำลังเตรียมใส่ซับไตเติ้ลและกราฟิก",
+  [VideoGenerationStep.AwaitingOverlayApproval]:
+    "อนุมัติอัตโนมัติแล้ว — กำลังเตรียมวิดีโอสำหรับช่องทางของคุณ",
+  [VideoGenerationStep.AwaitingAdditionalRatios]:
+    "อนุมัติอัตโนมัติแล้ว — กำลังเริ่มสร้างรูปแบบช่องทางที่เหลือ",
+};
+
+/** True when this step is a gate the express lane handles automatically. */
+export function isAutoApprovedGate(step: VideoGenerationStep | null | undefined): boolean {
+  return step != null && step in AUTO_APPROVED_GATE_LABELS;
+}
+
 export const STEP_TO_PHASE = Object.fromEntries(
   Object.entries(PIPELINE_STEP_PRESENTATION).map(([step, presentation]) => [
     step,
@@ -203,15 +225,31 @@ export const STEP_TO_PHASE = Object.fromEntries(
   ])
 ) as Record<VideoGenerationStep, PipelinePhaseId | null>;
 
+export interface PipelineDisplayOptions {
+  /**
+   * The job took the step-5 express lane, so the remaining approval gates are
+   * granted automatically. Re-labels those gates as work in progress rather than
+   * as something the requester must act on.
+   */
+  autoApproveRemaining?: boolean;
+}
+
 export function getPipelineStepPresentation(
-  step: VideoGenerationStep | null | undefined
+  step: VideoGenerationStep | null | undefined,
+  options: PipelineDisplayOptions = {}
 ): PipelineStepPresentation | null {
   if (!step) return null;
-  return (
+  const base =
     PIPELINE_STEP_PRESENTATION[
       step as keyof typeof PIPELINE_STEP_PRESENTATION
-    ] ?? null
-  );
+    ] ?? null;
+  if (!base) return null;
+
+  const autoLabel = AUTO_APPROVED_GATE_LABELS[step];
+  if (options.autoApproveRemaining && autoLabel) {
+    return { ...base, state: "processing", statusLabel: autoLabel };
+  }
+  return base;
 }
 
 export type PipelinePhaseDisplayStatus =
@@ -235,7 +273,8 @@ export interface PipelinePhaseDisplay {
  */
 export function buildPipelinePhaseDisplay(
   currentStep?: VideoGenerationStep | null,
-  failedAtStep?: VideoGenerationStep | null
+  failedAtStep?: VideoGenerationStep | null,
+  options: PipelineDisplayOptions = {}
 ): PipelinePhaseDisplay[] {
   if (!currentStep) {
     return PIPELINE_PHASES.map((phase) => ({ phase, status: "preview" }));
@@ -257,7 +296,7 @@ export function buildPipelinePhaseDisplay(
     }));
   }
 
-  const current = getPipelineStepPresentation(currentStep);
+  const current = getPipelineStepPresentation(currentStep, options);
   if (!current || current.phaseId == null) {
     return PIPELINE_PHASES.map((phase) => ({ phase, status: "unknown" }));
   }

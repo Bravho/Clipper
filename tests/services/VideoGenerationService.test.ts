@@ -31,6 +31,7 @@ import type {
   VideoGenerationJob,
 } from "@/domain/models/VideoGenerationJob";
 import type { BusinessProfile } from "@/domain/models/BusinessProfile";
+import { MOTION_TEMPLATES, DEFAULT_TEMPLATE_ID } from "@/config/motionTemplates";
 
 // ── Mock repositories module (used via `@/repositories/index` singletons) ──
 jest.mock("@/repositories/index", () => ({
@@ -845,6 +846,108 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
     expect(updated?.travyVideoStatus).toBe("ready");
     expect(updated?.finalExport_travy_assetId).toBeTruthy();
+  });
+
+  // ── Step-5 express lane: "approve everything from here" ─────────────────────
+  it("express lane runs every remaining gate itself: merged review → overlay → extra ratios → download, never stopping", async () => {
+    const request = await createRequestWithPlatforms([
+      Platform.TikTok,
+      Platform.YouTube,
+      Platform.TravyApp,
+    ]);
+    const master916 = await createMaster(request.id, "9:16");
+    const master169 = await createMaster(request.id, "16:9");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16", "16:9"]);
+
+    // A job that took the express lane at step 5: Thai-only subtitles, flag set.
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingFinalApproval,
+      { "9:16": master916.id, "16:9": master169.id },
+      ["th"]
+    );
+    await mockJobRepo.update(job.id, { autoApproveRemaining: true });
+
+    // Nothing below is a requester action — the ONLY call is the pipeline's own
+    // post-step hook, standing in for the worker/inline completion callback that
+    // fires after the compose step lands the job on AwaitingFinalApproval.
+    const service = new VideoGenerationService();
+    await service.afterRenderStepCompleted(job.id);
+    await flushBackground(
+      async () => (await mockJobRepo.findById(job.id))?.travyVideoStatus === "ready"
+    );
+
+    const updated = await mockJobRepo.findById(job.id);
+    // Ran all the way to the download step without a single manual approval.
+    expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
+    expect(updated?.captionedExport_9_16_assetId).toBeTruthy();
+    expect(updated?.captionedExport_16_9_assetId).toBeTruthy();
+
+    // The requester's own channels are Thai-subtitled…
+    const userCalls = renderTemplatedVideoMock.mock.calls.filter(
+      ([p]: any[]) => p.subtitleLanguages.join() === "th"
+    );
+    expect(userCalls.map(([p]: any[]) => p.ratio).sort()).toEqual(["16:9", "9:16"]);
+
+    // …while Travy silently still gets EN+ZH at its fixed 16:9, unasked.
+    const travyCalls = renderTemplatedVideoMock.mock.calls.filter(
+      ([p]: any[]) => p.subtitleLanguages.join() === "en,zh"
+    );
+    expect(travyCalls).toHaveLength(1);
+    expect(travyCalls[0][0].ratio).toBe("16:9");
+    expect(updated?.travyVideoStatus).toBe("ready");
+    expect(updated?.finalExport_travy_assetId).toBeTruthy();
+  });
+
+  it("choosing the express lane at step 5 pins Thai subtitles and picks a decorated template at random", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingAnimationApproval,
+      {},
+      ["en", "zh"]
+    );
+
+    const service = new VideoGenerationService();
+    const updated = await service.approveAnimationByRequester(
+      job.id,
+      "user-001",
+      undefined,
+      "none",
+      undefined,
+      true
+    );
+
+    expect(updated.autoApproveRemaining).toBe(true);
+    expect(updated.subtitleLanguages).toEqual(["th"]);
+    // The requester never sees the template picker, so they must not be given
+    // the bare "none" look — one of the decorated templates is chosen for them.
+    const decorated = MOTION_TEMPLATES.filter((t) => t.id !== DEFAULT_TEMPLATE_ID).map(
+      (t) => t.id
+    );
+    expect(decorated).toContain(updated.selectedMotionTemplate);
+  });
+
+  it("without the express lane the pipeline still waits at the merged-review gate", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
+    const master = await createMaster(request.id, "9:16");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingFinalApproval,
+      { "9:16": master.id },
+      ["th"]
+    );
+
+    const service = new VideoGenerationService();
+    await service.afterRenderStepCompleted(job.id);
+    await flushBackground(undefined, 50);
+
+    const updated = await mockJobRepo.findById(job.id);
+    expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingFinalApproval);
+    expect(renderTemplatedVideoMock).not.toHaveBeenCalled();
   });
 
   // ── Render-queue seam: enqueue for a live Mac worker, else run inline ────────

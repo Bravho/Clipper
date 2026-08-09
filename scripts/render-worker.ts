@@ -156,6 +156,12 @@ async function processTask(task: RenderTask): Promise<void> {
       user: task.requesterId,
       seconds: sec(startedAt),
     });
+    // Only NOW may the next step be enqueued: a job holds at most one active
+    // render task, so an enqueue before `complete` above would have replaced
+    // this very row and the "done" would have landed on the unrun next step.
+    // Used by the step-5 "approve everything from here" express lane; a no-op
+    // for every other job. Never throws.
+    await service.afterRenderStepCompleted(task.jobId);
   } catch (err) {
     log("step FAILED", {
       task: task.id,

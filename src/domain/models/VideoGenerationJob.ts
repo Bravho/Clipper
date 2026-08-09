@@ -161,6 +161,23 @@ export interface VideoGenerationJob {
    */
   subtitleLanguages: ("th" | "en" | "zh")[];
 
+  /**
+   * "Approve everything from here" — set when the requester takes the express
+   * lane at the step-5 gate (AwaitingAnimationApproval). Every REMAINING
+   * requester gate (AwaitingFinalApproval, AwaitingOverlayApproval,
+   * AwaitingAdditionalRatios) is then approved automatically the moment it is
+   * reached, so the job runs through to the final download step
+   * (AwaitingDistributionReview) without stopping. The download gate itself is
+   * NEVER auto-confirmed.
+   *
+   * Persisted on the job (not held in memory) so the auto-advance survives a
+   * process restart, a render-worker handoff and a retry.
+   *
+   * Taking the express lane also pins `subtitleLanguages` to ["th"]. As always,
+   * the Travy export ignores that and renders EN+ZH.
+   */
+  autoApproveRemaining?: boolean;
+
   // Step 4: Final exports (merged voice+music masters, per ratio — NO captions).
   // These are the un-captioned masters. The Phase-7 overlay step composites the
   // subtitle/motion-graphic layer ON TOP of these into the captionedExport_*

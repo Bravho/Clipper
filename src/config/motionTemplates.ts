@@ -69,6 +69,19 @@ export function getTemplate(id?: string | null): MotionTemplate {
   );
 }
 
+/**
+ * Pick one of the DECORATED templates at random (never "none").
+ *
+ * Used by the step-5 express lane ("approve everything from here"): the
+ * requester never sees the template picker, so instead of silently shipping the
+ * bare clean render they get one of the real motion-graphic looks.
+ */
+export function pickRandomMotionTemplateId(): string {
+  const decorated = MOTION_TEMPLATES.filter((t) => t.id !== DEFAULT_TEMPLATE_ID);
+  if (decorated.length === 0) return DEFAULT_TEMPLATE_ID;
+  return decorated[Math.floor(Math.random() * decorated.length)].id;
+}
+
 export function isValidTemplateId(id: unknown): id is string {
   return typeof id === "string" && MOTION_TEMPLATES.some((t) => t.id === id);
 }
