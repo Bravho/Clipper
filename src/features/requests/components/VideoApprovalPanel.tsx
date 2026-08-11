@@ -967,15 +967,18 @@ export function VideoApprovalPanel({
             })()
           )
         ) : (
-          // Once the pipeline reaches subtitle review or any later channel-ratio
-          // stage, the non-subtitled base montage is obsolete. Never fall back
-          // to it—even when the captioned/watermarked preview URL is temporarily
-          // unavailable. The relevant captioned cards below either show the
-          // correct asset or their own preparing/loading state.
+          // Once the pipeline reaches the merged-audio review, subtitle review or
+          // any later channel-ratio stage, the non-subtitled base montage is
+          // obsolete. Never fall back to it—even when the captioned/watermarked
+          // preview URL is temporarily unavailable. The relevant captioned cards
+          // below either show the correct asset or their own preparing/loading
+          // state. In particular, during merged-audio approval the requester must
+          // see ONLY the merged clip, not the silent source montage.
           videoUrl &&
           !animationApproving &&
           !finalApproving &&
           !isProcessing &&
+          !isAwaitingFinalApproval &&
           !isAwaitingOverlayApproval &&
           !isAwaitingAdditionalRatios &&
           !isGeneratingAdditionalRatios && (
@@ -1466,13 +1469,20 @@ export function VideoApprovalPanel({
                       )}
                     </div>
 
-                    {/* Preview video at the primary channel's aspect ratio */}
-                    <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden max-h-[500px]">
+                    {/* Preview video at the primary channel's aspect ratio.
+                        The player must never be wider than its box: without
+                        max-w-full a landscape clip sized by max-h overflows the
+                        card on narrow/mid widths, so the native control bar gets
+                        clipped and no longer lines up with the picture. Letting
+                        width shrink with the container (max-w-full + h-auto)
+                        keeps the controls exactly as wide as the video. */}
+                    <div className="flex justify-center bg-slate-900 rounded-lg p-2 overflow-hidden">
                       <video
                         key={primaryClip.id}
                         src={primaryClip.storageUrl}
                         controls
-                        className="max-h-[480px] w-auto object-contain rounded"
+                        playsInline
+                        className="block h-auto max-h-[480px] w-auto max-w-full object-contain rounded"
                       />
                     </div>
 
@@ -1512,14 +1522,10 @@ export function VideoApprovalPanel({
                       </div>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                      <a
-                        href={primaryClip.storageUrl}
-                        download={`final_video_${primaryClip.videoRatio.replace(":", "_")}.mp4`}
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-medium"
-                      >
-                        ดาวน์โหลด ({primaryClip.videoRatio})
-                      </a>
+                    {/* No download here on purpose: this merged-audio master is an
+                        intermediate step, not a deliverable. Downloads belong to
+                        the final subtitled/motion-graphic exports. */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-3 pt-3 border-t border-slate-100">
                       <div className="flex gap-3">
                         <button
                           type="button"

@@ -137,7 +137,10 @@ export function uploadedMaterialsNote(): RetentionNote {
  * Note for a single stored media object, derived from its storage-key lifecycle
  * window (see {@link estimatedSpaceExpiry}). Used at the final-approval step for
  * the intermediate un-captioned "master" merged video so the requester knows
- * when its stored file will be purged and can download / continue before then.
+ * when its stored file will be purged and can continue before then. The note
+ * never tells the requester to download: this master is an intermediate step
+ * with no download action, and downloads exist only on the final subtitled /
+ * motion-graphic exports.
  *
  * `baseline` is the object's creation time (the asset's `createdAt`). Returns
  * null when the key has no lifecycle rule or no baseline is available.
@@ -167,7 +170,7 @@ export function spaceExpiryNote(
     };
   }
   return {
-    text: `ไฟล์วิดีโอที่รวมเสียงนี้จะถูกเก็บไว้ถึงประมาณ ${formatThaiDate(expiresAt)} (อีก ${remaining} วัน) — กรุณาดาวน์โหลดหรือดำเนินการขั้นตอนต่อไปก่อนหมดเวลา`,
+    text: `ไฟล์วิดีโอที่รวมเสียงนี้จะถูกเก็บไว้ถึงประมาณ ${formatThaiDate(expiresAt)} (อีก ${remaining} วัน) — กรุณาดำเนินการขั้นตอนต่อไปก่อนหมดเวลา`,
     effectiveAt: expiresAt,
     tone: remaining <= 2 ? "warning" : "info",
   };
