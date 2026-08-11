@@ -7,6 +7,7 @@ import {
   estimateStoryboardTotalRange,
   suggestVoiceDurationRange,
   minMontageTotalSeconds,
+  reallocateSceneAssetDurations,
   sceneMontageSeconds,
   voiceOverShortageSeconds,
   MONTAGE_INTRO_SECONDS,
@@ -180,6 +181,59 @@ describe("assetPlaySeconds", () => {
   it("returns 0 for a non-positive/absent duration", () => {
     expect(assetPlaySeconds({ kind: "image" })).toBe(0);
     expect(assetPlaySeconds({ kind: "image", durationSeconds: 0 })).toBe(0);
+  });
+
+  it("never reports LESS than a clip's approved window, even with a bigger slot", () => {
+    // A slot longer than the window is a deliberate slow-motion fill and is the
+    // real on-screen time; a slot shorter than the window would mean cutting
+    // approved footage, which the pipeline must never do.
+    expect(
+      assetPlaySeconds({ kind: "clip", durationSeconds: 7, trimStartSeconds: 0, trimEndSeconds: 4 })
+    ).toBe(7);
+    expect(
+      assetPlaySeconds({ kind: "clip", durationSeconds: 2, trimStartSeconds: 0, trimEndSeconds: 9 })
+    ).toBe(9);
+  });
+});
+
+describe("reallocateSceneAssetDurations", () => {
+  it("pins EVERY clip to its window and gives the rest of the budget to stills", () => {
+    const scene = reallocateSceneAssetDurations({
+      durationSeconds: 10,
+      assets: [
+        { kind: "image" as const, durationSeconds: 1 },
+        { kind: "clip" as const, durationSeconds: 2, trimStartSeconds: 0, trimEndSeconds: 6 },
+        { kind: "image" as const, durationSeconds: 1 },
+      ],
+    });
+
+    expect(scene.assets.map((a) => a.durationSeconds)).toEqual([2, 6, 2]);
+    expect(scene.durationSeconds).toBe(10);
+  });
+
+  it("auto-grows the scene rather than compressing clips past the target", () => {
+    const scene = reallocateSceneAssetDurations({
+      durationSeconds: 5,
+      assets: [
+        { kind: "clip" as const, durationSeconds: 1, trimStartSeconds: 0, trimEndSeconds: 9 },
+        { kind: "image" as const, durationSeconds: 3 },
+      ],
+    });
+
+    expect(scene.assets[0].durationSeconds).toBe(9);
+    expect(scene.assets[1].durationSeconds).toBe(1); // minimum flex share
+    expect(scene.durationSeconds).toBe(10);
+  });
+
+  it("allocates stills fractionally instead of flooring whole seconds away", () => {
+    const scene = reallocateSceneAssetDurations({
+      durationSeconds: 7,
+      assets: [
+        { kind: "image" as const, durationSeconds: 1 },
+        { kind: "image" as const, durationSeconds: 1 },
+      ],
+    });
+    expect(scene.assets.map((a) => a.durationSeconds)).toEqual([3.5, 3.5]);
   });
 });
 

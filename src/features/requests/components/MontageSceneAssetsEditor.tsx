@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import type { MontageSceneAsset } from "@/domain/models/VideoGenerationJob";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { MOTION_PRESETS, type MotionPreset, assetPlaySeconds } from "@/config/montage";
@@ -15,11 +16,12 @@ import { ClipTrimBar } from "@/features/requests/components/ClipTrimBar";
  * (`OrderedSourceAsset.index`), so the same index resolves to the same media in
  * the storyboard, the scene plan, and the renderer.
  *
- * Duration model: a trimmed CLIP's on-screen play time is its selected window
- * (out − in); stills keep their allocated duration. The scene total is the sum
- * of per-asset durations and AUTO-GROWS as clips are trimmed longer — the
- * editor never redistributes existing durations, so dragging one clip never
- * silently changes another asset's length.
+ * Duration model: a CLIP's on-screen play time is its selected window (out − in)
+ * — which defaults to the WHOLE clip, exactly as the trim bar shows it — and is
+ * never reduced to fit a scene's time budget. Stills keep their allocated
+ * duration. The scene total is the sum of per-asset durations and AUTO-GROWS as
+ * clips are trimmed longer; the editor never redistributes existing durations,
+ * so dragging one clip never silently changes another asset's length.
  */
 
 const MOTION_LABELS: Record<MotionPreset, string> = {
@@ -83,26 +85,41 @@ export function MontageSceneAssetsEditor({
 }: MontageSceneAssetsEditorProps) {
   const selectedIndexes = assets.map((a) => a.assetIndex);
 
+  // Every mutation reads the LATEST list from this ref rather than the render's
+  // props. Several clip trim bars commit their default full-clip window as soon
+  // as their <video> metadata loads, and two of those landing in the same tick
+  // would otherwise both build on the same stale props array — the second
+  // silently discarding the first clip's window.
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
+  const commit = (next: MontageSceneAsset[]) => {
+    assetsRef.current = next;
+    onChange(next);
+  };
+
   const toggleAsset = (src: OrderedSourceAsset) => {
-    const exists = selectedIndexes.includes(src.index);
+    const current = assetsRef.current;
+    const exists = current.some((a) => a.assetIndex === src.index);
     if (exists) {
       // Removing an asset leaves the others' durations untouched.
-      onChange(assets.filter((a) => a.assetIndex !== src.index));
+      commit(current.filter((a) => a.assetIndex !== src.index));
     } else {
-      onChange([
-        ...assets,
+      commit([
+        ...current,
         {
           assetIndex: src.index,
           kind: src.kind,
           motion: src.kind === "clip" ? "static" : "ken_burns_in",
-          durationSeconds: defaultAssetDuration(assets.length + 1, sceneDurationSeconds),
+          durationSeconds: defaultAssetDuration(current.length + 1, sceneDurationSeconds),
         },
       ]);
     }
   };
 
   const updateAsset = (assetIndex: number, patch: Partial<MontageSceneAsset>) => {
-    onChange(assets.map((a) => (a.assetIndex === assetIndex ? { ...a, ...patch } : a)));
+    commit(
+      assetsRef.current.map((a) => (a.assetIndex === assetIndex ? { ...a, ...patch } : a))
+    );
   };
 
   /** A clip's trim window IS its on-screen play time, so update both together. */
@@ -116,11 +133,12 @@ export function MontageSceneAssetsEditor({
   };
 
   const move = (from: number, dir: -1 | 1) => {
+    const current = assetsRef.current;
     const to = from + dir;
-    if (to < 0 || to >= assets.length) return;
-    const next = [...assets];
+    if (to < 0 || to >= current.length) return;
+    const next = [...current];
     [next[from], next[to]] = [next[to], next[from]];
-    onChange(next);
+    commit(next);
   };
 
   if (orderedAssets.length === 0) {

@@ -569,8 +569,14 @@ export class VideoGenerationService {
         try {
           const dur = await ffmpegService.probeMediaDurationSeconds(a.url);
           if (dur > 0) {
-            a.trimStartSeconds = a.trimStartSeconds ?? 0;
-            a.trimEndSeconds = dur;
+            const start = a.trimStartSeconds ?? 0;
+            a.trimStartSeconds = start;
+            // Legacy plans only: never open a window WIDER than the slot the
+            // plan allocated, because the composition hard-cuts at the end of
+            // the slot — a wider window is footage that silently disappears.
+            // (Plans written since the trim fix always carry an explicit window,
+            // and `toRenderAssetSpecs` sizes the slot to match it.)
+            a.trimEndSeconds = Math.min(dur, start + a.durationSeconds);
           }
         } catch {
           /* leave unset — falls back to prior (non-black-out) behavior */

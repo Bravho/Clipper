@@ -27,6 +27,7 @@ import {
   assetPlaySeconds,
   estimateSuggestedVoiceSeconds,
   estimateStoryboardTotalRange,
+  reallocateSceneAssetDurations,
   suggestVoiceDurationRange,
   VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS,
 } from "@/config/montage";
@@ -764,40 +765,12 @@ export function VideoApprovalPanel({
     setEditScenes((prev) => prev.map((scene, i) => (i === index ? { ...scene, ...patch } : scene)));
   };
 
-  /** Even-split duration allocation, remainder on the last asset; min 1s each. */
-  const allocateDurations = (count: number, totalSeconds: number): number[] => {
-    if (count <= 0) return [];
-    const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : count;
-    const per = Math.max(1, Math.floor(total / count));
-    const arr = new Array<number>(count).fill(per);
-    const remainder = total - per * count;
-    if (remainder > 0) arr[count - 1] = per + remainder;
-    return arr;
-  };
-
-  /** Trim-aware: a clip with an in/out window keeps that window as its duration;
-   *  only stills / untrimmed clips share the scene's remaining budget. The scene
-   *  auto-grows if pinned clips exceed the target. */
-  const reallocateSceneAssets = (scene: ScenePlan): ScenePlan => {
-    if (!scene.assets || scene.assets.length === 0) return scene;
-    const isTrimmedClip = (a: MontageSceneAsset) =>
-      a.kind === "clip" &&
-      Number.isFinite(a.trimStartSeconds) &&
-      Number.isFinite(a.trimEndSeconds) &&
-      (a.trimEndSeconds as number) > (a.trimStartSeconds as number);
-    const pinned = scene.assets.map((a) => (isTrimmedClip(a) ? assetPlaySeconds(a) : null));
-    const pinnedTotal = pinned.reduce((sum: number, d) => sum + (d ?? 0), 0);
-    const flexCount = pinned.filter((d) => d == null).length;
-    const flexBudget = Math.max(flexCount, (Number(scene.durationSeconds) || 0) - pinnedTotal);
-    const flexDurations = allocateDurations(flexCount, flexBudget);
-    let c = 0;
-    const assets = scene.assets.map((a, i) => ({
-      ...a,
-      durationSeconds: pinned[i] ?? flexDurations[c++] ?? 1,
-    }));
-    const durationSeconds = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
-    return { ...scene, assets, durationSeconds };
-  };
+  /** Trim-aware: every clip keeps its full on-screen window as its duration —
+   *  only stills share the scene's remaining budget, and the scene auto-grows if
+   *  the clips exceed the target. Shared with the scene-design panel and the
+   *  renderer via `@/config/montage` so they cannot drift apart. */
+  const reallocateSceneAssets = (scene: ScenePlan): ScenePlan =>
+    reallocateSceneAssetDurations(scene);
 
   /** Persist montage asset edits for a scene during revision: keep scene.assets,
    *  clear imageIndexes (legacy Veo morph rules stay dormant), resize the scene. */

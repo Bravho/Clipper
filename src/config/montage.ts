@@ -316,14 +316,10 @@ export function voiceOverShortageSeconds(
 }
 
 /**
- * On-screen seconds a single montage asset occupies. For a trimmed clip this is
- * its selected window (out − in); otherwise its explicit `durationSeconds`.
- * Used by the editor and the approval gate so a clip's play time follows its
- * trim handles.
+ * Seconds of footage a clip's in/out window selects (0 when it has no window).
  */
-export function assetPlaySeconds(asset: {
+export function clipWindowSeconds(asset: {
   kind: "image" | "clip";
-  durationSeconds?: number;
   trimStartSeconds?: number;
   trimEndSeconds?: number;
 }): number {
@@ -335,9 +331,33 @@ export function assetPlaySeconds(asset: {
   ) {
     return (asset.trimEndSeconds as number) - (asset.trimStartSeconds as number);
   }
-  return Number.isFinite(asset.durationSeconds) && (asset.durationSeconds as number) > 0
-    ? (asset.durationSeconds as number)
-    : 0;
+  return 0;
+}
+
+/**
+ * On-screen seconds a single montage asset occupies.
+ *
+ * For a clip this is NEVER shorter than its selected window: the requester
+ * approved that window at full length, and the renderer hard-cuts a clip at the
+ * end of its allotted slice, so a slot below the window silently deletes
+ * approved footage. A slot LONGER than the window is legitimate — the planner
+ * may stretch a clip (playbackRate < 1) to fill leftover time — so the on-screen
+ * time is the larger of the two. Stills simply use `durationSeconds`.
+ *
+ * Every length the requester is shown, every approval gate, and the renderer all
+ * measure through this one function, so they cannot disagree.
+ */
+export function assetPlaySeconds(asset: {
+  kind: "image" | "clip";
+  durationSeconds?: number;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+}): number {
+  const slot =
+    Number.isFinite(asset.durationSeconds) && (asset.durationSeconds as number) > 0
+      ? (asset.durationSeconds as number)
+      : 0;
+  return Math.max(slot, clipWindowSeconds(asset));
 }
 
 /** Sum a scene's on-screen length: Σ per-asset play seconds, else scene.durationSeconds. */
@@ -351,6 +371,97 @@ export function sceneMontageSeconds(scene: {
   return Number.isFinite(scene.durationSeconds) && (scene.durationSeconds as number) > 0
     ? (scene.durationSeconds as number)
     : 0;
+}
+
+/**
+ * Split `totalSeconds` evenly across `count` slots, frame-accurately on the
+ * montage's 30 fps grid. Works in whole frames so durations align to real cut
+ * points, then spreads any rounding remainder one frame at a time across the
+ * earliest slots (largest-remainder) instead of dumping it on the last slot —
+ * which previously left an off-beat, lingering final shot.
+ *
+ * Every slot gets ≥1 frame. Falls back to 1s/slot when the total is non-positive.
+ *
+ * Lives here (rather than in `lib/ai/montagePlan`) so the client-side approval
+ * panels can share ONE allocation rule with the server-side planner.
+ */
+export function allocateAssetDurations(count: number, totalSeconds: number): number[] {
+  if (count <= 0) return [];
+
+  const fps = MONTAGE_FPS;
+  const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : count;
+  const totalFrames = Math.max(count, Math.round(total * fps)); // ≥1 frame per slot
+
+  const base = Math.floor(totalFrames / count);
+  let remainder = totalFrames - base * count;
+  const frames = new Array<number>(count).fill(base);
+  for (let i = 0; i < count && remainder > 0; i++, remainder--) frames[i] += 1;
+
+  // Frame-aligned seconds; sum equals totalFrames / fps exactly.
+  return frames.map((f) => f / fps);
+}
+
+/** Minimal asset shape the duration rules need (structural, so this module
+ *  stays free of a `domain/models` import — that module imports THIS one). */
+export interface MontageDurationAsset {
+  kind: "image" | "clip";
+  durationSeconds?: number;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+}
+
+/**
+ * A CLIP's on-screen slot is ALWAYS its own footage window — never a share of
+ * the scene's time budget.
+ *
+ * This is the invariant that keeps "what the requester approved" and "what the
+ * renderer emits" identical. The Remotion composition allocates each asset a
+ * slice proportional to `durationSeconds` and hard-cuts the clip at the end of
+ * that slice, so a slot SHORTER than the approved in/out window silently
+ * truncates footage the requester already signed off on. Pinning the slot to
+ * {@link assetPlaySeconds} makes that impossible.
+ *
+ * Returns null when the clip has no usable length yet (so the caller can fall
+ * back to sharing the budget rather than rendering a zero-length shot).
+ */
+export function pinnedAssetSeconds(asset: MontageDurationAsset): number | null {
+  if (asset.kind !== "clip") return null;
+  const seconds = assetPlaySeconds(asset);
+  return seconds > 0 ? seconds : null;
+}
+
+/**
+ * Distribute a scene's target duration across its assets while PRESERVING every
+ * clip at its full selected window ({@link pinnedAssetSeconds}); only stills
+ * share the remaining budget. When the pinned clips already exceed the target
+ * the scene AUTO-GROWS — clips are never compressed to fit, because doing so
+ * would cut approved footage.
+ *
+ * Shared by the scene-design panel, the video-approval revision panel, and the
+ * server planner so the three can never drift apart.
+ */
+export function reallocateSceneAssetDurations<
+  A extends MontageDurationAsset,
+  S extends { durationSeconds?: number; assets?: A[] },
+>(scene: S): S {
+  if (!scene.assets || scene.assets.length === 0) return scene;
+
+  const pinned = scene.assets.map(pinnedAssetSeconds);
+  const pinnedTotal = pinned.reduce((sum: number, d) => sum + (d ?? 0), 0);
+  const flexCount = pinned.filter((d) => d == null).length;
+  const target = Number.isFinite(scene.durationSeconds) ? Number(scene.durationSeconds) : 0;
+  // Fractional (frame-aligned) split — an integer floor here used to shave
+  // whole seconds off stills on every re-render.
+  const flexBudget = Math.max(flexCount, target - pinnedTotal);
+  const flexDurations = allocateAssetDurations(flexCount, flexBudget);
+
+  let cursor = 0;
+  const assets = scene.assets.map((asset, i) => ({
+    ...asset,
+    durationSeconds: pinned[i] ?? flexDurations[cursor++] ?? 1,
+  }));
+  const durationSeconds = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
+  return { ...scene, assets, durationSeconds };
 }
 
 export function isMotionPreset(value: unknown): value is MotionPreset {

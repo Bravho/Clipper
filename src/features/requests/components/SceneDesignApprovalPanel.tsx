@@ -12,6 +12,7 @@ import { MontageSceneAssetsEditor } from "@/features/requests/components/Montage
 import {
   assetPlaySeconds,
   minMontageTotalSeconds,
+  reallocateSceneAssetDurations,
   sceneMontageSeconds,
 } from "@/config/montage";
 
@@ -51,48 +52,12 @@ function sceneTotal(scenes: ScenePlan[]): number {
   return scenes.reduce((sum, scene) => sum + sceneMontageSeconds(scene), 0);
 }
 
-/** A clip whose in/out window is set — its duration is pinned to that window. */
-function isTrimmedClip(a: MontageSceneAsset): boolean {
-  return (
-    a.kind === "clip" &&
-    Number.isFinite(a.trimStartSeconds) &&
-    Number.isFinite(a.trimEndSeconds) &&
-    (a.trimEndSeconds as number) > (a.trimStartSeconds as number)
-  );
-}
-
-/** Even-split duration allocation, remainder on the last asset; min 1s each. */
-function allocateDurations(count: number, totalSeconds: number): number[] {
-  if (count <= 0) return [];
-  const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : count;
-  const per = Math.max(1, Math.floor(total / count));
-  const arr = new Array<number>(count).fill(per);
-  const remainder = total - per * count;
-  if (remainder > 0) arr[count - 1] = per + remainder;
-  return arr;
-}
-
 /** Distribute a scene's target duration across its montage assets while
- *  PRESERVING trimmed clips: a clip with an in/out window keeps that window as
- *  its duration; only stills and untrimmed clips share the remaining budget.
- *  If the pinned clips already exceed the target, the scene auto-grows and the
- *  flexible assets fall back to their minimum. */
+ *  PRESERVING every clip at its full on-screen window; only stills share the
+ *  remaining budget. Shared with the renderer and the revision panel via
+ *  `@/config/montage` so the three cannot drift apart. */
 function reallocateSceneAssets(scene: ScenePlan): ScenePlan {
-  if (!scene.assets || scene.assets.length === 0) return scene;
-
-  const pinned = scene.assets.map((a) => (isTrimmedClip(a) ? assetPlaySeconds(a) : null));
-  const pinnedTotal = pinned.reduce((sum: number, d) => sum + (d ?? 0), 0);
-  const flexCount = pinned.filter((d) => d == null).length;
-  const flexBudget = Math.max(flexCount, (Number(scene.durationSeconds) || 0) - pinnedTotal);
-  const flexDurations = allocateDurations(flexCount, flexBudget);
-
-  let c = 0;
-  const assets = scene.assets.map((a, i) => ({
-    ...a,
-    durationSeconds: pinned[i] ?? flexDurations[c++] ?? 1,
-  }));
-  const durationSeconds = assets.reduce((sum, a) => sum + (Number(a.durationSeconds) || 0), 0);
-  return { ...scene, assets, durationSeconds };
+  return reallocateSceneAssetDurations(scene);
 }
 
 /** On load, montage scenes (those carrying `assets`) drop `imageIndexes` so the
@@ -147,6 +112,10 @@ export function SceneDesignApprovalPanel({
   // How much longer the picture runs than the voice needs — a mild "trailing
   // silence" hint (advisory only, never blocks approval).
   const overBySeconds = Math.max(0, totalSceneSeconds - minTotalSeconds);
+  // Advisory only: clips keep their full selected window, so the montage can run
+  // past the usual short-video length. Warn rather than silently cut.
+  const exceedsRecommendedLength =
+    totalSceneSeconds > PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS + 1e-6;
 
   // The same strict minimum is enforced again by the server and merge step.
   const mergeBlocked = !meetsMinimum;
@@ -381,6 +350,20 @@ export function SceneDesignApprovalPanel({
             <p className="text-xs text-slate-500">
               คำแนะนำ: ความยาววิดีโอมากกว่าเสียงพากย์ประมาณ {round1(overBySeconds)} วินาที —
               หากไม่ต้องการช่วงท้ายที่ไม่มีเสียง ให้ลดความยาวฉาก/คลิป
+            </p>
+          </div>
+        )}
+        {/* Clips play at their FULL selected length by default, so a scene with
+            several long clips can run past the usual short-video length. This is
+            advisory only — nothing is ever trimmed without the requester doing
+            it — but it must be visible before approval. */}
+        {exceedsRecommendedLength && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs text-amber-700">
+              วิดีโอยาว {round1(totalSceneSeconds)} วินาที ซึ่งเกินความยาวแนะนำ{" "}
+              {PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS} วินาทีสำหรับคลิปสั้น —
+              คลิปทุกอันจะเล่นเต็มช่วงที่เลือกไว้ หากต้องการให้สั้นลง
+              ให้ลากแถบตัดคลิปในแต่ละฉากเพื่อเลือกเฉพาะช่วงที่ต้องการ (ระบบจะไม่ตัดคลิปให้เอง)
             </p>
           </div>
         )}

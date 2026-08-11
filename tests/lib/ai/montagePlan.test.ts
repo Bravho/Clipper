@@ -137,7 +137,7 @@ describe("buildSceneMontageAssets", () => {
           // Legacy jobs may carry a still-image preset on a clip. Rebuilding
           // must normalize it because clips always play as-shot.
           motion: "ken_burns_in",
-          durationSeconds: 0, // unpinned -> allocated
+          durationSeconds: 0,
           trimStartSeconds: 2,
           trimEndSeconds: 5,
         },
@@ -147,11 +147,37 @@ describe("buildSceneMontageAssets", () => {
 
     expect(assets[0].motion).toBe("pan_left");
     expect(assets[0].durationSeconds).toBe(4); // pinned, preserved
-    // Remaining 6s allocated to the unpinned clip; trim preserved.
+    // The clip's slot IS its selected window (5 − 2), never a share of the
+    // scene's budget — a larger slot would hold a frozen frame, a smaller one
+    // would cut footage the requester approved.
     expect(assets[1].motion).toBe("static");
-    expect(assets[1].durationSeconds).toBe(6);
+    expect(assets[1].durationSeconds).toBe(3);
     expect(assets[1].trimStartSeconds).toBe(2);
     expect(assets[1].trimEndSeconds).toBe(5);
+  });
+
+  it("pins an untrimmed clip to its FULL footage and writes the window down", () => {
+    // Regression: an untrimmed clip used to receive an even share of the scene
+    // budget (here 3s of 6s) while the trim bar showed the whole 9s clip as
+    // selected — so the renderer cut 6s off a clip the requester had approved
+    // at full length.
+    const list = ordered([{ kind: "image" }, { kind: "clip", durationSeconds: 9 }]);
+    const assets = buildSceneMontageAssets(scene({ imageIndexes: [0, 1] }), list, 6);
+
+    expect(assets[1].durationSeconds).toBe(9);
+    expect(assets[1].trimStartSeconds).toBe(0);
+    expect(assets[1].trimEndSeconds).toBe(9);
+    // The clip alone already exceeds the scene's budget, so the still falls back
+    // to the minimum flex share and the scene auto-grows (never the reverse).
+    expect(assets[0].durationSeconds).toBe(1);
+  });
+
+  it("still shares the budget when a clip's footage length is unknown", () => {
+    const list = ordered([{ kind: "image" }, { kind: "clip" }]);
+    const assets = buildSceneMontageAssets(scene({ imageIndexes: [0, 1] }), list, 8);
+
+    expect(assets.reduce((s, a) => s + a.durationSeconds, 0)).toBe(8);
+    expect(assets[1].trimEndSeconds).toBeUndefined();
   });
 });
 
@@ -165,6 +191,45 @@ describe("toRenderAssetSpecs — cross-pipeline index alignment", () => {
     // The clip keeps its clip kind through the whole resolution.
     expect(specs[1].kind).toBe("clip");
     expect(specs[1].motion).toBe("static");
+  });
+
+  it("never gives a clip a slot SHORTER than its approved in/out window", () => {
+    // Regression: the composition hard-cuts a clip at the end of its slot, so a
+    // stale `durationSeconds` below the window deleted approved footage.
+    const list = ordered([{ kind: "clip", durationSeconds: 12 }]);
+    const specs = toRenderAssetSpecs(
+      [
+        {
+          assetIndex: 0,
+          kind: "clip",
+          motion: "static",
+          durationSeconds: 2.5, // stale AI allocation
+          trimStartSeconds: 0,
+          trimEndSeconds: 8, // what the requester approved
+        },
+      ],
+      list
+    );
+    expect(specs[0].durationSeconds).toBe(8);
+    expect(specs[0].trimEndSeconds).toBe(8);
+  });
+
+  it("keeps a slot deliberately longer than the window (slow-motion fill)", () => {
+    const list = ordered([{ kind: "clip", durationSeconds: 12 }]);
+    const specs = toRenderAssetSpecs(
+      [
+        {
+          assetIndex: 0,
+          kind: "clip",
+          motion: "static",
+          durationSeconds: 5,
+          trimStartSeconds: 0,
+          trimEndSeconds: 4,
+        },
+      ],
+      list
+    );
+    expect(specs[0].durationSeconds).toBe(5);
   });
 
   it("drops invalid indexes and falls back to the first ordered asset", () => {

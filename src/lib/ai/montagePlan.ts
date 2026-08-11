@@ -1,11 +1,20 @@
 import {
+  allocateAssetDurations,
+  assetPlaySeconds,
+  clipWindowSeconds,
   DEFAULT_MOTION_PRESET,
   isMotionPreset,
   MIN_AUTOMATIC_CLIP_PLAYBACK_RATE,
-  MONTAGE_FPS,
   type MontageAssetSpec,
   type MotionPreset,
 } from "@/config/montage";
+
+/**
+ * Re-exported for the existing call sites/tests: the implementation now lives in
+ * `@/config/montage` so the client-side approval panels share ONE allocation
+ * rule with this server-side planner.
+ */
+export { allocateAssetDurations };
 
 /** Shortest on-screen hold for one asset (avoids sub-second flash frames). */
 export const MIN_ASSET_HOLD_SECONDS = 0.8;
@@ -79,35 +88,6 @@ import type { OrderedSourceAsset } from "@/lib/sourceAssets";
  * the montage plan, the approval panels, and the renderer. These helpers are
  * free of network/AI deps so they're unit-testable without Remotion or Spaces.
  */
-
-/**
- * Split `totalSeconds` evenly across `count` slots, frame-accurately on the
- * montage's 30 fps grid. Works in whole frames so durations align to real cut
- * points, then spreads any rounding remainder one frame at a time across the
- * earliest slots (largest-remainder) instead of dumping it on the last slot —
- * which previously left an off-beat, lingering final shot.
- *
- * Every slot gets ≥1 frame. When the scene is long enough to afford it
- * (`total >= count * MIN_ASSET_HOLD_SECONDS`), the even split automatically
- * keeps every shot at or above the minimum hold; when there are too many assets
- * for the scene length, shots are evenly short rather than dropping any.
- * Falls back to 1s/asset when the total is non-positive.
- */
-export function allocateAssetDurations(count: number, totalSeconds: number): number[] {
-  if (count <= 0) return [];
-
-  const fps = MONTAGE_FPS;
-  const total = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : count;
-  const totalFrames = Math.max(count, Math.round(total * fps)); // ≥1 frame per slot
-
-  const base = Math.floor(totalFrames / count);
-  let remainder = totalFrames - base * count;
-  const frames = new Array<number>(count).fill(base);
-  for (let i = 0; i < count && remainder > 0; i++, remainder--) frames[i] += 1;
-
-  // Frame-aligned seconds; sum equals totalFrames / fps exactly.
-  return frames.map((f) => f / fps);
-}
 
 /**
  * Resolve the in-range source indexes a scene draws from, preferring an
@@ -194,8 +174,33 @@ export function buildSceneMontageAssets(
     if (Number.isInteger(a.assetIndex)) existingByIndex.set(a.assetIndex, a);
   }
 
-  // Decide which durations are already pinned vs. need allocation.
-  const pinned = indexes.map((i) => {
+  /**
+   * The footage window a clip will play: an explicit in/out already chosen in a
+   * panel, otherwise the WHOLE uploaded clip (its probed length). A clip is
+   * never given a share of the scene's time budget — its slot is its own
+   * footage — because a slot shorter than the window makes the renderer
+   * hard-cut footage the requester approved at full length.
+   */
+  const clipWindow = (assetIndex: number): { start: number; end: number } | null => {
+    if (ordered[assetIndex]?.kind !== "clip") return null;
+    const existing = existingByIndex.get(assetIndex);
+    const start = Number.isFinite(existing?.trimStartSeconds)
+      ? Math.max(0, existing!.trimStartSeconds!)
+      : 0;
+    if (Number.isFinite(existing?.trimEndSeconds) && existing!.trimEndSeconds! > start) {
+      return { start, end: existing!.trimEndSeconds! };
+    }
+    const footage = Number(ordered[assetIndex]?.durationSeconds);
+    if (Number.isFinite(footage) && footage > start) return { start: 0, end: footage };
+    return null; // length unknown (legacy upload) — fall back to the budget share
+  };
+
+  // Decide which durations are already pinned vs. need allocation. Clips are
+  // pinned to their footage window; stills keep an explicit duration if set.
+  const windows = indexes.map(clipWindow);
+  const pinned = indexes.map((i, slot) => {
+    const window = windows[slot];
+    if (window) return window.end - window.start;
     const d = existingByIndex.get(i)?.durationSeconds;
     return Number.isFinite(d) && (d as number) > 0 ? (d as number) : null;
   });
@@ -232,14 +237,16 @@ export function buildSceneMontageAssets(
     };
 
     if (src.kind === "clip") {
-      if (Number.isFinite(existing?.trimStartSeconds)) {
+      // Write the window down explicitly (defaulting to the whole clip) so the
+      // plan, the trim bar, the approval gate and the renderer all read the
+      // same in/out — an implicit "untrimmed" clip is what let the renderer
+      // truncate a clip the requester had approved at full length.
+      const window = windows[i];
+      if (window) {
+        asset.trimStartSeconds = window.start;
+        asset.trimEndSeconds = window.end;
+      } else if (Number.isFinite(existing?.trimStartSeconds)) {
         asset.trimStartSeconds = Math.max(0, existing!.trimStartSeconds!);
-      }
-      if (
-        Number.isFinite(existing?.trimEndSeconds) &&
-        (asset.trimStartSeconds == null || existing!.trimEndSeconds! > asset.trimStartSeconds)
-      ) {
-        asset.trimEndSeconds = Math.max(0, existing!.trimEndSeconds!);
       }
     }
     if (Number.isFinite(existing?.focusX)) asset.focusX = existing!.focusX;
@@ -273,15 +280,17 @@ export function fitScenePlanToVisualCapacity(
         images.push(asset);
         continue;
       }
+      const windowSeconds = clipWindowSeconds(asset);
       const selectedSeconds =
-        Number.isFinite(asset.trimStartSeconds) &&
-        Number.isFinite(asset.trimEndSeconds) &&
-        (asset.trimEndSeconds as number) > (asset.trimStartSeconds as number)
-          ? (asset.trimEndSeconds as number) - (asset.trimStartSeconds as number)
-          : Number(ordered[asset.assetIndex]?.durationSeconds);
+        windowSeconds > 0 ? windowSeconds : Number(ordered[asset.assetIndex]?.durationSeconds);
       if (!Number.isFinite(selectedSeconds) || selectedSeconds <= 0) continue;
       const capacity = selectedSeconds / MIN_AUTOMATIC_CLIP_PLAYBACK_RATE;
-      asset.durationSeconds = Math.min(asset.durationSeconds, capacity);
+      // Never below the selected window (that would cut approved footage) and
+      // never above the slow-motion capacity (that would freeze the last frame).
+      asset.durationSeconds = Math.max(
+        selectedSeconds,
+        Math.min(asset.durationSeconds, capacity)
+      );
       clips.push({ asset, capacity });
     }
   }
@@ -352,8 +361,15 @@ export function toRenderAssetSpecs(
           : isMotionPreset(a.motion)
             ? a.motion
             : DEFAULT_MOTION_PRESET,
-      durationSeconds:
-        Number.isFinite(a.durationSeconds) && a.durationSeconds > 0 ? a.durationSeconds : 1,
+      // The Remotion composition allocates each asset a slice proportional to
+      // `durationSeconds` and hard-cuts the clip at the end of that slice, so a
+      // slot smaller than the approved in/out window truncates footage the
+      // requester signed off on. `assetPlaySeconds` never returns less than the
+      // window, so the render matches the approval by construction.
+      durationSeconds: (() => {
+        const seconds = assetPlaySeconds({ ...a, kind: src.kind });
+        return seconds > 0 ? seconds : 1;
+      })(),
     };
     if (src.kind === "clip") {
       if (Number.isFinite(a.trimStartSeconds)) spec.trimStartSeconds = a.trimStartSeconds;

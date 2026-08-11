@@ -15,7 +15,10 @@ import { aspectRatioClass } from "@/lib/aspectRatio";
  *
  * The true clip length is read client-side from `<video>` metadata. When the
  * clip has no saved trim yet, the whole timeline is selected by default so the
- * user can shorten it from either end.
+ * user can shorten it from either end — and that default window is COMMITTED
+ * upward immediately via `onChange`, so the plan always stores exactly what the
+ * bar displays. (Leaving it implicit is what previously let the renderer cut a
+ * clip down to the AI's much shorter allotted slot.)
  */
 
 const MIN_WINDOW_SECONDS = 0.5;
@@ -67,6 +70,8 @@ export function ClipTrimBar({
   // Seed the window once we know the real clip length. Preserve an explicit
   // saved trim; otherwise select the clip's complete timeline.
   const seededRef = useRef(false);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const handleLoadedMetadata = useCallback(() => {
     const el = previewRef.current;
     if (!el || !Number.isFinite(el.duration) || el.duration <= 0) return;
@@ -75,15 +80,22 @@ export function ClipTrimBar({
     if (seededRef.current) return;
     seededRef.current = true;
     const s = clamp(trimStartSeconds ?? 0, 0, Math.max(0, dur - MIN_WINDOW_SECONDS));
-    const seededEnd =
-      Number.isFinite(trimEndSeconds) && (trimEndSeconds as number) > s
-        ? (trimEndSeconds as number)
-        : dur;
+    const hasSavedWindow =
+      Number.isFinite(trimEndSeconds) && (trimEndSeconds as number) > s;
+    const seededEnd = hasSavedWindow ? (trimEndSeconds as number) : dur;
     const e = clamp(seededEnd, s + MIN_WINDOW_SECONDS, dur);
     trimWindowRef.current = { start: s, end: e };
     setStart(s);
     setEnd(e);
     setPlayhead(s);
+    // COMMIT the default full-clip window upward. The bar renders the whole
+    // timeline as selected when a clip has no saved trim, so leaving it
+    // untouched reads as "approve the clip at full length" — but without this
+    // the scene plan kept the AI's much shorter allotted slot and the renderer
+    // cut the clip. What is shown selected is now always what is stored.
+    if (!hasSavedWindow) {
+      onChangeRef.current({ start: round2(s), end: round2(e) });
+    }
   }, [trimStartSeconds, trimEndSeconds]);
 
   // Reflect external trim edits (e.g. a scene rebuild) once seeded.
