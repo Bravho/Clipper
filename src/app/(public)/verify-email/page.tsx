@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { ROUTES } from "@/config/routes";
+import { fetchWithTimeout, RequestTimeoutError } from "@/lib/fetchWithTimeout";
 
 export default function VerifyEmailPage() {
   const router = useRouter();
@@ -29,7 +30,7 @@ export default function VerifyEmailPage() {
     setVerifyState("verifying");
     setVerifyError(null);
     try {
-      const res = await fetch("/api/verify-email", {
+      const res = await fetchWithTimeout("/api/verify-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code }),
@@ -45,8 +46,12 @@ export default function VerifyEmailPage() {
           "Email verified! You can now sign in."
         )}`
       );
-    } catch {
-      setVerifyError("An unexpected error occurred. Please try again.");
+    } catch (error) {
+      setVerifyError(
+        error instanceof RequestTimeoutError
+          ? "The server took too long to respond. Please try again."
+          : "An unexpected error occurred. Please try again."
+      );
       setVerifyState("error");
     }
   }
@@ -56,7 +61,7 @@ export default function VerifyEmailPage() {
     setResendError(null);
 
     try {
-      const res = await fetch("/api/resend-verification", {
+      const res = await fetchWithTimeout("/api/resend-verification", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
@@ -69,8 +74,12 @@ export default function VerifyEmailPage() {
       } else {
         setResendState("sent");
       }
-    } catch {
-      setResendError("An unexpected error occurred.");
+    } catch (error) {
+      setResendError(
+        error instanceof RequestTimeoutError
+          ? "The server took too long to respond. Please try again in a moment."
+          : "An unexpected error occurred."
+      );
       setResendState("error");
     }
   }

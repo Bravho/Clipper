@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true },
+  "include": [
+    "next-env.d.ts",
+    "src/lib/email.ts",
+    "src/lib/fetchWithTimeout.ts",
+    "src/app/api/resend-verification/route.ts",
+    "src/features/auth/components/SignupForm.tsx",
+    "src/app/(public)/verify-email/page.tsx"
+  ]
+}

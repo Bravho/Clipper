@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { GoogleSignInButton } from "./GoogleSignInButton";
 import { AppleSignInButton } from "./AppleSignInButton";
 import { ROUTES } from "@/config/routes";
+import { fetchWithTimeout, RequestTimeoutError } from "@/lib/fetchWithTimeout";
 
 export function SignupForm() {
   const router = useRouter();
@@ -29,7 +30,7 @@ export function SignupForm() {
     setServerError(null);
 
     try {
-      const response = await fetch("/api/register", {
+      const response = await fetchWithTimeout("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -81,8 +82,15 @@ export function SignupForm() {
       router.push(
         `${ROUTES.VERIFY_EMAIL}?email=${encodeURIComponent(data.email)}${deliveryFailed}`
       );
-    } catch {
-      setServerError("เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+    } catch (error) {
+      // A timeout is reported distinctly: the account may well have been created
+      // before the server stalled, so telling the user to retry blindly would
+      // walk them into a duplicate-email error on the next attempt.
+      setServerError(
+        error instanceof RequestTimeoutError
+          ? "เซิร์ฟเวอร์ใช้เวลานานเกินไป บัญชีของคุณอาจถูกสร้างแล้ว กรุณาลองเข้าสู่ระบบ หรือลองสมัครใหม่อีกครั้ง"
+          : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง"
+      );
     }
   };
 
