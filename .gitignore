@@ -56,3 +56,7 @@ coverage/
 *.sqlite
 *.db.fuse_hidden*
 .fuse_hidden* 
+
+# local env backups (never commit)
+.env*.bak*
+.env.local.*

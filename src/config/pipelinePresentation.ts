@@ -197,7 +197,7 @@ export const PIPELINE_STEP_PRESENTATION = {
 } satisfies Record<VideoGenerationStep, PipelineStepPresentation>;
 
 /**
- * The gates the step-5 express lane ("อนุมัติทุกขั้นตอนถัดไปอัตโนมัติ") approves on
+ * The gates the scene-plan express lane ("อนุมัติและทำทุกขั้นตอนที่เหลืออัตโนมัติ") approves on
  * the requester's behalf, with the copy shown INSTEAD of the normal "waiting for
  * you" label. On an express-lane job these are pass-throughs, not requests for
  * attention: showing them as `action_required` (amber, paused) would tell the
@@ -205,6 +205,10 @@ export const PIPELINE_STEP_PRESENTATION = {
  * `processing` — the pipeline genuinely IS working through them.
  */
 const AUTO_APPROVED_GATE_LABELS: Partial<Record<VideoGenerationStep, string>> = {
+  [VideoGenerationStep.AwaitingVideoApproval]:
+    "อนุมัติอัตโนมัติแล้ว — กำลังรวมวิดีโอทุกฉาก",
+  [VideoGenerationStep.AwaitingAnimationApproval]:
+    "อนุมัติอัตโนมัติแล้ว — กำลังรวมเสียงพากย์และเพลงเข้าในวิดีโอ",
   [VideoGenerationStep.AwaitingFinalApproval]:
     "อนุมัติอัตโนมัติแล้ว — กำลังเตรียมใส่ซับไตเติ้ลและกราฟิก",
   [VideoGenerationStep.AwaitingOverlayApproval]:
@@ -227,7 +231,7 @@ export const STEP_TO_PHASE = Object.fromEntries(
 
 export interface PipelineDisplayOptions {
   /**
-   * The job took the step-5 express lane, so the remaining approval gates are
+   * The job took the scene-plan express lane, so the remaining approval gates are
    * granted automatically. Re-labels those gates as work in progress rather than
    * as something the requester must act on.
    */

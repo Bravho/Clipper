@@ -6,10 +6,12 @@ import { clipRequestRepository, videoGenerationJobRepository } from "@/repositor
 import { videoGenerationService } from "@/services/VideoGenerationService";
 
 /**
- * POST /api/requests/[id]/approve-video
+ * POST /api/requests/[id]/reopen-scene-videos
  *
- * Requester-only. Approves every generated scene clip and starts the merge.
- * The creative settings were chosen one step earlier, at scene-plan approval.
+ * Requester-only. Steps back from the merge-and-music gate to the scene-video
+ * review, which is where the scene clips and every creative setting (music,
+ * subtitle languages, motion template) are chosen. The rendered per-scene
+ * segments are kept, so nothing has to be regenerated.
  */
 export async function POST(
   request: Request,
@@ -42,13 +44,13 @@ export async function POST(
   }
 
   try {
-    const updated = await videoGenerationService.approveBaseVideoByRequester(
+    const updated = await videoGenerationService.reopenSceneVideoReviewByRequester(
       jobId,
       session.user.id
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to approve video.";
+    const message = err instanceof Error ? err.message : "Failed to reopen the scene review.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

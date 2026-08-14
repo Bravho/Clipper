@@ -8,8 +8,15 @@ import type { MontageSceneAsset, ScenePlan, StoryboardScene } from "@/domain/mod
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
-import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
-import { MOTION_TEMPLATES } from "@/config/motionTemplates";
+import {
+  MAX_SUBTITLE_LANGS,
+  MotionTemplatePicker,
+  MusicPicker,
+  SubtitleLanguagePicker,
+  motionTemplateLabel,
+  musicTrackLabel,
+  subtitleLangsLabel,
+} from "@/features/requests/components/CreativeSettingsPickers";
 import { Platform, PLATFORM_LABELS, OPTIONAL_FORM_PLATFORMS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 
 /** Short Thai label for an aspect ratio, e.g. "แนวตั้ง (9:16)". */
@@ -34,64 +41,6 @@ import {
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
-
-/** Small SVG preview of a template, mirroring the real render. */
-function TemplateThumb({ id }: { id: string }) {
-  return (
-    <svg viewBox="0 0 64 112" className="mx-auto mb-1.5 block h-28 w-16">
-      <defs>
-        <linearGradient id="tvScreen" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#3b4655" />
-          <stop offset="1" stopColor="#111827" />
-        </linearGradient>
-      </defs>
-
-      {id === "framed_cream" ? (
-        <>
-          <rect width="64" height="112" rx="8" fill="#f7ecda" />
-          <rect x="7" y="8" width="50" height="78" rx="7" fill="#ffffff" />
-          <rect x="10" y="11" width="44" height="72" rx="5" fill="url(#tvScreen)" />
-          <path d="M12 100 q4 -3.5 8 0 t8 0 t8 0" fill="none" stroke="#c98a3f" strokeWidth="1.5" strokeLinecap="round" opacity="0.85" />
-          <g stroke="#b4762f" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.85">
-            <path d="M40 104 q9 -5 16 -10" />
-            <path d="M45 101 q1 -4 -3 -6" />
-            <path d="M50 98 q1 -4 -3 -6" />
-          </g>
-          <rect x="15" y="74" width="34" height="5" rx="2.5" fill="#ffffff" opacity="0.92" />
-        </>
-      ) : id === "editorial" ? (
-        <>
-          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
-          <rect width="64" height="24" fill="#000" opacity="0.28" />
-          <rect y="82" width="64" height="30" fill="#000" opacity="0.35" />
-          <rect x="6" y="7" width="52" height="98" rx="6" fill="none" stroke="#ffffff" strokeWidth="1.3" opacity="0.85" />
-          <circle cx="13" cy="15" r="1.8" fill="#f5b301" />
-          <rect x="17" y="14" width="14" height="2" rx="1" fill="#f5b301" />
-          <rect x="12" y="94" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
-        </>
-      ) : id === "clean_frame" ? (
-        <>
-          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
-          <g stroke="#ffffff" strokeWidth="2" fill="none" strokeLinecap="round">
-            <path d="M9 20 V11 H18" />
-            <path d="M55 20 V11 H46" />
-            <path d="M9 84 V93 H18" />
-            <path d="M55 84 V93 H46" />
-          </g>
-          <rect x="27" y="15" width="10" height="2.5" rx="1.2" fill="#f5b301" />
-          <circle cx="14" cy="78" r="5" fill="none" stroke="#f5b301" strokeWidth="1.2" opacity="0.75" />
-          <circle cx="14" cy="78" r="9" fill="none" stroke="#f5b301" strokeWidth="1" opacity="0.4" />
-          <rect x="12" y="97" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
-        </>
-      ) : (
-        <>
-          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
-          <rect x="12" y="96" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
-        </>
-      )}
-    </svg>
-  );
-}
 
 interface Props {
   requestId: string;
@@ -401,9 +350,6 @@ export function VideoApprovalPanel({
       ? savedSubtitleLanguages.slice(0, 2)
       : ["th"]
   );
-  // At most two subtitle languages may be shown at once (a third would crowd the
-  // frame). Selecting a third when two are already chosen is ignored.
-  const MAX_SUBTITLE_LANGS = 2;
   const toggleSubtitleLang = (l: "th" | "en" | "zh") =>
     setSubtitleLangs((prev) => {
       if (prev.includes(l)) return prev.filter((x) => x !== l);
@@ -455,6 +401,10 @@ export function VideoApprovalPanel({
   const [editingSubtitle, setEditingSubtitle] = useState(false);
   // Phase 7 — chosen motion template (default "none" = clean video + subtitles).
   const [selectedTemplate, setSelectedTemplate] = useState<string>(savedTemplate ?? "none");
+  // Later gates show the settings chosen at scene-plan approval read-only; the
+  // pickers reopen behind an edit toggle.
+  const [editingMusic, setEditingMusic] = useState(false);
+  const [editingSubtitleStyle, setEditingSubtitleStyle] = useState(false);
 
   const voiceRecreatingRef = useRef(false);
   useEffect(() => { voiceRecreatingRef.current = voiceRecreating; }, [voiceRecreating]);
@@ -568,12 +518,11 @@ export function VideoApprovalPanel({
   };
 
   /**
-   * Approve the merge-and-music gate. `autoApproveRemaining` takes the express
-   * lane: the server approves every gate after this one as it is reached and
-   * pins the requester's own subtitles to Thai, so the next thing the requester
-   * sees is the finished video ready to download.
+   * Approve the merge-and-music gate. Every creative choice was already made at
+   * the scene-video review; the music track is resent only so a change made in
+   * this screen's edit panel is picked up.
    */
-  const handleApproveAnimation = async (autoApproveRemaining = false) => {
+  const handleApproveAnimation = async () => {
     setAnimationApproving(true);
     setError(null);
     // Stop every sound source used by this review step before starting the
@@ -592,11 +541,7 @@ export function VideoApprovalPanel({
       const res = await fetch(`/api/requests/${requestId}/approve-animation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobId,
-          selectedMusicTrack,
-          autoApproveRemaining,
-        }),
+        body: JSON.stringify({ jobId, selectedMusicTrack }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -792,6 +737,11 @@ export function VideoApprovalPanel({
     );
   };
 
+  /**
+   * Approve every scene clip and start the merge. The creative settings were
+   * decided one step earlier (scene-plan approval), so this screen stays a pure
+   * review of the rendered clips.
+   */
   const handleApprove = async () => {
     setIsSubmitting(true);
     setIsMergingScenes(sceneVideos.length > 0);
@@ -811,6 +761,32 @@ export function VideoApprovalPanel({
       setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
       setIsSubmitting(false);
       setIsMergingScenes(false);
+    }
+  };
+
+  /**
+   * Go back from the merge-and-music gate to the scene-video review — the screen
+   * that owns the scene clips and every creative setting. The rendered segments
+   * are kept, so nothing is regenerated.
+   */
+  const [reopeningSceneVideos, setReopeningSceneVideos] = useState(false);
+  const handleReopenSceneVideos = async () => {
+    setReopeningSceneVideos(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/requests/${requestId}/reopen-scene-videos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถกลับไปแก้ไขวิดีโอแต่ละฉากได้");
+      }
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+      setReopeningSceneVideos(false);
     }
   };
 
@@ -1020,9 +996,9 @@ export function VideoApprovalPanel({
                     onClick={handleReopenSceneDesign}
                     disabled={isSubmitting}
                     className="mr-auto rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                    title="กลับไปแก้ไขแผนฉาก (รูป/คลิป ลำดับ ความยาว และบทฉาก) แล้วสร้างวิดีโอใหม่"
+                    title="ย้อนกลับหนึ่งขั้นตอนไปหน้าแผนฉาก เพื่อแก้ไขรูป/คลิป ลำดับ ความยาว บทฉาก และการตั้งค่า แล้วสร้างวิดีโอใหม่"
                   >
-                    ← แก้ไขแผนทุกฉาก
+                    ← ย้อนกลับไปแก้ไขแผนฉากและการตั้งค่า
                   </button>
                 )}
                 <Button onClick={handleApprove} loading={isSubmitting} disabled={isSubmitting}>
@@ -1280,9 +1256,9 @@ export function VideoApprovalPanel({
         {isAwaitingAnimationApproval && !animationApproving && (
           <div className="mt-6 space-y-6">
             <Card className="border-purple-100 bg-purple-50/40">
-              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3.5: เลือกเพลงพื้นหลังและรวมเสียงเข้าในวีดิโอ</h3>
+              <h3 className="text-base font-semibold text-slate-900 mb-2">ขั้นตอนที่ 3.5: รวมเสียงพากย์และเพลงเข้าในวีดิโอ</h3>
               <p className="text-sm text-slate-500 mb-4">
-                เลือกเพลงประกอบสำหรับวิดีโอ แล้วกดอนุมัติเพื่อให้ระบบรวมเสียงพากย์ เพลงพื้นหลัง และวิดีโอเข้าด้วยกัน
+                ฟังเสียงพากย์อีกครั้ง แล้วกดอนุมัติเพื่อให้ระบบรวมเสียงพากย์ เพลงพื้นหลัง และวิดีโอเข้าด้วยกัน
                 ขั้นตอนตรวจสอบ Animation และ Graphic จะอยู่ในขั้นตอนถัดไป หลังจากรวมเสียงและวิดีโอเรียบร้อยแล้ว
               </p>
 
@@ -1301,96 +1277,57 @@ export function VideoApprovalPanel({
                 </div>
               )}
 
-              {/* Background music picker */}
-              <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-                <div>
-                  <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">เพลงพื้นหลัง</p>
-                  <p className="text-xs text-slate-400 mt-0.5">คลิกเพื่อฟังตัวอย่าง เสียงพูดจะดังขึ้นอัตโนมัติเมื่อไม่มีการพูด</p>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
+              {/* The music was chosen at the scene-video review, so this gate
+                  only states what will be used — the picker itself is one click
+                  away for a late change of mind. */}
+              <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-slate-700">
+                    <span className="text-slate-500">เพลงพื้นหลัง:</span>{" "}
+                    <span className="font-medium">{musicTrackLabel(selectedMusicTrack)}</span>
+                  </p>
                   <button
-                    onClick={() => handleMusicTrackClick("none")}
-                    className={[
-                      "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
-                      selectedMusicTrack === "none"
-                        ? "border-slate-500 bg-slate-100 text-slate-800 font-medium"
-                        : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50",
-                    ].join(" ")}
+                    type="button"
+                    onClick={() => setEditingMusic((open) => !open)}
+                    disabled={animationApproving}
+                    className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                   >
-                    <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-                      {selectedMusicTrack === "none" ? (
-                        <svg className="w-4 h-4 text-slate-700" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                      ) : (
-                        <svg className="w-4 h-4 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" /><path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 20v4M8 20h8" /></svg>
-                      )}
-                    </span>
-                    <span className="truncate">ไม่ใส่เพลง</span>
+                    {editingMusic ? "ปิดการแก้ไข" : "แก้ไขเพลง"}
                   </button>
-                  {BACKGROUND_MUSIC_TRACKS.map((track) => {
-                    const isSelected = selectedMusicTrack === track.id;
-                    const isPlaying = playingMusicTrack === track.id;
-                    return (
-                      <button
-                        key={track.id}
-                        onClick={() => handleMusicTrackClick(track.id)}
-                        className={[
-                          "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm transition-all",
-                          isSelected
-                            ? "border-purple-500 bg-purple-50 text-purple-800 font-medium"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
-                        ].join(" ")}
-                      >
-                        <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">
-                          {isPlaying ? (
-                            <span className="flex gap-0.5 items-end h-4">
-                              <span className="w-0.5 bg-purple-500 rounded-full animate-bounce" style={{ height: "60%", animationDelay: "0ms" }} />
-                              <span className="w-0.5 bg-purple-500 rounded-full animate-bounce" style={{ height: "100%", animationDelay: "100ms" }} />
-                              <span className="w-0.5 bg-purple-500 rounded-full animate-bounce" style={{ height: "40%", animationDelay: "200ms" }} />
-                            </span>
-                          ) : isSelected ? (
-                            <svg className="w-4 h-4 text-purple-600" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                          ) : (
-                            <svg className="w-4 h-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
-                          )}
-                        </span>
-                        <span className="truncate">{track.label}</span>
-                      </button>
-                    );
-                  })}
                 </div>
-                {selectedMusicTrack === null && (
-                  <p className="text-xs text-amber-600">กรุณาเลือกเพลง หรือเลือก &ldquo;ไม่ใส่เพลง&rdquo; ก่อนอนุมัติ</p>
+                {editingMusic && (
+                  <div className="mt-3">
+                    <MusicPicker
+                      selected={selectedMusicTrack}
+                      playing={playingMusicTrack}
+                      onSelect={handleMusicTrackClick}
+                    />
+                  </div>
                 )}
               </div>
 
               {/* Distribution channels are chosen at the voice-approval step. */}
-              {/* Phase 7 (deferred): subtitle-language picker removed — captions
-                  return with the Phase 7 caption/timeline pipeline. */}
 
               <div className="flex flex-col items-stretch gap-2 pt-2 border-t border-slate-100 sm:items-end">
                 <Button
-                  onClick={() => handleApproveAnimation(false)}
+                  onClick={handleApproveAnimation}
                   loading={animationApproving}
-                  disabled={animationApproving || selectedMusicTrack === null}
+                  disabled={animationApproving || reopeningSceneVideos || selectedMusicTrack === null}
                   className="sm:self-end"
                 >
                   อนุมัติและรวมเสียงเข้าในวีดิโอ →
                 </Button>
 
-                {/* Express lane: no further approval screens, Thai subtitles. */}
-                <Button
-                  variant="outline"
-                  onClick={() => handleApproveAnimation(true)}
-                  loading={animationApproving}
-                  disabled={animationApproving || selectedMusicTrack === null}
-                  className="sm:self-end"
+                {/* Everything else on this production is decided one screen back,
+                    so offer the way there rather than duplicating the pickers. */}
+                <button
+                  type="button"
+                  onClick={handleReopenSceneVideos}
+                  disabled={animationApproving || reopeningSceneVideos}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:self-end"
                 >
-                  อนุมัติทุกขั้นตอนถัดไปอัตโนมัติ (ซับไตเติ้ลภาษาไทย) →
-                </Button>
-                <p className="text-xs text-slate-400 sm:text-right">
-                  ระบบจะดำเนินการทุกขั้นตอนที่เหลือให้โดยไม่ต้องกดอนุมัติอีก
-                  และใส่ซับไตเติ้ลภาษาไทยในวิดีโอของคุณ แจ้งเตือนอีกครั้งเมื่อวิดีโอพร้อมดาวน์โหลด
-                </p>
+                  {reopeningSceneVideos ? "กำลังย้อนกลับ..." : "← กลับไปแก้ไขวิดีโอแต่ละฉากและการตั้งค่า"}
+                </button>
               </div>
             </Card>
           </div>
@@ -1411,61 +1348,42 @@ export function VideoApprovalPanel({
                 const primaryClip = finalClips.find((c) => c.videoRatio === primaryRatio) || finalClips[0];
                 return (
                   <div className="space-y-4">
-                    {/* Required choice for the NEXT render. Keep this above the
-                        tall video player so it is immediately visible on mobile. */}
-                    <div className="rounded-xl border-2 border-blue-300 bg-blue-50/70 p-4 shadow-sm">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-                            ขั้นตอนถัดไป · ต้องเลือกก่อนสร้างวิดีโอ
-                          </p>
-                          <h4 className="mt-1 text-base font-semibold text-slate-900">
-                            เลือกภาษาซับไตเติ้ล
-                          </h4>
-                        </div>
-                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
-                          เลือกแล้ว {subtitleLangs.length}/{MAX_SUBTITLE_LANGS}
-                        </span>
+                    {/* Subtitles and the graphic template were chosen at the
+                        scene-video review, so this gate states what is about to
+                        be rendered and keeps the pickers one click away. */}
+                    <div className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm text-slate-700">
+                          <span className="text-slate-500">ซับไตเติ้ล:</span>{" "}
+                          <span className="font-medium">{subtitleLangsLabel(subtitleLangs)}</span>
+                          <span className="text-slate-300"> · </span>
+                          <span className="text-slate-500">เทมเพลตกราฟิก:</span>{" "}
+                          <span className="font-medium">{motionTemplateLabel(selectedTemplate)}</span>
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setEditingSubtitleStyle((open) => !open)}
+                          disabled={finalApproving || audioRevising}
+                          className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {editingSubtitleStyle ? "ปิดการแก้ไข" : "แก้ไขซับไตเติ้ล/เทมเพลต"}
+                        </button>
                       </div>
-                      <p className="mt-1 text-sm text-slate-600">
-                        เลือก 1–2 ภาษาสำหรับวิดีโอทุกช่องทางของคุณ จากนั้นกดปุ่มสร้างซับไตเติ้ลด้านล่าง
-                      </p>
-                      <div className="mt-3 grid grid-cols-3 gap-2">
-                        {([
-                          { code: "th", label: "ไทย", short: "TH" },
-                          { code: "en", label: "อังกฤษ", short: "EN" },
-                          { code: "zh", label: "จีน", short: "ZH" },
-                        ] as const).map(({ code, label, short }) => {
-                          const selected = subtitleLangs.includes(code);
-                          const atMax = !selected && subtitleLangs.length >= MAX_SUBTITLE_LANGS;
-                          return (
-                            <button
-                              key={code}
-                              type="button"
-                              onClick={() => toggleSubtitleLang(code)}
-                              disabled={atMax}
-                              aria-pressed={selected}
-                              className={`flex min-h-16 flex-col items-center justify-center rounded-lg border px-2 py-2 text-sm font-semibold transition ${
-                                selected
-                                  ? "border-blue-500 bg-blue-600 text-white ring-2 ring-blue-200"
-                                  : atMax
-                                    ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-300"
-                                    : "border-blue-200 bg-white text-slate-700 hover:border-blue-400 hover:bg-blue-50"
-                              }`}
-                            >
-                              <span className="text-xs opacity-75">{short}</span>
-                              <span>{selected ? "✓ " : ""}{label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <p className="mt-2 text-xs text-slate-500">
+                      <p className="mt-1 text-xs text-slate-400">
                         Travy ใช้ซับไตเติ้ลอังกฤษและจีนโดยอัตโนมัติ
                       </p>
-                      {subtitleLangs.length === 0 && (
-                        <p className="mt-2 text-sm font-medium text-red-600">
-                          กรุณาเลือกอย่างน้อย 1 ภาษา
-                        </p>
+                      {editingSubtitleStyle && (
+                        <div className="mt-3 space-y-4">
+                          <SubtitleLanguagePicker
+                            value={subtitleLangs}
+                            max={MAX_SUBTITLE_LANGS}
+                            onToggle={toggleSubtitleLang}
+                          />
+                          <MotionTemplatePicker
+                            value={selectedTemplate}
+                            onSelect={setSelectedTemplate}
+                          />
+                        </div>
                       )}
                     </div>
 
@@ -1494,34 +1412,6 @@ export function VideoApprovalPanel({
                       className="text-center"
                     />
 
-                    {/* Phase 7 — motion-graphic template picker (default None). */}
-                    <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <p className="text-sm font-medium text-slate-800">เลือกเทมเพลตกราฟิก (Motion Template)</p>
-                      <p className="text-xs text-slate-400 mt-0.5 mb-3">
-                        เลือกสไตล์กรอบและกราฟิกที่จะซ้อนบนวิดีโอ (ค่าเริ่มต้น: ไม่มีเทมเพลต — วิดีโอเต็มจอ + ซับไตเติ้ล)
-                      </p>
-                      <div className="flex gap-3 overflow-x-auto pb-1">
-                        {MOTION_TEMPLATES.map((tpl) => {
-                          const active = selectedTemplate === tpl.id;
-                          return (
-                            <button
-                              key={tpl.id}
-                              type="button"
-                              onClick={() => setSelectedTemplate(tpl.id)}
-                              className={`shrink-0 w-24 rounded-lg border p-2 text-left transition ${
-                                active
-                                  ? "border-green-400 ring-2 ring-green-200 bg-green-50"
-                                  : "border-slate-200 hover:bg-slate-50"
-                              }`}
-                            >
-                              <TemplateThumb id={tpl.id} />
-                              <p className="text-[11px] font-medium leading-tight text-slate-700">{tpl.name}</p>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
                     {/* No download here on purpose: this merged-audio master is an
                         intermediate step, not a deliverable. Downloads belong to
                         the final subtitled/motion-graphic exports. */}
@@ -1540,11 +1430,7 @@ export function VideoApprovalPanel({
                           loading={finalApproving}
                           disabled={finalApproving || audioRevising || subtitleLangs.length === 0}
                         >
-                          สร้างซับไตเติ้ล (
-                          {subtitleLangs
-                            .map((code) => ({ th: "ไทย", en: "อังกฤษ", zh: "จีน" })[code])
-                            .join(" + ")}
-                          ) และ Motion Graphic →
+                          สร้างซับไตเติ้ลและ Motion Graphic →
                         </Button>
                       </div>
                     </div>

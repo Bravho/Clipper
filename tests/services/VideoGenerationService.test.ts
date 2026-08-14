@@ -848,7 +848,154 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.finalExport_travy_assetId).toBeTruthy();
   });
 
-  // ── Step-5 express lane: "approve everything from here" ─────────────────────
+  // ── Express lane: "approve everything from here", chosen at scene-plan
+  //    approval (the screen that now owns music, subtitles and template) ───────
+  it("express lane clears the scene-clip review — the requester never sees it", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingVideoApproval,
+      {},
+      ["en", "zh"]
+    );
+    await mockJobRepo.update(job.id, {
+      autoApproveRemaining: true,
+      contentApprovedBy: "user-001",
+      // A plan long enough to cover the 12s voice track (the merge guard).
+      approvedScenePlan: JSON.stringify([
+        {
+          sceneNumber: 1,
+          durationSeconds: 14,
+          visualDescriptionThai: "ฉากเดียว",
+          imageIndexes: [0],
+          assets: [{ assetIndex: 0, kind: "image", motion: "static", durationSeconds: 14 }],
+        },
+      ]),
+    });
+
+    const service = new VideoGenerationService();
+    await service.afterRenderStepCompleted(job.id);
+
+    const updated = await mockJobRepo.findById(job.id);
+    // Merged on its own — the requester was never asked to approve the clips.
+    expect(updated?.currentStep).not.toBe(VideoGenerationStep.AwaitingVideoApproval);
+    expect(updated?.videoApprovedBy).toBe("user-001");
+  });
+
+  it("a gate stranded by an out-of-date render worker is advanced by the requester's own status poll", async () => {
+    // Reproduces the production stall: the Mac worker ran an OLDER build whose
+    // post-step hook did not know AwaitingVideoApproval was auto-approvable, so it
+    // marked its claim done and left the job parked there. The panel is hidden on
+    // an express-lane job, so the requester just watched a spinner forever.
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingVideoApproval,
+      {},
+      ["th"]
+    );
+    await mockJobRepo.update(job.id, {
+      autoApproveRemaining: true,
+      contentApprovedBy: "user-001",
+      approvedScenePlan: JSON.stringify([
+        {
+          sceneNumber: 1,
+          durationSeconds: 14,
+          visualDescriptionThai: "ฉากเดียว",
+          imageIndexes: [0],
+          assets: [{ assetIndex: 0, kind: "image", motion: "static", durationSeconds: 14 }],
+        },
+      ]),
+    });
+
+    const service = new VideoGenerationService();
+    const stranded = (await mockJobRepo.findById(job.id))!;
+
+    // While a render is genuinely in flight the poll must keep its hands off.
+    const untouched = await service.resumeAutoApproveIfStranded(stranded, true);
+    expect(untouched.currentStep).toBe(VideoGenerationStep.AwaitingVideoApproval);
+
+    // Nothing rendering + on the lane + on an auto gate = stranded. Advance it.
+    const resumed = await service.resumeAutoApproveIfStranded(stranded, false);
+    expect(resumed.currentStep).not.toBe(VideoGenerationStep.AwaitingVideoApproval);
+    expect(resumed.videoApprovedBy).toBe("user-001");
+  });
+
+  it("losing the race to the worker leaves the express lane ON — the job is running, not broken", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingOverlayApproval,
+      {},
+      ["th"]
+    );
+    await mockJobRepo.update(job.id, {
+      autoApproveRemaining: true,
+      contentApprovedBy: "user-001",
+    });
+
+    const service = new VideoGenerationService();
+    // First runner clears the gate…
+    await service.afterRenderStepCompleted(job.id);
+    const afterFirst = await mockJobRepo.findById(job.id);
+    expect(afterFirst?.currentStep).not.toBe(VideoGenerationStep.AwaitingOverlayApproval);
+
+    // …then the loser arrives at a gate that has already moved. Its approval
+    // throws, and the old code answered that by switching the lane OFF — which
+    // would strand a perfectly healthy job on the very next gate.
+    await service.afterRenderStepCompleted(job.id);
+    const afterSecond = await mockJobRepo.findById(job.id);
+    expect(afterSecond?.autoApproveRemaining).toBe(true);
+  });
+
+  it("express lane clears the merge-and-music gate too — the requester never sees it", async () => {
+    const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+    // Composition runs in the background after the gate is cleared; give it a
+    // usable result so a rejected render cannot muddy the assertion below.
+    composeAndExportMock.mockResolvedValue({
+      exports: {
+        "9:16": {
+          storageKey: "final_exports/9-16.mp4",
+          storageUrl: "https://cdn.example.com/final_9-16.mp4",
+        },
+      },
+    });
+
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingAnimationApproval,
+      {},
+      ["en", "zh"]
+    );
+    // The lane was started at scene-plan approval, so the approver id is on
+    // contentApprovedBy — nothing has touched animationApprovedBy yet.
+    await mockJobRepo.update(job.id, {
+      autoApproveRemaining: true,
+      contentApprovedBy: "user-001",
+      selectedMotionTemplate: "editorial",
+      selectedMusicTrack: "happy",
+    });
+
+    const service = new VideoGenerationService();
+    await service.afterRenderStepCompleted(job.id);
+
+    const updated = await mockJobRepo.findById(job.id);
+    // Moved off the gate on its own, credited to the requester who chose the lane.
+    expect(updated?.currentStep).not.toBe(VideoGenerationStep.AwaitingAnimationApproval);
+    expect(updated?.animationApprovedBy).toBe("user-001");
+    // Their step-3 choices are carried through untouched — no Thai pin, no
+    // randomly substituted template.
+    expect(updated?.subtitleLanguages).toEqual(["en", "zh"]);
+    expect(updated?.selectedMotionTemplate).toBe("editorial");
+    expect(updated?.selectedMusicTrack).toBe("happy");
+  });
+
   it("express lane runs every remaining gate itself: merged review → overlay → extra ratios → download, never stopping", async () => {
     const request = await createRequestWithPlatforms([
       Platform.TikTok,
@@ -899,34 +1046,49 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.finalExport_travy_assetId).toBeTruthy();
   });
 
-  it("choosing the express lane at step 5 pins Thai subtitles and picks a decorated template at random", async () => {
+  it("choosing the express lane at scene-plan approval persists the requester's own choices, guessing nothing", async () => {
     const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
     getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
     const job = await createOverlayJob(
       request.id,
-      VideoGenerationStep.AwaitingAnimationApproval,
+      VideoGenerationStep.AwaitingSceneDesignApproval,
       {},
-      ["en", "zh"]
+      ["th"]
     );
 
+    // A montage plan long enough to cover the 12s voice track.
+    const scenePlan = [
+      {
+        sceneNumber: 1,
+        durationSeconds: 14,
+        visualDescriptionThai: "ฉากเดียว",
+        imageIndexes: [0],
+        assets: [{ assetIndex: 0, kind: "image", motion: "static", durationSeconds: 14 }],
+      },
+    ];
+
     const service = new VideoGenerationService();
-    const updated = await service.approveAnimationByRequester(
+    const updated = await service.approveSceneDesignByRequester(
       job.id,
       "user-001",
-      undefined,
-      "none",
-      undefined,
-      true
+      { scenePlan: JSON.stringify(scenePlan), durationSeconds: 14 },
+      {
+        selectedMusicTrack: "happy",
+        subtitleLanguages: ["en", "zh"],
+        selectedMotionTemplate: "editorial",
+        autoApproveRemaining: true,
+      }
     );
 
     expect(updated.autoApproveRemaining).toBe(true);
-    expect(updated.subtitleLanguages).toEqual(["th"]);
-    // The requester never sees the template picker, so they must not be given
-    // the bare "none" look — one of the decorated templates is chosen for them.
-    const decorated = MOTION_TEMPLATES.filter((t) => t.id !== DEFAULT_TEMPLATE_ID).map(
-      (t) => t.id
-    );
-    expect(decorated).toContain(updated.selectedMotionTemplate);
+    // Exactly what they picked — the old lane pinned Thai and rolled a random
+    // decorated template because it fired before those screens existed.
+    expect(updated.subtitleLanguages).toEqual(["en", "zh"]);
+    expect(updated.selectedMotionTemplate).toBe("editorial");
+    expect(updated.selectedMusicTrack).toBe("happy");
+    expect(updated.contentApprovedBy).toBe("user-001");
+    // "none" is a legitimate choice now that they are actually shown the picker.
+    expect(MOTION_TEMPLATES.map((t) => t.id)).toContain(DEFAULT_TEMPLATE_ID);
   });
 
   it("without the express lane the pipeline still waits at the merged-review gate", async () => {

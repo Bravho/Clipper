@@ -137,11 +137,13 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
 }
 
 /**
- * Gates the step-5 express lane approves on the requester's behalf. Reaching one
- * of these on an `autoApproveRemaining` job is a pass-through, not a request for
- * attention, so no push notice is sent for it.
+ * Gates the scene-plan express lane approves on the requester's behalf. Reaching
+ * one of these on an `autoApproveRemaining` job is a pass-through, not a request
+ * for attention, so no push notice is sent for it.
  */
 const AUTO_APPROVED_GATES: VideoGenerationStep[] = [
+  VideoGenerationStep.AwaitingVideoApproval,
+  VideoGenerationStep.AwaitingAnimationApproval,
   VideoGenerationStep.AwaitingFinalApproval,
   VideoGenerationStep.AwaitingOverlayApproval,
   VideoGenerationStep.AwaitingAdditionalRatios,

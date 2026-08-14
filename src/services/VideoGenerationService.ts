@@ -53,6 +53,7 @@ import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/
 import { RENDER_QUEUE } from "@/config/renderQueue";
 import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
+import { isAutoApprovedGate } from "@/config/pipelinePresentation";
 import {
   extractInlineHashtags,
   normalizeHashtags,
@@ -61,6 +62,30 @@ import {
 } from "@/lib/publishing/channelCopyPolicy";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * The creative choices the requester makes on the scene-plan approval screen
+ * (pipeline phase 3, "วางแผนฉากและสคริปต์วิดีโอ") — the last screen before any
+ * video is generated — and hands to the rest of the pipeline in one go. They
+ * used to be collected one screen at a time (music at the merge gate, subtitles
+ * and template at the merged-video gate), which is why the old express lane had
+ * to guess them; now they are all decided up front.
+ */
+export interface ApproveSceneDesignOptions {
+  /** Background-music track id, or "none". */
+  selectedMusicTrack?: string | null;
+  /** 1–2 subtitle languages for the requester's own channels (Travy is always EN+ZH). */
+  subtitleLanguages?: ("th" | "en" | "zh")[];
+  /** Motion-graphic template id (see `src/config/motionTemplates.ts`). */
+  selectedMotionTemplate?: string | null;
+  /**
+   * "Approve everything from here" — grant every remaining requester gate
+   * automatically as the pipeline reaches it, INCLUDING the per-scene video
+   * review, running through to the download step without stopping. The download
+   * gate itself is never auto-confirmed.
+   */
+  autoApproveRemaining?: boolean;
+}
 
 /**
  * Thrown when a request reaches scene design with zero usable uploaded media
@@ -772,6 +797,41 @@ export class VideoGenerationService {
     await this._autoAdvanceIfEnabled(jobId);
   }
 
+  /** `jobId:step` gates this process is currently auto-approving. See `_autoAdvanceIfEnabled`. */
+  private _autoAdvancing = new Set<string>();
+
+  /**
+   * Safety net for the express lane, called from the requester's status poll.
+   *
+   * `afterRenderStepCompleted` runs INSIDE whichever process ran the heavy step —
+   * usually the Mac render worker. That makes the express lane depend on the
+   * worker running the same build as the web app: a worker on an older deploy
+   * simply does not know that a newly added gate should be auto-approved, so the
+   * job parks there forever behind a spinner (the panel is hidden precisely
+   * because the server is supposed to be clearing it). The same happens if the
+   * worker dies between marking its claim done and running the hook.
+   *
+   * So the web server checks for itself: a job on the express lane, sitting on a
+   * gate that lane is supposed to clear, with no render task in flight, is
+   * stranded — advance it here. Idempotent and safe to race with the worker.
+   *
+   * Never throws: this runs inside a read-only status endpoint.
+   */
+  async resumeAutoApproveIfStranded(
+    job: VideoGenerationJob,
+    hasActiveRenderTask: boolean
+  ): Promise<VideoGenerationJob> {
+    if (!job.autoApproveRemaining) return job;
+    if (hasActiveRenderTask) return job;
+    if (!isAutoApprovedGate(job.currentStep)) return job;
+
+    console.log(
+      `[auto-approve] job ${job.id}: stranded on ${job.currentStep} with no render in flight — advancing from the web server`
+    );
+    await this._autoAdvanceIfEnabled(job.id);
+    return (await this._getJob(job.id).catch(() => null)) ?? job;
+  }
+
   /**
    * Worker entrypoint: run ONE claimed render step by dispatching to the SAME
    * private compute method the web server would have run inline — no compute is
@@ -1303,18 +1363,18 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * Requester approves the animated video, selects target platforms, and triggers
    * FFmpeg final composition.
    *
-   * `autoApproveRemaining` is the express lane offered as a second button at this
-   * gate: every remaining requester approval is then granted automatically as the
-   * pipeline reaches it (see {@link _autoAdvanceIfEnabled}) and the requester's own
-   * subtitles are pinned to Thai only. The Travy export still renders EN+ZH.
+   * The music track is normally chosen one gate earlier (scene-video review) and
+   * already sits on the job; `selectedMusicTrack`/`subtitleLanguages` are only
+   * sent when the requester reopens the picker here to change their mind. On an
+   * express-lane job this method is called by {@link _autoAdvanceIfEnabled} with
+   * neither, so the job's own choices pass straight through.
    */
   async approveAnimationByRequester(
     jobId: string,
     userId: string,
     targetPlatforms?: Platform[],
     selectedMusicTrack: string | null = null,
-    subtitleLanguages?: ("th" | "en" | "zh")[],
-    autoApproveRemaining = false
+    subtitleLanguages?: ("th" | "en" | "zh")[]
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
 
@@ -1326,21 +1386,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await clipRequestRepository.update(job.requestId, { targetPlatforms });
     }
 
-    // Express lane pins the requester's own subtitles to Thai only — it is chosen
-    // INSTEAD of the language picker they would have seen at the merged-review
-    // gate, so it must win over any language set earlier.
-    const effectiveSubtitleLanguages: ("th" | "en" | "zh")[] | undefined =
-      autoApproveRemaining ? ["th"] : subtitleLanguages;
-
-    // The merged-review gate is also where the motion-graphic template is
-    // picked. Skipping it would ship the bare "none" look, so choose one of the
-    // decorated templates at random instead.
-    const { pickRandomMotionTemplateId } = await import("@/config/motionTemplates");
-    const autoTemplate = autoApproveRemaining ? pickRandomMotionTemplateId() : null;
-    if (autoTemplate) {
-      console.log(`[auto-approve] job ${jobId}: motion template "${autoTemplate}" chosen at random`);
-    }
-
     const updated = await videoGenerationJobRepository.update(jobId, {
       currentStep: VideoGenerationStep.ComposingFinalVideo,
       animationApprovedBy: userId,
@@ -1348,11 +1393,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       // Do not expose it as if it were the in-progress audio-merged result.
       animatedVideoAssetId: null,
       ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
-      ...(effectiveSubtitleLanguages && effectiveSubtitleLanguages.length > 0
-        ? { subtitleLanguages: effectiveSubtitleLanguages }
+      ...(subtitleLanguages && subtitleLanguages.length > 0
+        ? { subtitleLanguages }
         : {}),
-      ...(autoApproveRemaining ? { autoApproveRemaining: true } : {}),
-      ...(autoTemplate ? { selectedMotionTemplate: autoTemplate } : {}),
     });
 
     await this._dispatchHeavy(updated, RenderStep.FfmpegComposition, () =>
@@ -1594,7 +1637,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     approved: {
       scenePlan: string;
       durationSeconds: number;
-    }
+    },
+    options: ApproveSceneDesignOptions = {}
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingSceneDesignApproval);
     const job = await this._getJob(jobId);
@@ -1644,6 +1688,21 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       contentApprovedBy: userId,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
+      // The creative choices made on this same screen. Each is written only when
+      // supplied, so a staff/legacy caller cannot blank an existing selection.
+      ...(options.selectedMusicTrack != null
+        ? { selectedMusicTrack: options.selectedMusicTrack }
+        : {}),
+      ...(options.subtitleLanguages && options.subtitleLanguages.length > 0
+        ? { subtitleLanguages: options.subtitleLanguages }
+        : {}),
+      ...(options.selectedMotionTemplate != null
+        ? { selectedMotionTemplate: options.selectedMotionTemplate }
+        : {}),
+      // Only ever turned ON here. Backing out of the express lane is an explicit
+      // action elsewhere (reopen scene design / videos, revise audio), never a
+      // side effect of re-approving a gate.
+      ...(options.autoApproveRemaining ? { autoApproveRemaining: true } : {}),
     });
     await this._dispatchHeavy(cleared, RenderStep.MontageAllSegments, () =>
       this._renderAllSceneSegments(cleared)
@@ -1769,6 +1828,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * segment is concatenated into the single `baseVideoAssetId` the downstream
    * pipeline consumes, then animation generation begins. (Individual scenes are
    * revised in place beforehand via `requestVideoRevisionByRequester`.)
+   *
+   * On an express-lane job this is called by {@link _autoAdvanceIfEnabled}
+   * rather than by a click — the creative settings were all chosen at scene-plan
+   * approval, so there is nothing left for the requester to decide here.
    */
   async approveBaseVideoByRequester(
     jobId: string,
@@ -1866,6 +1929,36 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       videoGenStatus: null,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
+      // Back at the screen where the express lane is chosen, so drop it rather
+      // than silently re-applying a choice made last time round.
+      autoApproveRemaining: false,
+    });
+  }
+
+  /**
+   * Send the requester back from the merge-and-music gate to the scene-video
+   * review — the screen where the scene clips AND every creative setting (music,
+   * subtitle languages, motion template) are decided. Used by the "back to the
+   * scene review" button on that gate.
+   *
+   * The per-scene segments (`sceneVideoAssetIds`) are kept, so the review panel
+   * reloads intact and re-approving simply re-runs the merge
+   * (`approveBaseVideoByRequester` clears `baseVideoAssetId` itself). The merged
+   * preview is dropped because it no longer reflects what they are about to
+   * approve.
+   */
+  async reopenSceneVideoReviewByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    void userId; // retained for caller-identity parity; not yet persisted
+    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
+    return videoGenerationJobRepository.update(jobId, {
+      currentStep: VideoGenerationStep.AwaitingVideoApproval,
+      animatedVideoAssetId: null,
+      // Back at the gate where the express lane is offered, so drop it rather
+      // than silently re-applying a choice made last time round.
+      autoApproveRemaining: false,
     });
   }
 
@@ -1967,14 +2060,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   // ──────────────────────────────────────────────────────────────────────────
 
   /**
-   * Express lane ("approve everything from here", chosen at the step-5 gate):
-   * grant the requester approval for whichever gate the job has just landed on,
+   * Express lane ("approve everything from here", chosen at the scene-plan
+   * gate): grant the requester approval for whichever gate the job has landed on,
    * so the pipeline keeps moving without a human click. Called at the END of the
    * compute step that reaches each gate — i.e. the gate is already persisted, so
    * a crash between the two simply leaves the job waiting for a manual click
    * rather than losing work.
    *
-   * Only the three intermediate gates are automated. The final download step
+   * Only the intermediate gates are automated. The final download step
    * (AwaitingDistributionReview) is deliberately NOT auto-confirmed: it is where
    * the requester actually collects the video.
    *
@@ -1983,21 +2076,50 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * which the requester can approve by hand.
    */
   private async _autoAdvanceIfEnabled(jobId: string): Promise<void> {
+    // Two callers now race for every gate — the render worker's post-step hook
+    // and the requester's own status poll (see `resumeAutoApproveIfStranded`) —
+    // so this guard stops THIS process from approving the same gate twice. It is
+    // keyed by job AND step, never by job alone: clearing one gate dispatches the
+    // step that reaches the NEXT one, and on the inline path that follow-up can
+    // fire before this call unwinds. A job-wide lock would swallow it and stop
+    // the lane dead. The cross-process race is handled by the step check inside
+    // each approve* method plus the "did it move?" test in the catch below.
+    let held: string | null = null;
+    let stepOnEntry: VideoGenerationStep | null = null;
     try {
       const job = await this._getJob(jobId);
       if (!job.autoApproveRemaining) return;
+      stepOnEntry = job.currentStep;
 
-      // The express lane was started by the requester at the step-5 gate, so
-      // their id is on animationApprovedBy; fall back to any earlier approver so
-      // the *_approvedBy audit columns are never blanked by an auto-approval.
+      const gateKey = `${jobId}:${job.currentStep}`;
+      if (this._autoAdvancing.has(gateKey)) return;
+      this._autoAdvancing.add(gateKey);
+      held = gateKey;
+
+      // The express lane is started by the requester at the scene-plan gate, so
+      // their id is on contentApprovedBy; fall back to any later/earlier approver
+      // so the *_approvedBy audit columns are never blanked by an auto-approval.
       const userId =
-        job.animationApprovedBy ?? job.finalApprovedBy ?? job.voiceApprovedBy ?? "";
+        job.contentApprovedBy ??
+        job.videoApprovedBy ??
+        job.animationApprovedBy ??
+        job.finalApprovedBy ??
+        job.voiceApprovedBy ??
+        "";
 
       switch (job.currentStep) {
+        case VideoGenerationStep.AwaitingVideoApproval:
+          console.log(`[auto-approve] job ${jobId}: every scene clip`);
+          await this.approveBaseVideoByRequester(jobId, userId);
+          return;
+        case VideoGenerationStep.AwaitingAnimationApproval:
+          console.log(`[auto-approve] job ${jobId}: merge voice + music`);
+          // Music/subtitles/template were all chosen at the scene-plan gate and
+          // are already on the job, so approve with what it carries.
+          await this.approveAnimationByRequester(jobId, userId);
+          return;
         case VideoGenerationStep.AwaitingFinalApproval:
-          console.log(`[auto-approve] job ${jobId}: merged video (subtitles: th)`);
-          // Languages/template are already persisted (Thai pinned when the lane
-          // was chosen), so approve with what the job carries.
+          console.log(`[auto-approve] job ${jobId}: merged video`);
           await this.approveFinalVideoByRequester(jobId, userId);
           return;
         case VideoGenerationStep.AwaitingOverlayApproval:
@@ -2012,6 +2134,18 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           return;
       }
     } catch (err) {
+      // Losing the race is not a failure. When the worker and the status poll
+      // both reach the same gate, the loser's approval throws because the step
+      // has already moved on — turning the express lane off for that would strand
+      // a job that is in fact running perfectly.
+      const latest = await this._getJob(jobId).catch(() => null);
+      if (latest && stepOnEntry != null && latest.currentStep !== stepOnEntry) {
+        console.log(
+          `[auto-approve] job ${jobId}: gate ${stepOnEntry} was already cleared by another runner — nothing to do`
+        );
+        return;
+      }
+
       console.error(`[auto-approve] job ${jobId}: auto-approval failed, handing the gate back:`, err);
       // Turn the express lane OFF so the requester gets their approval buttons
       // back. Review gates are never "stalled" (see stallThresholds), so leaving
@@ -2019,6 +2153,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await videoGenerationJobRepository
         .update(jobId, { autoApproveRemaining: false })
         .catch(() => {});
+    } finally {
+      // Only ever release the lock this call took, never another runner's.
+      if (held) this._autoAdvancing.delete(held);
     }
   }
 

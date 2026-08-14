@@ -60,6 +60,14 @@ export async function GET(
     ? await renderTaskRepository.countAhead(activeTask.id)
     : null;
 
+  // Safety net for the express lane ("approve everything from here"). The hook
+  // that clears each gate normally runs inside whichever process ran the heavy
+  // step — usually the Mac render worker — so a worker on an older deploy, or one
+  // that died right after marking its claim done, leaves the job parked on a gate
+  // the requester can no longer see. This poll notices and advances it. No-op
+  // unless the job is on the lane, on such a gate, with nothing rendering.
+  job = await videoGenerationService.resumeAutoApproveIfStranded(job, Boolean(activeTask));
+
   // The montage engine renders each scene segment in a background task that
   // advances the step itself, so there is nothing to poll here — the poller
   // simply reads the current step below.

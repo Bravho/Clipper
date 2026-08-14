@@ -17,11 +17,11 @@ initEditorSeedData();
 
 export const metadata: Metadata = {
   title: {
-    default: "RClipper — Video Editing Marketplace",
+    default: "RClipper — AI Video Editor and Video Editing Services",
     template: "%s | RClipper",
   },
   description:
-    "Video editing marketplace สำหรับธุรกิจท่องเที่ยวและร้านอาหารในไทย — ทำคลิปเร็ว ราคาถูกด้วย AI หรือเลือก editor ที่เข้าใจ algorithm และตลาดต่างชาติ พร้อม distribution ผ่าน Travy",
+    "AI ตัดต่อวิดีโอ และบริการตัดต่อวิดีโอ สำหรับธุรกิจท่องเที่ยวและร้านอาหารในไทย — ทำคลิปเร็ว ราคาถูกด้วย AI หรือเลือก editor ที่เข้าใจ algorithm และตลาดต่างชาติ พร้อม distribution ผ่าน Travy",
   manifest: "/manifest.webmanifest",
   applicationName: "RClipper",
   appleWebApp: {

@@ -54,13 +54,29 @@ describe("pipeline presentation configuration", () => {
     }
   });
 
-  // ── Step-5 express lane ("approve everything from here") ────────────────────
+  // ── Express lane ("approve everything from here", chosen at the scene-video
+  //    review) ────────────────────────────────────────────────────────────────
   describe("express lane display", () => {
     const AUTO_GATES = [
+      // The lane starts at scene-plan approval, so the per-scene video review and
+      // the merge-and-music gate are passed through too — they must read as work
+      // in progress like the rest.
+      VideoGenerationStep.AwaitingVideoApproval,
+      VideoGenerationStep.AwaitingAnimationApproval,
       VideoGenerationStep.AwaitingFinalApproval,
       VideoGenerationStep.AwaitingOverlayApproval,
       VideoGenerationStep.AwaitingAdditionalRatios,
     ];
+
+    it("does not swallow the gate the requester actually acts on", () => {
+      // Scene-plan approval is where the lane is CHOSEN, so it must keep asking
+      // for a click even on a job that later runs itself.
+      const step = VideoGenerationStep.AwaitingSceneDesignApproval;
+      expect(isAutoApprovedGate(step)).toBe(false);
+      expect(getPipelineStepPresentation(step, { autoApproveRemaining: true })).toEqual(
+        PIPELINE_STEP_PRESENTATION[step]
+      );
+    });
 
     it.each(AUTO_GATES)(
       "%s shows as work in progress, not as waiting for the requester",

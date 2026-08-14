@@ -246,8 +246,8 @@ export default function SupportPage() {
       </Card>
 
       <p className="mt-6 text-xs leading-relaxed text-slate-500">
-        RClipper is a video editing marketplace for tourism, restaurant, and
-        small business operators in Thailand. Support is provided by the
+        RClipper is an AI video editor and video editing service for tourism,
+        restaurant, and small business operators in Thailand. Support is provided by the
         RClipper team at the email address above.
       </p>
     </div>

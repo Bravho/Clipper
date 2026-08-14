@@ -525,9 +525,9 @@ export default async function RequestDetailPage({
         // Phase 8 — distribution-review step (auto-filled per-channel publish form).
         const isAwaitingDistributionReview =
           pipelineJob.currentStep === VideoGenerationStep.AwaitingDistributionReview;
-        // Express lane (step-5 "approve everything from here"): the remaining
-        // gates are cleared by the server, so the requester must see progress —
-        // not approval buttons that vanish under their cursor mid-click.
+        // Express lane (scene-plan "approve everything from here"): the
+        // remaining gates are cleared by the server, so the requester must see
+        // progress — not approval buttons that vanish under their cursor mid-click.
         const autoApproveRemaining = pipelineJob.autoApproveRemaining === true;
         const autoAdvancingGate =
           autoApproveRemaining && isAutoApprovedGate(pipelineJob.currentStep);
@@ -658,6 +658,9 @@ export default async function RequestDetailPage({
                 sourceAssets={sourceAssets}
                 orderedAssets={orderedSourceAssets}
                 activeSceneIndex={activeSceneIndex}
+                savedMusicTrack={pipelineJob.selectedMusicTrack ?? null}
+                savedSubtitleLanguages={pipelineJob.subtitleLanguages}
+                savedTemplate={pipelineJob.selectedMotionTemplate ?? "none"}
               />
             </>
           );
@@ -781,8 +784,9 @@ export default async function RequestDetailPage({
             )}
 
             {/* Generated base video + script — shown once video generation completes.
-                On an express-lane job the three review gates below
-                (final / overlay / additional-ratios) are passed `false`: the server
+                On an express-lane job every review gate below (scene clips /
+                merge-and-music / final / overlay / additional-ratios) is passed
+                `false`: the server
                 approves them itself, so the requester gets the processing spinner
                 instead of buttons that vanish under their cursor. */}
             {!isFailed && !isAwaitingVoiceApproval && !isAwaitingDistributionReview && baseVideoAsset?.storageUrl && (
@@ -794,10 +798,12 @@ export default async function RequestDetailPage({
                 isProcessing={isProcessing}
                 isAutoAdvancing={autoAdvancingGate}
                 isAwaitingApproval={
+                  !autoApproveRemaining &&
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingVideoApproval
                 }
                 isAwaitingVoiceApproval={false}
                 isAwaitingAnimationApproval={
+                  !autoApproveRemaining &&
                   pipelineJob.currentStep === VideoGenerationStep.AwaitingAnimationApproval
                 }
                 isPipelineFailed={isFailed}

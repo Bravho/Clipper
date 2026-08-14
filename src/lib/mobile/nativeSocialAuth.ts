@@ -20,7 +20,16 @@ import { getMobilePlatform } from "@/lib/mobile/platform";
 
 export type NativeProvider = "google" | "apple";
 
-/** The *web* client ID. Credential Manager uses it as its serverClientId. */
+/**
+ * The **web** client ID. Credential Manager takes it as its `serverClientId`.
+ *
+ * It must be the *web* client — not the Android one. Both live in the same
+ * Google Cloud project and look identical (`<project>-<hash>.apps.google...`),
+ * so the two are easy to swap; the Android client exists only so Google can
+ * match the package name + signing certificate, and has no client secret, so
+ * Credential Manager rejects it as a `serverClientId`. The symptom is a bare
+ * rejection with no account sheet — indistinguishable from a dead button.
+ */
 export function googleWebClientId(): string {
   return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim() ?? "";
 }
@@ -69,6 +78,34 @@ export function supportsNativeSignIn(provider: NativeProvider): boolean {
   return platform === "ios";
 }
 
+/**
+ * A snapshot of everything that decides which sign-in path runs.
+ *
+ * Every native sign-in failure looks the same from the outside, and the shells
+ * load their JS from `server.url`, so the running code is whatever was last
+ * deployed — you cannot tell from the app which branch it took. Logging this on
+ * every attempt makes `adb logcat` answer that in one line instead of a guess.
+ *
+ * The client ID is truncated: it is not a secret (it ships in the bundle), but a
+ * full ID in a log invites copy-pasting the wrong one back into config. The tail
+ * is what differs between the web and Android clients, so it is the useful part.
+ */
+export function nativeSignInDiagnostics(provider: NativeProvider) {
+  const clientId =
+    provider === "google" && getMobilePlatform() === "ios"
+      ? googleIosClientId()
+      : googleWebClientId();
+
+  return {
+    provider,
+    platform: getMobilePlatform(),
+    capacitorPlatform: Capacitor.getPlatform(),
+    pluginAvailable: nativePluginAvailable(),
+    supportsNative: supportsNativeSignIn(provider),
+    clientIdTail: clientId ? `…${clientId.slice(-28)}` : "(unset)",
+  };
+}
+
 let initialised: Promise<void> | undefined;
 
 function ensureInitialised(): Promise<void> {
@@ -101,13 +138,46 @@ export interface NativeSignInResult {
 }
 
 /**
+ * Thrown when the user dismisses the native account sheet.
+ *
+ * Both Credential Manager and ASAuthorizationController reject on dismissal, and
+ * that rejection is otherwise indistinguishable from a genuine failure. Callers
+ * need the distinction: a dismissal must stay silent, anything else must be
+ * shown to the user rather than swallowed.
+ */
+export class NativeSignInCancelled extends Error {
+  constructor(message = "Native sign-in was cancelled.") {
+    super(message);
+    this.name = "NativeSignInCancelled";
+  }
+}
+
+/**
+ * Android throws `GetCredentialCancellationException` ("activity is cancelled by
+ * the user"); iOS throws `ASAuthorizationError.canceled`, surfaced as code 1001.
+ */
+function isCancellation(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /cancell?ed|\b1001\b/i.test(message);
+}
+
+async function runNativeLogin<T>(login: () => Promise<T>): Promise<T> {
+  try {
+    return await login();
+  } catch (error) {
+    if (isCancellation(error)) throw new NativeSignInCancelled();
+    throw error;
+  }
+}
+
+/**
  * Run the native account picker and return the resulting ID token.
  *
  * The token is opaque to the client: it is verified server-side
  * (`src/lib/auth/oidcVerify.ts`) before any account is created or linked.
  *
- * @throws Error when misconfigured, when the provider returns no token, or when
- *         the user cancels (the plugin rejects on cancellation).
+ * @throws NativeSignInCancelled when the user dismisses the account sheet.
+ * @throws Error when misconfigured or when the provider returns no token.
  */
 export async function getNativeIdToken(
   provider: NativeProvider
@@ -115,16 +185,18 @@ export async function getNativeIdToken(
   await ensureInitialised();
 
   if (provider === "google") {
-    const { result } = await SocialLogin.login({
-      provider: "google",
-      options: {
-        scopes: ["email", "profile"],
-        // Always show the picker. Without these, Credential Manager silently
-        // reuses the last account, so a signed-out user cannot switch accounts.
-        filterByAuthorizedAccounts: false,
-        autoSelectEnabled: false,
-      },
-    });
+    const { result } = await runNativeLogin(() =>
+      SocialLogin.login({
+        provider: "google",
+        options: {
+          scopes: ["email", "profile"],
+          // Always show the picker. Without these, Credential Manager silently
+          // reuses the last account, so a signed-out user cannot switch accounts.
+          filterByAuthorizedAccounts: false,
+          autoSelectEnabled: false,
+        },
+      })
+    );
 
     // `offline` mode would return only a serverAuthCode; we stay online.
     if (!("idToken" in result) || !result.idToken) {
@@ -133,10 +205,12 @@ export async function getNativeIdToken(
     return { idToken: result.idToken };
   }
 
-  const { result } = await SocialLogin.login({
-    provider: "apple",
-    options: { scopes: ["name", "email"] },
-  });
+  const { result } = await runNativeLogin(() =>
+    SocialLogin.login({
+      provider: "apple",
+      options: { scopes: ["name", "email"] },
+    })
+  );
 
   if (!result.idToken) {
     throw new Error("Sign in with Apple returned no identity token.");

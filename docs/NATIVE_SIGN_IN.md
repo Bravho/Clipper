@@ -123,18 +123,40 @@ minted for the *web* client ID.
 1. APIs & Services → Credentials → **Create credentials → OAuth client ID**
 2. Application type: **Android**
 3. Package name: `com.rclipper.app`
-4. SHA-1: the **Play App Signing** certificate, from
-   Play Console → Test and release → **App integrity** → App signing key certificate
-   — *not* your local upload key. Add the upload-key SHA-1 as a second client too
-   if you also sideload debug builds.
+4. SHA-1 — **one client per signing certificate.** A certificate with no matching
+   client makes Credential Manager reject with no account sheet at all:
 
-You do **not** need the client secret for this client.
+   | Build | Certificate | Where to get the SHA-1 |
+   |---|---|---|
+   | Play / internal testing | Play App Signing | Play Console → Test and release → **App integrity** → App signing key certificate |
+   | Sideloaded release APK | Upload key | `keytool -list -v -keystore android/upload-keystore.jks -alias <alias>` |
+   | **Android Studio ▶ Run** | **Debug keystore** | `keytool -list -v -keystore %USERPROFILE%\.android\debug.keystore -alias androiddebugkey -storepass android -keypass android` |
+
+   The debug row is the one that catches people out: pressing Run in Android
+   Studio installs a *debug* build signed with `~/.android/debug.keystore`, whose
+   SHA-1 matches neither of the other two. Sign-in then fails on the dev machine
+   while the Play build works.
+
+You do **not** need the client secret for this client, and the Android client ID
+is never referenced by the app — it exists purely so Google can match the package
+and certificate. See the warning in step 3.
 
 ### 3. Environment
+
+> **`NEXT_PUBLIC_GOOGLE_CLIENT_ID` must be the WEB client ID.** Not the Android
+> one. Credential Manager takes it as its `serverClientId`, and an Android client
+> has no secret, so passing it there is rejected before the account sheet ever
+> appears — the sign-in button simply does nothing. The two IDs share a project
+> prefix and differ only in the hash, so they are trivially easy to swap. The
+> Android client ID belongs in `GOOGLE_ANDROID_CLIENT_ID` (server-side, an
+> accepted `aud`) and nowhere else.
 
 ```bash
 # same value as GOOGLE_CLIENT_ID (the web client ID) — not a secret
 NEXT_PUBLIC_GOOGLE_CLIENT_ID=<web client id>.apps.googleusercontent.com
+
+# server-side only: an additional accepted `aud`. NOT the value above.
+GOOGLE_ANDROID_CLIENT_ID=<android client id>.apps.googleusercontent.com
 
 # iOS bundle ID — the `aud` of a native Apple identity token
 APPLE_NATIVE_CLIENT_ID=com.rclipper.app
@@ -158,6 +180,39 @@ npm test -- tests/auth/googleIdToken.test.ts tests/auth/appleIdToken.test.ts
 On device, the fix is confirmed when tapping "Continue with Google" shows the
 **system account sheet** — not a browser — and the app itself lands on
 `/dashboard`.
+
+### 5. Debugging on device
+
+`startOAuth()` logs a diagnostic line on every attempt, and both sign-in buttons
+log and display the rejection rather than swallowing it. Watch for both:
+
+```bash
+adb logcat -c
+adb logcat | grep -iE "\[auth\]|CredentialManager|GetCredential|SocialLogin"
+```
+
+`[auth] sign-in attempt {...}` reports which branch ran. Read it first:
+
+| Field | Wrong value means |
+|---|---|
+| `platform: "web"` | The UA suffix is missing — the WebView is not the shell, or `appendUserAgent` was dropped |
+| `pluginAvailable: false` | The installed binary predates the plugin — `npx cap sync` and rebuild |
+| `supportsNative: false` | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` was empty in the **deployed** build |
+| `clientIdTail` | Must end in the *web* client's hash, not the Android client's |
+
+Then the rejection itself:
+
+| Log text | Cause |
+|---|---|
+| `[28444]` / "Developer console is not set up correctly" | No Android OAuth client for this build's package + SHA-1, **or** an Android client ID passed as `serverClientId` |
+| `[28433]` / `NoCredentialException` | No Google account on the device — add one in Android Settings |
+| `GetCredentialCancellationException` | User dismissed the sheet; handled silently, not an error |
+| "not implemented" | `SocialLogin` missing from the binary — rebuild |
+
+Note that the shells load their JS from `server.url`, so **UI-side changes only
+reach the device after a deploy**. To iterate without deploying, build with
+`CAP_SERVER_URL` pointed at a dev host. The `CredentialManager` lines are native
+and appear regardless.
 
 ## Failure codes
 

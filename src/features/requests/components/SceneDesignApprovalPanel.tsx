@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerationJob";
@@ -9,6 +9,14 @@ import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { AssetType } from "@/domain/enums/AssetType";
 import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
+import {
+  MAX_SUBTITLE_LANGS,
+  MotionTemplatePicker,
+  MusicPicker,
+  SubtitleLanguagePicker,
+  type SubtitleLang,
+} from "@/features/requests/components/CreativeSettingsPickers";
+import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import {
   assetPlaySeconds,
   minMontageTotalSeconds,
@@ -33,6 +41,12 @@ interface SceneDesignApprovalPanelProps {
   /** Canonical, index-stable source media (images + clips). */
   orderedAssets: OrderedSourceAsset[];
   activeSceneIndex?: number;
+  /** Background-music track saved on the job (seeds the picker). */
+  savedMusicTrack?: string | null;
+  /** Subtitle languages saved on the job (seed the picker). */
+  savedSubtitleLanguages?: SubtitleLang[];
+  /** Motion-graphic template saved on the job (seeds the picker). */
+  savedTemplate?: string | null;
 }
 
 const ta =
@@ -84,6 +98,9 @@ export function SceneDesignApprovalPanel({
   sourceAssets,
   orderedAssets,
   activeSceneIndex = 0,
+  savedMusicTrack = null,
+  savedSubtitleLanguages,
+  savedTemplate = null,
 }: SceneDesignApprovalPanelProps) {
   const router = useRouter();
   // Preserve the server-sized montage durations on load (they already cover the
@@ -91,6 +108,72 @@ export function SceneDesignApprovalPanel({
   const [scenes, setScenes] = useState<ScenePlan[]>(() => normalizeMontageScenes(initialScenes));
   const [scriptDraft, setScriptDraft] = useState<string>(scriptThai ?? "");
   const [isApproving, setIsApproving] = useState(false);
+
+  // ── Creative settings for the finished video ────────────────────────────────
+  // Every remaining creative choice is made HERE, on the last screen the
+  // requester reviews before generation starts, so the express lane below can
+  // run the whole production on their real choices instead of guessing.
+  const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(
+    savedMusicTrack ?? null
+  );
+  const [playingMusicTrack, setPlayingMusicTrack] = useState<string | null>(null);
+  const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [subtitleLangs, setSubtitleLangs] = useState<SubtitleLang[]>(
+    savedSubtitleLanguages && savedSubtitleLanguages.length > 0
+      ? savedSubtitleLanguages.slice(0, MAX_SUBTITLE_LANGS)
+      : ["th"]
+  );
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(savedTemplate ?? "none");
+
+  const toggleSubtitleLang = (l: SubtitleLang) =>
+    setSubtitleLangs((prev) => {
+      if (prev.includes(l)) return prev.filter((x) => x !== l);
+      if (prev.length >= MAX_SUBTITLE_LANGS) return prev;
+      return [...prev, l];
+    });
+
+  /** Preview a track on click (and select it). "none" just selects. */
+  function handleMusicTrackClick(trackId: string) {
+    if (musicAudioRef.current) {
+      musicAudioRef.current.pause();
+      musicAudioRef.current.src = "";
+    }
+    setPlayingMusicTrack(null);
+
+    if (trackId === "none") {
+      setSelectedMusicTrack("none");
+      return;
+    }
+    const track = BACKGROUND_MUSIC_TRACKS.find((t) => t.id === trackId)!;
+    if (playingMusicTrack !== trackId) {
+      const audio = new Audio(track.url);
+      audio.onended = () => setPlayingMusicTrack(null);
+      audio.play();
+      musicAudioRef.current = audio;
+      setPlayingMusicTrack(trackId);
+    }
+    setSelectedMusicTrack(trackId);
+  }
+
+  /** Stop any music preview before navigating away from this screen. */
+  const stopMusicPreview = () => {
+    if (musicAudioRef.current) {
+      musicAudioRef.current.pause();
+      musicAudioRef.current.src = "";
+      musicAudioRef.current = null;
+    }
+    setPlayingMusicTrack(null);
+  };
+
+  // Both approve buttons stay locked until all three are chosen: the express
+  // lane runs straight through with no later screen to correct a blank.
+  const settingsComplete =
+    selectedMusicTrack !== null && subtitleLangs.length > 0 && Boolean(selectedTemplate);
+  const missingSettings = [
+    selectedMusicTrack === null ? "เพลงพื้นหลัง (เลือก “ไม่ใส่เพลง” ได้)" : null,
+    subtitleLangs.length === 0 ? "ภาษาซับไตเติ้ลอย่างน้อย 1 ภาษา" : null,
+    !selectedTemplate ? "เทมเพลตกราฟิก" : null,
+  ].filter(Boolean);
   const [isRegenVoice, setIsRegenVoice] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -192,13 +275,22 @@ export function SceneDesignApprovalPanel({
     updateSceneDuration(targetIndex, current + Math.ceil(deficitSeconds));
   };
 
-  const handleApprove = async () => {
+  /**
+   * Approve the scene plan and start generation.
+   *
+   * `autoApproveRemaining` takes the express lane: the server then grants every
+   * later requester gate — including the per-scene video review — as it reaches
+   * it, using exactly the settings chosen on this screen, so the next thing the
+   * requester sees is the finished video ready to download.
+   */
+  const handleApprove = async (autoApproveRemaining = false) => {
     if (blockers.length > 0) {
       setError("กรุณาปรับแก้รายการด้านล่างก่อนดำเนินการต่อ");
       return;
     }
     setIsApproving(true);
     setError(null);
+    stopMusicPreview();
     try {
       // Belt-and-suspenders: keep each montage scene's per-asset durations
       // consistent (trimmed clips pinned, stills rebalanced) before the renderer
@@ -207,7 +299,15 @@ export function SceneDesignApprovalPanel({
       const res = await fetch(`/api/requests/${requestId}/scene-design/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, scenePlan, durationSeconds: submitDurationSeconds }),
+        body: JSON.stringify({
+          jobId,
+          scenePlan,
+          durationSeconds: submitDurationSeconds,
+          selectedMusicTrack,
+          subtitleLanguages: subtitleLangs,
+          selectedMotionTemplate: selectedTemplate,
+          autoApproveRemaining,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -522,16 +622,65 @@ export function SceneDesignApprovalPanel({
         </div>
       )}
 
-      <div className="flex flex-col items-end gap-1 pb-2">
-        <Button onClick={handleApprove} loading={isApproving} disabled={busy || mergeBlocked}>
+      {/* Every creative choice for the finished video is made here — the last
+          screen before generation — so the express lane below can run the whole
+          production on the requester's real choices instead of guessing. */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <h3 className="text-base font-semibold text-slate-900">ตั้งค่าวิดีโอขั้นสุดท้าย</h3>
+        <p className="mt-0.5 mb-4 text-sm text-slate-500">
+          เลือกเพลงพื้นหลัง ภาษาซับไตเติ้ล และเทมเพลตกราฟิกให้ครบ
+          จากนั้นเลือกได้ว่าจะตรวจทีละขั้น หรือให้ระบบทำให้จนจบ
+        </p>
+        <div className="space-y-4">
+          <MusicPicker
+            selected={selectedMusicTrack}
+            playing={playingMusicTrack}
+            onSelect={handleMusicTrackClick}
+          />
+          <SubtitleLanguagePicker
+            value={subtitleLangs}
+            max={MAX_SUBTITLE_LANGS}
+            onToggle={toggleSubtitleLang}
+          />
+          <MotionTemplatePicker value={selectedTemplate} onSelect={setSelectedTemplate} />
+        </div>
+      </div>
+
+      <div className="flex flex-col items-stretch gap-2 pb-2 sm:items-end">
+        <Button
+          onClick={() => handleApprove(false)}
+          loading={isApproving}
+          disabled={busy || mergeBlocked || !settingsComplete}
+          className="sm:self-end"
+        >
           อนุมัติแผนฉากและสร้างวิดีโอ →
         </Button>
+
+        {/* Express lane: this approval AND every gate after it. */}
+        <Button
+          variant="outline"
+          onClick={() => handleApprove(true)}
+          loading={isApproving}
+          disabled={busy || mergeBlocked || !settingsComplete}
+          className="sm:self-end"
+        >
+          อนุมัติและทำทุกขั้นตอนที่เหลืออัตโนมัติ →
+        </Button>
+        <p className="text-xs text-slate-400 sm:text-right">
+          ระบบจะสร้างวิดีโอจนเสร็จตามการตั้งค่าด้านบน โดยไม่หยุดรอให้กดอนุมัติอีก
+          (รวมถึงขั้นตอนตรวจวิดีโอแต่ละฉาก) และแจ้งเตือนเมื่อวิดีโอพร้อมดาวน์โหลด
+        </p>
+
         {mergeBlocked ? (
-          <p className="text-xs text-red-600">
+          <p className="text-xs text-red-600 sm:text-right">
             ต้องแก้ปัญหาเสียงพากย์ยาวเกินไปก่อน จึงจะรวมคลิปได้
           </p>
+        ) : !settingsComplete ? (
+          <p className="text-xs text-amber-600 sm:text-right">
+            กรุณาเลือก {missingSettings.join(" · ")} ก่อนอนุมัติ
+          </p>
         ) : blockers.length > 0 ? (
-          <p className="text-xs text-amber-600">ยังปรับแก้ได้ก่อนกดยืนยัน</p>
+          <p className="text-xs text-amber-600 sm:text-right">ยังปรับแก้ได้ก่อนกดยืนยัน</p>
         ) : null}
       </div>
     </div>

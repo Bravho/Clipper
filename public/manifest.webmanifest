@@ -1,7 +1,7 @@
 {
-  "name": "RClipper — Video Editing Marketplace",
+  "name": "RClipper — AI Video Editor and Video Editing Services",
   "short_name": "RClipper",
-  "description": "AI-powered video editing marketplace for Thai tourism and restaurant businesses. Create clips fast and distribute to Travy, TikTok, Instagram, YouTube and more.",
+  "description": "AI video editor and video editing services for Thai tourism and restaurant businesses. Create clips fast and distribute to Travy, TikTok, Instagram, YouTube and more.",
   "id": "/",
   "start_url": "/?source=pwa",
   "scope": "/",
