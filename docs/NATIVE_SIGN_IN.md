@@ -206,14 +206,25 @@ The route also falls back to the non-public names, so setting only
 Nothing secret is exposed. OAuth *client IDs* are public by design and already
 shipped inside the JS bundle; client *secrets* never go near this route.
 
-### Ordering — this matters
+### Ordering — enforced in code
 
-`NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID` is what makes the Google button appear on
-iOS, and the Info.plist URL scheme is what makes it work. Set the env var only
-once a build carrying the real scheme is the build people are running. Set it
-early and installed copies of build 9 show a Google button that throws
-`Your app is missing support for the following URL schemes` — a visible button
-that does nothing, which is its own rejection (Guideline 2.1).
+The server decides whether the Google button appears; the *installed binary*
+decides whether it can work. Those two can disagree, because the shells load
+their JS from `server.url` while an installed `Info.plist` is frozen forever.
+
+Build 9 shipped with no `CFBundleURLTypes` at all, so once the server began
+returning `iosClientId`, every build-9 install showed a Google button whose tap
+raises an **uncaught NSException** in `GIDSignIn.m` — the app terminates. A crash
+on tap is a harder rejection (Guideline 2.1) than the browser hop that started
+this.
+
+`MIN_IOS_BUILD_FOR_NATIVE_GOOGLE` in `src/lib/mobile/nativeSocialAuth.ts` closes
+that gap: the button is offered only to binaries at or above the build that
+carries the URL scheme, read from `App.getInfo()`. An unreadable build number
+hides it. So the env var and the build can now be rolled out in either order,
+and users who never update simply keep Apple and email sign-in.
+
+**Raise `MIN_IOS_BUILD_FOR_NATIVE_GOOGLE` if a later build changes the scheme.**
 
 ## Sign-out
 

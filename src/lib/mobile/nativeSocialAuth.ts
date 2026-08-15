@@ -1,5 +1,6 @@
 "use client";
 
+import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { SocialLogin } from "@capgo/capacitor-social-login";
 import { getMobilePlatform } from "@/lib/mobile/platform";
@@ -20,6 +21,38 @@ import { loadNativeAuthConfig } from "@/lib/mobile/nativeAuthConfig";
  */
 
 export type NativeProvider = "google" | "apple";
+
+/**
+ * The first iOS build whose `Info.plist` declares the reversed-client-ID URL
+ * scheme that GoogleSignIn requires.
+ *
+ * This is not belt-and-braces — it is load-bearing. The shells load their JS
+ * from `server.url`, so the running code is whatever was last deployed, but the
+ * `Info.plist` inside an *installed* binary can never change. Build 9 shipped
+ * with no `CFBundleURLTypes` key at all (verified in the archive), so the moment
+ * the server started returning `iosClientId`, every build-9 install began
+ * showing a Google button that cannot work.
+ *
+ * And it does not fail politely. `GIDSignIn.m` raises an **uncaught
+ * NSException** — "Your app is missing support for the following URL schemes" —
+ * which Swift cannot catch, so the app terminates. A crash on tap is a harder
+ * App Store rejection (Guideline 2.1) than the browser hop that started all
+ * this.
+ *
+ * So the button is offered only to binaries that can actually service it. Raise
+ * this constant only if a later build changes the URL scheme again.
+ */
+const MIN_IOS_BUILD_FOR_NATIVE_GOOGLE = 10;
+
+let buildNumber: Promise<number> | undefined;
+
+/** `CFBundleVersion` on iOS / `versionCode` on Android, as a number. */
+function nativeBuildNumber(): Promise<number> {
+  buildNumber ??= App.getInfo()
+    .then((info) => Number.parseInt(info.build, 10))
+    .catch(() => Number.NaN);
+  return buildNumber;
+}
 
 /**
  * Whether the SocialLogin native plugin is compiled into the installed binary.
@@ -58,7 +91,14 @@ export async function supportsNativeSignIn(
 
   if (provider === "google") {
     if (platform === "android") return Boolean(config.googleWebClientId);
-    if (platform === "ios") return Boolean(config.googleIosClientId);
+    if (platform === "ios") {
+      if (!config.googleIosClientId) return false;
+      // Fail closed: an unreadable build number hides the button rather than
+      // risking the crash described above. Apple and email/password remain, so
+      // no one is left without a way in.
+      const build = await nativeBuildNumber();
+      return Number.isFinite(build) && build >= MIN_IOS_BUILD_FOR_NATIVE_GOOGLE;
+    }
     return false;
   }
   // Sign in with Apple is only native on iOS; Android keeps the web flow.
@@ -94,6 +134,8 @@ export async function nativeSignInDiagnostics(provider: NativeProvider) {
     // "server" means /api/mobile/auth-config answered; "bundle" means it did
     // not and these are the values frozen in at build time.
     configSource: config.source,
+    build: await nativeBuildNumber(),
+    minBuildForNativeGoogle: MIN_IOS_BUILD_FOR_NATIVE_GOOGLE,
     clientIdTail: clientId ? `…${clientId.slice(-28)}` : "(unset)",
   };
 }
