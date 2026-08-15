@@ -170,6 +170,42 @@ rejection that looks nothing like its cause.
 **5. Build.** `npx cap sync ios`, `cd ios/App && pod install`, open
 `App.xcworkspace` (the workspace, not the project), archive as build 10.
 
+### The client IDs are read at runtime, not baked in
+
+`NEXT_PUBLIC_*` values are inlined into the JS bundle by `next build`. Editing
+one and restarting the server changes nothing — the old value stays frozen in
+the chunks, and the only symptom is a button that silently does not appear. That
+has now cost this project two rounds: an empty `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+disabled native Google on Android, and a missing `NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID`
+hid the Google button on iOS even after the droplet was rebuilt.
+
+So the apps now ask the server:
+
+    GET /api/mobile/auth-config
+    -> { "google": { "webClientId": "...", "iosClientId": "..." },
+         "apple":  { "serverConfigured": true } }
+
+`src/lib/mobile/nativeAuthConfig.ts` fetches it once per page load and falls back
+to the bundled `NEXT_PUBLIC_*` values if the request fails, so a network blip
+does not hide every provider. `supportsNativeSignIn()` and
+`SocialLogin.initialize()` both read from it.
+
+Two consequences worth knowing:
+
+* **A restart is enough.** Change `.env.local` on the droplet, restart the
+  process, reload the app — no rebuild.
+* **It is self-diagnosing.** Open
+  `https://app.rclipper.com/api/mobile/auth-config` in any browser. An empty
+  `iosClientId` means the *server* does not have the value, full stop — no need
+  to reason about which build inlined what.
+
+The route also falls back to the non-public names, so setting only
+`GOOGLE_IOS_CLIENT_ID` and `GOOGLE_CLIENT_ID` is sufficient — the
+`NEXT_PUBLIC_` twins are no longer required for the native apps.
+
+Nothing secret is exposed. OAuth *client IDs* are public by design and already
+shipped inside the JS bundle; client *secrets* never go near this route.
+
 ### Ordering — this matters
 
 `NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID` is what makes the Google button appear on

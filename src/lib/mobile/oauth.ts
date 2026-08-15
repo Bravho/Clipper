@@ -68,9 +68,9 @@ export async function startOAuth(
   // One line in `adb logcat` (filter `chromium:`) that says which branch ran and
   // with which client ID. Without it every failure below is a silent guess,
   // because the shell runs whatever JS was last deployed to `server.url`.
-  console.info("[auth] sign-in attempt", nativeSignInDiagnostics(provider));
+  console.info("[auth] sign-in attempt", await nativeSignInDiagnostics(provider));
 
-  if (!supportsNativeSignIn(provider)) {
+  if (!(await supportsNativeSignIn(provider))) {
     throw new NativeSignInUnavailableError(provider);
   }
 

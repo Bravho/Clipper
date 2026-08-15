@@ -41,7 +41,22 @@ export function useSignInAvailability(provider: NativeProvider): SignInAvailabil
       setAvailability("web");
       return;
     }
-    setAvailability(supportsNativeSignIn(provider) ? "native-ready" : "unavailable");
+
+    // `supportsNativeSignIn` asks the server for the client IDs, so this can
+    // resolve after unmount if the user navigates away mid-flight.
+    let active = true;
+    supportsNativeSignIn(provider)
+      .then((supported) => {
+        if (active) setAvailability(supported ? "native-ready" : "unavailable");
+      })
+      .catch((error) => {
+        console.warn("[auth] availability check failed", error);
+        if (active) setAvailability("unavailable");
+      });
+
+    return () => {
+      active = false;
+    };
   }, [provider]);
 
   return availability;

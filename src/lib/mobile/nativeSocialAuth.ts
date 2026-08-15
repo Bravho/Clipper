@@ -3,6 +3,7 @@
 import { Capacitor } from "@capacitor/core";
 import { SocialLogin } from "@capgo/capacitor-social-login";
 import { getMobilePlatform } from "@/lib/mobile/platform";
+import { loadNativeAuthConfig } from "@/lib/mobile/nativeAuthConfig";
 
 /**
  * Native (in-app) social sign-in for the Capacitor shells.
@@ -19,34 +20,6 @@ import { getMobilePlatform } from "@/lib/mobile/platform";
  */
 
 export type NativeProvider = "google" | "apple";
-
-/**
- * The **web** client ID. Credential Manager takes it as its `serverClientId`.
- *
- * It must be the *web* client — not the Android one. Both live in the same
- * Google Cloud project and look identical (`<project>-<hash>.apps.google...`),
- * so the two are easy to swap; the Android client exists only so Google can
- * match the package name + signing certificate, and has no client secret, so
- * Credential Manager rejects it as a `serverClientId`. The symptom is a bare
- * rejection with no account sheet — indistinguishable from a dead button.
- */
-export function googleWebClientId(): string {
-  return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim() ?? "";
-}
-
-/**
- * The iOS OAuth client ID. Native Google on iOS is skipped when unset — the
- * button is hidden rather than pointed at a browser (see
- * `useSignInAvailability`), because sending the user to a browser is what App
- * Store review rejected build 9 for.
- *
- * Setting this is only half the job: the installed binary must also declare the
- * *reversed* form of this ID as a `CFBundleURLTypes` URL scheme in
- * `ios/App/App/Info.plist`, or GoogleSignIn throws before the sheet appears.
- */
-export function googleIosClientId(): string {
-  return process.env.NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID?.trim() ?? "";
-}
 
 /**
  * Whether the SocialLogin native plugin is compiled into the installed binary.
@@ -70,17 +43,22 @@ function nativePluginAvailable(): boolean {
 /**
  * Whether a provider can be handled natively on the current platform.
  *
- * Anything that returns `false` falls back to the browser redirect flow, so a
- * missing env var — or an app build without the plugin — degrades to today's
- * behaviour instead of a hard failure.
+ * Async because the client IDs come from the server at runtime rather than from
+ * the JS bundle — see src/lib/mobile/nativeAuthConfig.ts for why. Anything that
+ * returns `false` means the provider's button is **hidden**; there is no browser
+ * fallback, because that is what App Store review rejected build 9 for.
  */
-export function supportsNativeSignIn(provider: NativeProvider): boolean {
+export async function supportsNativeSignIn(
+  provider: NativeProvider
+): Promise<boolean> {
   if (!nativePluginAvailable()) return false;
 
   const platform = getMobilePlatform();
+  const config = await loadNativeAuthConfig();
+
   if (provider === "google") {
-    if (platform === "android") return Boolean(googleWebClientId());
-    if (platform === "ios") return Boolean(googleIosClientId());
+    if (platform === "android") return Boolean(config.googleWebClientId);
+    if (platform === "ios") return Boolean(config.googleIosClientId);
     return false;
   }
   // Sign in with Apple is only native on iOS; Android keeps the web flow.
@@ -99,34 +77,46 @@ export function supportsNativeSignIn(provider: NativeProvider): boolean {
  * full ID in a log invites copy-pasting the wrong one back into config. The tail
  * is what differs between the web and Android clients, so it is the useful part.
  */
-export function nativeSignInDiagnostics(provider: NativeProvider) {
+export async function nativeSignInDiagnostics(provider: NativeProvider) {
+  const platform = getMobilePlatform();
+  const config = await loadNativeAuthConfig();
   const clientId =
-    provider === "google" && getMobilePlatform() === "ios"
-      ? googleIosClientId()
-      : googleWebClientId();
+    provider === "google" && platform === "ios"
+      ? config.googleIosClientId
+      : config.googleWebClientId;
 
   return {
     provider,
-    platform: getMobilePlatform(),
+    platform,
     capacitorPlatform: Capacitor.getPlatform(),
     pluginAvailable: nativePluginAvailable(),
-    supportsNative: supportsNativeSignIn(provider),
+    supportsNative: await supportsNativeSignIn(provider),
+    // "server" means /api/mobile/auth-config answered; "bundle" means it did
+    // not and these are the values frozen in at build time.
+    configSource: config.source,
     clientIdTail: clientId ? `…${clientId.slice(-28)}` : "(unset)",
   };
 }
 
 let initialised: Promise<void> | undefined;
 
-function ensureInitialised(): Promise<void> {
-  initialised ??= SocialLogin.initialize({
+async function ensureInitialised(): Promise<void> {
+  initialised ??= initialise();
+  return initialised;
+}
+
+async function initialise(): Promise<void> {
+  const config = await loadNativeAuthConfig();
+
+  return SocialLogin.initialize({
     google: {
-      webClientId: googleWebClientId(),
-      iOSClientId: googleIosClientId() || undefined,
+      webClientId: config.googleWebClientId,
+      iOSClientId: config.googleIosClientId || undefined,
       // The **web** client ID, as `serverClientID` on iOS. It does not move the
       // token's `aud` — that stays the iOS client ID, which is why
       // `googleAudiences()` accepts a list — it just registers the backend as an
       // additional relying party. Harmless when unset.
-      iOSServerClientId: googleWebClientId() || undefined,
+      iOSServerClientId: config.googleWebClientId || undefined,
     },
     apple: {
       // Empty string tells the plugin to use native ASAuthorizationController
@@ -138,7 +128,6 @@ function ensureInitialised(): Promise<void> {
     initialised = undefined;
     throw error;
   });
-  return initialised;
 }
 
 export interface NativeSignInResult {
