@@ -9,8 +9,7 @@ import Link from "next/link";
 import { loginSchema, LoginInput } from "@/features/auth/validation/loginSchema";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { GoogleSignInButton } from "./GoogleSignInButton";
-import { AppleSignInButton } from "./AppleSignInButton";
+import { SocialSignInButtons } from "./SocialSignInButtons";
 import { getRoleHomePath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
@@ -94,15 +93,12 @@ export function LoginForm() {
         เข้าสู่ระบบ
       </Button>
 
-      <div className="relative flex items-center gap-3">
-        <div className="flex-1 border-t border-slate-200" />
-        <span className="text-xs text-slate-400">หรือ</span>
-        <div className="flex-1 border-t border-slate-200" />
-      </div>
-
-      <GoogleSignInButton label="เข้าสู่ระบบด้วย Google" />
-
-      <AppleSignInButton label="เข้าสู่ระบบด้วย Apple" />
+      <SocialSignInButtons
+        dividerLabel="หรือ"
+        dividerPlacement="before"
+        googleLabel="เข้าสู่ระบบด้วย Google"
+        appleLabel="เข้าสู่ระบบด้วย Apple"
+      />
 
       <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-slate-200" />

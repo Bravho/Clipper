@@ -24,6 +24,40 @@
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!--
+	     Google Sign-In callback scheme.
+
+	     GoogleSignIn 9 (pulled in by @capgo/capacitor-social-login) refuses to
+	     start unless the *reversed* iOS client ID is declared here — see
+	     Pods/GoogleSignIn/GoogleSignIn/Sources/GIDSignIn.m, which raises
+	     "Your app is missing support for the following URL schemes". Build 9 had
+	     no CFBundleURLTypes at all, which is why native Google sign-in was
+	     impossible on iOS and the app fell back to a browser — the Guideline 4
+	     rejection. See docs/NATIVE_SIGN_IN.md.
+
+	     The reversed form is the iOS client ID with its two dot-separated halves
+	     swapped and the suffix dropped:
+	       815687220043-abc123.apps.googleusercontent.com
+	         -> com.googleusercontent.apps.815687220043-abc123
+
+	     It must match NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID / GOOGLE_IOS_CLIENT_ID
+	     exactly, or the sheet opens and dead-ends. Do NOT set those env vars on
+	     the server until a build carrying the real value below is the one users
+	     (and App Review) are running.
+	-->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>Google</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.815687220043-i1h8oq01j0uun5u6odq4m4otdhen1oh9</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>RClipper uses the camera only when you choose to take a photo for a video request.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

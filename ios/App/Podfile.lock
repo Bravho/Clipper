@@ -38,19 +38,9 @@ PODS:
   - CapgoCapacitorSocialLogin (8.3.40):
     - Alamofire (~> 5.10.2)
     - Capacitor
-    - FBSDKCoreKit (~> 18.0)
-    - FBSDKLoginKit (~> 18.0)
     - GoogleSignIn (~> 9.0.0)
   - CapgoNativePurchases (8.6.4):
     - Capacitor
-  - FBAEMKit (18.1.0):
-    - FBSDKCoreKit_Basics (= 18.1.0)
-  - FBSDKCoreKit (18.1.0):
-    - FBAEMKit (= 18.1.0)
-    - FBSDKCoreKit_Basics (= 18.1.0)
-  - FBSDKCoreKit_Basics (18.1.0)
-  - FBSDKLoginKit (18.1.0):
-    - FBSDKCoreKit (= 18.1.0)
   - GoogleSignIn (9.0.0):
     - AppAuth (~> 2.0)
     - AppCheckCore (~> 11.0)
@@ -90,16 +80,13 @@ DEPENDENCIES:
   - "CapacitorStatusBar (from `../../node_modules/@capacitor/status-bar`)"
   - "CapgoCapacitorSocialLogin (from `../../node_modules/@capgo/capacitor-social-login`)"
   - "CapgoNativePurchases (from `../../node_modules/@capgo/native-purchases`)"
+  - GoogleSignIn
 
 SPEC REPOS:
   trunk:
     - Alamofire
     - AppAuth
     - AppCheckCore
-    - FBAEMKit
-    - FBSDKCoreKit
-    - FBSDKCoreKit_Basics
-    - FBSDKLoginKit
     - GoogleSignIn
     - GoogleUtilities
     - GTMAppAuth
@@ -153,12 +140,8 @@ SPEC CHECKSUMS:
   CapacitorShare: 0c58305114538568059bfc07111f22dcb9cb2a82
   CapacitorSplashScreen: 7bf61c2001557ff9e195e601c6b87344480d3c65
   CapacitorStatusBar: eca7bc2b58d9f886f1ef9edb66e57a9b29c121af
-  CapgoCapacitorSocialLogin: 7771b021a7201a320056b61add95cf8f2ed17ba9
+  CapgoCapacitorSocialLogin: 00382bf1c343972d9ae5aa6fd051e663f79c3995
   CapgoNativePurchases: dc3a1624ce42b90f5781b0e4a68121330952d3eb
-  FBAEMKit: 64088ff0380f50e4a56e2ee07d984f7f1aef7595
-  FBSDKCoreKit: 8390ea3a8fac186f444275f31d7512e760b47cba
-  FBSDKCoreKit_Basics: 3a0005c78b355388bf2df5c6dbe6381b77ea4be3
-  FBSDKLoginKit: d8e2711a3a03b0026703735c8d28a2b5a0e1f4fd
   GoogleSignIn: c7f09cfbc85a1abf69187be091997c317cc33b77
   GoogleUtilities: 766ace00c6b10d8148408f329d10c4f051931850
   GTMAppAuth: 217a876b249c3c585a54fd6f73e6b58c4f5c4238
@@ -169,6 +152,6 @@ SPEC CHECKSUMS:
   PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
 
-PODFILE CHECKSUM: f67c161a43c8b5fe227bfe257b16cab4b45ee2d6
+PODFILE CHECKSUM: 0178756cfad0477c005c3f68fbcd4e50e1c9ad32
 
 COCOAPODS: 1.16.2

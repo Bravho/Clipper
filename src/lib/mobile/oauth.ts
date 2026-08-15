@@ -1,7 +1,6 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { Browser } from "@capacitor/browser";
 import { isNativeMobile } from "@/lib/mobile/platform";
 import {
   getNativeIdToken,
@@ -22,6 +21,28 @@ const NATIVE_PROVIDER_IDS: Record<NativeProvider, string> = {
 };
 
 /**
+ * Thrown when a third-party provider cannot be handled natively on this device.
+ *
+ * There used to be a fallback here: open the provider in a Custom Tab /
+ * SFSafariViewController and hope for the best. It never actually worked — the
+ * browser has its own cookie jar, so the session landed there and the app stayed
+ * signed out — and App Store review rejected the iOS build for it under
+ * **Guideline 4 (Design)**: "the user is taken to the default web browser to sign
+ * in or register for an account".
+ *
+ * So there is no browser path any more. A provider that cannot sign in *inside*
+ * the app does not offer to sign in at all: the button is hidden up front (see
+ * `useSignInAvailability`), and this error exists for the race where support
+ * disappears between render and tap.
+ */
+export class NativeSignInUnavailableError extends Error {
+  constructor(public readonly provider: NativeProvider) {
+    super(`Native sign-in is unavailable for "${provider}" on this device.`);
+    this.name = "NativeSignInUnavailableError";
+  }
+}
+
+/**
  * Start a third-party sign-in.
  *
  * Two paths, because the cookie jar differs per surface:
@@ -30,11 +51,10 @@ const NATIVE_PROVIDER_IDS: Record<NativeProvider, string> = {
  *  - **Native app** — in-app sign-in (Android Credential Manager, iOS
  *    ASAuthorizationController). A Custom Tab / SFSafariViewController cannot be
  *    used: each has its own cookie jar, so the session cookie would land in the
- *    browser and the app WebView would stay signed out.
+ *    browser and the app WebView would stay signed out — and Apple rejects it.
  *
- * The browser redirect remains as a fallback for any native combination that is
- * not configured (e.g. Google on iOS without NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID),
- * so a missing env var degrades rather than hard-fails.
+ * There is deliberately **no browser fallback**. On a native platform this either
+ * signs in without leaving the app or throws.
  */
 export async function startOAuth(
   provider: NativeProvider,
@@ -50,30 +70,11 @@ export async function startOAuth(
   // because the shell runs whatever JS was last deployed to `server.url`.
   console.info("[auth] sign-in attempt", nativeSignInDiagnostics(provider));
 
-  if (supportsNativeSignIn(provider)) {
-    await startNativeSignIn(provider, callbackUrl);
-    return;
+  if (!supportsNativeSignIn(provider)) {
+    throw new NativeSignInUnavailableError(provider);
   }
 
-  // Reaching here on a native platform means the native path was unavailable —
-  // and the Custom Tab below cannot actually sign the app in, because its cookie
-  // jar is not the WebView's. It stays as a last resort, but say so plainly
-  // rather than letting it look like a working flow.
-  console.warn(
-    "[auth] native sign-in unavailable — falling back to the browser, which " +
-      "cannot set the WebView session cookie. See docs/NATIVE_SIGN_IN.md."
-  );
-
-  const result = await signIn(provider, {
-    callbackUrl,
-    redirect: false,
-  });
-  if (!result?.url) throw new Error("OAuth provider returned no authorization URL.");
-  await Browser.open({
-    url: result.url,
-    presentationStyle: "popover",
-    toolbarColor: "#0f172a",
-  });
+  await startNativeSignIn(provider, callbackUrl);
 }
 
 /**
@@ -140,6 +141,12 @@ function sameOriginPath(url: string | null | undefined, fallback: string): strin
  */
 export function describeSignInFailure(error: unknown): string | null {
   if (error instanceof NativeSignInCancelled) return null;
+
+  // Not a misconfiguration the user can do anything about — point them at the
+  // sign-in methods that do work in-app rather than showing a diagnostic.
+  if (error instanceof NativeSignInUnavailableError) {
+    return "วิธีเข้าสู่ระบบนี้ยังใช้ไม่ได้บนอุปกรณ์นี้ กรุณาเข้าสู่ระบบด้วยอีเมลและรหัสผ่าน";
+  }
 
   const detail = error instanceof Error ? error.message : String(error ?? "");
 

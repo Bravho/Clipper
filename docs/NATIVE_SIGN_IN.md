@@ -56,9 +56,128 @@ Both native providers resolve through the same
 `authService.findOrCreateOAuthUser()` the redirect flow uses, so a user who
 signed up on the web lands on the identical account in the app.
 
-**Fallback is preserved.** `supportsNativeSignIn()` returns `false` when the
-platform's client ID is unset, and `startOAuth()` then uses the old browser
-redirect. A missing env var degrades to today's behaviour instead of hard-failing.
+**There is no browser fallback.** `supportsNativeSignIn()` returns `false` when
+the platform's client ID is unset or the SocialLogin plugin is missing from the
+binary — and the provider's button is then **hidden** (`useSignInAvailability`),
+not pointed at a browser. See "Why the fallback was removed" below.
+
+## Why the fallback was removed — App Store rejection, 11 Aug 2026
+
+`startOAuth()` used to fall back to `Browser.open()` when a provider had no
+native path. On iOS that path was always taken for Google, because
+`NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID` was never set, so tapping "Continue with
+Google" left the app for a browser. App Store review rejected 1.01 (build 9) on
+an iPad Air 11-inch (M4) under **Guideline 4 – Design**, submission
+`66544c21-ebd6-496d-9986-45f5c726fac9`:
+
+> We noticed that the user is taken to the default web browser to sign in or
+> register for an account, which provides a poor user experience.
+
+The fallback was never functional anyway — the browser's cookie jar is not the
+WebView's, so it signed the user in *in the browser* and left the app signed
+out. It is gone:
+
+| Situation | Before | Now |
+|---|---|---|
+| Provider has a native path | Native sheet | Native sheet (unchanged) |
+| Provider has none, native app | `Browser.open()` → left the app | Button is **not rendered** |
+| Provider has none, tapped anyway | — | `NativeSignInUnavailableError`, message points at email sign-in |
+| Web browser | NextAuth redirect | NextAuth redirect (unchanged) |
+
+`src/lib/mobile/useSignInAvailability.ts` resolves availability in an effect, so
+the server render and first client render agree; until it resolves the button is
+not rendered, so an unusable provider is never tappable even for one frame.
+`SocialSignInButtons` owns the "or" separator and disappears with the buttons,
+so the form does not end up with a separator above an empty gap.
+
+Email and password sign-in, registration, and the six-digit email verification
+are entirely in-app and always available, so hiding a provider never leaves a
+user without a way in. Account deletion — required by guideline 4 for any app
+that offers account creation — is on `/account` (`DeleteAccountCard`) plus the
+public `/delete-account` page.
+
+## Enabling native Google on iOS (build 10)
+
+Native Google on iOS **is in-app** — `GoogleSignIn` presents an
+`ASWebAuthenticationSession` sheet over the app, which is what Apple asks for.
+It is not the default browser, and it is not the thing that got build 9
+rejected. What got build 9 rejected was the *absence* of this path, and the
+`Browser.open()` fallback that filled the gap.
+
+This mirrors the working iOS Google sign-in in the sibling TravyBuzz project
+(`../travel_advisor/IOS_GOOGLE_LOGIN.md`), minus the custom Swift plugin —
+RClipper already ships `@capgo/capacitor-social-login`, which wraps the same
+GoogleSignIn SDK, so only configuration is missing.
+
+**1. Create the iOS OAuth client.** Google Cloud Console (project `815687220043`,
+the one that owns `GOOGLE_CLIENT_ID`) → APIs & Services → Credentials → Create
+credentials → OAuth client ID → application type **iOS** → bundle ID
+`com.rclipper.app`.
+
+Use the **Xcode** bundle identifier, not the Capacitor `appId`, when the two
+differ. For RClipper they happen to agree — `PRODUCT_BUNDLE_IDENTIFIER` in
+`ios/App/App.xcodeproj/project.pbxproj` and `appId` in `capacitor.config.ts` are
+both `com.rclipper.app` — but confirm in Xcode → App target → General before
+creating the client. TravyBuzz has two different identifiers and picking the
+wrong one silently produces a client Google never matches.
+
+**2. Info.plist.** Run:
+
+```bash
+node scripts/set-google-ios-client-id.js <ios client id>
+```
+
+It derives the **reversed** form and writes it into `ios/App/App/Info.plist` →
+`CFBundleURLTypes`, then prints the env lines for step 3. Re-running with a
+different ID is safe.
+
+The reversed form swaps the two dot-separated halves and drops the suffix:
+
+```
+815687220043-abc123.apps.googleusercontent.com
+  -> com.googleusercontent.apps.815687220043-abc123
+```
+
+It must match exactly — a single wrong character opens the sheet and then
+dead-ends with no useful error, which is why the script exists. `npx cap sync`
+does not overwrite `Info.plist`, so this survives syncs.
+
+`AppDelegate.swift` also offers incoming URLs to `GIDSignIn.sharedInstance.handle`
+before Capacitor sees them, and `ios/App/Podfile` declares `pod 'GoogleSignIn'`
+directly so that import resolves. GoogleSignIn 9 completes inside
+`ASWebAuthenticationSession`, which captures its own callback, so this is a
+safety net for the app-switch path rather than the main route — but it is what
+Google's iOS guide asks for.
+
+**3. Server env** (droplet `.env.local`):
+
+```bash
+NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID=<ios client id>   # un-hides the button on iOS
+GOOGLE_IOS_CLIENT_ID=<same value>                  # accepted `aud`, server-side
+```
+
+Both are required. Google mints the token against whichever client did the
+sign-in — web/PWA and Android both get the **web** client ID in `aud`, iOS gets
+the **iOS** client ID — which is why `googleAudiences()` in
+`src/lib/auth/googleIdToken.ts` checks a *list*. `iOSServerClientId` (the web
+client ID, passed in `ensureInitialised()`) registers the backend as a relying
+party; it does **not** move `aud`.
+
+**4. Publish the OAuth consent screen.** While it is in "Testing" only listed
+test users can sign in, so an App Review account hits "access blocked" — a
+rejection that looks nothing like its cause.
+
+**5. Build.** `npx cap sync ios`, `cd ios/App && pod install`, open
+`App.xcworkspace` (the workspace, not the project), archive as build 10.
+
+### Ordering — this matters
+
+`NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID` is what makes the Google button appear on
+iOS, and the Info.plist URL scheme is what makes it work. Set the env var only
+once a build carrying the real scheme is the build people are running. Set it
+early and installed copies of build 9 show a Google button that throws
+`Your app is missing support for the following URL schemes` — a visible button
+that does nothing, which is its own rejection (Guideline 2.1).
 
 ## Sign-out
 

@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { describeSignInFailure, startOAuth } from "@/lib/mobile/oauth";
+import {
+  isSignInOffered,
+  useSignInAvailability,
+} from "@/lib/mobile/useSignInAvailability";
 
 interface GoogleSignInButtonProps {
   callbackUrl?: string;
@@ -15,6 +19,7 @@ export function GoogleSignInButton({
 }: GoogleSignInButtonProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const availability = useSignInAvailability("google");
 
   const handleGoogleSignIn = async () => {
     setLoading(true);
@@ -30,6 +35,11 @@ export function GoogleSignInButton({
       setLoading(false);
     }
   };
+
+  // Inside the native apps a provider with no in-app path must not be
+  // offered at all. The old code fell back to opening a browser here, which
+  // is what App Store review rejected under Guideline 4.
+  if (!isSignInOffered(availability)) return null;
 
   return (
     <div className="flex flex-col gap-2">

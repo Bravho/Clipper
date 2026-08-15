@@ -1,6 +1,15 @@
 import UIKit
 import Capacitor
 
+// Guarded so the target still builds if the pod is ever dropped. GoogleSignIn 9
+// completes its flow inside ASWebAuthenticationSession, which captures its own
+// callback, so the handler below is a safety net for the app-switch path rather
+// than the main route — but it is what Google's iOS guide asks for, and the
+// sibling TravyBuzz app wires it the same way.
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
+
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
@@ -34,6 +43,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        // Google Sign-In returns through the reversed-client-ID scheme
+        // (com.googleusercontent.apps.<id>, declared in Info.plist). `handle`
+        // returns true only when it recognises the URL, so every other deep link
+        // still falls through to Capacitor untouched.
+        #if canImport(GoogleSignIn)
+        if GIDSignIn.sharedInstance.handle(url) {
+            return true
+        }
+        #endif
+
         // Called when the app was launched with a url. Feel free to add additional processing here,
         // but if you want the App API to support tracking app url opens, make sure to keep this call
         return ApplicationDelegateProxy.shared.application(app, open: url, options: options)

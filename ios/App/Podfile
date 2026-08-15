@@ -27,6 +27,13 @@ end
 target 'App' do
   capacitor_pods
   # Add your Pods here
+
+  # Already pulled in transitively by CapgoCapacitorSocialLogin. Declared here as
+  # well so `import GoogleSignIn` resolves in AppDelegate.swift — a transitive
+  # pod is built and linked, but is not guaranteed to be on the app target's
+  # module search path. No version constraint: let CocoaPods resolve to whatever
+  # the plugin requires (9.0.x today) rather than pinning a second opinion.
+  pod 'GoogleSignIn'
 end
 
 post_install do |installer|

@@ -24,11 +24,16 @@ const config: CapacitorConfig = {
     url: serverUrl,
     cleartext: false,
     // Third-party identity providers are never loaded in the WebView: Google
-    // blocks OAuth in embedded user agents. Sign-in is handled natively instead
-    // (Credential Manager / ASAuthorizationController) — a Custom Tab or
-    // SFSafariViewController cannot be used because neither shares a cookie jar
-    // with the WebView, so the session would land in the browser and the app
-    // would stay signed out. See docs/NATIVE_SIGN_IN.md.
+    // blocks OAuth in embedded user agents. Sign-in runs natively instead —
+    // Android Credential Manager, and on iOS ASAuthorizationController for Apple
+    // and the GoogleSignIn SDK (an ASWebAuthenticationSession sheet presented
+    // over the app) for Google. Neither leaves the app.
+    //
+    // A Custom Tab or SFSafariViewController is deliberately NOT used as a
+    // fallback: neither shares a cookie jar with the WebView, so the session
+    // would land in the browser and the app would stay signed out — and App
+    // Store review rejected build 9 under Guideline 4 for exactly that. A
+    // provider with no native path is hidden instead. See docs/NATIVE_SIGN_IN.md.
     allowNavigation: [
       "app.rclipper.com",
       "*.rclipper.com",

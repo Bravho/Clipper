@@ -8,8 +8,7 @@ import Link from "next/link";
 import { signupSchema, SignupInput } from "@/features/auth/validation/signupSchema";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { GoogleSignInButton } from "./GoogleSignInButton";
-import { AppleSignInButton } from "./AppleSignInButton";
+import { SocialSignInButtons } from "./SocialSignInButtons";
 import { ROUTES } from "@/config/routes";
 import { fetchWithTimeout, RequestTimeoutError } from "@/lib/fetchWithTimeout";
 
@@ -105,21 +104,13 @@ export function SignupForm() {
         </div>
       )}
 
-      <GoogleSignInButton
-        label="สมัครด้วย Google"
+      <SocialSignInButtons
         callbackUrl={ROUTES.DASHBOARD}
+        dividerLabel="หรือสมัครด้วยอีเมล"
+        dividerPlacement="after"
+        googleLabel="สมัครด้วย Google"
+        appleLabel="สมัครด้วย Apple"
       />
-
-      <AppleSignInButton
-        label="สมัครด้วย Apple"
-        callbackUrl={ROUTES.DASHBOARD}
-      />
-
-      <div className="relative flex items-center gap-3">
-        <div className="flex-1 border-t border-slate-200" />
-        <span className="text-xs text-slate-400">หรือสมัครด้วยอีเมล</span>
-        <div className="flex-1 border-t border-slate-200" />
-      </div>
 
       <Input
         label="ชื่อ-นามสกุล"

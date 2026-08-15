@@ -34,7 +34,16 @@ export function googleWebClientId(): string {
   return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim() ?? "";
 }
 
-/** The iOS OAuth client ID. Native Google on iOS is skipped when unset. */
+/**
+ * The iOS OAuth client ID. Native Google on iOS is skipped when unset — the
+ * button is hidden rather than pointed at a browser (see
+ * `useSignInAvailability`), because sending the user to a browser is what App
+ * Store review rejected build 9 for.
+ *
+ * Setting this is only half the job: the installed binary must also declare the
+ * *reversed* form of this ID as a `CFBundleURLTypes` URL scheme in
+ * `ios/App/App/Info.plist`, or GoogleSignIn throws before the sheet appears.
+ */
 export function googleIosClientId(): string {
   return process.env.NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID?.trim() ?? "";
 }
@@ -113,6 +122,11 @@ function ensureInitialised(): Promise<void> {
     google: {
       webClientId: googleWebClientId(),
       iOSClientId: googleIosClientId() || undefined,
+      // The **web** client ID, as `serverClientID` on iOS. It does not move the
+      // token's `aud` — that stays the iOS client ID, which is why
+      // `googleAudiences()` accepts a list — it just registers the backend as an
+      // additional relying party. Harmless when unset.
+      iOSServerClientId: googleWebClientId() || undefined,
     },
     apple: {
       // Empty string tells the plugin to use native ASAuthorizationController
