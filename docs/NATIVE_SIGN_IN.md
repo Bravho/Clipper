@@ -226,6 +226,145 @@ and users who never update simply keep Apple and email sign-in.
 
 **Raise `MIN_IOS_BUILD_FOR_NATIVE_GOOGLE` if a later build changes the scheme.**
 
+## Sign in with Apple on Android (versionCode 5)
+
+### Why Android needed its own path
+
+There is no Sign in with Apple SDK for Android, so there is nothing to present
+in-process the way `ASAuthorizationController` does on iOS. Until versionCode 5
+the Apple button was therefore **hidden** on Android — `supportsNativeSignIn()`
+ended with `return platform === "ios"`, and `useSignInAvailability` maps *native
+app + unsupported* to a button that is not rendered. The comment beside it still
+said "Android keeps the web flow", which had been true until the Guideline 4 fix
+deleted the browser fallback. The rule outlived its fallback, and the button
+quietly disappeared.
+
+Note that the Play Store has no equivalent of Guideline 4: leaving the app for a
+Custom Tab is normal on Android. What must **not** happen is the session landing
+in the browser's cookie jar, and it does not here — see the flow below.
+
+### The flow
+
+```
+ app     tap "ดำเนินการต่อด้วย Apple"
+   │
+   ├─► SocialLogin.login({provider:"apple"})  →  Chrome Custom Tab
+   │                                              appleid.apple.com/auth/authorize
+   │                                              (response_mode=form_post)
+   │
+   │    Apple POSTs code + user  ─►  /api/auth/apple/android-callback   [server]
+   │                                   exchanges code with APPLE_CLIENT_SECRET
+   │                                   parks the display name (appleNameMemo)
+   │                                   ▼
+   │                                 com.rclipper.app://apple-login?id_token=…
+   │                                   ▼
+   ├─◄ MainActivity.onNewIntent → SocialLoginPlugin.handleAppleLoginIntent
+   │
+   └─► signIn("apple-native", {idToken})   ← a fetch made BY the WebView
+                                              Set-Cookie lands in the WebView
+```
+
+The Custom Tab only ever carries the OAuth handshake. The **session** is
+established by a request the WebView makes itself, so the cookie jar problem that
+started all of this does not apply.
+
+| File | Role |
+|---|---|
+| `src/lib/auth/appleAndroid.ts` | The one place the `redirect_uri` and deep link are defined |
+| `src/app/api/auth/apple/android-callback/route.ts` | Apple's `form_post` target; token exchange; deep-link hand-back |
+| `src/lib/auth/appleNameMemo.ts` | Carries the first-authorization display name across the two requests |
+| `android/…/MainActivity.java` | Forwards the deep link to the plugin |
+| `android/app/src/main/AndroidManifest.xml` | `com.rclipper.app://apple-login` intent-filter |
+
+The server's audience config needed **no** change: on Android Apple is a plain
+OAuth client, so `aud` is the Services ID, which `appleAudiences()` already
+accepted for the web flow.
+
+### The `initialize()` bug this also fixes
+
+`initialise()` passed `apple: { redirectUrl: "" }` on every platform. On iOS the
+empty string is the plugin's sentinel for "present the native sheet". On Android
+it is a **validation failure**: the plugin rejects the whole `initialize()` call
+with `apple.android.redirectUrl is null or empty` — and it processes the `apple`
+block *before* `google`, so Google sign-in never got registered either. If Google
+sign-in on Android has been failing, this was why. `appleInitOptions()` now emits
+per-platform values and omits the provider entirely rather than passing a blank.
+
+### The build gate
+
+`MIN_ANDROID_BUILD_FOR_NATIVE_APPLE` (in `nativeSocialAuth.ts`) must equal the
+`versionCode` in `android/app/build.gradle` — both are 5. The shells load their
+JS from `server.url`, so this code reaches installs built before the
+intent-filter existed. On those, Apple would sign the user in and the deep link
+would land nowhere: the plugin's call never settles and the button spins until
+the app is killed. The gate keeps the button hidden there instead. If Play
+rejects the upload because versionCode 5 is taken, **raise both numbers
+together.**
+
+### Setup
+
+1. **Apple Developer → Certificates, IDs & Profiles → Identifiers → your
+   Services ID** (`APPLE_CLIENT_ID`, e.g. `com.rclipper.app.web`) → Configure →
+   add to **Return URLs**:
+
+   ```
+   https://app.rclipper.com/api/auth/apple/android-callback
+   ```
+
+   It must match byte for byte — trailing slashes included. Apple reports any
+   mismatch as a bare `invalid_client`, which names neither the value nor the
+   place it disagrees with.
+
+2. **Environment.** Nothing new is required: the redirect URL is derived from
+   `NEXTAUTH_URL`. Set `APPLE_ANDROID_REDIRECT_URL` only if Apple must post to a
+   host other than `NEXTAUTH_URL` — the shell is pinned to `app.rclipper.com`
+   while the web app is canonical on the apex. The button stays hidden unless
+   `APPLE_CLIENT_ID`, `APPLE_CLIENT_SECRET` and the redirect URL all resolve.
+
+   > `APPLE_CLIENT_SECRET` is an ES256 JWT that expires after at most six months.
+   > When it lapses, the web flow and this one fail together — at the token
+   > exchange, *after* the user has signed in with Apple.
+
+3. **Deploy, then release.** The server can go out first; it changes nothing for
+   existing installs. Then `npx cap sync` and ship versionCode 5. The button
+   appears on a device only once it has that build.
+
+### Verifying
+
+```bash
+# what the running server actually serves the app
+curl -s https://app.rclipper.com/api/mobile/auth-config | jq .apple
+# → servicesClientId and androidRedirectUrl must both be non-empty,
+#   and androidRedirectUrl must equal the Return URL registered with Apple
+
+# the callback is reachable (a browser GET has no code, which is the point)
+curl -s -o /dev/null -w '%{http_code}\n' \
+  https://app.rclipper.com/api/auth/apple/android-callback   # → 200
+
+npm test -- tests/auth/appleNameMemo.test.ts tests/auth/appleIdToken.test.ts
+```
+
+On device, with `adb logcat | grep -i "auth\]"`, the diagnostic line now carries
+`appleAndroidRedirectUrl` and `minBuildForAndroidApple` — enough to tell "the
+server is not configured" from "this build is too old" without guessing.
+
+### Known limitations
+
+- **Scheme hijacking.** The identity token comes back in a custom-scheme URL, and
+  any app may register any scheme. A malicious app on the same device could take
+  it and sign in as that user inside the token's ~5 minute window. The fix is an
+  https App Link, which cannot be claimed by another app — blocked on the
+  `assetlinks.json` fingerprint issue below. The refresh token is deliberately
+  not forwarded, so the exposure ends with that window.
+- **No `state` verification.** The plugin generates `state` on the device and
+  never checks it on return, so the server has nothing to compare against. This
+  leaves login-CSRF theoretically open; it cannot expose the victim's account.
+- **A dismissed Custom Tab.** The plugin has no cancellation callback, so backing
+  out settles nothing. `withCustomTabCancellation()` unblocks the button when the
+  app returns to the foreground, but the plugin's internal `lastcall` stays
+  pending: a second attempt in the same session fails with "Last call is not
+  null", which `describeSignInFailure` renders as "close and reopen the app".
+
 ## Sign-out
 
 `signOut()` alone is not a real sign-out in the native apps. Android Credential
@@ -253,10 +392,16 @@ native code to an already-installed build. **Both stores need a new release.**
 That creates a version skew: a web deploy is served to app versions built *before*
 the plugin existed, whose Capacitor bridge has no SocialLogin implementation.
 `supportsNativeSignIn()` therefore calls `Capacitor.isPluginAvailable("SocialLogin")`
-first, and old installs fall back to the browser redirect — still broken sign-in
-for them, but no worse than before, and no "plugin not implemented" crash. This
-makes the deploy order safe either way, and stays useful permanently: users who
-never update keep hitting current server code.
+first, and on old installs the provider's button is simply **not rendered** —
+they keep email and password, and get no "plugin not implemented" crash. (Before
+the Guideline 4 fix those installs fell back to a browser redirect; that fallback
+is gone. See "Why the fallback was removed".) This makes the deploy order safe
+either way, and stays useful permanently: users who never update keep hitting
+current server code.
+
+The same reasoning drives the two build floors — `MIN_IOS_BUILD_FOR_NATIVE_GOOGLE`
+and `MIN_ANDROID_BUILD_FOR_NATIVE_APPLE` — where the plugin *is* present but the
+binary lacks something else it needs.
 
 Recommended order:
 
@@ -330,6 +475,10 @@ APPLE_NATIVE_CLIENT_ID=com.rclipper.app
 # optional: only if you enable native Google on iOS
 NEXT_PUBLIC_GOOGLE_IOS_CLIENT_ID=<ios client id>.apps.googleusercontent.com
 GOOGLE_IOS_CLIENT_ID=<ios client id>.apps.googleusercontent.com
+
+# optional: only when Apple must post to a host other than NEXTAUTH_URL
+# (Sign in with Apple on Android — see that section)
+APPLE_ANDROID_REDIRECT_URL=https://app.rclipper.com/api/auth/apple/android-callback
 ```
 
 `APPLE_CLIENT_ID` (the Services ID) stays as-is for the web flow — both are
@@ -340,7 +489,8 @@ the Services ID sits under the primary App ID, so the same person gets the same
 ### 4. Verify
 
 ```bash
-npm test -- tests/auth/googleIdToken.test.ts tests/auth/appleIdToken.test.ts
+npm test -- tests/auth/googleIdToken.test.ts tests/auth/appleIdToken.test.ts \
+            tests/auth/appleNameMemo.test.ts
 ```
 
 On device, the fix is confirmed when tapping "Continue with Google" shows the

@@ -4,7 +4,10 @@ import { App } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { SocialLogin } from "@capgo/capacitor-social-login";
 import { getMobilePlatform } from "@/lib/mobile/platform";
-import { loadNativeAuthConfig } from "@/lib/mobile/nativeAuthConfig";
+import {
+  loadNativeAuthConfig,
+  type NativeAuthConfig,
+} from "@/lib/mobile/nativeAuthConfig";
 
 /**
  * Native (in-app) social sign-in for the Capacitor shells.
@@ -43,6 +46,24 @@ export type NativeProvider = "google" | "apple";
  * this constant only if a later build changes the URL scheme again.
  */
 const MIN_IOS_BUILD_FOR_NATIVE_GOOGLE = 10;
+
+/**
+ * The first Android `versionCode` that can complete Sign in with Apple.
+ *
+ * Same reasoning as the iOS constant above, different failure. Android's Apple
+ * flow returns through a `com.rclipper.app://apple-login` deep link, which needs
+ * both an `<intent-filter>` in the manifest and `MainActivity` forwarding
+ * `onNewIntent` to the plugin. Neither exists in versionCode ≤ 4, and neither
+ * can be added by deploying the web app — they live in the installed binary.
+ *
+ * The failure on an older install is silent rather than loud: Apple signs the
+ * user in, Chrome fires an intent nothing handles, and the plugin's call never
+ * settles. The button spins until the app is killed.
+ *
+ * **Keep this in step with `versionCode` in android/app/build.gradle.** If Play
+ * rejects the upload because that number is taken, raise both together.
+ */
+const MIN_ANDROID_BUILD_FOR_NATIVE_APPLE = 5;
 
 let buildNumber: Promise<number> | undefined;
 
@@ -101,8 +122,28 @@ export async function supportsNativeSignIn(
     }
     return false;
   }
-  // Sign in with Apple is only native on iOS; Android keeps the web flow.
-  return platform === "ios";
+
+  // Sign in with Apple.
+  //
+  // iOS has a real native path (ASAuthorizationController) and needs no
+  // configuration on the device. Android has no Apple SDK at all, so it runs the
+  // OAuth flow: a Custom Tab to Apple, then back into the app through a deep
+  // link. That requires three things to line up, and all three are checked here
+  // rather than discovered at the point of tapping.
+  if (platform === "ios") return true;
+  if (platform !== "android") return false;
+
+  // 1 + 2: the server can service the flow (Services ID, redirect URL and
+  // client secret all present — see isAppleAndroidConfigured).
+  if (!config.appleServicesClientId || !config.appleAndroidRedirectUrl) return false;
+
+  // 3: this *binary* can receive the deep link. The shells load their JS from
+  // `server.url`, so this code reaches installs built before the intent-filter
+  // and the MainActivity forwarding existed. On those, Apple would sign the user
+  // in and the result would never come back — the button would spin for ever.
+  // Fail closed on an unreadable build number, exactly as the iOS gate does.
+  const build = await nativeBuildNumber();
+  return Number.isFinite(build) && build >= MIN_ANDROID_BUILD_FOR_NATIVE_APPLE;
 }
 
 /**
@@ -121,9 +162,13 @@ export async function nativeSignInDiagnostics(provider: NativeProvider) {
   const platform = getMobilePlatform();
   const config = await loadNativeAuthConfig();
   const clientId =
-    provider === "google" && platform === "ios"
-      ? config.googleIosClientId
-      : config.googleWebClientId;
+    provider === "apple"
+      ? // iOS uses no client ID (the bundle ID is the audience); Android uses the
+        // Services ID, and getting the wrong one here is a live failure mode.
+        config.appleServicesClientId
+      : provider === "google" && platform === "ios"
+        ? config.googleIosClientId
+        : config.googleWebClientId;
 
   return {
     provider,
@@ -136,7 +181,12 @@ export async function nativeSignInDiagnostics(provider: NativeProvider) {
     configSource: config.source,
     build: await nativeBuildNumber(),
     minBuildForNativeGoogle: MIN_IOS_BUILD_FOR_NATIVE_GOOGLE,
+    minBuildForAndroidApple: MIN_ANDROID_BUILD_FOR_NATIVE_APPLE,
     clientIdTail: clientId ? `…${clientId.slice(-28)}` : "(unset)",
+    // Not truncated: this is the value that has to match the Services ID's
+    // Return URL exactly, and a truncated one cannot be compared against Apple's
+    // console. It is a plain URL to a public endpoint.
+    appleAndroidRedirectUrl: config.appleAndroidRedirectUrl || "(unset)",
   };
 }
 
@@ -145,6 +195,48 @@ let initialised: Promise<void> | undefined;
 async function ensureInitialised(): Promise<void> {
   initialised ??= initialise();
   return initialised;
+}
+
+/**
+ * Apple's slice of the `initialize` payload — or nothing at all.
+ *
+ * The two platforms want different, and mutually invalid, values, and Android
+ * **validates** them: an empty `redirectUrl` makes the native plugin reject the
+ * whole `initialize()` call with `apple.android.redirectUrl is null or empty`.
+ * Android processes the `apple` block *before* `google`, so passing iOS's empty
+ * sentinel there did not merely disable Apple — it aborted initialisation and
+ * took Google sign-in down with it.
+ *
+ * Hence: never pass a blank. A provider that cannot be configured on this
+ * platform is omitted from the payload entirely.
+ */
+function appleInitOptions(config: NativeAuthConfig): {
+  apple?: { clientId?: string; redirectUrl: string };
+} {
+  const platform = getMobilePlatform();
+
+  // iOS: an empty `redirectUrl` is the plugin's sentinel for "present
+  // ASAuthorizationController natively rather than redirecting". Load-bearing —
+  // do not fill it in.
+  if (platform === "ios") return { apple: { redirectUrl: "" } };
+
+  if (
+    platform === "android" &&
+    config.appleServicesClientId &&
+    config.appleAndroidRedirectUrl
+  ) {
+    return {
+      apple: {
+        // The **Services ID**, not the bundle ID: on Android this is a plain
+        // OAuth client, so `aud` comes back as the Services ID. `appleAudiences()`
+        // already accepts it, which is why the server needs no change.
+        clientId: config.appleServicesClientId,
+        redirectUrl: config.appleAndroidRedirectUrl,
+      },
+    };
+  }
+
+  return {};
 }
 
 async function initialise(): Promise<void> {
@@ -160,11 +252,7 @@ async function initialise(): Promise<void> {
       // additional relying party. Harmless when unset.
       iOSServerClientId: config.googleWebClientId || undefined,
     },
-    apple: {
-      // Empty string tells the plugin to use native ASAuthorizationController
-      // on iOS rather than a redirect. `aud` is then the app's bundle ID.
-      redirectUrl: "",
-    },
+    ...appleInitOptions(config),
   }).catch((error) => {
     // Reset so one transient failure does not permanently poison the singleton.
     initialised = undefined;
@@ -216,6 +304,51 @@ async function runNativeLogin<T>(login: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * How long to wait, after the app comes back to the foreground, before deciding
+ * the user backed out of the Custom Tab.
+ *
+ * The successful path also brings the app forward — Chrome fires the deep-link
+ * intent, which resumes the activity — and `onNewIntent` lands a moment later.
+ * Too short and a success is misread as a cancellation; too long and a genuine
+ * back-press leaves the button spinning. A couple of seconds covers the gap.
+ */
+const APPLE_REDIRECT_GRACE_MS = 2500;
+
+/**
+ * Wrap the Android Apple login so dismissing the Custom Tab settles the promise.
+ *
+ * Unlike Credential Manager and ASAuthorizationController, the Custom Tab flow
+ * has no cancellation callback: the plugin settles its call only when the deep
+ * link arrives. Backing out therefore settles *nothing*, and the button spins
+ * for ever with no way back.
+ *
+ * Known limitation: the plugin's internal `lastcall` stays pending, and nothing
+ * it exposes can clear it, so a second attempt in the same app session rejects
+ * with "Last call is not null". `describeSignInFailure` translates that into
+ * "reopen the app" rather than showing the raw plugin string.
+ */
+async function withCustomTabCancellation<T>(login: () => Promise<T>): Promise<T> {
+  let cancel: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelled = new Promise<never>((_, reject) => {
+    cancel = () => reject(new NativeSignInCancelled());
+  });
+
+  // Registered before the tab opens, so a fast back-press is not missed.
+  const listener = await App.addListener("resume", () => {
+    timer = setTimeout(() => cancel?.(), APPLE_REDIRECT_GRACE_MS);
+  });
+
+  try {
+    return await Promise.race([login(), cancelled]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await listener.remove().catch(() => undefined);
+  }
+}
+
+/**
  * Run the native account picker and return the resulting ID token.
  *
  * The token is opaque to the client: it is verified server-side
@@ -250,17 +383,28 @@ export async function getNativeIdToken(
     return { idToken: result.idToken };
   }
 
-  const { result } = await runNativeLogin(() =>
+  const appleLogin = () =>
     SocialLogin.login({
       provider: "apple",
       options: { scopes: ["name", "email"] },
-    })
+    });
+
+  const { result } = await runNativeLogin(() =>
+    // Only Android leaves the app for a Custom Tab. iOS presents a sheet that
+    // rejects on dismissal by itself, so it must not be wrapped.
+    getMobilePlatform() === "android"
+      ? withCustomTabCancellation(appleLogin)
+      : appleLogin()
   );
 
   if (!result.idToken) {
     throw new Error("Sign in with Apple returned no identity token.");
   }
 
+  // Populated on iOS only. The Android provider builds its profile by decoding
+  // the identity token, and Apple never puts a name in there — it arrives as a
+  // separate `user` form field on the callback, which the plugin discards. The
+  // server picks it up from there instead; see src/lib/auth/appleNameMemo.ts.
   const name = [result.profile?.givenName, result.profile?.familyName]
     .filter(Boolean)
     .join(" ")

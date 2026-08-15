@@ -28,6 +28,20 @@
                 <data android:scheme="https" android:host="app.rclipper.com" />
             </intent-filter>
 
+            <!--
+                Return path for Sign in with Apple on Android. Apple posts the
+                authorization code to /api/auth/apple/android-callback, which
+                bounces the result back to this scheme; MainActivity.onNewIntent
+                hands it to the SocialLogin plugin. Keep in step with
+                APPLE_ANDROID_DEEP_LINK in src/lib/auth/appleAndroid.ts.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.rclipper.app" android:host="apple-login" />
+            </intent-filter>
+
         </activity>
 
         <provider

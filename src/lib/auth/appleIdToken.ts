@@ -3,6 +3,7 @@ import {
   verifyIdToken,
   type VerifiedIdentity,
 } from "@/lib/auth/oidcVerify";
+import { takeAppleName } from "@/lib/auth/appleNameMemo";
 
 /**
  * Apple identity-token verification for the native iOS Sign in with Apple flow.
@@ -20,7 +21,8 @@ const APPLE_ISSUERS = ["https://appleid.apple.com"];
  * The web redirect flow uses the **Services ID** (`APPLE_CLIENT_ID`, e.g.
  * `com.rclipper.app.web`). Native ASAuthorizationController on iOS instead uses
  * the app's **bundle ID** (`APPLE_NATIVE_CLIENT_ID`, e.g. `com.rclipper.app`),
- * so both must be accepted.
+ * so both must be accepted. Android is a plain OAuth client and so reuses the
+ * Services ID — which is why that flow needed no change here.
  *
  * Apple's `sub` is stable per user *per developer team*, and the Services ID is
  * configured under the primary App ID — so the same person gets the same `sub`
@@ -44,7 +46,7 @@ export async function verifyAppleIdToken(
   idToken: string,
   fallbackName?: string
 ): Promise<VerifiedAppleIdentity> {
-  return verifyIdToken({
+  const identity = await verifyIdToken({
     provider: "apple",
     idToken,
     jwksUrl: APPLE_JWKS_URL,
@@ -52,4 +54,16 @@ export async function verifyAppleIdToken(
     audiences: appleAudiences(),
     fallbackName,
   });
+
+  // On Android the client has no name to forward — the plugin discards the one
+  // Apple sends — so `verifyIdToken` will have fallen back to the email address.
+  // The callback route parked the real name moments ago; collect it now.
+  // Nothing here affects *which* account is used: that is decided entirely by
+  // the verified `sub` above.
+  if (identity.name === identity.email) {
+    const remembered = takeAppleName(identity.providerAccountId);
+    if (remembered) return { ...identity, name: remembered };
+  }
+
+  return identity;
 }

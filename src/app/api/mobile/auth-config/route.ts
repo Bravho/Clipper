@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import {
+  appleAndroidClientId,
+  appleAndroidRedirectUrl,
+  isAppleAndroidConfigured,
+} from "@/lib/auth/appleAndroid";
 
 /**
  * Client IDs the native apps need, read at **request time**.
@@ -50,6 +55,14 @@ export async function GET() {
         // *server* is configured to accept it, so a misconfigured server shows
         // up here rather than as a sign-in that fails after the sheet.
         serverConfigured: Boolean(env("APPLE_NATIVE_CLIENT_ID")),
+        // Android has no Sign in with Apple SDK, so it runs the OAuth flow with
+        // the **Services ID** and posts back to this app. Both values are blank
+        // unless the whole flow is configured (client ID, redirect URL *and*
+        // client secret), because a half-configured server would fail the token
+        // exchange only after the user had already signed in with Apple. Blank
+        // hides the button. See src/lib/auth/appleAndroid.ts.
+        servicesClientId: isAppleAndroidConfigured() ? appleAndroidClientId() : "",
+        androidRedirectUrl: isAppleAndroidConfigured() ? appleAndroidRedirectUrl() : "",
       },
     },
     { headers: { "Cache-Control": "no-store" } }

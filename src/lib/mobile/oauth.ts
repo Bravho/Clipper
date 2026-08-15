@@ -150,6 +150,21 @@ export function describeSignInFailure(error: unknown): string | null {
 
   const detail = error instanceof Error ? error.message : String(error ?? "");
 
+  // The Apple-on-Android Custom Tab has no cancellation callback, so a dismissed
+  // tab leaves the plugin's `lastcall` pending and every later attempt in the
+  // same app session rejects with this. Nothing the plugin exposes can clear it,
+  // so the only real remedy is a restart — say so plainly instead of showing the
+  // raw string, which reads like a crash.
+  if (/last call is not null/i.test(detail)) {
+    return "การเข้าสู่ระบบครั้งก่อนยังค้างอยู่ กรุณาปิดแอปแล้วเปิดใหม่อีกครั้ง";
+  }
+
+  // Apple's token exchange failed on our server — almost always the Services ID,
+  // the Return URL, or an expired APPLE_CLIENT_SECRET. Nothing the user can fix.
+  if (/apple/i.test(detail) && /auth code|invalid_client|exchange/i.test(detail)) {
+    return `เข้าสู่ระบบด้วย Apple ไม่สำเร็จ กรุณาลองใหม่หรือใช้อีเมลและรหัสผ่าน — ${detail}`;
+  }
+
   // Credential Manager's "developer console is not set up correctly": the
   // package name + signing-certificate SHA-1 of *this* build has no matching
   // Android OAuth client. Debug builds from Android Studio are signed with the

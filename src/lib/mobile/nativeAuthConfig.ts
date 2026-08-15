@@ -14,6 +14,13 @@ export interface NativeAuthConfig {
   googleWebClientId: string;
   googleIosClientId: string;
   appleServerConfigured: boolean;
+  /**
+   * Apple **Services ID**, used as the OAuth `client_id` by the Android flow.
+   * Blank on iOS's behalf too — iOS needs no client ID, it uses the bundle ID.
+   */
+  appleServicesClientId: string;
+  /** `redirect_uri` for the Android Apple flow; see src/lib/auth/appleAndroid.ts. */
+  appleAndroidRedirectUrl: string;
   /** Where these values came from — surfaced in the sign-in diagnostics log. */
   source: "server" | "bundle";
 }
@@ -27,6 +34,13 @@ function bundleFallback(): NativeAuthConfig {
     // token with `AudienceNotConfigured`, which is a visible, diagnosable error
     // rather than a silently missing button.
     appleServerConfigured: true,
+    // Deliberately blank, with no `NEXT_PUBLIC_` counterpart: these two decide
+    // whether the Android Apple button is offered *and* what it posts to, and a
+    // wrong redirect URL fails at Apple with `invalid_client` after the user has
+    // already signed in. Hiding the button when the server cannot be reached is
+    // the safe direction; the fetch is retried on the next attempt.
+    appleServicesClientId: "",
+    appleAndroidRedirectUrl: "",
     source: "bundle",
   };
 }
@@ -57,7 +71,11 @@ async function fetchConfig(): Promise<NativeAuthConfig> {
 
   const data = (await response.json()) as {
     google?: { webClientId?: unknown; iosClientId?: unknown };
-    apple?: { serverConfigured?: unknown };
+    apple?: {
+      serverConfigured?: unknown;
+      servicesClientId?: unknown;
+      androidRedirectUrl?: unknown;
+    };
   };
 
   const fallback = bundleFallback();
@@ -68,6 +86,8 @@ async function fetchConfig(): Promise<NativeAuthConfig> {
     googleWebClientId: str(data.google?.webClientId, fallback.googleWebClientId),
     googleIosClientId: str(data.google?.iosClientId, fallback.googleIosClientId),
     appleServerConfigured: data.apple?.serverConfigured !== false,
+    appleServicesClientId: str(data.apple?.servicesClientId, ""),
+    appleAndroidRedirectUrl: str(data.apple?.androidRedirectUrl, ""),
     source: "server",
   };
 }

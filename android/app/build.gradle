@@ -15,8 +15,12 @@ android {
         applicationId "com.rclipper.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 4
-        versionName "1.0.3"
+        // Sign in with Apple on Android needs the deep-link intent-filter and the
+        // MainActivity forwarding that ship in this build. MIN_ANDROID_BUILD_FOR_NATIVE_APPLE
+        // in src/lib/mobile/nativeSocialAuth.ts must match this versionCode, or
+        // the button is offered to installs that cannot complete the flow.
+        versionCode 5
+        versionName "1.0.4"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
