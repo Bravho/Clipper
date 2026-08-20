@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "incremental": false, "skipLibCheck": true },
+  "include": [
+    "next-env.d.ts",
+    "src/types/next-auth.d.ts",
+    "src/services/PasswordResetService.ts",
+    "src/domain/enums/PasswordReset.ts",
+    "src/domain/models/PasswordResetToken.ts",
+    "src/repositories/interfaces/IPasswordResetTokenRepository.ts",
+    "src/repositories/postgres/PostgresPasswordResetTokenRepository.ts",
+    "src/repositories/mock/MockPasswordResetTokenRepository.ts",
+    "src/repositories/index.ts",
+    "src/config/routes.ts",
+    "src/features/auth/validation/passwordRules.ts",
+    "src/features/auth/validation/passwordResetSchema.ts",
+    "src/features/auth/validation/signupSchema.ts",
+    "src/features/auth/components/LoginForm.tsx",
+    "src/features/auth/components/ForgotPasswordForm.tsx",
+    "src/features/auth/components/ResetPasswordForm.tsx",
+    "src/app/(public)/forgot-password/page.tsx",
+    "src/app/(public)/reset-password/page.tsx",
+    "src/app/api/password-reset/request/route.ts",
+    "src/app/api/password-reset/validate/route.ts",
+    "src/app/api/password-reset/confirm/route.ts",
+    "tests/services/PasswordResetService.test.ts"
+  ]
+}

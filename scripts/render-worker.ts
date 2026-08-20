@@ -31,6 +31,7 @@ import {
   videoGenerationJobRepository,
   renderTaskRepository,
 } from "@/repositories/index";
+import { pool } from "@/lib/db";
 import { VideoGenerationService } from "@/services/VideoGenerationService";
 import { RENDER_QUEUE } from "@/config/renderQueue";
 import { AI_CONFIG } from "@/config/aiTools";
@@ -94,6 +95,87 @@ async function releaseInFlightClaims(): Promise<void> {
 }
 
 /**
+ * Resource sampling (migration 028, `render_worker_samples`).
+ *
+ * `render_worker_heartbeat` keeps only ONE `last_seen_at` per worker, so it
+ * answers "is the Mac alive" and nothing else — there was no history to size CPU
+ * against. One sample a minute is enough resolution for that question and keeps
+ * the table at ~1,440 rows/day/worker (the migration documents the 180-day prune).
+ *
+ * Every 6th heartbeat tick rather than its own timer: the heartbeat already runs
+ * on the right cadence (10s), and a second interval would drift against it and
+ * add a second thing to tear down at shutdown.
+ */
+const TICKS_PER_SAMPLE = Math.max(
+  1,
+  Math.round(60_000 / RENDER_QUEUE.heartbeatIntervalMs)
+);
+let heartbeatTicks = 0;
+
+/**
+ * `process.cpuUsage()` is a monotonic total since process start, so a single
+ * reading says nothing about current load. Keep the previous reading and report
+ * the delta over the elapsed wall time, divided by the core count — 100% means
+ * every core saturated, which is the number that matters when deciding whether
+ * the Mac needs more cores.
+ */
+let lastCpuUsage = process.cpuUsage();
+let lastCpuSampleAt = Date.now();
+
+function cpuPercentSinceLastSample(): number | null {
+  const now = Date.now();
+  const elapsedMs = now - lastCpuSampleAt;
+  const usage = process.cpuUsage(lastCpuUsage);
+  lastCpuUsage = process.cpuUsage();
+  lastCpuSampleAt = now;
+  if (elapsedMs <= 0) return null;
+  const cores = os.cpus().length || 1;
+  const usedMs = (usage.user + usage.system) / 1000;
+  return Math.round((usedMs / (elapsedMs * cores)) * 1000) / 10;
+}
+
+/**
+ * Write one resource sample. Never throws and never awaits anything a render
+ * depends on — an analytics outage must not stall or kill the worker.
+ */
+async function recordResourceSample(): Promise<void> {
+  try {
+    const cpuPercent = cpuPercentSinceLastSample();
+    const totalBytes = os.totalmem();
+    const freeBytes = os.freemem();
+    const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
+
+    // Platform-wide backlog, not this worker's: the point of pairing it with the
+    // load numbers is to see whether a busy Mac is keeping up with the line.
+    // COUNT(*) comes back from `pg` as a STRING — cast in SQL, not in JS.
+    let queueDepth: number | null = null;
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS depth FROM render_tasks WHERE state IN ('queued','claimed')`
+    );
+    if (rows[0]) queueDepth = rows[0].depth as number;
+
+    await pool.query(
+      `INSERT INTO render_worker_samples
+         (worker_id, cpu_percent, load_avg_1m, cpu_count,
+          mem_used_mb, mem_total_mb, active_tasks, queue_depth)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        WORKER_ID,
+        cpuPercent,
+        os.loadavg()[0],
+        os.cpus().length,
+        mb(totalBytes - freeBytes),
+        mb(totalBytes),
+        inFlight.size,
+        queueDepth,
+      ]
+    );
+  } catch (err) {
+    log("resource sample failed", { error: String(err) });
+  }
+}
+
+/**
  * Heartbeat loop: advertise liveness (so the web side enqueues instead of
  * running inline) and bump the keep-alive on every in-flight claim (so a long
  * render is not reclaimed as stale by another worker).
@@ -106,6 +188,14 @@ async function heartbeatTick(): Promise<void> {
     );
   } catch (err) {
     log("heartbeat failed", { error: String(err) });
+  }
+
+  // Outside the try above so a heartbeat failure does not skip the sample (and,
+  // more importantly, so a sampling failure can never be mistaken for a lost
+  // heartbeat, which is what the web side's inline-vs-enqueue decision reads).
+  heartbeatTicks += 1;
+  if (heartbeatTicks % TICKS_PER_SAMPLE === 0) {
+    await recordResourceSample();
   }
 }
 

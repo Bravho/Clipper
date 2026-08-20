@@ -17,6 +17,7 @@
  */
 
 import { AI_CONFIG } from "@/config/aiTools";
+import type { ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 
@@ -27,6 +28,8 @@ export interface SynthesizeStoreParams {
   text: string;
   userId: string;
   requestId: string;
+  /** Server-validated voice selected for this pipeline job. */
+  voiceId: ElevenLabsVoiceId;
 }
 
 export interface StoredVoiceResult {
@@ -44,7 +47,7 @@ export interface StoredVoiceResult {
 export async function synthesizeAndStore(
   params: SynthesizeStoreParams
 ): Promise<StoredVoiceResult> {
-  const { apiKey, voiceId, model, stability, languageCode } = AI_CONFIG.elevenLabs;
+  const { apiKey, model, stability, languageCode } = AI_CONFIG.elevenLabs;
 
   if (!apiKey) {
     throw new Error(
@@ -53,7 +56,7 @@ export async function synthesizeAndStore(
   }
 
   const res = await fetch(
-    `${BASE_URL}/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
+    `${BASE_URL}/text-to-speech/${params.voiceId}?output_format=mp3_44100_128`,
     {
       method: "POST",
       headers: {

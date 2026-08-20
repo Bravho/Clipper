@@ -1,0 +1,86 @@
+ada3b4ce3972e7b68d300daaa3bd0662
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MAX_CLIP_DURATION_SECONDS = exports.MAX_VIDEO_SIZE_BYTES = exports.MAX_UPLOAD_SIZE_BYTES = exports.MAX_IMAGE_SIZE_BYTES = exports.MAX_UPLOAD_COUNT = exports.ACCEPTED_MIME_TYPES = exports.ACCEPTED_IMAGE_MIME_TYPES = exports.ACCEPTED_VIDEO_MIME_TYPES = exports.AssetUploadStatus = exports.AssetType = void 0;
+/**
+ * Type of a requester-uploaded source asset.
+ *
+ * Requesters may upload up to 5 videos or images as source material
+ * for their clip request. These are NOT a reusable asset library —
+ * they are retained for the submitted request only and deleted after 90 days.
+ *
+ * TODO: PostgreSQL — store as TEXT with CHECK constraint on `uploaded_assets` table.
+ */
+var AssetType;
+(function (AssetType) {
+    AssetType["Video"] = "video";
+    AssetType["Image"] = "image";
+    /** Final edited clip uploaded by staff — stored in clips/ folder. */
+    AssetType["EditedClip"] = "edited_clip";
+    // ── AI Pipeline asset types ─────────────────────────────────────────────────
+    /** Raw video produced by the AI video generator (Veo) from requester images. */
+    AssetType["AIGeneratedBaseVideo"] = "ai_generated_base_video";
+    /** RVC-converted voice audio uploaded by staff (conversion happens in browser before upload). */
+    AssetType["StaffVoiceRecording"] = "staff_voice_recording";
+    /** Alias kept for DB compatibility — points to the same asset as StaffVoiceRecording. */
+    AssetType["ProcessedVoice"] = "processed_voice";
+    /** FFmpeg-composed final clip (one record per exported ratio). */
+    AssetType["FinalClip"] = "final_clip";
+    /** Base video with Claude-generated animation/graphic overlays applied by FFmpeg. */
+    AssetType["AnimatedVideo"] = "animated_video";
+    /**
+     * Watermarked ("RClipper" tiled overlay) sibling of a FinalClip, pre-rendered
+     * during the pipeline. This is the ONLY variant shown to a requester whose
+     * download is still locked (unpaid) — the clean FinalClip is never surfaced
+     * until they pay. Linked back to its clean source via `sourceAssetId`.
+     */
+    AssetType["WatermarkedPreview"] = "watermarked_preview";
+})(AssetType || (exports.AssetType = AssetType = {}));
+/** Upload status of a single asset record. */
+var AssetUploadStatus;
+(function (AssetUploadStatus) {
+    AssetUploadStatus["Pending"] = "pending";
+    AssetUploadStatus["Uploading"] = "uploading";
+    AssetUploadStatus["Uploaded"] = "uploaded";
+    AssetUploadStatus["Failed"] = "failed";
+    AssetUploadStatus["Deleted"] = "deleted";
+})(AssetUploadStatus || (exports.AssetUploadStatus = AssetUploadStatus = {}));
+/** Accepted MIME types for video uploads. MP4 only — the montage renderer and
+ *  FFmpeg concat expect a consistent H.264/MP4 source, and browsers reliably
+ *  decode MP4 for the in-form thumbnail + trim-bar preview. */
+exports.ACCEPTED_VIDEO_MIME_TYPES = ["video/mp4"];
+/** Accepted MIME types for image uploads. */
+exports.ACCEPTED_IMAGE_MIME_TYPES = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+];
+exports.ACCEPTED_MIME_TYPES = [
+    ...exports.ACCEPTED_VIDEO_MIME_TYPES,
+    ...exports.ACCEPTED_IMAGE_MIME_TYPES,
+];
+/** Maximum number of files a requester may attach to a single request. */
+exports.MAX_UPLOAD_COUNT = 10;
+/** Maximum file size for image uploads: 8 MB */
+exports.MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024;
+/** Maximum overall upload size accepted by the upload service: 500 MB */
+exports.MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024;
+/**
+ * Maximum file size for a single video upload: 300 MB. A requester may attach up
+ * to MAX_UPLOAD_COUNT files, but the per-request total is still capped by
+ * MAX_UPLOAD_SIZE_BYTES (500 MB) — so a single 300 MB clip leaves room for a few
+ * more, but not several max-size videos at once. (Clip length is still bounded
+ * by MAX_CLIP_DURATION_SECONDS.)
+ */
+exports.MAX_VIDEO_SIZE_BYTES = 300 * 1024 * 1024;
+/**
+ * Maximum duration for a single uploaded video clip: 45 seconds.
+ *
+ * Enforced on the client (HTMLVideoElement metadata probe) for fast feedback
+ * and authoritatively on the server at upload-confirm time (ffprobe). Clips
+ * become source material for the real-media montage renderer, so over-long
+ * clips are rejected before they enter the pipeline.
+ */
+exports.MAX_CLIP_DURATION_SECONDS = 45;
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxBc3NldFR5cGUudHMiLCJtYXBwaW5ncyI6Ijs7O0FBQUE7Ozs7Ozs7O0dBUUc7QUFDSCxJQUFZLFNBd0JYO0FBeEJELFdBQVksU0FBUztJQUNuQiw0QkFBZSxDQUFBO0lBQ2YsNEJBQWUsQ0FBQTtJQUNmLHFFQUFxRTtJQUNyRSx1Q0FBMEIsQ0FBQTtJQUUxQiwrRUFBK0U7SUFDL0UsZ0ZBQWdGO0lBQ2hGLDZEQUFnRCxDQUFBO0lBQ2hELGlHQUFpRztJQUNqRywwREFBNkMsQ0FBQTtJQUM3Qyx5RkFBeUY7SUFDekYsK0NBQWtDLENBQUE7SUFDbEMsa0VBQWtFO0lBQ2xFLHFDQUF3QixDQUFBO0lBQ3hCLHFGQUFxRjtJQUNyRiw2Q0FBZ0MsQ0FBQTtJQUNoQzs7Ozs7T0FLRztJQUNILHVEQUEwQyxDQUFBO0FBQzVDLENBQUMsRUF4QlcsU0FBUyx5QkFBVCxTQUFTLFFBd0JwQjtBQUVELDhDQUE4QztBQUM5QyxJQUFZLGlCQU1YO0FBTkQsV0FBWSxpQkFBaUI7SUFDM0Isd0NBQW1CLENBQUE7SUFDbkIsNENBQXVCLENBQUE7SUFDdkIsMENBQXFCLENBQUE7SUFDckIsc0NBQWlCLENBQUE7SUFDakIsd0NBQW1CLENBQUE7QUFDckIsQ0FBQyxFQU5XLGlCQUFpQixpQ0FBakIsaUJBQWlCLFFBTTVCO0FBRUQ7OytEQUUrRDtBQUNsRCxRQUFBLHlCQUF5QixHQUFHLENBQUMsV0FBVyxDQUFVLENBQUM7QUFFaEUsNkNBQTZDO0FBQ2hDLFFBQUEseUJBQXlCLEdBQUc7SUFDdkMsWUFBWTtJQUNaLFdBQVc7SUFDWCxZQUFZO0lBQ1osV0FBVztDQUNILENBQUM7QUFFRSxRQUFBLG1CQUFtQixHQUFHO0lBQ2pDLEdBQUcsaUNBQXlCO0lBQzVCLEdBQUcsaUNBQXlCO0NBQ3BCLENBQUM7QUFFWCwwRUFBMEU7QUFDN0QsUUFBQSxnQkFBZ0IsR0FBRyxFQUFFLENBQUM7QUFFbkMsZ0RBQWdEO0FBQ25DLFFBQUEsb0JBQW9CLEdBQUcsQ0FBQyxHQUFHLElBQUksR0FBRyxJQUFJLENBQUM7QUFFcEQseUVBQXlFO0FBQzVELFFBQUEscUJBQXFCLEdBQUcsR0FBRyxHQUFHLElBQUksR0FBRyxJQUFJLENBQUM7QUFFdkQ7Ozs7OztHQU1HO0FBQ1UsUUFBQSxvQkFBb0IsR0FBRyxHQUFHLEdBQUcsSUFBSSxHQUFHLElBQUksQ0FBQztBQUV0RDs7Ozs7OztHQU9HO0FBQ1UsUUFBQSx5QkFBeUIsR0FBRyxFQUFFLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxBc3NldFR5cGUudHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBUeXBlIG9mIGEgcmVxdWVzdGVyLXVwbG9hZGVkIHNvdXJjZSBhc3NldC5cbiAqXG4gKiBSZXF1ZXN0ZXJzIG1heSB1cGxvYWQgdXAgdG8gNSB2aWRlb3Mgb3IgaW1hZ2VzIGFzIHNvdXJjZSBtYXRlcmlhbFxuICogZm9yIHRoZWlyIGNsaXAgcmVxdWVzdC4gVGhlc2UgYXJlIE5PVCBhIHJldXNhYmxlIGFzc2V0IGxpYnJhcnkg4oCUXG4gKiB0aGV5IGFyZSByZXRhaW5lZCBmb3IgdGhlIHN1Ym1pdHRlZCByZXF1ZXN0IG9ubHkgYW5kIGRlbGV0ZWQgYWZ0ZXIgOTAgZGF5cy5cbiAqXG4gKiBUT0RPOiBQb3N0Z3JlU1FMIOKAlCBzdG9yZSBhcyBURVhUIHdpdGggQ0hFQ0sgY29uc3RyYWludCBvbiBgdXBsb2FkZWRfYXNzZXRzYCB0YWJsZS5cbiAqL1xuZXhwb3J0IGVudW0gQXNzZXRUeXBlIHtcbiAgVmlkZW8gPSBcInZpZGVvXCIsXG4gIEltYWdlID0gXCJpbWFnZVwiLFxuICAvKiogRmluYWwgZWRpdGVkIGNsaXAgdXBsb2FkZWQgYnkgc3RhZmYg4oCUIHN0b3JlZCBpbiBjbGlwcy8gZm9sZGVyLiAqL1xuICBFZGl0ZWRDbGlwID0gXCJlZGl0ZWRfY2xpcFwiLFxuXG4gIC8vIOKUgOKUgCBBSSBQaXBlbGluZSBhc3NldCB0eXBlcyDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIDilIBcbiAgLyoqIFJhdyB2aWRlbyBwcm9kdWNlZCBieSB0aGUgQUkgdmlkZW8gZ2VuZXJhdG9yIChWZW8pIGZyb20gcmVxdWVzdGVyIGltYWdlcy4gKi9cbiAgQUlHZW5lcmF0ZWRCYXNlVmlkZW8gPSBcImFpX2dlbmVyYXRlZF9iYXNlX3ZpZGVvXCIsXG4gIC8qKiBSVkMtY29udmVydGVkIHZvaWNlIGF1ZGlvIHVwbG9hZGVkIGJ5IHN0YWZmIChjb252ZXJzaW9uIGhhcHBlbnMgaW4gYnJvd3NlciBiZWZvcmUgdXBsb2FkKS4gKi9cbiAgU3RhZmZWb2ljZVJlY29yZGluZyA9IFwic3RhZmZfdm9pY2VfcmVjb3JkaW5nXCIsXG4gIC8qKiBBbGlhcyBrZXB0IGZvciBEQiBjb21wYXRpYmlsaXR5IOKAlCBwb2ludHMgdG8gdGhlIHNhbWUgYXNzZXQgYXMgU3RhZmZWb2ljZVJlY29yZGluZy4gKi9cbiAgUHJvY2Vzc2VkVm9pY2UgPSBcInByb2Nlc3NlZF92b2ljZVwiLFxuICAvKiogRkZtcGVnLWNvbXBvc2VkIGZpbmFsIGNsaXAgKG9uZSByZWNvcmQgcGVyIGV4cG9ydGVkIHJhdGlvKS4gKi9cbiAgRmluYWxDbGlwID0gXCJmaW5hbF9jbGlwXCIsXG4gIC8qKiBCYXNlIHZpZGVvIHdpdGggQ2xhdWRlLWdlbmVyYXRlZCBhbmltYXRpb24vZ3JhcGhpYyBvdmVybGF5cyBhcHBsaWVkIGJ5IEZGbXBlZy4gKi9cbiAgQW5pbWF0ZWRWaWRlbyA9IFwiYW5pbWF0ZWRfdmlkZW9cIixcbiAgLyoqXG4gICAqIFdhdGVybWFya2VkIChcIlJDbGlwcGVyXCIgdGlsZWQgb3ZlcmxheSkgc2libGluZyBvZiBhIEZpbmFsQ2xpcCwgcHJlLXJlbmRlcmVkXG4gICAqIGR1cmluZyB0aGUgcGlwZWxpbmUuIFRoaXMgaXMgdGhlIE9OTFkgdmFyaWFudCBzaG93biB0byBhIHJlcXVlc3RlciB3aG9zZVxuICAgKiBkb3dubG9hZCBpcyBzdGlsbCBsb2NrZWQgKHVucGFpZCkg4oCUIHRoZSBjbGVhbiBGaW5hbENsaXAgaXMgbmV2ZXIgc3VyZmFjZWRcbiAgICogdW50aWwgdGhleSBwYXkuIExpbmtlZCBiYWNrIHRvIGl0cyBjbGVhbiBzb3VyY2UgdmlhIGBzb3VyY2VBc3NldElkYC5cbiAgICovXG4gIFdhdGVybWFya2VkUHJldmlldyA9IFwid2F0ZXJtYXJrZWRfcHJldmlld1wiLFxufVxuXG4vKiogVXBsb2FkIHN0YXR1cyBvZiBhIHNpbmdsZSBhc3NldCByZWNvcmQuICovXG5leHBvcnQgZW51bSBBc3NldFVwbG9hZFN0YXR1cyB7XG4gIFBlbmRpbmcgPSBcInBlbmRpbmdcIiwgICAgIC8vIFNlbGVjdGVkIGJ5IHJlcXVlc3Rlciwgbm90IHlldCBzZW50XG4gIFVwbG9hZGluZyA9IFwidXBsb2FkaW5nXCIsIC8vIFVwbG9hZCBpbiBwcm9ncmVzc1xuICBVcGxvYWRlZCA9IFwidXBsb2FkZWRcIiwgICAvLyBTdWNjZXNzZnVsbHkgc3RvcmVkXG4gIEZhaWxlZCA9IFwiZmFpbGVkXCIsICAgICAgIC8vIFVwbG9hZCBlcnJvciDigJQgcmV0cnlhYmxlXG4gIERlbGV0ZWQgPSBcImRlbGV0ZWRcIiwgICAgIC8vIFJlbW92ZWQgcGVyIDkwLWRheSByZXRlbnRpb24gcG9saWN5XG59XG5cbi8qKiBBY2NlcHRlZCBNSU1FIHR5cGVzIGZvciB2aWRlbyB1cGxvYWRzLiBNUDQgb25seSDigJQgdGhlIG1vbnRhZ2UgcmVuZGVyZXIgYW5kXG4gKiAgRkZtcGVnIGNvbmNhdCBleHBlY3QgYSBjb25zaXN0ZW50IEguMjY0L01QNCBzb3VyY2UsIGFuZCBicm93c2VycyByZWxpYWJseVxuICogIGRlY29kZSBNUDQgZm9yIHRoZSBpbi1mb3JtIHRodW1ibmFpbCArIHRyaW0tYmFyIHByZXZpZXcuICovXG5leHBvcnQgY29uc3QgQUNDRVBURURfVklERU9fTUlNRV9UWVBFUyA9IFtcInZpZGVvL21wNFwiXSBhcyBjb25zdDtcblxuLyoqIEFjY2VwdGVkIE1JTUUgdHlwZXMgZm9yIGltYWdlIHVwbG9hZHMuICovXG5leHBvcnQgY29uc3QgQUNDRVBURURfSU1BR0VfTUlNRV9UWVBFUyA9IFtcbiAgXCJpbWFnZS9qcGVnXCIsXG4gIFwiaW1hZ2UvcG5nXCIsXG4gIFwiaW1hZ2Uvd2VicFwiLFxuICBcImltYWdlL2dpZlwiLFxuXSBhcyBjb25zdDtcblxuZXhwb3J0IGNvbnN0IEFDQ0VQVEVEX01JTUVfVFlQRVMgPSBbXG4gIC4uLkFDQ0VQVEVEX1ZJREVPX01JTUVfVFlQRVMsXG4gIC4uLkFDQ0VQVEVEX0lNQUdFX01JTUVfVFlQRVMsXG5dIGFzIGNvbnN0O1xuXG4vKiogTWF4aW11bSBudW1iZXIgb2YgZmlsZXMgYSByZXF1ZXN0ZXIgbWF5IGF0dGFjaCB0byBhIHNpbmdsZSByZXF1ZXN0LiAqL1xuZXhwb3J0IGNvbnN0IE1BWF9VUExPQURfQ09VTlQgPSAxMDtcblxuLyoqIE1heGltdW0gZmlsZSBzaXplIGZvciBpbWFnZSB1cGxvYWRzOiA4IE1CICovXG5leHBvcnQgY29uc3QgTUFYX0lNQUdFX1NJWkVfQllURVMgPSA4ICogMTAyNCAqIDEwMjQ7XG5cbi8qKiBNYXhpbXVtIG92ZXJhbGwgdXBsb2FkIHNpemUgYWNjZXB0ZWQgYnkgdGhlIHVwbG9hZCBzZXJ2aWNlOiA1MDAgTUIgKi9cbmV4cG9ydCBjb25zdCBNQVhfVVBMT0FEX1NJWkVfQllURVMgPSA1MDAgKiAxMDI0ICogMTAyNDtcblxuLyoqXG4gKiBNYXhpbXVtIGZpbGUgc2l6ZSBmb3IgYSBzaW5nbGUgdmlkZW8gdXBsb2FkOiAzMDAgTUIuIEEgcmVxdWVzdGVyIG1heSBhdHRhY2ggdXBcbiAqIHRvIE1BWF9VUExPQURfQ09VTlQgZmlsZXMsIGJ1dCB0aGUgcGVyLXJlcXVlc3QgdG90YWwgaXMgc3RpbGwgY2FwcGVkIGJ5XG4gKiBNQVhfVVBMT0FEX1NJWkVfQllURVMgKDUwMCBNQikg4oCUIHNvIGEgc2luZ2xlIDMwMCBNQiBjbGlwIGxlYXZlcyByb29tIGZvciBhIGZld1xuICogbW9yZSwgYnV0IG5vdCBzZXZlcmFsIG1heC1zaXplIHZpZGVvcyBhdCBvbmNlLiAoQ2xpcCBsZW5ndGggaXMgc3RpbGwgYm91bmRlZFxuICogYnkgTUFYX0NMSVBfRFVSQVRJT05fU0VDT05EUy4pXG4gKi9cbmV4cG9ydCBjb25zdCBNQVhfVklERU9fU0laRV9CWVRFUyA9IDMwMCAqIDEwMjQgKiAxMDI0O1xuXG4vKipcbiAqIE1heGltdW0gZHVyYXRpb24gZm9yIGEgc2luZ2xlIHVwbG9hZGVkIHZpZGVvIGNsaXA6IDQ1IHNlY29uZHMuXG4gKlxuICogRW5mb3JjZWQgb24gdGhlIGNsaWVudCAoSFRNTFZpZGVvRWxlbWVudCBtZXRhZGF0YSBwcm9iZSkgZm9yIGZhc3QgZmVlZGJhY2tcbiAqIGFuZCBhdXRob3JpdGF0aXZlbHkgb24gdGhlIHNlcnZlciBhdCB1cGxvYWQtY29uZmlybSB0aW1lIChmZnByb2JlKS4gQ2xpcHNcbiAqIGJlY29tZSBzb3VyY2UgbWF0ZXJpYWwgZm9yIHRoZSByZWFsLW1lZGlhIG1vbnRhZ2UgcmVuZGVyZXIsIHNvIG92ZXItbG9uZ1xuICogY2xpcHMgYXJlIHJlamVjdGVkIGJlZm9yZSB0aGV5IGVudGVyIHRoZSBwaXBlbGluZS5cbiAqL1xuZXhwb3J0IGNvbnN0IE1BWF9DTElQX0RVUkFUSU9OX1NFQ09ORFMgPSA0NTtcbiJdLCJ2ZXJzaW9uIjozfQ==

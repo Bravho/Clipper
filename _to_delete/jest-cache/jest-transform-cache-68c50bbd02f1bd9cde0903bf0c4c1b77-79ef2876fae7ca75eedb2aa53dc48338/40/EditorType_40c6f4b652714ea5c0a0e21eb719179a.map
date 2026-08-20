@@ -1,0 +1,1 @@
+{"file":"D:\\coding\\clipper_agent\\src\\domain\\enums\\EditorType.ts","mappings":";;;AAAA,IAAY,UAGX;AAHD,WAAY,UAAU;IACpB,uBAAS,CAAA;IACT,6BAAe,CAAA;AACjB,CAAC,EAHW,UAAU,0BAAV,UAAU,QAGrB","names":[],"sources":["D:\\coding\\clipper_agent\\src\\domain\\enums\\EditorType.ts"],"sourcesContent":["export enum EditorType {\n  AI = \"ai\",\n  Human = \"human\",\n}\n"],"version":3}

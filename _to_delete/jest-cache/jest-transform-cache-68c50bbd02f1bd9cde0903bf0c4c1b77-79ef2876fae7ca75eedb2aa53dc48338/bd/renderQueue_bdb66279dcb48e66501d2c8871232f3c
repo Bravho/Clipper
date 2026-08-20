@@ -1,0 +1,49 @@
+58e1f87313db5362db63eae4c3c892a0
+"use strict";
+var _a, _b, _c, _d, _e, _f;
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.RENDER_QUEUE = void 0;
+/**
+ * Configuration for the render-queue seam (Mac Mini worker offload).
+ *
+ * All values are safe defaults tuned so that, with NO worker present, behaviour
+ * is identical to running every heavy step inline on the web server.
+ */
+exports.RENDER_QUEUE = {
+    /**
+     * Master switch. When false, heavy steps always run inline (the seam is a
+     * no-op). Default on; a worker still has to be alive for anything to enqueue.
+     * Set RENDER_QUEUE_ENABLED=false to force inline everywhere.
+     */
+    enabled: process.env.RENDER_QUEUE_ENABLED !== "false",
+    /**
+     * A worker heartbeat newer than this many seconds means "a worker is alive,
+     * enqueue for it". Older/absent → the web server runs the step itself
+     * (fallback), so the droplet is never blocked when the Mac is offline.
+     */
+    workerFreshSeconds: Number((_a = process.env.RENDER_WORKER_FRESH_SECONDS) !== null && _a !== void 0 ? _a : "45"),
+    /**
+     * A claim whose keep-alive (render_heartbeat_at, else claimed_at) is older
+     * than this is considered abandoned (crashed worker) and may be re-claimed.
+     * A live render bumps render_heartbeat_at every heartbeatIntervalMs (10s), so
+     * only a genuinely dead worker's claim goes stale. Kept low (2 min) so a job
+     * abandoned by a SIGKILL'd worker is picked back up quickly rather than sitting
+     * idle for the old 10-minute window. The graceful-shutdown path releases claims
+     * immediately (see the worker's drain), so this is only the crash backstop.
+     */
+    staleClaimSeconds: Number((_b = process.env.RENDER_STALE_CLAIM_SECONDS) !== null && _b !== void 0 ? _b : "120"),
+    /** Worker: how often to bump its heartbeat / claim keep-alive, in ms. */
+    heartbeatIntervalMs: Number((_c = process.env.RENDER_HEARTBEAT_INTERVAL_MS) !== null && _c !== void 0 ? _c : "10000"),
+    /**
+     * Worker: on SIGTERM, how long to let an in-flight step finish before releasing
+     * its claim and exiting. Kept under launchd's SIGKILL timeout so the worker exits
+     * cleanly; a step that can't finish in time is requeued (idempotent) for the
+     * restarted worker rather than abandoned to the stale-claim window.
+     */
+    drainGraceMs: Number((_d = process.env.RENDER_DRAIN_GRACE_MS) !== null && _d !== void 0 ? _d : "15000"),
+    /** Worker: how often to poll for a queued step when idle, in ms. */
+    pollIntervalMs: Number((_e = process.env.RENDER_POLL_INTERVAL_MS) !== null && _e !== void 0 ? _e : "3000"),
+    /** Worker: max heavy steps processed concurrently (1–2 on a 16 GB M4). */
+    concurrency: Math.max(1, Number((_f = process.env.RENDER_CONCURRENCY) !== null && _f !== void 0 ? _f : "1")),
+};
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxjb25maWdcXHJlbmRlclF1ZXVlLnRzIiwibWFwcGluZ3MiOiI7Ozs7QUFBQTs7Ozs7R0FLRztBQUNVLFFBQUEsWUFBWSxHQUFHO0lBQzFCOzs7O09BSUc7SUFDSCxPQUFPLEVBQUUsT0FBTyxDQUFDLEdBQUcsQ0FBQyxvQkFBb0IsS0FBSyxPQUFPO0lBRXJEOzs7O09BSUc7SUFDSCxrQkFBa0IsRUFBRSxNQUFNLENBQUMsTUFBQSxPQUFPLENBQUMsR0FBRyxDQUFDLDJCQUEyQixtQ0FBSSxJQUFJLENBQUM7SUFFM0U7Ozs7Ozs7O09BUUc7SUFDSCxpQkFBaUIsRUFBRSxNQUFNLENBQUMsTUFBQSxPQUFPLENBQUMsR0FBRyxDQUFDLDBCQUEwQixtQ0FBSSxLQUFLLENBQUM7SUFFMUUseUVBQXlFO0lBQ3pFLG1CQUFtQixFQUFFLE1BQU0sQ0FBQyxNQUFBLE9BQU8sQ0FBQyxHQUFHLENBQUMsNEJBQTRCLG1DQUFJLE9BQU8sQ0FBQztJQUVoRjs7Ozs7T0FLRztJQUNILFlBQVksRUFBRSxNQUFNLENBQUMsTUFBQSxPQUFPLENBQUMsR0FBRyxDQUFDLHFCQUFxQixtQ0FBSSxPQUFPLENBQUM7SUFFbEUsb0VBQW9FO0lBQ3BFLGNBQWMsRUFBRSxNQUFNLENBQUMsTUFBQSxPQUFPLENBQUMsR0FBRyxDQUFDLHVCQUF1QixtQ0FBSSxNQUFNLENBQUM7SUFFckUsMEVBQTBFO0lBQzFFLFdBQVcsRUFBRSxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUMsRUFBRSxNQUFNLENBQUMsTUFBQSxPQUFPLENBQUMsR0FBRyxDQUFDLGtCQUFrQixtQ0FBSSxHQUFHLENBQUMsQ0FBQztDQUN4RSxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIkQ6XFxjb2RpbmdcXGNsaXBwZXJfYWdlbnRcXHNyY1xcY29uZmlnXFxyZW5kZXJRdWV1ZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcclxuICogQ29uZmlndXJhdGlvbiBmb3IgdGhlIHJlbmRlci1xdWV1ZSBzZWFtIChNYWMgTWluaSB3b3JrZXIgb2ZmbG9hZCkuXHJcbiAqXHJcbiAqIEFsbCB2YWx1ZXMgYXJlIHNhZmUgZGVmYXVsdHMgdHVuZWQgc28gdGhhdCwgd2l0aCBOTyB3b3JrZXIgcHJlc2VudCwgYmVoYXZpb3VyXHJcbiAqIGlzIGlkZW50aWNhbCB0byBydW5uaW5nIGV2ZXJ5IGhlYXZ5IHN0ZXAgaW5saW5lIG9uIHRoZSB3ZWIgc2VydmVyLlxyXG4gKi9cclxuZXhwb3J0IGNvbnN0IFJFTkRFUl9RVUVVRSA9IHtcclxuICAvKipcclxuICAgKiBNYXN0ZXIgc3dpdGNoLiBXaGVuIGZhbHNlLCBoZWF2eSBzdGVwcyBhbHdheXMgcnVuIGlubGluZSAodGhlIHNlYW0gaXMgYVxyXG4gICAqIG5vLW9wKS4gRGVmYXVsdCBvbjsgYSB3b3JrZXIgc3RpbGwgaGFzIHRvIGJlIGFsaXZlIGZvciBhbnl0aGluZyB0byBlbnF1ZXVlLlxyXG4gICAqIFNldCBSRU5ERVJfUVVFVUVfRU5BQkxFRD1mYWxzZSB0byBmb3JjZSBpbmxpbmUgZXZlcnl3aGVyZS5cclxuICAgKi9cclxuICBlbmFibGVkOiBwcm9jZXNzLmVudi5SRU5ERVJfUVVFVUVfRU5BQkxFRCAhPT0gXCJmYWxzZVwiLFxyXG5cclxuICAvKipcclxuICAgKiBBIHdvcmtlciBoZWFydGJlYXQgbmV3ZXIgdGhhbiB0aGlzIG1hbnkgc2Vjb25kcyBtZWFucyBcImEgd29ya2VyIGlzIGFsaXZlLFxyXG4gICAqIGVucXVldWUgZm9yIGl0XCIuIE9sZGVyL2Fic2VudCDihpIgdGhlIHdlYiBzZXJ2ZXIgcnVucyB0aGUgc3RlcCBpdHNlbGZcclxuICAgKiAoZmFsbGJhY2spLCBzbyB0aGUgZHJvcGxldCBpcyBuZXZlciBibG9ja2VkIHdoZW4gdGhlIE1hYyBpcyBvZmZsaW5lLlxyXG4gICAqL1xyXG4gIHdvcmtlckZyZXNoU2Vjb25kczogTnVtYmVyKHByb2Nlc3MuZW52LlJFTkRFUl9XT1JLRVJfRlJFU0hfU0VDT05EUyA/PyBcIjQ1XCIpLFxyXG5cclxuICAvKipcclxuICAgKiBBIGNsYWltIHdob3NlIGtlZXAtYWxpdmUgKHJlbmRlcl9oZWFydGJlYXRfYXQsIGVsc2UgY2xhaW1lZF9hdCkgaXMgb2xkZXJcclxuICAgKiB0aGFuIHRoaXMgaXMgY29uc2lkZXJlZCBhYmFuZG9uZWQgKGNyYXNoZWQgd29ya2VyKSBhbmQgbWF5IGJlIHJlLWNsYWltZWQuXHJcbiAgICogQSBsaXZlIHJlbmRlciBidW1wcyByZW5kZXJfaGVhcnRiZWF0X2F0IGV2ZXJ5IGhlYXJ0YmVhdEludGVydmFsTXMgKDEwcyksIHNvXHJcbiAgICogb25seSBhIGdlbnVpbmVseSBkZWFkIHdvcmtlcidzIGNsYWltIGdvZXMgc3RhbGUuIEtlcHQgbG93ICgyIG1pbikgc28gYSBqb2JcclxuICAgKiBhYmFuZG9uZWQgYnkgYSBTSUdLSUxMJ2Qgd29ya2VyIGlzIHBpY2tlZCBiYWNrIHVwIHF1aWNrbHkgcmF0aGVyIHRoYW4gc2l0dGluZ1xyXG4gICAqIGlkbGUgZm9yIHRoZSBvbGQgMTAtbWludXRlIHdpbmRvdy4gVGhlIGdyYWNlZnVsLXNodXRkb3duIHBhdGggcmVsZWFzZXMgY2xhaW1zXHJcbiAgICogaW1tZWRpYXRlbHkgKHNlZSB0aGUgd29ya2VyJ3MgZHJhaW4pLCBzbyB0aGlzIGlzIG9ubHkgdGhlIGNyYXNoIGJhY2tzdG9wLlxyXG4gICAqL1xyXG4gIHN0YWxlQ2xhaW1TZWNvbmRzOiBOdW1iZXIocHJvY2Vzcy5lbnYuUkVOREVSX1NUQUxFX0NMQUlNX1NFQ09ORFMgPz8gXCIxMjBcIiksXHJcblxyXG4gIC8qKiBXb3JrZXI6IGhvdyBvZnRlbiB0byBidW1wIGl0cyBoZWFydGJlYXQgLyBjbGFpbSBrZWVwLWFsaXZlLCBpbiBtcy4gKi9cclxuICBoZWFydGJlYXRJbnRlcnZhbE1zOiBOdW1iZXIocHJvY2Vzcy5lbnYuUkVOREVSX0hFQVJUQkVBVF9JTlRFUlZBTF9NUyA/PyBcIjEwMDAwXCIpLFxyXG5cclxuICAvKipcclxuICAgKiBXb3JrZXI6IG9uIFNJR1RFUk0sIGhvdyBsb25nIHRvIGxldCBhbiBpbi1mbGlnaHQgc3RlcCBmaW5pc2ggYmVmb3JlIHJlbGVhc2luZ1xyXG4gICAqIGl0cyBjbGFpbSBhbmQgZXhpdGluZy4gS2VwdCB1bmRlciBsYXVuY2hkJ3MgU0lHS0lMTCB0aW1lb3V0IHNvIHRoZSB3b3JrZXIgZXhpdHNcclxuICAgKiBjbGVhbmx5OyBhIHN0ZXAgdGhhdCBjYW4ndCBmaW5pc2ggaW4gdGltZSBpcyByZXF1ZXVlZCAoaWRlbXBvdGVudCkgZm9yIHRoZVxyXG4gICAqIHJlc3RhcnRlZCB3b3JrZXIgcmF0aGVyIHRoYW4gYWJhbmRvbmVkIHRvIHRoZSBzdGFsZS1jbGFpbSB3aW5kb3cuXHJcbiAgICovXHJcbiAgZHJhaW5HcmFjZU1zOiBOdW1iZXIocHJvY2Vzcy5lbnYuUkVOREVSX0RSQUlOX0dSQUNFX01TID8/IFwiMTUwMDBcIiksXHJcblxyXG4gIC8qKiBXb3JrZXI6IGhvdyBvZnRlbiB0byBwb2xsIGZvciBhIHF1ZXVlZCBzdGVwIHdoZW4gaWRsZSwgaW4gbXMuICovXHJcbiAgcG9sbEludGVydmFsTXM6IE51bWJlcihwcm9jZXNzLmVudi5SRU5ERVJfUE9MTF9JTlRFUlZBTF9NUyA/PyBcIjMwMDBcIiksXHJcblxyXG4gIC8qKiBXb3JrZXI6IG1heCBoZWF2eSBzdGVwcyBwcm9jZXNzZWQgY29uY3VycmVudGx5ICgx4oCTMiBvbiBhIDE2IEdCIE00KS4gKi9cclxuICBjb25jdXJyZW5jeTogTWF0aC5tYXgoMSwgTnVtYmVyKHByb2Nlc3MuZW52LlJFTkRFUl9DT05DVVJSRU5DWSA/PyBcIjFcIikpLFxyXG59O1xyXG5cclxuLyoqIFRlcm1pbmFsIHJlbmRlci1zdGF0ZSB2YWx1ZXMgKGEgY2xhaW0gaXMgZmluaXNoZWQpLiAqL1xyXG5leHBvcnQgdHlwZSBSZW5kZXJTdGF0ZSA9IFwicXVldWVkXCIgfCBcImNsYWltZWRcIiB8IFwiZG9uZVwiIHwgXCJmYWlsZWRcIjtcclxuIl0sInZlcnNpb24iOjN9

@@ -342,13 +342,10 @@ export class ClipRequestService {
     }
 
     const now = new Date();
-    const updated = await clipRequestRepository.update(requestId, {
-      revisionCount: (existing.revisionCount ?? 0) + 1,
-    } as any);
-
     const withStatus = await clipRequestRepository.updateStatus(
       requestId,
-      RequestStatus.RevisionRequested
+      RequestStatus.RevisionRequested,
+      { revisionCount: (existing.revisionCount ?? 0) + 1 }
     );
 
     await requestStatusHistoryRepository.create({

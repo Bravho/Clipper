@@ -8,7 +8,6 @@ import {
   creditPurchaseLogRepository,
 } from "@/repositories";
 import { pool } from "@/lib/db";
-import { CreditPurchaseLog } from "@/domain/models/CreditPurchaseLog";
 
 /**
  * CreditService — manages all credit wallet operations.

@@ -1,0 +1,101 @@
+6d40ace32dbe786f3c55082ec4701440
+"use strict";
+var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5;
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AI_CONFIG = void 0;
+exports.requireGeminiApiKey = requireGeminiApiKey;
+const elevenLabsVoices_1 = require("@/config/elevenLabsVoices");
+/**
+ * Returns the Gemini API key or throws a clear setup error.
+ * Prevents cryptic 403 PERMISSION_DENIED ("unregistered callers") responses
+ * when GEMINI_API_KEY is missing from .env.local.
+ */
+function requireGeminiApiKey() {
+    const key = exports.AI_CONFIG.gemini.apiKey;
+    if (!key) {
+        throw new Error("GEMINI_API_KEY is not set. Add GEMINI_API_KEY=<your key> to .env.local and restart the dev server.");
+    }
+    return key;
+}
+exports.AI_CONFIG = {
+    gemini: {
+        apiKey: (_a = process.env.GEMINI_API_KEY) !== null && _a !== void 0 ? _a : "",
+        /** Vision model - used for image analysis + scene/script generation */
+        visionModel: (_b = process.env.GEMINI_IMAGE_MODEL) !== null && _b !== void 0 ? _b : "gemini-2.5-flash",
+        /** Text model - used for lightweight text tasks */
+        textModel: (_c = process.env.GEMINI_TEXT_MODEL) !== null && _c !== void 0 ? _c : "gemini-2.5-flash",
+        scriptWordTarget: 45,
+        scenesTarget: 3,
+    },
+    veo: {
+        /**
+         * Google Veo runs through the Gemini API, so it reuses the Gemini API key
+         * by default. VEO_API_KEY can override it if a separate key is preferred.
+         */
+        apiKey: ((_e = (_d = process.env.VEO_API_KEY) !== null && _d !== void 0 ? _d : process.env.GEMINI_API_KEY) !== null && _e !== void 0 ? _e : "").trim(),
+        /** Veo model id. Defaults to Veo 3.1 Fast so video extension is available. */
+        modelName: (_f = process.env.VEO_MODEL_NAME) !== null && _f !== void 0 ? _f : "veo-3.1-fast-generate-preview",
+        /** "720p" | "1080p"; video extension is limited to 720p. */
+        resolution: (_g = process.env.VEO_RESOLUTION) !== null && _g !== void 0 ? _g : "720p",
+        /** Fallback duration (seconds, one of 4/6/8) when a scene has no duration. */
+        defaultDuration: process.env.VEO_DURATION ? Number(process.env.VEO_DURATION) : 8,
+        /** Fallback aspect ratio ("16:9" | "9:16") used when none is supplied. */
+        defaultAspectRatio: (_h = process.env.VEO_ASPECT_RATIO) !== null && _h !== void 0 ? _h : "9:16",
+        /** Optional global negative prompt applied to every generation. */
+        negativePrompt: (_j = process.env.VEO_NEGATIVE_PROMPT) !== null && _j !== void 0 ? _j : "",
+    },
+    elevenLabs: {
+        // ElevenLabs cloud TTS — current pipeline voice engine. No local server.
+        apiKey: ((_k = process.env.ELEVENLABS_API_KEY) !== null && _k !== void 0 ? _k : "").trim(),
+        // Original female voice. Per-job selection overrides this in the TTS call.
+        voiceId: ((_l = process.env.ELEVENLABS_VOICE_ID) !== null && _l !== void 0 ? _l : elevenLabsVoices_1.DEFAULT_ELEVENLABS_VOICE_ID).trim(),
+        // eleven_v3 is the only ElevenLabs model that supports Thai
+        model: ((_m = process.env.ELEVENLABS_TTS_MODEL) !== null && _m !== void 0 ? _m : "eleven_v3").trim(),
+        // v3 stability presets: 0.0 = Creative, 0.5 = Natural, 1.0 = Robust
+        stability: Number((_o = process.env.ELEVENLABS_STABILITY) !== null && _o !== void 0 ? _o : "0.0"),
+        languageCode: "th",
+    },
+    claude: {
+        apiKey: (_p = process.env.ANTHROPIC_API_KEY) !== null && _p !== void 0 ? _p : "",
+        // Overridable so the deployed model id / API version can be corrected
+        // without a code change if the API rejects the default. The Phase-7
+        // animation step logs the full 400 body, so a bad model id is diagnosable.
+        model: ((_q = process.env.ANTHROPIC_MODEL) !== null && _q !== void 0 ? _q : "claude-sonnet-4-6").trim(),
+        apiVersion: ((_r = process.env.ANTHROPIC_VERSION) !== null && _r !== void 0 ? _r : "2023-06-01").trim(),
+    },
+    ffmpeg: {
+        path: (_s = process.env.FFMPEG_PATH) !== null && _s !== void 0 ? _s : "ffmpeg",
+        tmpDir: (_t = process.env.FFMPEG_TMP_DIR) !== null && _t !== void 0 ? _t : "/tmp/clipper",
+        /**
+         * Path to a TTF/OTF font file with Thai glyph support, used by drawtext.
+         * Required on Windows builds of ffmpeg where libfontconfig has no default
+         * config file ("Fontconfig error: Cannot load default config file").
+         * Specifying fontfile= bypasses fontconfig lookup entirely.
+         */
+        fontFile: (_u = process.env.FFMPEG_FONT_FILE) !== null && _u !== void 0 ? _u : "C:\\Windows\\Fonts\\tahoma.ttf",
+    },
+    social: {
+        youtube: {
+            clientId: (_v = process.env.YOUTUBE_CLIENT_ID) !== null && _v !== void 0 ? _v : "",
+            clientSecret: (_w = process.env.YOUTUBE_CLIENT_SECRET) !== null && _w !== void 0 ? _w : "",
+            refreshToken: (_x = process.env.YOUTUBE_REFRESH_TOKEN) !== null && _x !== void 0 ? _x : "",
+        },
+        tiktok: {
+            clientKey: (_y = process.env.TIKTOK_CLIENT_KEY) !== null && _y !== void 0 ? _y : "",
+            accessToken: (_z = process.env.TIKTOK_ACCESS_TOKEN) !== null && _z !== void 0 ? _z : "",
+        },
+        instagram: {
+            accessToken: (_0 = process.env.INSTAGRAM_ACCESS_TOKEN) !== null && _0 !== void 0 ? _0 : "",
+            pageId: (_1 = process.env.INSTAGRAM_PAGE_ID) !== null && _1 !== void 0 ? _1 : "",
+        },
+        facebook: {
+            pageToken: (_2 = process.env.FACEBOOK_PAGE_TOKEN) !== null && _2 !== void 0 ? _2 : "",
+            pageId: (_3 = process.env.FACEBOOK_PAGE_ID) !== null && _3 !== void 0 ? _3 : "",
+        },
+        travy: {
+            apiKey: (_4 = process.env.TRAVY_API_KEY) !== null && _4 !== void 0 ? _4 : "",
+            apiUrl: (_5 = process.env.TRAVY_API_URL) !== null && _5 !== void 0 ? _5 : "",
+        },
+    },
+};
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxjb25maWdcXGFpVG9vbHMudHMiLCJtYXBwaW5ncyI6Ijs7OztBQU9BLGtEQVFDO0FBZkQsZ0VBQXdFO0FBRXhFOzs7O0dBSUc7QUFDSCxTQUFnQixtQkFBbUI7SUFDakMsTUFBTSxHQUFHLEdBQUcsaUJBQVMsQ0FBQyxNQUFNLENBQUMsTUFBTSxDQUFDO0lBQ3BDLElBQUksQ0FBQyxHQUFHLEVBQUUsQ0FBQztRQUNULE1BQU0sSUFBSSxLQUFLLENBQ2Isb0dBQW9HLENBQ3JHLENBQUM7SUFDSixDQUFDO0lBQ0QsT0FBTyxHQUFHLENBQUM7QUFDYixDQUFDO0FBRVksUUFBQSxTQUFTLEdBQUc7SUFDdkIsTUFBTSxFQUFFO1FBQ04sTUFBTSxFQUFFLE1BQUEsT0FBTyxDQUFDLEdBQUcsQ0FBQyxjQUFjLG1DQUFJLEVBQUU7UUFDeEMsdUVBQXVFO1FBQ3ZFLFdBQVcsRUFBRSxNQUFBLE9BQU8sQ0FBQyxHQUFHLENBQUMsa0JBQWtCLG1DQUFJLGtCQUFrQjtRQUNqRSxtREFBbUQ7UUFDbkQsU0FBUyxFQUFFLE1BQUEsT0FBTyxDQUFDLEdBQUcsQ0FBQyxpQkFBaUIsbUNBQUksa0JBQWtCO1FBQzlELGdCQUFnQixFQUFFLEVBQUU7UUFDcEIsWUFBWSxFQUFFLENBQUM7S0FDaEI7SUFDRCxHQUFHLEVBQUU7UUFDSDs7O1dBR0c7UUFDSCxNQUFNLEVBQUUsQ0FBQyxNQUFBLE1BQUEsT0FBTyxDQUFDLEdBQUcsQ0FBQyxXQUFXLG1DQUFJLE9BQU8sQ0FBQyxHQUFHLENBQUMsY0FBYyxtQ0FBSSxFQUFFLENBQUMsQ0FBQyxJQUFJLEVBQUU7UUFDNUUsOEVBQThFO1FBQzlFLFNBQVMsRUFBRSxNQUFBLE9BQU8sQ0FBQyxHQUFHLENBQUMsY0FBYyxtQ0FBSSwrQkFBK0I7UUFDeEUsNERBQTREO1FBQzVELFVBQVUsRUFBRSxNQUFBLE9BQU8sQ0FBQyxHQUFHLENBQUMsY0FBYyxtQ0FBSSxNQUFNO1FBQ2hELDhFQUE4RTtRQUM5RSxlQUFlLEVB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RCxLQUFLLEVBQUU7WUFDTCxNQUFNLEVBQUUsTUFBQSxPQUFPLENBQUMsR0FBRyxDQUFDLGFBQWEsbUNBQUksRUFBRTtZQUN2QyxNQUFNLEVBQUUsTUFBQSxPQUFPLENBQUMsR0FBRyxDQUFDLGFBQWEsbUNBQUksRUFBRTtTQUN4QztLQUNGO0NBQ0YsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyJEOlxcY29kaW5nXFxjbGlwcGVyX2FnZW50XFxzcmNcXGNvbmZpZ1xcYWlUb29scy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgeyBERUZBVUxUX0VMRVZFTkxBQlNfVk9JQ0VfSUQgfSBmcm9tIFwiQC9jb25maWcvZWxldmVuTGFic1ZvaWNlc1wiO1xuXG4vKipcbiAqIFJldHVybnMgdGhlIEdlbWluaSBBUEkga2V5IG9yIHRocm93cyBhIGNsZWFyIHNldHVwIGVycm9yLlxuICogUHJldmVudHMgY3J5cHRpYyA0MDMgUEVSTUlTU0lPTl9ERU5JRUQgKFwidW5yZWdpc3RlcmVkIGNhbGxlcnNcIikgcmVzcG9uc2VzXG4gKiB3aGVuIEdFTUlOSV9BUElfS0VZIGlzIG1pc3NpbmcgZnJvbSAuZW52LmxvY2FsLlxuICovXG5leHBvcnQgZnVuY3Rpb24gcmVxdWlyZUdlbWluaUFwaUtleSgpOiBzdHJpbmcge1xuICBjb25zdCBrZXkgPSBBSV9DT05GSUcuZ2VtaW5pLmFwaUtleTtcbiAgaWYgKCFrZXkpIHtcbiAgICB0aHJvdyBuZXcgRXJyb3IoXG4gICAgICBcIkdFTUlOSV9BUElfS0VZIGlzIG5vdCBzZXQuIEFkZCBHRU1JTklfQVBJX0tFWT08eW91ciBrZXk+IHRvIC5lbnYubG9jYWwgYW5kIHJlc3RhcnQgdGhlIGRldiBzZXJ2ZXIuXCJcbiAgICApO1xuICB9XG4gIHJldHVybiBrZXk7XG59XG5cbmV4cG9ydCBjb25zdCBBSV9DT05GSUcgPSB7XG4gIGdlbWluaToge1xuICAgIGFwaUtleTogcHJvY2Vzcy5lbnYuR0VNSU5JX0FQSV9LRVkgPz8gXCJcIixcbiAgICAvKiogVmlzaW9uIG1vZGVsIC0gdXNlZCBmb3IgaW1hZ2UgYW5hbHlzaXMgKyBzY2VuZS9zY3JpcHQgZ2VuZXJhdGlvbiAqL1xuICAgIHZpc2lvbk1vZGVsOiBwcm9jZXNzLmVudi5HRU1JTklfSU1BR0VfTU9ERUwgPz8gXCJnZW1pbmktMi41LWZsYXNoXCIsXG4gICAgLyoqIFRleHQgbW9kZWwgLSB1c2VkIGZvciBsaWdodHdlaWdodCB0ZXh0IHRhc2tzICovXG4gICAgdGV4dE1vZGVsOiBwcm9jZXNzLmVudi5HRU1JTklfVEVYVF9NT0RFTCA/PyBcImdlbWluaS0yLjUtZmxhc2hcIixcbiAgICBzY3JpcHRXb3JkVGFyZ2V0OiA0NSxcbiAgICBzY2VuZXNUYXJnZXQ6IDMsXG4gIH0sXG4gIHZlbzoge1xuICAgIC8qKlxuICAgICAqIEdvb2dsZSBWZW8gcnVucyB0aHJvdWdoIHRoZSBHZW1pbmkgQVBJLCBzbyBpdCByZXVzZXMgdGhlIEdlbWluaSBBUEkga2V5XG4gICAgICogYnkgZGVmYXVsdC4gVkVPX0FQSV9LRVkgY2FuIG92ZXJyaWRlIGl0IGlmIGEgc2VwYXJhdGUga2V5IGlzIHByZWZlcnJlZC5cbiAgICAgKi9cbiAgICBhcGlLZXk6IChwcm9jZXNzLmVudi5WRU9fQVBJX0tFWSA/PyBwcm9jZXNzLmVudi5HRU1JTklfQVBJX0tFWSA/PyBcIlwiKS50cmltKCksXG4gICAgLyoqIFZlbyBtb2RlbCBpZC4gRGVmYXVsdHMgdG8gVmVvIDMuMSBGYXN0IHNvIHZpZGVvIGV4dGVuc2lvbiBpcyBhdmFpbGFibGUuICovXG4gICAgbW9kZWxOYW1lOiBwcm9jZXNzLmVudi5WRU9fTU9ERUxfTkFNRSA/PyBcInZlby0zLjEtZmFzdC1nZW5lcmF0ZS1wcmV2aWV3XCIsXG4gICAgLyoqIFwiNzIwcFwiIHwgXCIxMDgwcFwiOyB2aWRlbyBleHRlbnNpb24gaXMgbGltaXRlZCB0byA3MjBwLiAqL1xuICAgIHJlc29sdXRpb246IHByb2Nlc3MuZW52LlZFT19SRVNPTFVUSU9OID8/IFwiNzIwcFwiLFxuICAgIC8qKiBGYWxsYmFjayBkdXJhdGlvbiAoc2Vjb25kcywgb25lIG9mIDQvNi84KSB3aGVuIGEgc2NlbmUgaGFzIG5vIGR1cmF0aW9uLiAqL1xuICAgIGRlZmF1bHREdXJhdGlvbjogcHJvY2Vzcy5lbnYuVkVPX0RVUkFUSU9OID8gTnVtYmVyKHByb2Nlc3MuZW52LlZFT19EVVJBVElPTikgOiA4LFxuICAgIC8qKiBGYWxsYmFjayBhc3BlY3QgcmF0aW8gKFwiMTY6OVwiIHwgXCI5OjE2XCIpIHVzZWQgd2hlbiBub25lIGlzIHN1cHBsaWVkLiAqL1xuICAgIGRlZmF1bHRBc3BlY3RSYXRpbzogcHJvY2Vzcy5lbnYuVkVPX0FTUEVDVF9SQVRJTyA/PyBcIjk6MTZcIixcbiAgICAvKiogT3B0aW9uYWwgZ2xvYmFsIG5lZ2F0aXZlIHByb21wdCBhcHBsaWVkIHRvIGV2ZXJ5IGdlbmVyYXRpb24uICovXG4gICAgbmVnYXRpdmVQcm9tcHQ6IHByb2Nlc3MuZW52LlZFT19ORUdBVElWRV9QUk9NUFQgPz8gXCJcIixcbiAgfSxcbiAgZWxldmVuTGFiczoge1xuICAgIC8vIEVsZXZlbkxhYnMgY2xvdWQgVFRTIOKAlCBjdXJyZW50IHBpcGVsaW5lIHZvaWNlIGVuZ2luZS4gTm8gbG9jYWwgc2VydmVyLlxuICAgIGFwaUtleTogKHByb2Nlc3MuZW52LkVMRVZFTkxBQlNfQVBJX0tFWSA/PyBcIlwiKS50cmltKCksXG4gICAgLy8gT3JpZ2luYWwgZmVtYWxlIHZvaWNlLiBQZXItam9iIHNlbGVjdGlvbiBvdmVycmlkZXMgdGhpcyBpbiB0aGUgVFRTIGNhbGwuXG4gICAgdm9pY2VJZDogKHByb2Nlc3MuZW52LkVMRVZFTkxBQlNfVk9JQ0VfSUQgPz8gREVGQVVMVF9FTEVWRU5MQUJTX1ZPSUNFX0lEKS50cmltKCksXG4gICAgLy8gZWxldmVuX3YzIGlzIHRoZSBvbmx5IEVsZXZlbkxhYnMgbW9kZWwgdGhhdCBzdXBwb3J0cyBUaGFpXG4gICAgbW9kZWw6IChwcm9jZXNzLmVudi5FTEVWRU5MQUJTX1RUU19NT0RFTCA/PyBcImVsZXZlbl92M1wiKS50cmltKCksXG4gICAgLy8gdjMgc3RhYmlsaXR5IHByZXNldHM6IDAuMCA9IENyZWF0aXZlLCAwLjUgPSBOYXR1cmFsLCAxLjAgPSBSb2J1c3RcbiAgICBzdGFiaWxpdHk6IE51bWJlcihwcm9jZXNzLmVudi5FTEVWRU5MQUJTX1NUQUJJTElUWSA/PyBcIjAuMFwiKSxcbiAgICBsYW5ndWFnZUNvZGU6IFwidGhcIixcbiAgfSxcbiAgY2xhdWRlOiB7XG4gICAgYXBpS2V5OiBwcm9jZXNzLmVudi5BTlRIUk9QSUNfQVBJX0tFWSA/PyBcIlwiLFxuICAgIC8vIE92ZXJyaWRhYmxlIHNvIHRoZSBkZXBsb3llZCBtb2RlbCBpZCAvIEFQSSB2ZXJzaW9uIGNhbiBiZSBjb3JyZWN0ZWRcbiAgICAvLyB3aXRob3V0IGEgY29kZSBjaGFuZ2UgaWYgdGhlIEFQSSByZWplY3RzIHRoZSBkZWZhdWx0LiBUaGUgUGhhc2UtN1xuICAgIC8vIGFuaW1hdGlvbiBzdGVwIGxvZ3MgdGhlIGZ1bGwgNDAwIGJvZHksIHNvIGEgYmFkIG1vZGVsIGlkIGlzIGRpYWdub3NhYmxlLlxuICAgIG1vZGVsOiAocHJvY2Vzcy5lbnYuQU5USFJPUElDX01PREVMID8/IFwiY2xhdWRlLXNvbm5ldC00LTZcIikudHJpbSgpLFxuICAgIGFwaVZlcnNpb246IChwcm9jZXNzLmVudi5BTlRIUk9QSUNfVkVSU0lPTiA/PyBcIjIwMjMtMDYtMDFcIikudHJpbSgpLFxuICB9LFxuICBmZm1wZWc6IHtcbiAgICBwYXRoOiBwcm9jZXNzLmVudi5GRk1QRUdfUEFUSCA/PyBcImZmbXBlZ1wiLFxuICAgIHRtcERpcjogcHJvY2Vzcy5lbnYuRkZNUEVHX1RNUF9ESVIgPz8gXCIvdG1wL2NsaXBwZXJcIixcbiAgICAvKipcbiAgICAgKiBQYXRoIHRvIGEgVFRGL09URiBmb250IGZpbGUgd2l0aCBUaGFpIGdseXBoIHN1cHBvcnQsIHVzZWQgYnkgZHJhd3RleHQuXG4gICAgICogUmVxdWlyZWQgb24gV2luZG93cyBidWlsZHMgb2YgZmZtcGVnIHdoZXJlIGxpYmZvbnRjb25maWcgaGFzIG5vIGRlZmF1bHRcbiAgICAgKiBjb25maWcgZmlsZSAoXCJGb250Y29uZmlnIGVycm9yOiBDYW5ub3QgbG9hZCBkZWZhdWx0IGNvbmZpZyBmaWxlXCIpLlxuICAgICAqIFNwZWNpZnlpbmcgZm9udGZpbGU9IGJ5cGFzc2VzIGZvbnRjb25maWcgbG9va3VwIGVudGlyZWx5LlxuICAgICAqL1xuICAgIGZvbnRGaWxlOiBwcm9jZXNzLmVudi5GRk1QRUdfRk9OVF9GSUxFID8/IFwiQzpcXFxcV2luZG93c1xcXFxGb250c1xcXFx0YWhvbWEudHRmXCIsXG4gIH0sXG4gIHNvY2lhbDoge1xuICAgIHlvdXR1YmU6IHtcbiAgICAgIGNsaWVudElkOiBwcm9jZXNzLmVudi5ZT1VUVUJFX0NMSUVOVF9JRCA/PyBcIlwiLFxuICAgICAgY2xpZW50U2VjcmV0OiBwcm9jZXNzLmVudi5ZT1VUVUJFX0NMSUVOVF9TRUNSRVQgPz8gXCJcIixcbiAgICAgIHJlZnJlc2hUb2tlbjogcHJvY2Vzcy5lbnYuWU9VVFVCRV9SRUZSRVNIX1RPS0VOID8/IFwiXCIsXG4gICAgfSxcbiAgICB0aWt0b2s6IHtcbiAgICAgIGNsaWVudEtleTogcHJvY2Vzcy5lbnYuVElLVE9LX0NMSUVOVF9LRVkgPz8gXCJcIixcbiAgICAgIGFjY2Vzc1Rva2VuOiBwcm9jZXNzLmVudi5USUtUT0tfQUNDRVNTX1RPS0VOID8/IFwiXCIsXG4gICAgfSxcbiAgICBpbnN0YWdyYW06IHtcbiAgICAgIGFjY2Vzc1Rva2VuOiBwcm9jZXNzLmVudi5JTlNUQUdSQU1fQUNDRVNTX1RPS0VOID8/IFwiXCIsXG4gICAgICBwYWdlSWQ6IHByb2Nlc3MuZW52LklOU1RBR1JBTV9QQUdFX0lEID8/IFwiXCIsXG4gICAgfSxcbiAgICBmYWNlYm9vazoge1xuICAgICAgcGFnZVRva2VuOiBwcm9jZXNzLmVudi5GQUNFQk9PS19QQUdFX1RPS0VOID8/IFwiXCIsXG4gICAgICBwYWdlSWQ6IHByb2Nlc3MuZW52LkZBQ0VCT09LX1BBR0VfSUQgPz8gXCJcIixcbiAgICB9LFxuICAgIHRyYXZ5OiB7XG4gICAgICBhcGlLZXk6IHByb2Nlc3MuZW52LlRSQVZZX0FQSV9LRVkgPz8gXCJcIixcbiAgICAgIGFwaVVybDogcHJvY2Vzcy5lbnYuVFJBVllfQVBJX1VSTCA/PyBcIlwiLFxuICAgIH0sXG4gIH0sXG59O1xuIl0sInZlcnNpb24iOjN9

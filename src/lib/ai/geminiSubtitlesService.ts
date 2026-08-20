@@ -2,8 +2,6 @@ import { GoogleGenAI } from "@google/genai";
 import { AI_CONFIG, requireGeminiApiKey } from "@/config/aiTools";
 import { spacesClient } from "@/lib/spaces";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import * as fs from "fs/promises";
-import * as path from "path";
 
 export interface TimedSegment {
   sentenceNumber: number;

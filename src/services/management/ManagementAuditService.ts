@@ -38,6 +38,8 @@ export type ManagementAuditEvent =
   | "management.upload.failed"
   /** A paying user's uploads were moved to the longer (30-day) retention prefix. */
   | "management.upload.retention_extended"
+  /** A paying user's TRANSFERRED generation clips were promoted to that prefix. */
+  | "management.transfer.retention_extended"
   /** Media retention. */
   | "management.media.expired"
   | "management.social_account.connected"

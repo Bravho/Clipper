@@ -34,7 +34,8 @@ import {
   sceneMontageSeconds,
 } from "@/config/montage";
 import { buildAiVideoKey, buildFinalClipKey, buildWatermarkedPreviewKey } from "@/lib/spacesKeys";
-import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft, RenderProgressDetail } from "@/domain/models/VideoGenerationJob";
+import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft, RenderProgressDetail, CaptionedExportField, FinalExportField } from "@/domain/models/VideoGenerationJob";
+import type { JobUpdateActor } from "@/repositories/interfaces/IVideoGenerationJobRepository";
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import { DEFAULT_LOCALE, type AppLocale } from "@/i18n/config";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
@@ -48,6 +49,10 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { AI_CONFIG } from "@/config/aiTools";
+import {
+  resolveElevenLabsVoiceId,
+  type ElevenLabsVoiceId,
+} from "@/config/elevenLabsVoices";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE } from "@/config/renderQueue";
@@ -62,6 +67,14 @@ import {
 } from "@/lib/publishing/channelCopyPolicy";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Attribution for a transition nobody asked for: a render finishing, a worker
+ * hook firing. Distinct from `auto` — that means the express lane granted an
+ * approval a human otherwise would have — so the analytics can separate
+ * "the pipeline moved itself along" from "the lane approved on your behalf".
+ */
+const SYSTEM_ACTOR: JobUpdateActor = { source: "system" };
 
 /**
  * The creative choices the requester makes on the scene-plan approval screen
@@ -366,7 +379,7 @@ export class VideoGenerationService {
       // Stage-1 rough storyboard, approved with the script and used to seed the
       // Stage-3 montage scene design (and shown read-only at Stage 2).
       storyboard: output.storyboard ? JSON.stringify(output.storyboard) : null,
-    });
+    }, SYSTEM_ACTOR);
 
     // Auto-save/enrich the account profile only when this request is for that
     // same business. A requester can make clips for multiple venues, so a
@@ -801,6 +814,33 @@ export class VideoGenerationService {
   private _autoAdvancing = new Set<string>();
 
   /**
+   * The actor to attribute a gate transition to (migration 028,
+   * `pipeline_gate_events`).
+   *
+   * The express lane approves through the very same `approve*ByRequester`
+   * methods a click uses, and `_autoAdvanceIfEnabled` deliberately passes a real
+   * requester's id so the `*_approved_by` columns are never blanked. So the id
+   * alone cannot tell the two apart — the caller can.
+   *
+   * `_autoAdvancing` already holds `jobId:step` for the whole duration of an
+   * auto-approval (it is the re-entrancy guard), which makes it the authoritative
+   * "this process is auto-approving this job right now" signal. Reusing it keeps
+   * the two facts from drifting: a lane that forgot to mark itself auto would
+   * also have lost its re-entrancy protection, which is loud.
+   */
+  private _actorFor(jobId: string, userId?: string | null): JobUpdateActor {
+    const prefix = `${jobId}:`;
+    let auto = false;
+    for (const gateKey of this._autoAdvancing) {
+      if (gateKey.startsWith(prefix)) {
+        auto = true;
+        break;
+      }
+    }
+    return { userId: userId || undefined, source: auto ? "auto" : "human" };
+  }
+
+  /**
    * Safety net for the express lane, called from the requester's status poll.
    *
    * `afterRenderStepCompleted` runs INSIDE whichever process ran the heavy step —
@@ -962,7 +1002,7 @@ export class VideoGenerationService {
       baseVideoAssetId: assetId,
       videoGenStatus: null,
       videoGenLastPolledAt: new Date(),
-    });
+    }, SYSTEM_ACTOR);
   }
 
   /**
@@ -1000,7 +1040,7 @@ export class VideoGenerationService {
       baseVideoAssetId: firstSegment,
       videoGenStatus: null,
       videoGenLastPolledAt: new Date(),
-    });
+    }, SYSTEM_ACTOR);
   }
 
   /**
@@ -1161,11 +1201,16 @@ export class VideoGenerationService {
   private async _runIAppTtsGeneration(job: VideoGenerationJob): Promise<void> {
     const scriptThai = sanitizeThaiVoiceScript(job.approvedScriptThai ?? job.scriptThai ?? "");
     if (!scriptThai) throw new Error("No approved Thai script available for TTS");
+    const voiceId = resolveElevenLabsVoiceId(job.rvcVoiceModel);
 
-    if (scriptThai !== (job.approvedScriptThai ?? job.scriptThai ?? "")) {
+    if (
+      scriptThai !== (job.approvedScriptThai ?? job.scriptThai ?? "") ||
+      job.rvcVoiceModel !== voiceId
+    ) {
       await videoGenerationJobRepository.update(job.id, {
         scriptThai,
         approvedScriptThai: scriptThai,
+        rvcVoiceModel: voiceId,
       });
     }
 
@@ -1175,6 +1220,7 @@ export class VideoGenerationService {
       text: scriptThai,
       userId: request.userId,
       requestId: job.requestId,
+      voiceId,
     });
 
     const scheduledDeletionAt = new Date();
@@ -1262,7 +1308,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       voiceDurationSeconds,
       voiceTimestamps,
       subtitleTimeline,
-    });
+    }, SYSTEM_ACTOR);
     console.log(`[ElevenLabs] Voice stored for request ${job.requestId}: ${stored.storageKey}`);
   }
 
@@ -1277,7 +1323,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    */
   async regenerateVoice(
     jobId: string,
-    _userId: string
+    _userId: string,
+    requestedVoiceId?: ElevenLabsVoiceId
   ): Promise<VideoGenerationJob> {
     void _userId; // retained for caller-identity parity; not yet persisted
     const job = await this._getJob(jobId);
@@ -1298,6 +1345,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       );
     }
 
+    const selectedVoiceId = requestedVoiceId ?? resolveElevenLabsVoiceId(job.rvcVoiceModel);
     const updated = await videoGenerationJobRepository.update(jobId, {
       status: VideoGenerationJobStatus.Active,
       currentStep: VideoGenerationStep.GeneratingVoice,
@@ -1305,7 +1353,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       ttsTaskId: null,
-      rvcVoiceModel: "",
+      rvcVoiceModel: selectedVoiceId,
       // Coming back from scene-design: drop the stale plan + rendered segments so
       // a fresh scene design is generated once the new voice is approved.
       ...(fromSceneDesign
@@ -1356,7 +1404,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       currentStep: VideoGenerationStep.AwaitingAnimationApproval,
       animatedVideoAssetId: job.baseVideoAssetId,
       animatedOverlayAssetIds: {},
-    });
+    }, SYSTEM_ACTOR);
   }
 
   /**
@@ -1386,17 +1434,21 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await clipRequestRepository.update(job.requestId, { targetPlatforms });
     }
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.ComposingFinalVideo,
-      animationApprovedBy: userId,
-      // At this point the old animation preview is just the silent base video.
-      // Do not expose it as if it were the in-progress audio-merged result.
-      animatedVideoAssetId: null,
-      ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
-      ...(subtitleLanguages && subtitleLanguages.length > 0
-        ? { subtitleLanguages }
-        : {}),
-    });
+    const updated = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.ComposingFinalVideo,
+        animationApprovedBy: userId,
+        // At this point the old animation preview is just the silent base video.
+        // Do not expose it as if it were the in-progress audio-merged result.
+        animatedVideoAssetId: null,
+        ...(selectedMusicTrack !== null ? { selectedMusicTrack } : {}),
+        ...(subtitleLanguages && subtitleLanguages.length > 0
+          ? { subtitleLanguages }
+          : {}),
+      },
+      this._actorFor(jobId, userId)
+    );
 
     await this._dispatchHeavy(updated, RenderStep.FfmpegComposition, () =>
       this._runFFmpegComposition(updated)
@@ -1410,14 +1462,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     jobId: string,
     userId: string
   ): Promise<VideoGenerationJob> {
-    void userId; // retained for caller-identity parity; not yet persisted
+    // Not written to an *_approvedBy column (nothing was approved), but it is
+    // the actor for the gate-event row this transition closes.
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingAnimations,
-      animatedVideoAssetId: null,
-      animatedOverlayAssetIds: null,
-    });
+    const updated = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingAnimations,
+        animatedVideoAssetId: null,
+        animatedOverlayAssetIds: null,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "revised" }
+    );
 
     await this._dispatchHeavy(updated, RenderStep.AnimationGeneration, () =>
       this._runAnimationGeneration(updated)
@@ -1539,7 +1596,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       scenePlan: JSON.stringify(scenePlanToPersist),
       hookThai: output.hookThai,
       captionThai: output.captionThai,
-    });
+    }, SYSTEM_ACTOR);
   }
 
   /** Staff approves the AI voice and triggers scene/hook design from the approved script. */
@@ -1614,10 +1671,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await this._setDistributionChannels(job.requestId, targetPlatforms);
     }
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingSceneDesign,
-      voiceApprovedBy: userId,
-    });
+    const updated = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingSceneDesign,
+        voiceApprovedBy: userId,
+      },
+      this._actorFor(jobId, userId)
+    );
 
     this._runSceneDesignGeneration(updated).catch(async (err) => {
       console.error("Scene design generation failed:", err);
@@ -1681,29 +1742,33 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // then reviews every scene video together and clicks "Approve all" to merge.
     //
     // Fresh batch — clear any stale segment state in the same update.
-    const cleared = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      currentSceneIndex: 0,
-      approvedScenePlan: JSON.stringify(scenePlan),
-      contentApprovedBy: userId,
-      sceneVideoAssetIds: null,
-      baseVideoAssetId: null,
-      // The creative choices made on this same screen. Each is written only when
-      // supplied, so a staff/legacy caller cannot blank an existing selection.
-      ...(options.selectedMusicTrack != null
-        ? { selectedMusicTrack: options.selectedMusicTrack }
-        : {}),
-      ...(options.subtitleLanguages && options.subtitleLanguages.length > 0
-        ? { subtitleLanguages: options.subtitleLanguages }
-        : {}),
-      ...(options.selectedMotionTemplate != null
-        ? { selectedMotionTemplate: options.selectedMotionTemplate }
-        : {}),
-      // Only ever turned ON here. Backing out of the express lane is an explicit
-      // action elsewhere (reopen scene design / videos, revise audio), never a
-      // side effect of re-approving a gate.
-      ...(options.autoApproveRemaining ? { autoApproveRemaining: true } : {}),
-    });
+    const cleared = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingBaseVideo,
+        currentSceneIndex: 0,
+        approvedScenePlan: JSON.stringify(scenePlan),
+        contentApprovedBy: userId,
+        sceneVideoAssetIds: null,
+        baseVideoAssetId: null,
+        // The creative choices made on this same screen. Each is written only when
+        // supplied, so a staff/legacy caller cannot blank an existing selection.
+        ...(options.selectedMusicTrack != null
+          ? { selectedMusicTrack: options.selectedMusicTrack }
+          : {}),
+        ...(options.subtitleLanguages && options.subtitleLanguages.length > 0
+          ? { subtitleLanguages: options.subtitleLanguages }
+          : {}),
+        ...(options.selectedMotionTemplate != null
+          ? { selectedMotionTemplate: options.selectedMotionTemplate }
+          : {}),
+        // Only ever turned ON here. Backing out of the express lane is an explicit
+        // action elsewhere (reopen scene design / videos, revise audio), never a
+        // side effect of re-approving a gate.
+        ...(options.autoApproveRemaining ? { autoApproveRemaining: true } : {}),
+      },
+      this._actorFor(jobId, userId)
+    );
     await this._dispatchHeavy(cleared, RenderStep.MontageAllSegments, () =>
       this._renderAllSceneSegments(cleared)
     );
@@ -1807,10 +1872,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingSceneScriptApproval);
     await this._persistSceneEdits(jobId, edits);
 
-    const job = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      contentApprovedBy: userId,
-    });
+    const job = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingBaseVideo,
+        contentApprovedBy: userId,
+      },
+      this._actorFor(jobId, userId)
+    );
 
     // Render this scene's segment in the background.
     const sceneIndex = job.currentSceneIndex ?? 0;
@@ -1864,18 +1933,22 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // the offline fallback. `_runMontageMerge` performs the concat and advances to
     // animation. The API route returns promptly; the pipeline-status poller shows
     // the existing "Generating base video" state while it runs.
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      // The concat merge is its own visible pipeline phase ("รวมคลิปแต่ละฉาก")
-      // so its progress shows there rather than being hidden inside the scene-
-      // generation phase. `_runMontageMerge` advances to GeneratingAnimations.
-      currentStep: VideoGenerationStep.MergingScenes,
-      videoApprovedBy: userId,
-      // While the all-scenes merge is running there is no meaningful single
-      // base preview yet. The previous value is only a representative first
-      // scene used to enter the review panel, so clear it until the real merged
-      // asset is written by `_runMontageMerge`.
-      baseVideoAssetId: null,
-    });
+    const updated = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        // The concat merge is its own visible pipeline phase ("รวมคลิปแต่ละฉาก")
+        // so its progress shows there rather than being hidden inside the scene-
+        // generation phase. `_runMontageMerge` advances to GeneratingAnimations.
+        currentStep: VideoGenerationStep.MergingScenes,
+        videoApprovedBy: userId,
+        // While the all-scenes merge is running there is no meaningful single
+        // base preview yet. The previous value is only a representative first
+        // scene used to enter the review panel, so clear it until the real merged
+        // asset is written by `_runMontageMerge`.
+        baseVideoAssetId: null,
+      },
+      this._actorFor(jobId, userId)
+    );
 
     await this._dispatchHeavy(updated, RenderStep.MontageMerge, () =>
       this._runMontageMerge(updated)
@@ -1922,17 +1995,21 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     userId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
-      currentSceneIndex: 0,
-      contentApprovedBy: userId,
-      videoGenStatus: null,
-      sceneVideoAssetIds: null,
-      baseVideoAssetId: null,
-      // Back at the screen where the express lane is chosen, so drop it rather
-      // than silently re-applying a choice made last time round.
-      autoApproveRemaining: false,
-    });
+    return videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
+        currentSceneIndex: 0,
+        contentApprovedBy: userId,
+        videoGenStatus: null,
+        sceneVideoAssetIds: null,
+        baseVideoAssetId: null,
+        // Back at the screen where the express lane is chosen, so drop it rather
+        // than silently re-applying a choice made last time round.
+        autoApproveRemaining: false,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "reopened" }
+    );
   }
 
   /**
@@ -1951,15 +2028,20 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     jobId: string,
     userId: string
   ): Promise<VideoGenerationJob> {
-    void userId; // retained for caller-identity parity; not yet persisted
+    // Not written to an *_approvedBy column (nothing was approved), but it is
+    // the actor for the gate-event row this transition closes.
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingVideoApproval,
-      animatedVideoAssetId: null,
-      // Back at the gate where the express lane is offered, so drop it rather
-      // than silently re-applying a choice made last time round.
-      autoApproveRemaining: false,
-    });
+    return videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.AwaitingVideoApproval,
+        animatedVideoAssetId: null,
+        // Back at the gate where the express lane is offered, so drop it rather
+        // than silently re-applying a choice made last time round.
+        autoApproveRemaining: false,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "reopened" }
+    );
   }
 
   /**
@@ -1988,12 +2070,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._reinferSceneMotion(jobId, idx);
 
     // Keep ALL existing segments; only scene `idx` is replaced when it re-renders.
-    const prepared = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingBaseVideo,
-      currentSceneIndex: idx,
-      videoGenStatus: null,
-      contentApprovedBy: userId,
-    });
+    const prepared = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingBaseVideo,
+        currentSceneIndex: idx,
+        videoGenStatus: null,
+        contentApprovedBy: userId,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "revised" }
+    );
     await this._dispatchHeavy(
       prepared,
       RenderStep.MontageSceneSegment,
@@ -2034,11 +2120,15 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // request. Instead, the requester's chosen subtitle languages + motion
     // template are persisted and the styled/subtitle render begins (primary
     // ratio first). Delivery happens once that is approved.
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingOverlay,
-      ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
-      ...(selectedMotionTemplate ? { selectedMotionTemplate } : {}),
-    });
+    const updated = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingOverlay,
+        ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
+        ...(selectedMotionTemplate ? { selectedMotionTemplate } : {}),
+      },
+      this._actorFor(jobId, userId)
+    );
 
     await this._dispatchHeavy(updated, RenderStep.OverlayComposition, () =>
       this._runOverlayComposition(updated)
@@ -2193,7 +2283,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     return set.size === 2 && set.has("en") && set.has("zh");
   }
 
-  private _captionedFieldForRatio(ratio: VideoRatio): keyof UpdateVideoGenerationJobInput {
+  private _captionedFieldForRatio(ratio: VideoRatio): CaptionedExportField {
     switch (ratio) {
       case "9:16": return "captionedExport_9_16_assetId";
       case "16:9": return "captionedExport_16_9_assetId";
@@ -2204,7 +2294,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /** Job field holding the un-captioned merged MASTER for a given ratio. */
-  private _finalExportFieldForRatio(ratio: VideoRatio): keyof UpdateVideoGenerationJobInput {
+  private _finalExportFieldForRatio(ratio: VideoRatio): FinalExportField {
     switch (ratio) {
       case "9:16": return "finalExport_9_16_assetId";
       case "16:9": return "finalExport_16_9_assetId";
@@ -2482,24 +2572,27 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       renderProgressDetail: null,
     };
     updates[this._captionedFieldForRatio(primaryRatio)] = captionedId;
-    await videoGenerationJobRepository.update(job.id, updates);
+    await videoGenerationJobRepository.update(job.id, updates, SYSTEM_ACTOR);
   }
 
   /** Requester re-renders the overlay (optionally changing subtitle languages). */
   async regenerateOverlayByRequester(
     jobId: string,
-    _userId: string,
+    userId: string,
     subtitleLanguages?: ("th" | "en" | "zh")[]
   ): Promise<VideoGenerationJob> {
-    void _userId;
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingOverlay,
-      // Manual re-render — the requester is reviewing by hand again.
-      autoApproveRemaining: false,
-      ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
-    });
+    const updated = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingOverlay,
+        // Manual re-render — the requester is reviewing by hand again.
+        autoApproveRemaining: false,
+        ...(subtitleLanguages && subtitleLanguages.length > 0 ? { subtitleLanguages } : {}),
+      },
+      { ...this._actorFor(jobId, userId), resolution: "revised" }
+    );
 
     await this._dispatchHeavy(updated, RenderStep.OverlayComposition, () =>
       this._runOverlayComposition(updated)
@@ -2516,21 +2609,26 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    */
   async editSubtitleVideoByRequester(
     jobId: string,
-    _userId: string
+    userId: string
   ): Promise<VideoGenerationJob> {
-    void _userId;
+    // Not written to an *_approvedBy column (nothing was approved), but it is
+    // the actor for the gate-event row this transition closes.
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingFinalApproval,
-      // The requester has stepped back in to change the template/languages by
-      // hand, so stop auto-approving on their behalf — otherwise their new
-      // choices would be approved out from under them the moment they render.
-      autoApproveRemaining: false,
-      captionedExport_9_16_assetId: null,
-      captionedExport_16_9_assetId: null,
-      captionedExport_1_1_assetId: null,
-      captionedExport_4_5_assetId: null,
-    });
+    return videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.AwaitingFinalApproval,
+        // The requester has stepped back in to change the template/languages by
+        // hand, so stop auto-approving on their behalf — otherwise their new
+        // choices would be approved out from under them the moment they render.
+        autoApproveRemaining: false,
+        captionedExport_9_16_assetId: null,
+        captionedExport_16_9_assetId: null,
+        captionedExport_1_1_assetId: null,
+        captionedExport_4_5_assetId: null,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "reopened" }
+    );
   }
 
   /**
@@ -2554,10 +2652,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     if (remaining.length > 0) {
       // More channel formats to produce — wait for the explicit button.
-      const gated = await videoGenerationJobRepository.update(jobId, {
-        currentStep: VideoGenerationStep.AwaitingAdditionalRatios,
-        finalApprovedBy: userId,
-      });
+      const gated = await videoGenerationJobRepository.update(
+        jobId,
+        {
+          currentStep: VideoGenerationStep.AwaitingAdditionalRatios,
+          finalApprovedBy: userId,
+        },
+        this._actorFor(jobId, userId)
+      );
       // Express lane: press that button for them. Guarded on the flag here (not
       // only inside the helper) so a manual approval never recurses.
       if (gated.autoApproveRemaining) {
@@ -2567,7 +2669,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       return gated;
     }
 
-    return this._finalizeAndStartTravy(job, userId);
+    return this._finalizeAndStartTravy(job, userId, {
+      actor: this._actorFor(jobId, userId),
+    });
   }
 
   /** Requester triggers generation of the remaining channels' aspect ratios. */
@@ -2577,10 +2681,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAdditionalRatios);
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
-      ...(userId ? { finalApprovedBy: userId } : {}),
-    });
+    const updated = await videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
+        ...(userId ? { finalApprovedBy: userId } : {}),
+      },
+      this._actorFor(jobId, userId)
+    );
 
     await this._dispatchHeavy(updated, RenderStep.AdditionalRatios, () =>
       this._runAdditionalRatiosOverlay(updated)
@@ -2658,6 +2766,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // claim completes, or the worker would tear it down.
     await this._finalizeAndStartTravy(refreshed, refreshed.finalApprovedBy ?? "", {
       renderTravyInline: true,
+      // Reached by the worker finishing a render, not by anyone clicking: the
+      // finalApprovedBy id above is the requester who approved a PREVIOUS gate,
+      // so attributing this transition to them would invent a human action.
+      actor: SYSTEM_ACTOR,
     });
   }
 
@@ -2677,7 +2789,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   private async _finalizeAndStartTravy(
     job: VideoGenerationJob,
     userId: string,
-    opts: { renderTravyInline?: boolean } = {}
+    opts: { renderTravyInline?: boolean; actor?: JobUpdateActor } = {}
   ): Promise<VideoGenerationJob> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
@@ -2730,7 +2842,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
     }
 
-    const updated = await videoGenerationJobRepository.update(job.id, updates);
+    const updated = await videoGenerationJobRepository.update(
+      job.id,
+      updates,
+      opts.actor
+    );
 
     // Persist the detailed production milestone before the coarse Delivered
     // request status so Status History always reads
@@ -3529,7 +3645,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       currentStep: VideoGenerationStep.AwaitingFinalApproval,
       renderProgress: null,
       renderProgressDetail: null,
-    });
+    }, SYSTEM_ACTOR);
     console.log(`[compose] request ${job.requestId}: batch complete → AwaitingFinalApproval`);
     // The Travy (Travy) export is NOT produced here — it is rendered with its
     // EN+ZH overlay automatically in the Phase-7 background step after the overlay
@@ -3645,19 +3761,24 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     jobId: string,
     userId: string
   ): Promise<VideoGenerationJob> {
-    void userId; // retained for caller-identity parity; not yet persisted
+    // Not written to an *_approvedBy column (nothing was approved), but it is
+    // the actor for the gate-event row this transition closes.
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
-    return videoGenerationJobRepository.update(jobId, {
-      currentStep: VideoGenerationStep.AwaitingAnimationApproval,
-      // Back at the step-5 gate, where the express lane is offered again — so
-      // drop it here rather than silently re-applying a choice made last time.
-      autoApproveRemaining: false,
-      finalExport_9_16_assetId: null,
-      finalExport_16_9_assetId: null,
-      finalExport_1_1_assetId: null,
-      finalExport_4_5_assetId: null,
-      finalExport_travy_assetId: null,
-    });
+    return videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.AwaitingAnimationApproval,
+        // Back at the step-5 gate, where the express lane is offered again — so
+        // drop it here rather than silently re-applying a choice made last time.
+        autoApproveRemaining: false,
+        finalExport_9_16_assetId: null,
+        finalExport_16_9_assetId: null,
+        finalExport_1_1_assetId: null,
+        finalExport_4_5_assetId: null,
+        finalExport_travy_assetId: null,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "reopened" }
+    );
   }
 
   /**
@@ -3703,7 +3824,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       captionChinese: string;
       /** Requester-edited storyboard (overrides the generated one). */
       storyboard?: StoryboardScene[] | null;
-    }
+    },
+    voiceId: ElevenLabsVoiceId
   ): Promise<VideoGenerationJob> {
     const existing = await videoGenerationJobRepository.findByRequestId(requestId);
     const scriptThai = sanitizeThaiVoiceScript(analysis.scriptThai);
@@ -3731,6 +3853,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         approvedCaptionChinese: analysis.captionChinese,
         storyboard: storyboardJson,
         approvedStoryboard: storyboardJson,
+        rvcVoiceModel: voiceId,
         contentApprovedBy: requesterId,
       });
 
@@ -3754,6 +3877,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       requestId,
       status: VideoGenerationJobStatus.Active,
       currentStep: VideoGenerationStep.GeneratingVoice,
+      currentSceneIndex: 0,
       storyboard: storyboardJson,
       approvedStoryboard: storyboardJson,
       scenePlan: sanitizeScenePlanJson(analysis.scenePlan),
@@ -3781,7 +3905,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       sceneVideoAssetIds: null,
       baseVideoAssetId: null,
       ttsTaskId: null,
-      rvcVoiceModel: "",
+      rvcVoiceModel: voiceId,
       voiceRecordingAssetId: null,
       processedVoiceAssetId: null,
       selectedMusicTrack: null,

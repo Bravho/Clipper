@@ -1,4 +1,7 @@
-import { IVideoGenerationJobRepository } from "@/repositories/interfaces/IVideoGenerationJobRepository";
+import {
+  IVideoGenerationJobRepository,
+  JobUpdateActor,
+} from "@/repositories/interfaces/IVideoGenerationJobRepository";
 import {
   VideoGenerationJob,
   CreateVideoGenerationJobInput,
@@ -9,6 +12,13 @@ import {
 } from "@/domain/models/VideoGenerationJob";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
+import { shouldSuppressPipelineNotice } from "@/config/push";
+import {
+  gateEventService,
+  gateSceneIndex,
+  isAwaitingGate,
+  type GateResolution,
+} from "@/services/analytics/GateEventService";
 import { pool } from "@/lib/db";
 
 function parseJsonField<T>(value: unknown, fallback: T): T {
@@ -39,6 +49,20 @@ function nullableNumber(value: unknown): number | null {
   if (value == null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Best guess at how a gate ended, from the step the pipeline moved to.
+ *
+ * Only a fallback: a caller that knows better (a revision, a reopen) passes
+ * `actor.resolution` and this is not consulted. Landing on another gate means
+ * the requester was sent back to review something, and Failed means the gate
+ * will never be answered.
+ */
+function inferGateResolution(nextStep: VideoGenerationStep): GateResolution {
+  if (nextStep === VideoGenerationStep.Failed) return "abandoned";
+  if (isAwaitingGate(nextStep)) return "reopened";
+  return "approved";
 }
 
 function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
@@ -135,19 +159,6 @@ function rowToJob(row: Record<string, unknown>): VideoGenerationJob {
     updatedAt: new Date(row.updated_at as string),
   };
 }
-
-/**
- * Gates the scene-plan express lane approves on the requester's behalf. Reaching
- * one of these on an `autoApproveRemaining` job is a pass-through, not a request
- * for attention, so no push notice is sent for it.
- */
-const AUTO_APPROVED_GATES: VideoGenerationStep[] = [
-  VideoGenerationStep.AwaitingVideoApproval,
-  VideoGenerationStep.AwaitingAnimationApproval,
-  VideoGenerationStep.AwaitingFinalApproval,
-  VideoGenerationStep.AwaitingOverlayApproval,
-  VideoGenerationStep.AwaitingAdditionalRatios,
-];
 
 const JOB_UPDATE_COLS: Record<string, string> = {
   status: "status",
@@ -326,7 +337,8 @@ export class PostgresVideoGenerationJobRepository
 
   async update(
     id: string,
-    input: UpdateVideoGenerationJobInput
+    input: UpdateVideoGenerationJobInput,
+    actor?: JobUpdateActor
   ): Promise<VideoGenerationJob> {
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -356,6 +368,14 @@ export class PostgresVideoGenerationJobRepository
       sets.push(`step_started_at = NOW()`);
     }
 
+    // Read the step being LEFT before the UPDATE overwrites it. A gate is closed
+    // against the step/scene it was opened on, and both can change in the same
+    // update (the per-scene loop advances currentSceneIndex alongside the step),
+    // so the post-update row cannot answer this. One extra SELECT, only on the
+    // updates that move the pipeline.
+    const previous =
+      input.currentStep !== undefined ? await this._readGateState(id) : null;
+
     sets.push(`updated_at = NOW()`);
     values.push(id);
 
@@ -376,6 +396,15 @@ export class PostgresVideoGenerationJobRepository
         updated.currentStep,
         updated.currentSceneIndex
       );
+
+      // Gate analytics (migration 028). Both calls swallow their own errors.
+      //
+      // Close BEFORE open: a revision that lands straight back on the same gate
+      // must free the `uq_gate_events_open` slot first, otherwise the re-entry is
+      // silently dropped by ON CONFLICT and the second wait goes unmeasured.
+      await this._closeGateIfLeaving(updated, previous, actor);
+      await this._openGateIfEntering(updated, actor);
+
       // Push is best-effort and idempotent. A notification outage must never
       // roll back a successfully persisted pipeline transition.
       //
@@ -383,9 +412,10 @@ export class PostgresVideoGenerationJobRepository
       // approved automatically within seconds, so a "ready for review" push
       // would summon the requester to a screen that is already gone. Stay
       // silent until the download step, which still notifies.
-      const suppressedByAutoApproval =
-        updated.autoApproveRemaining === true &&
-        AUTO_APPROVED_GATES.includes(updated.currentStep);
+      const suppressedByAutoApproval = shouldSuppressPipelineNotice(
+        updated.currentStep,
+        updated.autoApproveRemaining
+      );
 
       if (!suppressedByAutoApproval) {
         try {
@@ -398,6 +428,19 @@ export class PostgresVideoGenerationJobRepository
             updated.currentStep,
             updated.currentSceneIndex ?? undefined
           );
+          // Only reached when the push actually went out. A gate row left with
+          // notified_at NULL is the record of a suppressed or failed notice —
+          // see GateEventService.markNotified.
+          if (isAwaitingGate(updated.currentStep)) {
+            await gateEventService.markNotified({
+              jobId: updated.id,
+              step: updated.currentStep,
+              sceneIndex: gateSceneIndex(
+                updated.currentStep,
+                updated.currentSceneIndex
+              ),
+            });
+          }
         } catch (err) {
           console.error("[push] pipeline notification failed:", err);
         }
@@ -405,6 +448,82 @@ export class PostgresVideoGenerationJobRepository
     }
 
     return updated;
+  }
+
+  /**
+   * The step/scene a job is sitting on right now, for closing its gate row.
+   *
+   * Returns null rather than throwing when the row cannot be read: gate
+   * analytics must never be the reason a persisted transition fails.
+   */
+  private async _readGateState(
+    id: string
+  ): Promise<{ step: VideoGenerationStep; sceneIndex: number | null } | null> {
+    try {
+      const { rows } = await this.db.query(
+        "SELECT current_step, current_scene_index FROM video_generation_jobs WHERE id = $1",
+        [id]
+      );
+      if (!rows[0]) return null;
+      return {
+        step: rows[0].current_step as VideoGenerationStep,
+        sceneIndex: nullableNumber(rows[0].current_scene_index),
+      };
+    } catch (err) {
+      console.error("[gateEvents] failed to read previous step:", err);
+      return null;
+    }
+  }
+
+  /** Open a gate row when the job has just arrived at an `awaiting_*` step. */
+  private async _openGateIfEntering(
+    updated: VideoGenerationJob,
+    actor?: JobUpdateActor
+  ): Promise<void> {
+    if (!isAwaitingGate(updated.currentStep)) return;
+    await gateEventService.openGate({
+      jobId: updated.id,
+      requestId: updated.requestId,
+      // Whoever drove the pipeline to this gate is, in practice, the requester
+      // the gate now waits on. Null when the transition came from a worker or an
+      // untouched call site.
+      userId: actor?.userId ?? null,
+      step: updated.currentStep,
+      sceneIndex: gateSceneIndex(updated.currentStep, updated.currentSceneIndex),
+    });
+  }
+
+  /**
+   * Close the previous gate row when the job has just left an `awaiting_*` step.
+   *
+   * Re-entering the SAME gate at the same scene is not a close: it is the express
+   * lane's post-step hook and the requester's status poll both writing the step
+   * the job is already on, and treating that as a resolution would record a wait
+   * of a few milliseconds and lose the real one.
+   */
+  private async _closeGateIfLeaving(
+    updated: VideoGenerationJob,
+    previous: { step: VideoGenerationStep; sceneIndex: number | null } | null,
+    actor?: JobUpdateActor
+  ): Promise<void> {
+    if (!previous || !isAwaitingGate(previous.step)) return;
+    const previousScene = gateSceneIndex(previous.step, previous.sceneIndex);
+    const currentScene = gateSceneIndex(
+      updated.currentStep,
+      updated.currentSceneIndex
+    );
+    if (previous.step === updated.currentStep && previousScene === currentScene) {
+      return;
+    }
+
+    await gateEventService.closeGate({
+      jobId: updated.id,
+      step: previous.step,
+      sceneIndex: previousScene,
+      resolution: actor?.resolution ?? inferGateResolution(updated.currentStep),
+      resolvedBy: actor?.userId ?? null,
+      actorSource: actor?.source ?? null,
+    });
   }
 
   private async _recordStepHistory(

@@ -1,6 +1,5 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import * as os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -140,7 +139,7 @@ function escapeDrawtextString(s: string): string {
     .replace(/:/g, "\\:");
 }
 
-function buildFilterChain(specs: AnimationSpec[], videoWidth = 1080, videoHeight = 1920): string {
+function buildFilterChain(specs: AnimationSpec[], _videoWidth = 1080, _videoHeight = 1920): string {
   if (specs.length === 0) return "";
 
   const filters = specs.map((spec) => {

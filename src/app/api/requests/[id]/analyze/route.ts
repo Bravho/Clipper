@@ -84,6 +84,7 @@ export async function POST(
         requestId: id,
         status: VideoGenerationJobStatus.Active,
         currentStep: VideoGenerationStep.AwaitingContentApproval,
+        currentSceneIndex: 0,
         storyboard: JSON.stringify(scriptOutput.storyboard),
         approvedStoryboard: null,
         scenePlan: null,

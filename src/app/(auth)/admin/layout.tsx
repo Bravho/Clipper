@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
-import { AdminNav } from "@/components/layout/AdminNav";
+import { AdminShell } from "@/components/layout/AdminShell";
 
 export const metadata: Metadata = { title: "Admin Portal — RClipper" };
 
@@ -12,10 +12,7 @@ export default async function AdminLayout({
 }) {
   await requireRole(Role.Admin);
 
-  return (
-    <div className="w-full min-w-0 bg-slate-50">
-      <AdminNav />
-      <main className="mx-auto w-full min-w-0 max-w-7xl px-4 py-6">{children}</main>
-    </div>
-  );
+  // AdminShell owns the sidebar, the max-width content column and the mobile
+  // nav registration. The layout's only remaining job is the role gate.
+  return <AdminShell>{children}</AdminShell>;
 }

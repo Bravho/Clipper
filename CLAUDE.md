@@ -70,6 +70,18 @@ exchange the resulting ID token through the `google-native` / `apple-native`
 Credentials providers. Sign-out must go through `signOutEverywhere()` — plain
 `signOut()` leaves the native credential cached. See `docs/NATIVE_SIGN_IN.md`.
 
+**Push notifications fire at gates, not at step completions.** A pipeline step
+finishing is not news — the next step starts by itself. What the requester needs
+is a nudge when the pipeline STOPS and waits for them, so only `awaiting_*`
+steps (plus `failed`/`complete`) have an entry in `NOTICES`. On an express-lane
+job (`auto_approve_remaining`) the later gates clear themselves within seconds,
+so those notices are suppressed and the requester gets exactly one notification,
+at the final step. The rule is `shouldSuppressPipelineNotice()` in
+`src/config/push.ts`, derived from the UI's `isAutoApprovedGate()` so the two
+cannot drift. Delivery is FCM v1 / APNs over HTTP/2 / Web Push VAPID from
+`PushNotificationService`, deduped by a unique `(job_id, event_key)`. Setup and
+store-console steps: `docs/PUSH_NOTIFICATIONS_SETUP.md`.
+
 ### AI video pipeline
 
 Staff triggers the pipeline on a `ClipRequest`. The pipeline is orchestrated by `VideoGenerationService` and tracked on a `VideoGenerationJob` record.

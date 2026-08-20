@@ -1,0 +1,61 @@
+0fd6274198928a15c852c80f66d0185e
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TERMINAL_STATUSES = exports.ACTIVE_STATUSES = exports.RequestStatus = void 0;
+/**
+ * Clip request lifecycle statuses.
+ *
+ * Business rules:
+ * - Draft:                  Requester is filling out the form. Not yet submitted.
+ * - Submitted:              Requester has submitted. Awaiting staff review.
+ * - UnderReview:            Staff is reviewing the submitted materials.
+ * - AcceptedForProduction:  Staff accepted the request. Production is queued.
+ * - Editing:                Staff is actively editing the clip.
+ * - ScheduledForPublishing: Clip editing complete. Publishing is queued.
+ * - Published:              Clip has been published to at least one channel.
+ * - Delivered:              Delivery confirmed to requester.
+ * - OnHold:                 Request paused (reason shown to requester).
+ * - Rejected:               Request rejected (reason shown to requester).
+ *
+ * NOTE: No "InternalQA" status per product spec.
+ *
+ * TODO: PostgreSQL — store as TEXT with a CHECK constraint on the allowed values.
+ *       Map to `status` column on the `clip_requests` table.
+ */
+var RequestStatus;
+(function (RequestStatus) {
+    RequestStatus["Draft"] = "draft";
+    RequestStatus["Submitted"] = "submitted";
+    RequestStatus["UnderReview"] = "under_review";
+    RequestStatus["AcceptedForProduction"] = "accepted_for_production";
+    RequestStatus["Editing"] = "editing";
+    RequestStatus["ScheduledForPublishing"] = "scheduled_for_publishing";
+    RequestStatus["Published"] = "published";
+    RequestStatus["Delivered"] = "delivered";
+    RequestStatus["OnHold"] = "on_hold";
+    RequestStatus["Rejected"] = "rejected";
+    RequestStatus["RevisionRequested"] = "revision_requested";
+    /**
+     * AutoCancelled: request had no activity for the inactivity window (30 days)
+     * and was automatically cancelled by the retention sweep. Its uploaded and
+     * processed media are deleted (thumbnails retained). Distinct from a
+     * user/staff-initiated cancellation.
+     */
+    RequestStatus["AutoCancelled"] = "auto_cancelled";
+})(RequestStatus || (exports.RequestStatus = RequestStatus = {}));
+/** Statuses where the request is actively progressing (not terminal, not draft). */
+exports.ACTIVE_STATUSES = [
+    RequestStatus.Submitted,
+    RequestStatus.UnderReview,
+    RequestStatus.AcceptedForProduction,
+    RequestStatus.Editing,
+    RequestStatus.ScheduledForPublishing,
+];
+/** Terminal statuses — no further staff action expected. */
+exports.TERMINAL_STATUSES = [
+    RequestStatus.Published,
+    RequestStatus.Delivered,
+    RequestStatus.Rejected,
+    RequestStatus.AutoCancelled,
+];
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxSZXF1ZXN0U3RhdHVzLnRzIiwibWFwcGluZ3MiOiI7OztBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBbUJHO0FBQ0gsSUFBWSxhQW1CWDtBQW5CRCxXQUFZLGFBQWE7SUFDdkIsZ0NBQWUsQ0FBQTtJQUNmLHdDQUF1QixDQUFBO0lBQ3ZCLDZDQUE0QixDQUFBO0lBQzVCLGtFQUFpRCxDQUFBO0lBQ2pELG9DQUFtQixDQUFBO0lBQ25CLG9FQUFtRCxDQUFBO0lBQ25ELHdDQUF1QixDQUFBO0lBQ3ZCLHdDQUF1QixDQUFBO0lBQ3ZCLG1DQUFrQixDQUFBO0lBQ2xCLHNDQUFxQixDQUFBO0lBQ3JCLHlEQUF3QyxDQUFBO0lBQ3hDOzs7OztPQUtHO0lBQ0gsaURBQWdDLENBQUE7QUFDbEMsQ0FBQyxFQW5CVyxhQUFhLDZCQUFiLGFBQWEsUUFtQnhCO0FBRUQsb0ZBQW9GO0FBQ3ZFLFFBQUEsZUFBZSxHQUFvQjtJQUM5QyxhQUFhLENBQUMsU0FBUztJQUN2QixhQUFhLENBQUMsV0FBVztJQUN6QixhQUFhLENBQUMscUJBQXFCO0lBQ25DLGFBQWEsQ0FBQyxPQUFPO0lBQ3JCLGFBQWEsQ0FBQyxzQkFBc0I7Q0FDckMsQ0FBQztBQUVGLDREQUE0RDtBQUMvQyxRQUFBLGlCQUFpQixHQUFvQjtJQUNoRCxhQUFhLENBQUMsU0FBUztJQUN2QixhQUFhLENBQUMsU0FBUztJQUN2QixhQUFhLENBQUMsUUFBUTtJQUN0QixhQUFhLENBQUMsYUFBYTtDQUM1QixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIkQ6XFxjb2RpbmdcXGNsaXBwZXJfYWdlbnRcXHNyY1xcZG9tYWluXFxlbnVtc1xcUmVxdWVzdFN0YXR1cy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIENsaXAgcmVxdWVzdCBsaWZlY3ljbGUgc3RhdHVzZXMuXG4gKlxuICogQnVzaW5lc3MgcnVsZXM6XG4gKiAtIERyYWZ0OiAgICAgICAgICAgICAgICAgIFJlcXVlc3RlciBpcyBmaWxsaW5nIG91dCB0aGUgZm9ybS4gTm90IHlldCBzdWJtaXR0ZWQuXG4gKiAtIFN1Ym1pdHRlZDogICAgICAgICAgICAgIFJlcXVlc3RlciBoYXMgc3VibWl0dGVkLiBBd2FpdGluZyBzdGFmZiByZXZpZXcuXG4gKiAtIFVuZGVyUmV2aWV3OiAgICAgICAgICAgIFN0YWZmIGlzIHJldmlld2luZyB0aGUgc3VibWl0dGVkIG1hdGVyaWFscy5cbiAqIC0gQWNjZXB0ZWRGb3JQcm9kdWN0aW9uOiAgU3RhZmYgYWNjZXB0ZWQgdGhlIHJlcXVlc3QuIFByb2R1Y3Rpb24gaXMgcXVldWVkLlxuICogLSBFZGl0aW5nOiAgICAgICAgICAgICAgICBTdGFmZiBpcyBhY3RpdmVseSBlZGl0aW5nIHRoZSBjbGlwLlxuICogLSBTY2hlZHVsZWRGb3JQdWJsaXNoaW5nOiBDbGlwIGVkaXRpbmcgY29tcGxldGUuIFB1Ymxpc2hpbmcgaXMgcXVldWVkLlxuICogLSBQdWJsaXNoZWQ6ICAgICAgICAgICAgICBDbGlwIGhhcyBiZWVuIHB1Ymxpc2hlZCB0byBhdCBsZWFzdCBvbmUgY2hhbm5lbC5cbiAqIC0gRGVsaXZlcmVkOiAgICAgICAgICAgICAgRGVsaXZlcnkgY29uZmlybWVkIHRvIHJlcXVlc3Rlci5cbiAqIC0gT25Ib2xkOiAgICAgICAgICAgICAgICAgUmVxdWVzdCBwYXVzZWQgKHJlYXNvbiBzaG93biB0byByZXF1ZXN0ZXIpLlxuICogLSBSZWplY3RlZDogICAgICAgICAgICAgICBSZXF1ZXN0IHJlamVjdGVkIChyZWFzb24gc2hvd24gdG8gcmVxdWVzdGVyKS5cbiAqXG4gKiBOT1RFOiBObyBcIkludGVybmFsUUFcIiBzdGF0dXMgcGVyIHByb2R1Y3Qgc3BlYy5cbiAqXG4gKiBUT0RPOiBQb3N0Z3JlU1FMIOKAlCBzdG9yZSBhcyBURVhUIHdpdGggYSBDSEVDSyBjb25zdHJhaW50IG9uIHRoZSBhbGxvd2VkIHZhbHVlcy5cbiAqICAgICAgIE1hcCB0byBgc3RhdHVzYCBjb2x1bW4gb24gdGhlIGBjbGlwX3JlcXVlc3RzYCB0YWJsZS5cbiAqL1xuZXhwb3J0IGVudW0gUmVxdWVzdFN0YXR1cyB7XG4gIERyYWZ0ID0gXCJkcmFmdFwiLFxuICBTdWJtaXR0ZWQgPSBcInN1Ym1pdHRlZFwiLFxuICBVbmRlclJldmlldyA9IFwidW5kZXJfcmV2aWV3XCIsXG4gIEFjY2VwdGVkRm9yUHJvZHVjdGlvbiA9IFwiYWNjZXB0ZWRfZm9yX3Byb2R1Y3Rpb25cIixcbiAgRWRpdGluZyA9IFwiZWRpdGluZ1wiLFxuICBTY2hlZHVsZWRGb3JQdWJsaXNoaW5nID0gXCJzY2hlZHVsZWRfZm9yX3B1Ymxpc2hpbmdcIixcbiAgUHVibGlzaGVkID0gXCJwdWJsaXNoZWRcIixcbiAgRGVsaXZlcmVkID0gXCJkZWxpdmVyZWRcIixcbiAgT25Ib2xkID0gXCJvbl9ob2xkXCIsXG4gIFJlamVjdGVkID0gXCJyZWplY3RlZFwiLFxuICBSZXZpc2lvblJlcXVlc3RlZCA9IFwicmV2aXNpb25fcmVxdWVzdGVkXCIsXG4gIC8qKlxuICAgKiBBdXRvQ2FuY2VsbGVkOiByZXF1ZXN0IGhhZCBubyBhY3Rpdml0eSBmb3IgdGhlIGluYWN0aXZpdHkgd2luZG93ICgzMCBkYXlzKVxuICAgKiBhbmQgd2FzIGF1dG9tYXRpY2FsbHkgY2FuY2VsbGVkIGJ5IHRoZSByZXRlbnRpb24gc3dlZXAuIEl0cyB1cGxvYWRlZCBhbmRcbiAgICogcHJvY2Vzc2VkIG1lZGlhIGFyZSBkZWxldGVkICh0aHVtYm5haWxzIHJldGFpbmVkKS4gRGlzdGluY3QgZnJvbSBhXG4gICAqIHVzZXIvc3RhZmYtaW5pdGlhdGVkIGNhbmNlbGxhdGlvbi5cbiAgICovXG4gIEF1dG9DYW5jZWxsZWQgPSBcImF1dG9fY2FuY2VsbGVkXCIsXG59XG5cbi8qKiBTdGF0dXNlcyB3aGVyZSB0aGUgcmVxdWVzdCBpcyBhY3RpdmVseSBwcm9ncmVzc2luZyAobm90IHRlcm1pbmFsLCBub3QgZHJhZnQpLiAqL1xuZXhwb3J0IGNvbnN0IEFDVElWRV9TVEFUVVNFUzogUmVxdWVzdFN0YXR1c1tdID0gW1xuICBSZXF1ZXN0U3RhdHVzLlN1Ym1pdHRlZCxcbiAgUmVxdWVzdFN0YXR1cy5VbmRlclJldmlldyxcbiAgUmVxdWVzdFN0YXR1cy5BY2NlcHRlZEZvclByb2R1Y3Rpb24sXG4gIFJlcXVlc3RTdGF0dXMuRWRpdGluZyxcbiAgUmVxdWVzdFN0YXR1cy5TY2hlZHVsZWRGb3JQdWJsaXNoaW5nLFxuXTtcblxuLyoqIFRlcm1pbmFsIHN0YXR1c2VzIOKAlCBubyBmdXJ0aGVyIHN0YWZmIGFjdGlvbiBleHBlY3RlZC4gKi9cbmV4cG9ydCBjb25zdCBURVJNSU5BTF9TVEFUVVNFUzogUmVxdWVzdFN0YXR1c1tdID0gW1xuICBSZXF1ZXN0U3RhdHVzLlB1Ymxpc2hlZCxcbiAgUmVxdWVzdFN0YXR1cy5EZWxpdmVyZWQsXG4gIFJlcXVlc3RTdGF0dXMuUmVqZWN0ZWQsXG4gIFJlcXVlc3RTdGF0dXMuQXV0b0NhbmNlbGxlZCxcbl07XG4iXSwidmVyc2lvbiI6M30=

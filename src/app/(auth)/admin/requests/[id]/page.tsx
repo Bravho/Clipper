@@ -6,15 +6,12 @@ import { Role } from "@/domain/enums/Role";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import {
   clipRequestRepository,
-  productionReviewRepository,
   internalNoteRepository,
   uploadedAssetRepository,
   publishingLinkRepository,
   requestStatusHistoryRepository,
 } from "@/repositories";
 import { AdminStatusBadge } from "@/features/admin/components/AdminStatusBadge";
-import { ProductionReviewBadge } from "@/features/admin/components/ProductionReviewBadge";
-import { AdminActionButtons } from "@/features/admin/components/AdminActionButtons";
 
 export const metadata: Metadata = { title: "Request Detail — Admin" };
 
@@ -26,9 +23,8 @@ export default async function AdminRequestDetailPage({
   await requireRole(Role.Admin);
   const { id } = await params;
 
-  const [request, review, notes, assets, links, history] = await Promise.all([
+  const [request, notes, assets, links, history] = await Promise.all([
     clipRequestRepository.findById(id),
-    productionReviewRepository.findLatestByRequestId(id),
     internalNoteRepository.findByRequestId(id),
     uploadedAssetRepository.findByRequestId(id),
     publishingLinkRepository.findByRequestId(id),
@@ -37,7 +33,6 @@ export default async function AdminRequestDetailPage({
 
   if (!request) notFound();
 
-  const isPendingAdminReview = request.status === RequestStatus.ScheduledForPublishing;
   const now = new Date();
   const isOverdue =
     request.confirmedDueDate &&
@@ -57,7 +52,6 @@ export default async function AdminRequestDetailPage({
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-slate-900">{request.title}</h1>
           <AdminStatusBadge status={request.status} />
-          {review && <ProductionReviewBadge status={review.status} />}
           {isOverdue && (
             <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
               Overdue
@@ -66,22 +60,6 @@ export default async function AdminRequestDetailPage({
         </div>
         <p className="mt-1 text-xs text-slate-400">ID: {request.id}</p>
       </div>
-
-      {/* Admin action panel — only when pending review */}
-      {isPendingAdminReview && (
-        <div className="rounded-lg border border-orange-200 bg-orange-50 p-5 space-y-4">
-          <div>
-            <h2 className="text-sm font-semibold text-orange-800">
-              Production Review — Action Required
-            </h2>
-            <p className="mt-1 text-xs text-orange-700">
-              Staff has submitted this clip for your review. Approve to proceed to
-              publishing, or return to editing / hold / reject as needed.
-            </p>
-          </div>
-          <AdminActionButtons requestId={request.id} />
-        </div>
-      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left column — brief + operational data */}
@@ -116,57 +94,6 @@ export default async function AdminRequestDetailPage({
               </div>
             </div>
           </section>
-
-          {/* Production review record */}
-          {review && (
-            <section className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-                Production Review Record
-              </h2>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-xs font-medium text-slate-500">Review Status</p>
-                  <div className="mt-0.5">
-                    <ProductionReviewBadge status={review.status} />
-                  </div>
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500">Submitted for Review</p>
-                  <p className="mt-0.5 text-slate-800">
-                    {review.submittedAt.toLocaleDateString("en-GB", {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                    })}
-                  </p>
-                </div>
-                {review.reviewedBy && (
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Reviewed By</p>
-                    <p className="mt-0.5 text-slate-800">{review.reviewedBy}</p>
-                  </div>
-                )}
-                {review.reviewedAt && (
-                  <div>
-                    <p className="text-xs font-medium text-slate-500">Reviewed At</p>
-                    <p className="mt-0.5 text-slate-800">
-                      {review.reviewedAt.toLocaleDateString("en-GB", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
-                )}
-                {review.reviewNote && (
-                  <div className="col-span-2">
-                    <p className="text-xs font-medium text-slate-500">Review Note</p>
-                    <p className="mt-0.5 text-slate-800">{review.reviewNote}</p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
 
           {/* Internal notes */}
           <section className="rounded-lg border border-slate-200 bg-white p-5 space-y-3">
@@ -386,14 +313,6 @@ export default async function AdminRequestDetailPage({
               />
             </div>
           </section>
-
-          {/* Staff detail link */}
-          <Link
-            href={`/staff/requests/${request.id}`}
-            className="block rounded-md border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 text-center hover:bg-slate-50 transition"
-          >
-            View in Staff Portal →
-          </Link>
         </div>
       </div>
     </div>

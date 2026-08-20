@@ -2,40 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
+import { ROUTES } from "@/config/routes";
+import { ADMIN_NAV_LINKS } from "@/config/adminNav";
 import { adminDashboardService } from "@/services/admin/AdminDashboardService";
 import { AdminStatusBadge } from "@/features/admin/components/AdminStatusBadge";
+import { StatTile, StatTileGrid } from "@/features/admin/components/StatTile";
 
 export const metadata: Metadata = { title: "Admin Dashboard — RClipper" };
-
-function StatCard({
-  label,
-  value,
-  href,
-  urgent,
-}: {
-  label: string;
-  value: number;
-  href: string;
-  urgent?: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className={`rounded-lg border p-5 transition hover:shadow-sm ${
-        urgent && value > 0
-          ? "border-red-200 bg-red-50"
-          : "border-slate-200 bg-white"
-      }`}
-    >
-      <p className={`text-3xl font-bold ${urgent && value > 0 ? "text-red-700" : "text-slate-900"}`}>
-        {value}
-      </p>
-      <p className={`mt-1 text-sm ${urgent && value > 0 ? "text-red-600" : "text-slate-500"}`}>
-        {label}
-      </p>
-    </Link>
-  );
-}
 
 export default async function AdminDashboardPage() {
   const user = await requireRole(Role.Admin);
@@ -51,57 +24,28 @@ export default async function AdminDashboardPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {today} &middot; Signed in as{" "}
-            <span className="font-medium">{user.name}</span>
-            <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-              Admin
-            </span>
-          </p>
-        </div>
-        <Link
-          href="/staff"
-          className="text-xs text-slate-400 hover:text-slate-600 hover:underline"
-        >
-          → Staff view
-        </Link>
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          {today} &middot; Signed in as{" "}
+          <span className="font-medium">{user.name}</span>
+          <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+            Admin
+          </span>
+        </p>
       </div>
 
       {/* Operational alerts */}
       <div className="space-y-2">
-        {summary.pendingAdminReviewCount > 0 && (
-          <div className="flex items-start gap-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-3">
-            <span className="text-orange-600 font-bold">!</span>
-            <div>
-              <p className="text-sm font-semibold text-orange-800">
-                {summary.pendingAdminReviewCount} clip{summary.pendingAdminReviewCount !== 1 ? "s" : ""} pending your production review.
-              </p>
-              <p className="text-xs text-orange-600">
-                Staff has submitted these for admin approval before publishing.{" "}
-                <Link href="/admin/production-review" className="font-medium underline">
-                  Review now →
-                </Link>
-              </p>
-            </div>
-          </div>
-        )}
-
         {summary.overdueCount > 0 && (
           <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
             <span className="text-red-600 font-bold">!</span>
-            <div>
-              <p className="text-sm font-semibold text-red-800">
-                {summary.overdueCount} request{summary.overdueCount !== 1 ? "s are" : " is"} past the confirmed due date.
-              </p>
-              <p className="text-xs text-red-600">
-                <Link href="/admin/sla" className="font-medium underline">
-                  View SLA monitor →
-                </Link>
-              </p>
-            </div>
+            <p className="text-sm font-semibold text-red-800">
+              {summary.overdueCount} request{summary.overdueCount !== 1 ? "s are" : " is"} past the confirmed due date.{" "}
+              <Link href={ROUTES.ADMIN_REQUESTS} className="font-medium underline">
+                View requests →
+              </Link>
+            </p>
           </div>
         )}
 
@@ -123,23 +67,24 @@ export default async function AdminDashboardPage() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
           Pipeline Overview
         </h2>
-        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <StatCard label="Submitted" value={summary.submittedCount} href="/admin/queue" />
-          <StatCard label="Under Review" value={summary.underReviewCount} href="/admin/queue" />
-          <StatCard label="Accepted" value={summary.acceptedCount} href="/admin/queue" />
-          <StatCard label="In Editing" value={summary.editingCount} href="/admin/workload" />
-          <StatCard
-            label="Pending Admin Review"
-            value={summary.pendingAdminReviewCount}
-            href="/admin/production-review"
-            urgent
-          />
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-4">
-          <StatCard label="Published" value={summary.publishedCount} href="/admin/delivery" />
-          <StatCard label="Delivered (total)" value={summary.deliveredCount} href="/admin/delivery" />
-          <StatCard label="On Hold" value={summary.onHoldCount} href="/admin/queue" urgent />
-          <StatCard label="Overdue" value={summary.overdueCount} href="/admin/sla" urgent />
+        <StatTileGrid>
+          <StatTile label="Submitted" value={summary.submittedCount} href={ROUTES.ADMIN_QUEUE} />
+          <StatTile label="Under Review" value={summary.underReviewCount} href={ROUTES.ADMIN_QUEUE} />
+          <StatTile label="Accepted" value={summary.acceptedCount} href={ROUTES.ADMIN_QUEUE} />
+          <StatTile label="In Editing" value={summary.editingCount} href={ROUTES.ADMIN_QUEUE} />
+        </StatTileGrid>
+        <div className="mt-4">
+          <StatTileGrid>
+            <StatTile label="Published" value={summary.publishedCount} href={ROUTES.ADMIN_REQUESTS} />
+            <StatTile
+              label="Delivered (total)"
+              value={summary.deliveredCount}
+              hint={`${summary.deliveredRecentCount} in the last 14 days`}
+              href={ROUTES.ADMIN_REQUESTS}
+            />
+            <StatTile label="On Hold" value={summary.onHoldCount} href={ROUTES.ADMIN_QUEUE} tone="urgent" />
+            <StatTile label="Overdue" value={summary.overdueCount} href={ROUTES.ADMIN_REQUESTS} tone="urgent" />
+          </StatTileGrid>
         </div>
       </div>
 
@@ -213,28 +158,21 @@ export default async function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* Quick links */}
+      {/* Quick links — rendered from the nav config rather than a local array.
+          The hand-maintained copy this replaces had already drifted: it still
+          advertised five deleted pages and none of the analytics ones. */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
           Quick Links
         </h2>
         <div className="flex flex-wrap gap-2">
-          {[
-            { label: "Production Review", href: "/admin/production-review" },
-            { label: "Queue Monitor", href: "/admin/queue" },
-            { label: "All Requests", href: "/admin/requests" },
-            { label: "Delivery", href: "/admin/delivery" },
-            { label: "Users", href: "/admin/users" },
-            { label: "Credits", href: "/admin/credits" },
-            { label: "Workload", href: "/admin/workload" },
-            { label: "SLA Monitor", href: "/admin/sla" },
-            { label: "External Workforce", href: "/admin/external-workforce-placeholder" },
-          ].map((link) => (
+          {ADMIN_NAV_LINKS.filter((link) => link.href !== ROUTES.ADMIN).map((link) => (
             <Link
               key={link.href}
               href={link.href}
               className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
             >
+              <span className="mr-2 opacity-60">{link.icon}</span>
               {link.label}
             </Link>
           ))}

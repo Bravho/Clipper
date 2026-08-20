@@ -8,6 +8,8 @@ import { Footer } from "@/components/layout/Footer";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 import { WebPushRegistration } from "@/components/pwa/WebPushRegistration";
 import { NativeDeepLinkHandler } from "@/components/mobile/NativeDeepLinkHandler";
+import { AppleReturnRecovery } from "@/components/mobile/AppleReturnRecovery";
+import { NativePushRegistration } from "@/components/mobile/NativePushRegistration";
 import { initEditorSeedData } from "@/seed/editorSeedData";
 import { getServerLocale } from "@/i18n/server";
 import "./globals.css";
@@ -63,6 +65,11 @@ export default async function RootLayout({
             <ServiceWorkerRegister />
             <WebPushRegistration />
             <NativeDeepLinkHandler />
+            {/* Must sit above the session-dependent pieces: it runs on a cold
+                start where there is no session *yet*, precisely because the
+                Apple sign-in that would have created one was interrupted. */}
+            <AppleReturnRecovery />
+            <NativePushRegistration />
             <Navbar />
             {/* min-w-0 lets flex children shrink below their content width,
                 which is what stops wide cards/tables forcing a page-level

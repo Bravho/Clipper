@@ -76,14 +76,14 @@ const concatVideosMock = jest.fn();
 const getRequiredRatiosForPlatformsMock = jest.fn((..._args: any[]) => ["9:16"]);
 const composeAndExportMock = jest.fn();
 const renderOverlayPreviewMock = jest.fn();
-const overlayOnMasterMock = jest.fn(async (params: any) => ({
-  storageKey: `captioned/${params.outputStorageKey ?? "out"}.mp4`,
+const overlayOnMasterMock = jest.fn(async (...args: any[]) => ({
+  storageKey: `captioned/${args[0]?.outputStorageKey ?? "out"}.mp4`,
   storageUrl: `https://cdn.example.com/captioned/out.mp4`,
   fileSizeBytes: 4096,
 }));
-const applyTiledWatermarkMock = jest.fn(async (params: any) => ({
-  storageKey: params.outputStorageKey,
-  storageUrl: `https://cdn.example.com/${params.outputStorageKey}`,
+const applyTiledWatermarkMock = jest.fn(async (...args: any[]) => ({
+  storageKey: args[0]?.outputStorageKey,
+  storageUrl: `https://cdn.example.com/${args[0]?.outputStorageKey}`,
   fileSizeBytes: 3072,
 }));
 jest.mock("@/lib/ai/ffmpegService", () => ({
@@ -105,8 +105,8 @@ jest.mock("@/lib/ai/animationService", () => ({
 }));
 
 const renderOverlayMock = jest.fn();
-const renderTemplatedVideoMock = jest.fn(async (p: any) => ({
-  storageKey: `styled/${p?.outputStorageKey ?? "out"}.mp4`,
+const renderTemplatedVideoMock = jest.fn(async (...args: any[]) => ({
+  storageKey: `styled/${args[0]?.outputStorageKey ?? "out"}.mp4`,
   storageUrl: "https://cdn.example.com/styled/out.mp4",
   fileSizeBytes: 5000,
 }));
@@ -116,7 +116,7 @@ jest.mock("@/lib/ai/remotionService", () => ({
 }));
 
 // ── Mock palette derivation (no network in tests) ───────────────────────────
-const derivePaletteMock = jest.fn(async () => ({
+const derivePaletteMock = jest.fn(async (..._args: any[]) => ({
   primary: "#111111",
   secondary: "#222222",
   accent: "#333333",

@@ -1,0 +1,40 @@
+b95c894e9726407b20e794e3f9da2fc3
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EFFORT_CLASS_DAYS = exports.EFFORT_CLASS_LABELS = exports.EffortClass = void 0;
+/**
+ * Effort classification for a clip request.
+ *
+ * Set by staff during review or production planning.
+ * Used to influence queue priority, due date estimation, and capacity planning.
+ *
+ * Business rules:
+ * - Simple:   Minimal editing — basic cuts, captions, one template.
+ * - Standard: Normal editing — transitions, text overlays, basic effects.
+ * - Complex:  Heavy editing — advanced effects, multi-source composition, custom motion.
+ *
+ * TODO: PostgreSQL — store as TEXT with CHECK constraint on allowed values.
+ *   Map to `effort_class` column on `clip_requests` table.
+ */
+var EffortClass;
+(function (EffortClass) {
+    EffortClass["Simple"] = "simple";
+    EffortClass["Standard"] = "standard";
+    EffortClass["Complex"] = "complex";
+})(EffortClass || (exports.EffortClass = EffortClass = {}));
+/** Human-readable labels for effort classes. */
+exports.EFFORT_CLASS_LABELS = {
+    [EffortClass.Simple]: "Simple",
+    [EffortClass.Standard]: "Standard",
+    [EffortClass.Complex]: "Complex",
+};
+/** Estimated business days to complete per effort class.
+ *  Used for system due-date estimation alongside queue depth.
+ *  Staff may override at confirmation time.
+ */
+exports.EFFORT_CLASS_DAYS = {
+    [EffortClass.Simple]: 1,
+    [EffortClass.Standard]: 2,
+    [EffortClass.Complex]: 3,
+};
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxFZmZvcnRDbGFzcy50cyIsIm1hcHBpbmdzIjoiOzs7QUFBQTs7Ozs7Ozs7Ozs7OztHQWFHO0FBQ0gsSUFBWSxXQUlYO0FBSkQsV0FBWSxXQUFXO0lBQ3JCLGdDQUFpQixDQUFBO0lBQ2pCLG9DQUFxQixDQUFBO0lBQ3JCLGtDQUFtQixDQUFBO0FBQ3JCLENBQUMsRUFKVyxXQUFXLDJCQUFYLFdBQVcsUUFJdEI7QUFFRCxnREFBZ0Q7QUFDbkMsUUFBQSxtQkFBbUIsR0FBZ0M7SUFDOUQsQ0FBQyxXQUFXLENBQUMsTUFBTSxDQUFDLEVBQUUsUUFBUTtJQUM5QixDQUFDLFdBQVcsQ0FBQyxRQUFRLENBQUMsRUFBRSxVQUFVO0lBQ2xDLENBQUMsV0FBVyxDQUFDLE9BQU8sQ0FBQyxFQUFFLFNBQVM7Q0FDakMsQ0FBQztBQUVGOzs7R0FHRztBQUNVLFFBQUEsaUJBQWlCLEdBQWdDO0lBQzVELENBQUMsV0FBVyxDQUFDLE1BQU0sQ0FBQyxFQUFFLENBQUM7SUFDdkIsQ0FBQyxXQUFXLENBQUMsUUFBUSxDQUFDLEVBQUUsQ0FBQztJQUN6QixDQUFDLFdBQVcsQ0FBQyxPQUFPLENBQUMsRUFBRSxDQUFDO0NBQ3pCLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxFZmZvcnRDbGFzcy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEVmZm9ydCBjbGFzc2lmaWNhdGlvbiBmb3IgYSBjbGlwIHJlcXVlc3QuXG4gKlxuICogU2V0IGJ5IHN0YWZmIGR1cmluZyByZXZpZXcgb3IgcHJvZHVjdGlvbiBwbGFubmluZy5cbiAqIFVzZWQgdG8gaW5mbHVlbmNlIHF1ZXVlIHByaW9yaXR5LCBkdWUgZGF0ZSBlc3RpbWF0aW9uLCBhbmQgY2FwYWNpdHkgcGxhbm5pbmcuXG4gKlxuICogQnVzaW5lc3MgcnVsZXM6XG4gKiAtIFNpbXBsZTogICBNaW5pbWFsIGVkaXRpbmcg4oCUIGJhc2ljIGN1dHMsIGNhcHRpb25zLCBvbmUgdGVtcGxhdGUuXG4gKiAtIFN0YW5kYXJkOiBOb3JtYWwgZWRpdGluZyDigJQgdHJhbnNpdGlvbnMsIHRleHQgb3ZlcmxheXMsIGJhc2ljIGVmZmVjdHMuXG4gKiAtIENvbXBsZXg6ICBIZWF2eSBlZGl0aW5nIOKAlCBhZHZhbmNlZCBlZmZlY3RzLCBtdWx0aS1zb3VyY2UgY29tcG9zaXRpb24sIGN1c3RvbSBtb3Rpb24uXG4gKlxuICogVE9ETzogUG9zdGdyZVNRTCDigJQgc3RvcmUgYXMgVEVYVCB3aXRoIENIRUNLIGNvbnN0cmFpbnQgb24gYWxsb3dlZCB2YWx1ZXMuXG4gKiAgIE1hcCB0byBgZWZmb3J0X2NsYXNzYCBjb2x1bW4gb24gYGNsaXBfcmVxdWVzdHNgIHRhYmxlLlxuICovXG5leHBvcnQgZW51bSBFZmZvcnRDbGFzcyB7XG4gIFNpbXBsZSA9IFwic2ltcGxlXCIsXG4gIFN0YW5kYXJkID0gXCJzdGFuZGFyZFwiLFxuICBDb21wbGV4ID0gXCJjb21wbGV4XCIsXG59XG5cbi8qKiBIdW1hbi1yZWFkYWJsZSBsYWJlbHMgZm9yIGVmZm9ydCBjbGFzc2VzLiAqL1xuZXhwb3J0IGNvbnN0IEVGRk9SVF9DTEFTU19MQUJFTFM6IFJlY29yZDxFZmZvcnRDbGFzcywgc3RyaW5nPiA9IHtcbiAgW0VmZm9ydENsYXNzLlNpbXBsZV06IFwiU2ltcGxlXCIsXG4gIFtFZmZvcnRDbGFzcy5TdGFuZGFyZF06IFwiU3RhbmRhcmRcIixcbiAgW0VmZm9ydENsYXNzLkNvbXBsZXhdOiBcIkNvbXBsZXhcIixcbn07XG5cbi8qKiBFc3RpbWF0ZWQgYnVzaW5lc3MgZGF5cyB0byBjb21wbGV0ZSBwZXIgZWZmb3J0IGNsYXNzLlxuICogIFVzZWQgZm9yIHN5c3RlbSBkdWUtZGF0ZSBlc3RpbWF0aW9uIGFsb25nc2lkZSBxdWV1ZSBkZXB0aC5cbiAqICBTdGFmZiBtYXkgb3ZlcnJpZGUgYXQgY29uZmlybWF0aW9uIHRpbWUuXG4gKi9cbmV4cG9ydCBjb25zdCBFRkZPUlRfQ0xBU1NfREFZUzogUmVjb3JkPEVmZm9ydENsYXNzLCBudW1iZXI+ID0ge1xuICBbRWZmb3J0Q2xhc3MuU2ltcGxlXTogMSxcbiAgW0VmZm9ydENsYXNzLlN0YW5kYXJkXTogMixcbiAgW0VmZm9ydENsYXNzLkNvbXBsZXhdOiAzLFxufTtcbiJdLCJ2ZXJzaW9uIjozfQ==

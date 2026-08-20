@@ -1,0 +1,210 @@
+e92590ea91bf3acce2f12995b8c294a2
+"use strict";
+/**
+ * Storage key (path) helpers for DigitalOcean Spaces.
+ *
+ * Folder layout. Primary deletion is APP-DRIVEN (scripts/retention-sweep.js +
+ * StorageLifecycleService purge at Delivered+7d / 30d inactivity — see
+ * docs/storage-lifecycle-design.md Addendum A). The S3 lifecycle rules listed
+ * below are only age-based BACKSTOPS for objects the app path missed.
+ *
+ *   tmp/           In-transit presigned uploads (deleted on confirm). Backstop: 1 day.
+ *   processing/    Reserved, unused.                                 Backstop: 1 day.
+ *   request_mat/   Confirmed raw uploads (images & videos).          Backstop: 30 days.
+ *   thumbnails/    Previews of uploads and final clips (kept for
+ *                  request-history UI; exempt from app purge).       Backstop: 730 days.
+ *   clips/         Legacy final-clip prefix (no live writers).       Backstop: 60 days.
+ *   ai_videos/, animated_videos/, animated_overlays/,
+ *   processed_audio/, voice_recordings/                              Backstop: 30 days.
+ *   final_exports/, preview_exports/                                 Backstop: 60 days.
+ *
+ * The full prefix list lives in src/config/mediaPrefixes.json — when adding a
+ * prefix here, add it there AND add a bucket lifecycle backstop rule.
+ *
+ * Subfolder convention (all folders):
+ *   {folder}/{userId}/{YYYY-MM-DD}/{requestId}/{uuid}-{sanitizedFilename}
+ *
+ * The date segment uses the server's current UTC date at the time the key is
+ * generated. This makes objects browseable by date without a DB query.
+ */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildManagementUploadKey = buildManagementUploadKey;
+exports.buildManagementRetainedKey = buildManagementRetainedKey;
+exports.buildTmpKey = buildTmpKey;
+exports.buildRequestMatKey = buildRequestMatKey;
+exports.buildThumbnailKey = buildThumbnailKey;
+exports.buildClipKey = buildClipKey;
+exports.buildAiVideoKey = buildAiVideoKey;
+exports.buildVoiceRecordingKey = buildVoiceRecordingKey;
+exports.buildProcessedVoiceKey = buildProcessedVoiceKey;
+exports.buildAnimatedVideoKey = buildAnimatedVideoKey;
+exports.buildAnimatedOverlayKey = buildAnimatedOverlayKey;
+exports.buildFinalClipKey = buildFinalClipKey;
+exports.buildWatermarkedPreviewKey = buildWatermarkedPreviewKey;
+exports.buildPaidExportKey = buildPaidExportKey;
+function utcDateSegment() {
+    return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+function sanitize(name) {
+    return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+function uuid() {
+    return crypto.randomUUID();
+}
+/**
+ * Key for a video uploaded directly into RClipper Management.
+ *
+ * Layout is deliberately DIFFERENT from the clip-request folders:
+ *
+ *   management_uploads/{userId}/{managementContentId}/{uuid}-{filename}
+ *
+ * A Management upload has no clip request, so it has no requestId segment. The
+ * retention sweep parses clip-request keys as
+ * `{prefix}/{userId}/{date}/{requestId}/...` and only ever walks the prefixes in
+ * mediaPrefixes.json — `management_uploads` is intentionally NOT in that list,
+ * so the clip sweep never touches these objects. Management media is governed
+ * instead by `management_content_items.media_expires_at`.
+ *
+ * Add a bucket lifecycle backstop for this prefix comfortably LONGER than
+ * RCLIPPER_MANAGEMENT_MEDIA_RETENTION_DAYS, so the backstop never fires before
+ * the app-driven purge.
+ */
+function buildManagementUploadKey(userId, managementContentId, fileName) {
+    return `management_uploads/${userId}/${managementContentId}/${uuid()}-${sanitize(fileName)}`;
+}
+/**
+ * Key for a PAID-EXTENDED Management upload — the object is MOVED here when the
+ * user pays, so it lives under a prefix whose bucket lifecycle keeps it 30 days
+ * instead of the free tier's 7.
+ *
+ *   management_retained/{userId}/{managementContentId}/{uuid}-{filename}
+ *
+ * A FRESH uuid every call is deliberate: the retention window is enforced by the
+ * bucket lifecycle, which counts from an object's creation time. Copying the
+ * object to a NEW key resets that clock — so paying again (or re-extending)
+ * always writes a new key here and restarts the 30 days. The old object is
+ * deleted after the copy (a move).
+ */
+function buildManagementRetainedKey(userId, managementContentId, fileName) {
+    return `management_retained/${userId}/${managementContentId}/${uuid()}-${sanitize(fileName)}`;
+}
+/**
+ * Key for a file being uploaded — stored in tmp/ until confirmed.
+ * Lifecycle: deleted on upload confirmation; 1-day backstop.
+ */
+function buildTmpKey(userId, requestId, fileName) {
+    return `tmp/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
+}
+/**
+ * Key for a confirmed raw upload — moved here from tmp/ on upload confirmation.
+ * Lifecycle: purged at Delivered+7d or 30d inactivity; 30-day backstop.
+ */
+function buildRequestMatKey(userId, requestId, fileName) {
+    return `request_mat/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
+}
+/**
+ * Key for a thumbnail image.
+ * Used for:
+ *   - Preview thumbnails of uploaded images and videos (generated on confirmation).
+ *   - Preview thumbnails of the final produced clip (generated by staff/system).
+ * Lifecycle: exempt from app purge (request-history UI); 730-day backstop.
+ *
+ * @param baseName  Filename without extension (e.g. "my_video" from "my_video.mp4").
+ */
+function buildThumbnailKey(userId, requestId, baseName) {
+    return `thumbnails/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(baseName)}.jpg`;
+}
+/**
+ * Key for a final produced clip video.
+ * Used for:
+ *   - The delivered output clip uploaded by staff after production.
+ *   - The published version once delivered to the platform/client.
+ * Lifecycle: legacy prefix (no live writers); purged with request; 60-day backstop.
+ */
+function buildClipKey(userId, requestId, fileName) {
+    return `clips/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
+}
+// ── AI Pipeline storage keys ────────────────────────────────────────────────
+// Separate folders with distinct lifecycle policies for each pipeline stage.
+/**
+ * Key for an AI-generated base video — cumulative scene output.
+ * Lifecycle: purged with request; 30-day backstop.
+ */
+function buildAiVideoKey(userId, requestId) {
+    return `ai_videos/${userId}/${utcDateSegment()}/${requestId}/${uuid()}.mp4`;
+}
+/**
+ * Key for a staff voice recording (RVC-converted in browser before upload).
+ * Lifecycle: purged with request; 30-day backstop.
+ */
+function buildVoiceRecordingKey(userId, requestId, fileName) {
+    return `voice_recordings/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
+}
+/**
+ * Key for the processed voice audio (kept for legacy; not written by RVC flow).
+ * Lifecycle: purged with request; 30-day backstop.
+ */
+function buildProcessedVoiceKey(userId, requestId) {
+    return `processed_audio/${userId}/${utcDateSegment()}/${requestId}/${uuid()}.mp3`;
+}
+/**
+ * Key for an FFmpeg-animated video (base video + graphic overlays, before final composition).
+ * Lifecycle: purged with request; 30-day backstop.
+ */
+function buildAnimatedVideoKey(userId, requestId) {
+    return `animated_videos/${userId}/${utcDateSegment()}/${requestId}/${uuid()}.mp4`;
+}
+/**
+ * Key for a Remotion-rendered transparent overlay clip (captions +
+ * lower-thirds) for one aspect ratio (Phase 4 — animation/Remotion step).
+ * Stored as `.webm` (VP9 + alpha) so FFmpeg can overlay it onto the base
+ * video with `overlay=format=auto`.
+ * Lifecycle: purged with request; 30-day backstop.
+ */
+function buildAnimatedOverlayKey(userId, requestId, ratio) {
+    const safeRatio = ratio.replace(":", "-");
+    return `animated_overlays/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.webm`;
+}
+/**
+ * Key for a final FFmpeg-exported clip in a specific aspect ratio.
+ * Lifecycle: purged at Delivered+7d; 60-day backstop.
+ *
+ * @param ratio  e.g. "9-16", "16-9", "1-1", "4-5" (slashes replaced with dashes for path safety),
+ *               or "travy" for the dedicated Travy App export.
+ */
+function buildFinalClipKey(userId, requestId, ratio) {
+    const safeRatio = ratio.replace(":", "-");
+    return `final_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;
+}
+/**
+ * Key for a watermarked ("RClipper" tiled overlay) preview clip — the pre-rendered
+ * sibling of a final export, shown to a requester whose download is still locked
+ * (unpaid). Stored under its own `preview_exports/` prefix so the storage
+ * lifecycle can treat previews independently of the clean masters (they are
+ * disposable once the download is unlocked).
+ * Lifecycle: purged with request; 60-day backstop (expire-preview-exports-60d).
+ *
+ * @param ratio  "9:16" | "16:9" | "1:1" | "4:5" or "travy" for the Travy export.
+ */
+function buildWatermarkedPreviewKey(userId, requestId, ratio) {
+    const safeRatio = ratio.replace(":", "-");
+    return `preview_exports/${userId}/${utcDateSegment()}/${requestId}/${safeRatio}/${uuid()}.mp4`;
+}
+/**
+ * Key for a final clip the requester has PAID to distribute/download. On payment
+ * (`ClipRequestService.unlockDownload`) the clean master is MOVED here out of
+ * `final_exports/`, which restarts the Spaces lifecycle clock on the longer
+ * `paid_exports/` window (30 days + a safety day) — expiry counts from creation,
+ * so a re-key is the only way to extend. A fresh uuid every call is deliberate.
+ *
+ * Layout matches the other request folders so the retention sweep can parse the
+ * requestId as the 4th segment:
+ *   paid_exports/{userId}/{YYYY-MM-DD}/{requestId}/{uuid}-{filename}
+ *
+ * NOT listed in src/config/mediaPrefixes.json — the clip purge/orphan sweep must
+ * never touch a paid master; it is governed solely by the bucket lifecycle rule.
+ */
+function buildPaidExportKey(userId, requestId, fileName) {
+    return `paid_exports/${userId}/${utcDateSegment()}/${requestId}/${uuid()}-${sanitize(fileName)}`;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxsaWJcXHNwYWNlc0tleXMudHMiLCJtYXBwaW5ncyI6IjtBQUFBOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztHQTBCRzs7QUFnQ0gsNERBTUM7QUFlRCxnRUFNQztBQU1ELGtDQU1DO0FBTUQsZ0RBTUM7QUFXRCw4Q0FNQztBQVNELG9DQU1DO0FBU0QsMENBRUM7QUFNRCx3REFNQztBQU1ELHdEQUVDO0FBTUQsc0RBRUM7QUFTRCwwREFPQztBQVNELDhDQU9DO0FBWUQsZ0VBT0M7QUFnQkQsZ0RBTUM7QUFqT0QsU0FBUyxjQUFjO0lBQ3JCLE9BQU8sSUFBSSxJQUFJLEVBQUUsQ0FBQyxXQUFXLEVBQUUsQ0FBQyxLQUFLLENBQUMsQ0FBQyxFQUFFLEVBQUUsQ0FBQyxDQUFDLENBQUMsYUFBYTtBQUM3RCxDQUFDO0FBRUQsU0FBUyxRQUFRLENBQUMsSUFBWTtJQUM1QixPQUFPLElBQUksQ0FBQyxPQUFPLENBQUMsa0JBQWtCLEVBQUUsR0FBRyxDQUFDLENBQUM7QUFDL0MsQ0FBQztBQUVELFNBQVMsSUFBSTtJQUNYLE9BQU8sTUFBTSxDQUFDLFVBQVUsRUFBRSxDQUFDO0FBQzdCLENBQUM7QUFFRDs7Ozs7Ozs7Ozs7Ozs7Ozs7R0FpQkc7QUFDSCxTQUFnQix3QkFBd0IsQ0FDdEMsTUFBYyxFQUNkLG1CQUEyQixFQUMzQixRQUFnQjtJQUVoQixPQUFPLHNCQUFzQixNQUFNLElBQUksbUJBQW1CLElBQUksSUFBSSxFQUFFLElBQUksUUFBUSxDQUFDLFFBQVEsQ0FBQyxFQUFFLENBQUM7QUFDL0YsQ0FBQztBQUVEOzs7Ozs7Ozs7Ozs7R0FZRztBQUNILFNBQWdCLDBCQUEwQixDQUN4QyxNQUFjLEVBQ2QsbUJBQTJCLEVBQzNCLFFBQWdCO0lBRWhCLE9BQU8sdUJBQXVCLE1BQU0sSUFBSSxtQkFBbUIsSUFBSSxJQUFJLEVBQUUsSUFBSSxRQUFRLENBQUMsUUFBUSxDQUFDLEVBQUUsQ0FBQztBQUNoRyxDQUFDO0FBRUQ7OztHQUdHO0FB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RWhELE1BQU0sU0FBUyxHQUFHLEtBQUssQ0FBQyxPQUFPLENBQUMsR0FBRyxFQUFFLEdBQUcsQ0FBQyxDQUFDO0lBQzFDLE9BQU8sbUJBQW1CLE1BQU0sSUFBSSxjQUFjLEVBQUUsSUFBSSxTQUFTLElBQUksU0FBUyxJQUFJLElBQUksRUFBRSxNQUFNLENBQUM7QUFDakcsQ0FBQztBQUVEOzs7Ozs7Ozs7Ozs7O0dBYUc7QUFDSCxTQUFnQixrQkFBa0IsQ0FDaEMsTUFBYyxFQUNkLFNBQWlCLEVBQ2pCLFFBQWdCO0lBRWhCLE9BQU8sZ0JBQWdCLE1BQU0sSUFBSSxjQUFjLEVBQUUsSUFBSSxTQUFTLElBQUksSUFBSSxFQUFFLElBQUksUUFBUSxDQUFDLFFBQVEsQ0FBQyxFQUFFLENBQUM7QUFDbkcsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyJEOlxcY29kaW5nXFxjbGlwcGVyX2FnZW50XFxzcmNcXGxpYlxcc3BhY2VzS2V5cy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFN0b3JhZ2Uga2V5IChwYXRoKSBoZWxwZXJzIGZvciBEaWdpdGFsT2NlYW4gU3BhY2VzLlxuICpcbiAqIEZvbGRlciBsYXlvdXQuIFByaW1hcnkgZGVsZXRpb24gaXMgQVBQLURSSVZFTiAoc2NyaXB0cy9yZXRlbnRpb24tc3dlZXAuanMgK1xuICogU3RvcmFnZUxpZmVjeWNsZVNlcnZpY2UgcHVyZ2UgYXQgRGVsaXZlcmVkKzdkIC8gMzBkIGluYWN0aXZpdHkg4oCUIHNlZVxuICogZG9jcy9zdG9yYWdlLWxpZmVjeWNsZS1kZXNpZ24ubWQgQWRkZW5kdW0gQSkuIFRoZSBTMyBsaWZlY3ljbGUgcnVsZXMgbGlzdGVkXG4gKiBiZWxvdyBhcmUgb25seSBhZ2UtYmFzZWQgQkFDS1NUT1BTIGZvciBvYmplY3RzIHRoZSBhcHAgcGF0aCBtaXNzZWQuXG4gKlxuICogICB0bXAvICAgICAgICAgICBJbi10cmFuc2l0IHByZXNpZ25lZCB1cGxvYWRzIChkZWxldGVkIG9uIGNvbmZpcm0pLiBCYWNrc3RvcDogMSBkYXkuXG4gKiAgIHByb2Nlc3NpbmcvICAgIFJlc2VydmVkLCB1bnVzZWQuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgQmFja3N0b3A6IDEgZGF5LlxuICogICByZXF1ZXN0X21hdC8gICBDb25maXJtZWQgcmF3IHVwbG9hZHMgKGltYWdlcyAmIHZpZGVvcykuICAgICAgICAgIEJhY2tzdG9wOiAzMCBkYXlzLlxuICogICB0aHVtYm5haWxzLyAgICBQcmV2aWV3cyBvZiB1cGxvYWRzIGFuZCBmaW5hbCBjbGlwcyAoa2VwdCBmb3JcbiAqICAgICAgICAgICAgICAgICAgcmVxdWVzdC1oaXN0b3J5IFVJOyBleGVtcHQgZnJvbSBhcHAgcHVyZ2UpLiAgICAgICBCYWNrc3RvcDogNzMwIGRheXMuXG4gKiAgIGNsaXBzLyAgICAgICAgIExlZ2FjeSBmaW5hbC1jbGlwIHByZWZpeCAobm8gbGl2ZSB3cml0ZXJzKS4gICAgICAgQmFja3N0b3A6IDYwIGRheXMuXG4gKiAgIGFpX3ZpZGVvcy8sIGFuaW1hdGVkX3ZpZGVvcy8sIGFuaW1hdGVkX292ZXJsYXlzLyxcbiAqICAgcHJvY2Vzc2VkX2F1ZGlvLywgdm9pY2VfcmVjb3JkaW5ncy8gICAgICAgICAgICAgICAgICAgICAgICAgICAgICBCYWNrc3RvcDogMzAgZGF5cy5cbiAqICAgZmluYWxfZXhwb3J0cy8sIHByZXZpZXdfZXhwb3J0cy8gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBCYWNrc3RvcDogNjAgZGF5cy5cbiAqXG4gKiBUaGUgZnVsbCBwcmVmaXggbGlzdCBsaXZlcyBpbiBzcmMvY29uZmlnL21lZGlhUHJlZml4ZXMuanNvbiDigJQgd2hlbiBhZGRpbmcgYVxuICogcHJlZml4IGhlcmUsIGFkZCBpdCB0aGVyZSBBTkQgYWRkIGEgYnVja2V0IGxpZmVjeWNsZSBiYWNrc3RvcCBydWxlLlxuICpcbiAqIFN1YmZvbGRlciBjb252ZW50aW9uIChhbGwgZm9sZGVycyk6XG4gKiAgIHtmb2xkZXJ9L3t1c2VySWR9L3tZWVlZLU1NLUREfS97cmVxdWVzdElkfS97dXVpZH0te3Nhbml0aXplZEZpbGVuYW1lfVxuICpcbiAqIFRoZSBkYXRlIHNlZ21lbnQgdXNlcyB0aGUgc2VydmVyJ3MgY3VycmVudCBVVEMgZGF0ZSBhdCB0aGUgdGltZSB0aGUga2V5IGlzXG4gKiBnZW5lcmF0ZWQuIFRoaXMgbWFrZXMgb2JqZWN0cyBicm93c2VhYmxlIGJ5IGRhdGUgd2l0aG91dCBhIERCIHF1ZXJ5LlxuICovXG5cbmZ1bmN0aW9uIHV0Y0RhdGVTZWdtZW50KCk6IHN0cmluZyB7XG4gIHJldHVybiBuZXcgRGF0ZSgpLnRvSVNPU3RyaW5nKCkuc2xpY2UoMCwgMTApOyAvLyBZWVlZLU1NLUREXG59XG5cbmZ1bmN0aW9uIHNhbml0aXplKG5hbWU6IHN0cmluZyk6IHN0cmluZyB7XG4gIHJldHVybiBuYW1lLnJlcGxhY2UoL1teYS16QS1aMC05Ll8tXS9nLCBcIl9cIik7XG59XG5cbmZ1bmN0aW9uIHV1aWQoKTogc3RyaW5nIHtcbiAgcmV0dXJuIGNyeXB0by5yYW5kb21VVUlEKCk7XG59XG5cbi8qKlxuICogS2V5IGZvciBhIHZpZGVvIHVwbG9hZGVkIGRpcmVjdGx5IGludG8gUkNsaXBwZXIgTWFuYWdlbWVudC5cbiAqXG4gKiBMYXlvdXQgaXMgZGVsaWJlcmF0ZWx5IERJRkZFUkVOVCBmcm9tIHRoZSBjbGlwLXJlcXVlc3QgZm9sZGVyczpcbiAqXG4gKiAgIG1hbmFnZW1lbnRfdXBsb2Fkcy97dXNlcklkfS97bWFuYWdlbWVudENvbnRlbnRJZH0ve3V1aWR9LXtmaWxlbmFtZX1cbiAqXG4gKiBBIE1hbmFnZW1lbnQgdXBsb2FkIGhhcyBubyBjbGlwIHJlcXVlc3QsIHNvIGl0IGhhcyBubyByZXF1ZXN0SWQgc2VnbWVudC4gVGhlXG4gKiByZXRlbnRpb24gc3dlZXAgcGFyc2VzIGNsaXAtcmVxdWVzdCBrZXlzIGFzXG4gKiBge3ByZWZpeH0ve3VzZXJJZH0ve2RhdGV9L3tyZXF1ZXN0SWR9Ly4uLmAgYW5kIG9ubHkgZXZlciB3YWxrcyB0aGUgcHJlZml4ZXMgaW5cbiAqIG1lZGlhUHJlZml4ZXMuanNvbiDigJQgYG1hbmFnZW1lbnRfdXBsb2Fkc2AgaXMgaW50ZW50aW9uYWxseSBOT1QgaW4gdGhhdCBsaXN0LFxuICogc28gdGhlIGNsaXAgc3dlZXAgbmV2ZXIgdG91Y2hlcyB0aGVzZSBvYmplY3RzLiBNYW5hZ2VtZW50IG1lZGlhIGlzIGdvdmVybmVkXG4gKiBpbnN0ZWFkIGJ5IGBtYW5hZ2VtZW50X2NvbnRlbnRfaXRlbXMubWVkaWFfZXhwaXJlc19hdGAuXG4gKlxuICogQWRkIGEgYnVja2V0IGxpZmVjeWNsZSBiYWNrc3RvcCBmb3IgdGhpcyBwcmVmaXggY29tZm9ydGFibHkgTE9OR0VSIHRoYW5cbiAqIFJDTElQUEVSX01BTkFHRU1FTlRfTUVESUFfUkVURU5USU9OX0RBWVMsIHNvIHRoZSBiYWNrc3RvcCBuZXZlciBmaXJlcyBiZWZvcmVcbiAqIHRoZSBhcHAtZHJpdmVuIHB1cmdlLlxuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRNYW5hZ2VtZW50VXBsb2FkS2V5KFxuICB1c2VySWQ6IHN0cmluZyxcbiAgbWFuYWdlbWVudENvbnRlbnRJZDogc3RyaW5nLFxuICBmaWxlTmFtZTogc3RyaW5nXG4pOiBzdHJpbmcge1xuICByZXR1cm4gYG1hbmFnZW1lbnRfdXBsb2Fkcy8ke3VzZXJJZH0vJHttYW5hZ2VtZW50Q29udGVudElkfS8ke3V1aWQoKX0tJHtzYW5pdGl6ZShmaWxlTmFtZSl9YDtcbn1cblxuLyoqXG4gKiBLZXkgZm9yIGEgUEFJRC1FWFRFTkRFRCBNYW5hZ2VtZW50IHVwbG9hZCDigJQgdGhlIG9iamVjdCBpcyBNT1ZFRCBoZXJlIHdoZW4gdGhlXG4gKiB1c2VyIHBheXMsIHNvIGl0IGxpdmVzIHVuZGVyIGEgcHJlZml4IHdob3NlIGJ1Y2tldCBsaWZlY3ljbGUga2VlcHMgaXQgMzAgZGF5c1xuICogaW5zdGVhZCBvZiB0aGUgZnJlZSB0aWVyJ3MgNy5cbiAqXG4gKiAgIG1hbmFnZW1lbnRfcmV0YWluZWQve3VzZXJJZH0ve21hbmFnZW1lbnRDb250ZW50SWR9L3t1dWlkfS17ZmlsZW5hbWV9XG4gKlxuICogQSBGUkVTSCB1dWlkIGV2ZXJ5IGNhbGwgaXMgZGVsaWJlcmF0ZTogdGhlIHJldGVudGlvbiB3aW5kb3cgaXMgZW5mb3JjZWQgYnkgdGhlXG4gKiBidWNrZXQgbGlmZWN5Y2xlLCB3aGljaCBjb3VudHMgZnJvbSBhbiBvYmplY3QncyBjcmVhdGlvbiB0aW1lLiBDb3B5aW5nIHRoZVxuICogb2JqZWN0IHRvIGEgTkVXIGtleSByZXNldHMgdGhhdCBjbG9jayDigJQgc28gcGF5aW5nIGFnYWluIChvciByZS1leHRlbmRpbmcpXG4gKiBhbHdheXMgd3JpdGVzIGEgbmV3IGtleSBoZXJlIGFuZCByZXN0YXJ0cyB0aGUgMzAgZGF5cy4gVGhlIG9sZCBvYmplY3QgaXNcbiAqIGRlbGV0ZWQgYWZ0ZXIgdGhlIGNvcHkgKGEgbW92ZSkuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBidWlsZE1hbmFnZW1lbnRSZXRhaW5lZEtleShcbiAgdXNlcklkOiBzdHJpbmcsXG4gIG1hbmFnZW1lbnRDb250ZW50SWQ6IHN0cmluZyxcbiAgZmlsZU5hbWU6IHN0cmluZ1xuKTogc3RyaW5nIHtcbiAgcmV0dXJuIGBtYW5hZ2VtZW50X3JldGFpbmVkLyR7dXNlcklkfS8ke21hbmFnZW1lbnRDb250ZW50SWR9LyR7dXVpZCgpfS0ke3Nhbml0aXplKGZpbGVOYW1lKX1gO1xufVxuXG4vKipcbiAqIEtleSBmb3IgYSBmaWxlIGJlaW5nIHVwbG9hZGVkIOKAlCBzdG9yZWQgaW4gdG1wLyB1bnRpbCBjb25maXJtZWQuXG4gKiBMaWZlY3ljbGU6IGRlbGV0ZWQgb24gdXBsb2FkIGNvbmZpcm1hdGlvbjsgMS1kYXkgYmFja3N0b3AuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBidWlsZFRtcEtleShcbiAgdXNlcklkOiBzdHJpbmcsXG4gIHJlcXVlc3RJZDogc3RyaW5nLFxuICBmaWxlTmFtZTogc3RyaW5nXG4pOiBzdHJpbmcge1xuICByZXR1cm4gYHRtcC8ke3VzZXJJZH0vJHt1dGNEYXRlU2VnbWVudCgpfS8ke3JlcXVlc3RJZH0vJHt1dWlkKCl9LSR7c2FuaXRpemUoZmlsZU5hbWUpfWA7XG59XG5cbi8qKlxuICogS2V5IGZvciBhIGNvbmZpcm1lZCByYXcgdXBsb2FkIOKAlCBtb3ZlZCBoZXJlIGZyb20gdG1wLyBvbiB1cGxvYWQgY29uZmlybWF0aW9uLlxuICogTGlmZWN5Y2xlOiBwdXJnZWQgYXQgRGVsaXZlcmVkKzdkIG9yIDMwZCBpbmFjdGl2aXR5OyAzMC1kYXkgYmFja3N0b3AuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBidWlsZFJlcXVlc3RNYXRLZXkoXG4gIHVzZXJJZDogc3RyaW5nLFxuICByZXF1ZXN0SWQ6IHN0cmluZyxcbiAgZmlsZU5hbWU6IHN0cmluZ1xuKTogc3RyaW5nIHtcbiAgcmV0dXJuIGByZXF1ZXN0X21hdC8ke3VzZXJJZH0vJHt1dGNEYXRlU2VnbWVudCgpfS8ke3JlcXVlc3RJZH0vJHt1dWlkKCl9LSR7c2FuaXRpemUoZmlsZU5hbWUpfWA7XG59XG5cbi8qKlxuICogS2V5IGZvciBhIHRodW1ibmFpbCBpbWFnZS5cbiAqIFVzZWQgZm9yOlxuICogICAtIFByZXZpZXcgdGh1bWJuYWlscyBvZiB1cGxvYWRlZCBpbWFnZXMgYW5kIHZpZGVvcyAoZ2VuZXJhdGVkIG9uIGNvbmZpcm1hdGlvbikuXG4gKiAgIC0gUHJldmlldyB0aHVtYm5haWxzIG9mIHRoZSBmaW5hbCBwcm9kdWNlZCBjbGlwIChnZW5lcmF0ZWQgYnkgc3RhZmYvc3lzdGVtKS5cbiAqIExpZmVjeWNsZTogZXhlbXB0IGZyb20gYXBwIHB1cmdlIChyZXF1ZXN0LWhpc3RvcnkgVUkpOyA3MzAtZGF5IGJhY2tzdG9wLlxuICpcbiAqIEBwYXJhbSBiYXNlTmFtZSAgRmlsZW5hbWUgd2l0aG91dCBleHRlbnNpb24gKGUuZy4gXCJteV92aWRlb1wiIGZyb20gXCJteV92aWRlby5tcDRcIikuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBidWlsZFRodW1ibmFpbEtleShcbiAgdXNlcklkOiBzdHJpbmcsXG4gIHJlcXVlc3RJZDogc3RyaW5nLFxuICBiYXNlTmFtZTogc3RyaW5nXG4pOiBzdHJpbmcge1xuICByZXR1cm4gYHRodW1ibmFpbHMvJHt1c2VySWR9LyR7dXRjRGF0ZVNlZ21lbnQoKX0vJHtyZXF1ZXN0SWR9LyR7dXVpZCgpfS0ke3Nhbml0aXplKGJhc2VOYW1lKX0uanBnYDtcbn1cblxuLyoqXG4gKiBLZXkgZm9yIGEgZmluYWwgcHJvZHVjZWQgY2xpcCB2aWRlby5cbiAqIFVzZWQgZm9yOlxuICogICAtIFRoZSBkZWxpdmVyZWQgb3V0cHV0IGNsaXAgdXBsb2FkZWQgYnkgc3RhZmYgYWZ0ZXIgcHJvZHVjdGlvbi5cbiAqICAgLSBUaGUgcHVibGlzaGVkIHZlcnNpb24gb25jZSBkZWxpdmVyZWQgdG8gdGhlIHBsYXRmb3JtL2NsaWVudC5cbiAqIExpZmVjeWNsZTogbGVnYWN5IHByZWZpeCAobm8gbGl2ZSB3cml0ZXJzKTsgcHVyZ2VkIHdpdGggcmVxdWVzdDsgNjAtZGF5IGJhY2tzdG9wLlxuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRDbGlwS2V5KFxuICB1c2VySWQ6IHN0cmluZyxcbiAgcmVxdWVzdElkOiBzdHJpbmcsXG4gIGZpbGVOYW1lOiBzdHJpbmdcbik6IHN0cmluZyB7XG4gIHJldHVybiBgY2xpcHMvJHt1c2VySWR9LyR7dXRjRGF0ZVNlZ21lbnQoKX0vJHtyZXF1ZXN0SWR9LyR7dXVpZCgpfS0ke3Nhbml0aXplKGZpbGVOYW1lKX1gO1xufVxuXG4vLyDilIDilIAgQUkgUGlwZWxpbmUgc3RvcmFnZSBrZXlzIOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgFxuLy8gU2VwYXJhdGUgZm9sZGVycyB3aXRoIGRpc3RpbmN0IGxpZmVjeWNsZSBwb2xpY2llcyBmb3IgZWFjaCBwaXBlbGluZSBzdGFnZS5cblxuLyoqXG4gKiBLZXkgZm9yIGFuIEFJLWdlbmVyYXRlZCBiYXNlIHZpZGVvIOKAlCBjdW11bGF0aXZlIHNjZW5lIG91dHB1dC5cbiAqIExpZmVjeWNsZTogcHVyZ2VkIHdpdGggcmVxdWVzdDsgMzAtZGF5IGJhY2tzdG9wLlxuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRBaVZpZGVvS2V5KHVzZXJJZDogc3RyaW5nLCByZXF1ZXN0SWQ6IHN0cmluZyk6IHN0cmluZyB7XG4gIHJldHVybiBgYWlfdmlkZW9zLyR7dXNlcklkfS8ke3V0Y0RhdGVTZWdtZW50KCl9LyR7cmVxdWVzdElkfS8ke3V1aWQoKX0ubXA0YDtcbn1cblxuLyoqXG4gKiBLZXkgZm9yIGEgc3RhZmYgdm9pY2UgcmVjb3JkaW5nIChSVkMtY29udmVydGVkIGluIGJyb3dzZXIgYmVmb3JlIHVwbG9hZCkuXG4gKiBMaWZlY3ljbGU6IHB1cmdlZCB3aXRoIHJlcXVlc3Q7IDMwLWRheSBiYWNrc3RvcC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGJ1aWxkVm9pY2VSZWNvcmRpbmdLZXkoXG4gIHVzZXJJZDogc3RyaW5nLFxuICByZXF1ZXN0SWQ6IHN0cmluZyxcbiAgZmlsZU5hbWU6IHN0cmluZ1xuKTogc3RyaW5nIHtcbiAgcmV0dXJuIGB2b2ljZV9yZWNvcmRpbmdzLyR7dXNlcklkfS8ke3V0Y0RhdGVTZWdtZW50KCl9LyR7cmVxdWVzdElkfS8ke3V1aWQoKX0tJHtzYW5pdGl6ZShmaWxlTmFtZSl9YDtcbn1cblxuLyoqXG4gKiBLZXkgZm9yIHRoZSBwcm9jZXNzZWQgdm9pY2UgYXVkaW8gKGtlcHQgZm9yIGxlZ2FjeTsgbm90IHdyaXR0ZW4gYnkgUlZDIGZsb3cpLlxuICogTGlmZWN5Y2xlOiBwdXJnZWQgd2l0aCByZXF1ZXN0OyAzMC1kYXkgYmFja3N0b3AuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBidWlsZFByb2Nlc3NlZFZvaWNlS2V5KHVzZXJJZDogc3RyaW5nLCByZXF1ZXN0SWQ6IHN0cmluZyk6IHN0cmluZyB7XG4gIHJldHVybiBgcHJvY2Vzc2VkX2F1ZGlvLyR7dXNlcklkfS8ke3V0Y0RhdGVTZWdtZW50KCl9LyR7cmVxdWVzdElkfS8ke3V1aWQoKX0ubXAzYDtcbn1cblxuLyoqXG4gKiBLZXkgZm9yIGFuIEZGbXBlZy1hbmltYXRlZCB2aWRlbyAoYmFzZSB2aWRlbyArIGdyYXBoaWMgb3ZlcmxheXMsIGJlZm9yZSBmaW5hbCBjb21wb3NpdGlvbikuXG4gKiBMaWZlY3ljbGU6IHB1cmdlZCB3aXRoIHJlcXVlc3Q7IDMwLWRheSBiYWNrc3RvcC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGJ1aWxkQW5pbWF0ZWRWaWRlb0tleSh1c2VySWQ6IHN0cmluZywgcmVxdWVzdElkOiBzdHJpbmcpOiBzdHJpbmcge1xuICByZXR1cm4gYGFuaW1hdGVkX3ZpZGVvcy8ke3VzZXJJZH0vJHt1dGNEYXRlU2VnbWVudCgpfS8ke3JlcXVlc3RJZH0vJHt1dWlkKCl9Lm1wNGA7XG59XG5cbi8qKlxuICogS2V5IGZvciBhIFJlbW90aW9uLXJlbmRlcmVkIHRyYW5zcGFyZW50IG92ZXJsYXkgY2xpcCAoY2FwdGlvbnMgK1xuICogbG93ZXItdGhpcmRzKSBmb3Igb25lIGFzcGVjdCByYXRpbyAoUGhhc2UgNCDigJQgYW5pbWF0aW9uL1JlbW90aW9uIHN0ZXApLlxuICogU3RvcmVkIGFzIGAud2VibWAgKFZQOSArIGFscGhhKSBzbyBGRm1wZWcgY2FuIG92ZXJsYXkgaXQgb250byB0aGUgYmFzZVxuICogdmlkZW8gd2l0aCBgb3ZlcmxheT1mb3JtYXQ9YXV0b2AuXG4gKiBMaWZlY3ljbGU6IHB1cmdlZCB3aXRoIHJlcXVlc3Q7IDMwLWRheSBiYWNrc3RvcC5cbiAqL1xuZXhwb3J0IGZ1bmN0aW9uIGJ1aWxkQW5pbWF0ZWRPdmVybGF5S2V5KFxuICB1c2VySWQ6IHN0cmluZyxcbiAgcmVxdWVzdElkOiBzdHJpbmcsXG4gIHJhdGlvOiBcIjk6MTZcIiB8IFwiMTY6OVwiIHwgXCIxOjFcIiB8IFwiNDo1XCJcbik6IHN0cmluZyB7XG4gIGNvbnN0IHNhZmVSYXRpbyA9IHJhdGlvLnJlcGxhY2UoXCI6XCIsIFwiLVwiKTtcbiAgcmV0dXJuIGBhbmltYXRlZF9vdmVybGF5cy8ke3VzZXJJZH0vJHt1dGNEYXRlU2VnbWVudCgpfS8ke3JlcXVlc3RJZH0vJHtzYWZlUmF0aW99LyR7dXVpZCgpfS53ZWJtYDtcbn1cblxuLyoqXG4gKiBLZXkgZm9yIGEgZmluYWwgRkZtcGVnLWV4cG9ydGVkIGNsaXAgaW4gYSBzcGVjaWZpYyBhc3BlY3QgcmF0aW8uXG4gKiBMaWZlY3ljbGU6IHB1cmdlZCBhdCBEZWxpdmVyZWQrN2Q7IDYwLWRheSBiYWNrc3RvcC5cbiAqXG4gKiBAcGFyYW0gcmF0aW8gIGUuZy4gXCI5LTE2XCIsIFwiMTYtOVwiLCBcIjEtMVwiLCBcIjQtNVwiIChzbGFzaGVzIHJlcGxhY2VkIHdpdGggZGFzaGVzIGZvciBwYXRoIHNhZmV0eSksXG4gKiAgICAgICAgICAgICAgIG9yIFwidHJhdnlcIiBmb3IgdGhlIGRlZGljYXRlZCBUcmF2eSBBcHAgZXhwb3J0LlxuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRGaW5hbENsaXBLZXkoXG4gIHVzZXJJZDogc3RyaW5nLFxuICByZXF1ZXN0SWQ6IHN0cmluZyxcbiAgcmF0aW86IFwiOToxNlwiIHwgXCIxNjo5XCIgfCBcIjE6MVwiIHwgXCI0OjVcIiB8IFwidHJhdnlcIlxuKTogc3RyaW5nIHtcbiAgY29uc3Qgc2FmZVJhdGlvID0gcmF0aW8ucmVwbGFjZShcIjpcIiwgXCItXCIpO1xuICByZXR1cm4gYGZpbmFsX2V4cG9ydHMvJHt1c2VySWR9LyR7dXRjRGF0ZVNlZ21lbnQoKX0vJHtyZXF1ZXN0SWR9LyR7c2FmZVJhdGlvfS8ke3V1aWQoKX0ubXA0YDtcbn1cblxuLyoqXG4gKiBLZXkgZm9yIGEgd2F0ZXJtYXJrZWQgKFwiUkNsaXBwZXJcIiB0aWxlZCBvdmVybGF5KSBwcmV2aWV3IGNsaXAg4oCUIHRoZSBwcmUtcmVuZGVyZWRcbiAqIHNpYmxpbmcgb2YgYSBmaW5hbCBleHBvcnQsIHNob3duIHRvIGEgcmVxdWVzdGVyIHdob3NlIGRvd25sb2FkIGlzIHN0aWxsIGxvY2tlZFxuICogKHVucGFpZCkuIFN0b3JlZCB1bmRlciBpdHMgb3duIGBwcmV2aWV3X2V4cG9ydHMvYCBwcmVmaXggc28gdGhlIHN0b3JhZ2VcbiAqIGxpZmVjeWNsZSBjYW4gdHJlYXQgcHJldmlld3MgaW5kZXBlbmRlbnRseSBvZiB0aGUgY2xlYW4gbWFzdGVycyAodGhleSBhcmVcbiAqIGRpc3Bvc2FibGUgb25jZSB0aGUgZG93bmxvYWQgaXMgdW5sb2NrZWQpLlxuICogTGlmZWN5Y2xlOiBwdXJnZWQgd2l0aCByZXF1ZXN0OyA2MC1kYXkgYmFja3N0b3AgKGV4cGlyZS1wcmV2aWV3LWV4cG9ydHMtNjBkKS5cbiAqXG4gKiBAcGFyYW0gcmF0aW8gIFwiOToxNlwiIHwgXCIxNjo5XCIgfCBcIjE6MVwiIHwgXCI0OjVcIiBvciBcInRyYXZ5XCIgZm9yIHRoZSBUcmF2eSBleHBvcnQuXG4gKi9cbmV4cG9ydCBmdW5jdGlvbiBidWlsZFdhdGVybWFya2VkUHJldmlld0tleShcbiAgdXNlcklkOiBzdHJpbmcsXG4gIHJlcXVlc3RJZDogc3RyaW5nLFxuICByYXRpbzogXCI5OjE2XCIgfCBcIjE2OjlcIiB8IFwiMToxXCIgfCBcIjQ6NVwiIHwgXCJ0cmF2eVwiXG4pOiBzdHJpbmcge1xuICBjb25zdCBzYWZlUmF0aW8gPSByYXRpby5yZXBsYWNlKFwiOlwiLCBcIi1cIik7XG4gIHJldHVybiBgcHJldmlld19leHBvcnRzLyR7dXNlcklkfS8ke3V0Y0RhdGVTZWdtZW50KCl9LyR7cmVxdWVzdElkfS8ke3NhZmVSYXRpb30vJHt1dWlkKCl9Lm1wNGA7XG59XG5cbi8qKlxuICogS2V5IGZvciBhIGZpbmFsIGNsaXAgdGhlIHJlcXVlc3RlciBoYXMgUEFJRCB0byBkaXN0cmlidXRlL2Rvd25sb2FkLiBPbiBwYXltZW50XG4gKiAoYENsaXBSZXF1ZXN0U2VydmljZS51bmxvY2tEb3dubG9hZGApIHRoZSBjbGVhbiBtYXN0ZXIgaXMgTU9WRUQgaGVyZSBvdXQgb2ZcbiAqIGBmaW5hbF9leHBvcnRzL2AsIHdoaWNoIHJlc3RhcnRzIHRoZSBTcGFjZXMgbGlmZWN5Y2xlIGNsb2NrIG9uIHRoZSBsb25nZXJcbiAqIGBwYWlkX2V4cG9ydHMvYCB3aW5kb3cgKDMwIGRheXMgKyBhIHNhZmV0eSBkYXkpIOKAlCBleHBpcnkgY291bnRzIGZyb20gY3JlYXRpb24sXG4gKiBzbyBhIHJlLWtleSBpcyB0aGUgb25seSB3YXkgdG8gZXh0ZW5kLiBBIGZyZXNoIHV1aWQgZXZlcnkgY2FsbCBpcyBkZWxpYmVyYXRlLlxuICpcbiAqIExheW91dCBtYXRjaGVzIHRoZSBvdGhlciByZXF1ZXN0IGZvbGRlcnMgc28gdGhlIHJldGVudGlvbiBzd2VlcCBjYW4gcGFyc2UgdGhlXG4gKiByZXF1ZXN0SWQgYXMgdGhlIDR0aCBzZWdtZW50OlxuICogICBwYWlkX2V4cG9ydHMve3VzZXJJZH0ve1lZWVktTU0tRER9L3tyZXF1ZXN0SWR9L3t1dWlkfS17ZmlsZW5hbWV9XG4gKlxuICogTk9UIGxpc3RlZCBpbiBzcmMvY29uZmlnL21lZGlhUHJlZml4ZXMuanNvbiDigJQgdGhlIGNsaXAgcHVyZ2Uvb3JwaGFuIHN3ZWVwIG11c3RcbiAqIG5ldmVyIHRvdWNoIGEgcGFpZCBtYXN0ZXI7IGl0IGlzIGdvdmVybmVkIHNvbGVseSBieSB0aGUgYnVja2V0IGxpZmVjeWNsZSBydWxlLlxuICovXG5leHBvcnQgZnVuY3Rpb24gYnVpbGRQYWlkRXhwb3J0S2V5KFxuICB1c2VySWQ6IHN0cmluZyxcbiAgcmVxdWVzdElkOiBzdHJpbmcsXG4gIGZpbGVOYW1lOiBzdHJpbmdcbik6IHN0cmluZyB7XG4gIHJldHVybiBgcGFpZF9leHBvcnRzLyR7dXNlcklkfS8ke3V0Y0RhdGVTZWdtZW50KCl9LyR7cmVxdWVzdElkfS8ke3V1aWQoKX0tJHtzYW5pdGl6ZShmaWxlTmFtZSl9YDtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

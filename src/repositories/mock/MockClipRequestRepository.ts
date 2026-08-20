@@ -5,9 +5,8 @@ import {
   UpdateClipRequestInput,
   UpdateStaffFieldsInput,
 } from "@/domain/models/ClipRequest";
-import { RequestStatus, ACTIVE_STATUSES } from "@/domain/enums/RequestStatus";
+import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { CREDITS_CONFIG } from "@/config/credits";
-import { EditorType } from "@/domain/enums/EditorType";
 import { SEED_CLIP_REQUESTS } from "@/seed/requestSeedData";
 import { ADMIN_SEED_CLIP_REQUESTS } from "@/seed/adminSeedData";
 

@@ -746,6 +746,7 @@ export default async function RequestDetailPage({
                 isAwaitingFinalApproval={false}
                 voiceRecordingUrl={voiceRecordingAsset?.storageUrl ?? null}
                 voiceRecordingAssetId={voiceRecordingAsset?.id ?? null}
+                selectedVoiceId={pipelineJob.rvcVoiceModel}
                 finalClips={finalClips}
                 scenes={scenePlan}
                 storyboard={storyboard}

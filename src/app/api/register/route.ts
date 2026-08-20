@@ -136,9 +136,6 @@ export async function POST(
       );
     }
 
-    const message =
-      error instanceof Error ? error.message : "An unexpected error occurred.";
-
     console.error("[Clipper] /api/register error:", error);
     return NextResponse.json(
       { success: false, error: "Registration failed. Please try again." },

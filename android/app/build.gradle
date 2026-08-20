@@ -19,8 +19,8 @@ android {
         // MainActivity forwarding that ship in this build. MIN_ANDROID_BUILD_FOR_NATIVE_APPLE
         // in src/lib/mobile/nativeSocialAuth.ts must match this versionCode, or
         // the button is offered to installs that cannot complete the flow.
-        versionCode 5
-        versionName "1.0.4"
+        versionCode 6
+        versionName "1.0.5"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -47,6 +47,23 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+}
+
+// Firebase Cloud Messaging. Applied ONLY when google-services.json is present so
+// a checkout without Firebase credentials (CI, a contributor, a local debug build)
+// still compiles — the plugin hard-fails the build when the file is missing.
+// Without it the app builds but never receives a token: registrationError fires
+// with "MISSING_INSTANCEID_SERVICE" / "Default FirebaseApp is not initialized".
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
+} else {
+    // Not just "disabled": PushNotifications.register() opens with
+    // FirebaseMessaging.getInstance(), which throws when no default FirebaseApp
+    // exists, and Capacitor rethrows that on its HandlerThread — killing the
+    // process. src/lib/mobile/pushSupport.ts probes for this and skips
+    // registration, so such a build is safe; without that guard, tapping
+    // "enable notifications" terminates the app.
+    logger.warn("google-services.json not found - push notifications are DISABLED in this build (PushSupportPlugin will report unavailable and registration will be skipped). See docs/PUSH_NOTIFICATIONS_SETUP.md")
 }
 
 repositories {

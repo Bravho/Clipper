@@ -40,23 +40,33 @@ Stripe remains available on the website. Native builds append
 `RClipperNative/<platform>` to the user agent, hide Stripe checkout, and the
 Stripe top-up API rejects native requests.
 
-## 3. Push (iOS or a future Android release only)
+## 3. Push (now shipped on both platforms)
 
-The current Android Play build does not register for native push notifications
-and therefore does not require Firebase, FCM, `google-services.json`, or the
-Google Services Gradle plugin. Do not add Firebase configuration to the Android
-project merely for Play Console submission.
+Native push notifications are part of the current release on Android and iOS,
+so the following are now REQUIRED, not optional:
 
-If native push is added in a future release, configure:
+- APNs token key, team ID, bundle ID, and the production/sandbox environment
+  (`APNS_*`). TestFlight uses the *production* environment.
+- The iOS Push Notifications capability on the App ID and in Xcode. The
+  `APS_ENVIRONMENT` build setting must be defined or the `aps-environment`
+  entitlement resolves to an empty string.
+- For Android: a Firebase project, an Android app registered with BOTH the
+  upload-key and Play-App-Signing SHA-1s, `android/app/google-services.json`,
+  the Google Services Gradle plugin, and an FCM HTTP v1 service account
+  (`FCM_*`).
+- `POST_NOTIFICATIONS` in the Android manifest (mandatory at API 33+).
 
-- APNs token key, team ID, bundle ID, and production/sandbox environment.
-- For Android only: a Firebase project, Android app, `google-services.json`, and
-  an FCM HTTP v1 service account.
-- The iOS Push Notifications capability and provisioning profile.
+Store forms must be updated to match: the registration token is a collected
+device identifier, linked to the user, used for app functionality only, shared
+with nobody — declare it in Play **Data safety** and App Store Connect **App
+Privacy**.
 
-The user sees an explanatory prompt before the OS permission prompt. Tokens are
-registered only for authenticated users. Pipeline notifications are stored with
-a unique `(job_id, event_key)` constraint to prevent duplicate alerts.
+The user sees an explanatory prompt before the OS permission prompt — required
+in practice on iOS, where the system sheet can only ever be shown once. Tokens
+are registered only for authenticated users and unregistered on sign-out.
+Pipeline notifications are stored with a unique `(job_id, event_key)` constraint
+to prevent duplicate alerts. Full walkthrough:
+`docs/PUSH_NOTIFICATIONS_SETUP.md`.
 
 ## 4. Native projects
 

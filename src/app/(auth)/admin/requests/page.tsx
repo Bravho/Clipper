@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
-import { clipRequestRepository, productionReviewRepository } from "@/repositories";
-import { ProductionReviewStatus } from "@/domain/enums/ProductionReviewStatus";
+import { clipRequestRepository } from "@/repositories";
 import { AdminStatusBadge } from "@/features/admin/components/AdminStatusBadge";
 
 export const metadata: Metadata = { title: "All Requests — Admin" };
@@ -11,12 +10,7 @@ export const metadata: Metadata = { title: "All Requests — Admin" };
 export default async function AdminRequestsPage() {
   await requireRole(Role.Admin);
 
-  const [requests, pendingReviews] = await Promise.all([
-    clipRequestRepository.findAll(),
-    productionReviewRepository.findByStatus(ProductionReviewStatus.Pending),
-  ]);
-
-  const pendingReviewIds = new Set(pendingReviews.map((r) => r.requestId));
+  const requests = await clipRequestRepository.findAll();
   const now = new Date();
 
   return (
@@ -34,7 +28,6 @@ export default async function AdminRequestsPage() {
             <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
               <th className="px-4 py-3">Title</th>
               <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Admin Review</th>
               <th className="px-4 py-3">Due Date</th>
               <th className="px-4 py-3">Effort</th>
               <th className="px-4 py-3">Updated</th>
@@ -43,7 +36,6 @@ export default async function AdminRequestsPage() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {requests.map((req) => {
-              const isPendingReview = pendingReviewIds.has(req.id);
               const isOverdue =
                 req.confirmedDueDate &&
                 req.confirmedDueDate < now &&
@@ -62,15 +54,6 @@ export default async function AdminRequestsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <AdminStatusBadge status={req.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {isPendingReview ? (
-                      <span className="inline-flex items-center rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">
-                        Needs Review
-                      </span>
-                    ) : (
-                      <span className="text-slate-400 text-xs">—</span>
-                    )}
                   </td>
                   <td className="px-4 py-3">
                     {req.confirmedDueDate ? (

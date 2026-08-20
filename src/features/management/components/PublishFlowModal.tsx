@@ -454,7 +454,7 @@ export function PublishFlowModal({
         </div>
 
         {phase === "channels" && (
-          <div className="p-5 sm:p-6">
+          <div className="app-safe-bottom px-5 pt-5 sm:px-6 sm:pt-6">
             <p className="text-sm leading-6 text-slate-600">
               Suggested channels from video generation appear first. You may still
               choose any compatible connected account.
@@ -629,7 +629,7 @@ export function PublishFlowModal({
                 </div>
               )}
             </div>
-            <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-slate-100 bg-white px-5 py-4 sm:px-6">
+            <ModalFooter align="between">
               <Button
                 variant="ghost"
                 onClick={() => {
@@ -647,137 +647,140 @@ export function PublishFlowModal({
               >
                 Review submission
               </Button>
-            </div>
+            </ModalFooter>
           </>
         )}
 
         {phase === "confirm" && connection && form && (
-          <div className="p-5 sm:p-6">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <SummaryRow label="Channel" value={`${connection.label}${connection.accountName ? ` · ${connection.accountName}` : ""}`} />
-              <SummaryRow
-                label="Timing"
-                value={
-                  form.publishMode === "schedule"
-                    ? new Date(form.scheduledAtLocal).toLocaleString()
-                    : "Publish now"
-                }
-              />
-              <SummaryRow
-                label={config.hasTitle ? config.titleLabel : "Video title (video library)"}
-                value={form.title}
-              />
-              <SummaryRow label={config.captionLabel} value={form.caption} multiline />
-              {hashtags.length > 0 && (
+          <>
+            <div className="px-5 pb-5 pt-5 sm:px-6 sm:pt-6">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <SummaryRow label="Channel" value={`${connection.label}${connection.accountName ? ` · ${connection.accountName}` : ""}`} />
                 <SummaryRow
-                  label="Hashtags"
-                  value={hashtags.map((tag) => `#${tag}`).join(" ")}
-                  multiline
+                  label="Timing"
+                  value={
+                    form.publishMode === "schedule"
+                      ? new Date(form.scheduledAtLocal).toLocaleString()
+                      : "Publish now"
+                  }
                 />
-              )}
+                <SummaryRow
+                  label={config.hasTitle ? config.titleLabel : "Video title (video library)"}
+                  value={form.title}
+                />
+                <SummaryRow label={config.captionLabel} value={form.caption} multiline />
+                {hashtags.length > 0 && (
+                  <SummaryRow
+                    label="Hashtags"
+                    value={hashtags.map((tag) => `#${tag}`).join(" ")}
+                    multiline
+                  />
+                )}
+              </div>
+              <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                <p className="text-sm font-medium text-blue-950">
+                  Confirm this posting submission?
+                </p>
+                <p className="mt-1 text-xs leading-5 text-blue-800">
+                  RClipper will send this video and the information above to the selected
+                  connected channel.
+                </p>
+              </div>
+              {error && <div className="mt-4"><ErrorNotice message={error} /></div>}
             </div>
-            <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
-              <p className="text-sm font-medium text-blue-950">
-                Confirm this posting submission?
-              </p>
-              <p className="mt-1 text-xs leading-5 text-blue-800">
-                RClipper will send this video and the information above to the selected
-                connected channel.
-              </p>
-            </div>
-            {error && <div className="mt-4"><ErrorNotice message={error} /></div>}
-            <div className="mt-6 flex justify-end gap-2">
+            <ModalFooter align="end">
               <Button variant="outline" onClick={() => setPhase("form")} disabled={busy !== "idle"}>
                 Edit form
               </Button>
               <Button onClick={submitPublication} loading={busy === "publishing"}>
                 Confirm and submit
               </Button>
-            </div>
-          </div>
+            </ModalFooter>
+          </>
         )}
 
         {phase === "update" && connection && form && (
-          <div className="p-5 sm:p-6">
-            <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-              <SuccessIcon />
-              <div>
-                <p className="text-sm font-semibold text-emerald-950">
-                  Post submitted to {connection.label}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-emerald-800">
-                  Current status: {humanizeStatus(submittedStatus)}. Your submission is
-                  already confirmed.
+          <>
+            <div className="px-5 pb-5 pt-5 sm:px-6 sm:pt-6">
+              <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <SuccessIcon />
+                <div>
+                  <p className="text-sm font-semibold text-emerald-950">
+                    Post submitted to {connection.label}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-emerald-800">
+                    Current status: {humanizeStatus(submittedStatus)}. Your submission is
+                    already confirmed.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <h3 className="text-base font-semibold text-slate-950">
+                  Save these edited details to the original video?
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  This optional step only updates the item in{" "}
+                  <strong className="font-semibold text-slate-800">
+                    {VIDEO_LIBRARY_LABEL}
+                  </strong>
+                  . It will not change the {connection.label} post you just submitted.
                 </p>
               </div>
-            </div>
 
-            <div className="mt-5">
-              <h3 className="text-base font-semibold text-slate-950">
-                Save these edited details to the original video?
-              </h3>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                This optional step only updates the item in{" "}
-                <strong className="font-semibold text-slate-800">
-                  {VIDEO_LIBRARY_LABEL}
-                </strong>
-                . It will not change the {connection.label} post you just submitted.
-              </p>
-            </div>
+              <div className="mt-4 grid items-stretch gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-3">
+                <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    Edited details for {connection.label}
+                  </p>
+                  {form.title.trim() && (
+                    <p className="mt-2 truncate text-sm font-semibold text-slate-900">
+                      {form.title.trim()}
+                    </p>
+                  )}
+                  <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">
+                    {form.caption.trim()}
+                  </p>
+                  {hashtags.length > 0 && (
+                    <p className="mt-2 line-clamp-1 text-xs text-blue-700">
+                      {hashtags.map((tag) => `#${tag}`).join(" ")}
+                    </p>
+                  )}
+                </div>
 
-            <div className="mt-4 grid items-stretch gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-3">
-              <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                  Edited details for {connection.label}
-                </p>
-                {form.title.trim() && (
-                  <p className="mt-2 truncate text-sm font-semibold text-slate-900">
+                <div
+                  aria-hidden="true"
+                  className="flex items-center justify-center text-lg font-medium text-slate-400 sm:px-0"
+                >
+                  <span className="sm:hidden">&darr;</span>
+                  <span className="hidden sm:inline">&rarr;</span>
+                </div>
+
+                <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+                    Save as default text in
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-blue-950">
+                    {VIDEO_LIBRARY_LABEL}
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-sm leading-5 text-blue-900/80">
                     {form.title.trim()}
                   </p>
-                )}
-                <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">
-                  {form.caption.trim()}
-                </p>
-                {hashtags.length > 0 && (
-                  <p className="mt-2 line-clamp-1 text-xs text-blue-700">
-                    {hashtags.map((tag) => `#${tag}`).join(" ")}
-                  </p>
-                )}
+                </div>
               </div>
 
-              <div
-                aria-hidden="true"
-                className="flex items-center justify-center text-lg font-medium text-slate-400 sm:px-0"
-              >
-                <span className="sm:hidden">&darr;</span>
-                <span className="hidden sm:inline">&rarr;</span>
-              </div>
+              <p className="mt-4 text-xs leading-5 text-slate-500">
+                Saving will replace{" "}
+                {connection.platform === "youtube"
+                  ? "this video's saved title, description, caption, and hashtags"
+                  : "this video's saved title, caption, and hashtags"}
+                . The submitted text will be pre-filled the next time you publish this
+                video.
+              </p>
 
-              <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-                  Save as default text in
-                </p>
-                <p className="mt-2 text-sm font-semibold text-blue-950">
-                  {VIDEO_LIBRARY_LABEL}
-                </p>
-                <p className="mt-1 line-clamp-2 text-sm leading-5 text-blue-900/80">
-                  {form.title.trim()}
-                </p>
-              </div>
+              {error && <div className="mt-4"><ErrorNotice message={error} /></div>}
             </div>
-
-            <p className="mt-4 text-xs leading-5 text-slate-500">
-              Saving will replace{" "}
-              {connection.platform === "youtube"
-                ? "this video's saved title, description, caption, and hashtags"
-                : "this video's saved title, caption, and hashtags"}
-              . The submitted text will be pre-filled the next time you publish this
-              video.
-            </p>
-
-            {error && <div className="mt-4"><ErrorNotice message={error} /></div>}
-
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <ModalFooter align="end">
               <Button
                 variant="outline"
                 onClick={keepExistingDefaults}
@@ -788,28 +791,61 @@ export function PublishFlowModal({
               <Button onClick={updateVideoDefaults} loading={busy === "updating"}>
                 Save edited details
               </Button>
-            </div>
-          </div>
+            </ModalFooter>
+          </>
         )}
 
         {phase === "complete" && connection && (
-          <div className="p-6 text-center sm:p-8">
-            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-              <SuccessIcon large />
-            </span>
-            <h3 className="mt-4 text-lg font-semibold text-slate-950">All done</h3>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-600">
-              Your {connection.label} post was submitted
-              {defaultsUpdated
-                ? `, and its text is now saved to the original video in ${VIDEO_LIBRARY_LABEL}.`
-                : `. The original video's saved text in ${VIDEO_LIBRARY_LABEL} was left unchanged.`}
-            </p>
-            <Button className="mt-6" onClick={onClose}>
-              Done
-            </Button>
-          </div>
+          <>
+            <div className="px-6 pb-6 pt-6 text-center sm:px-8 sm:pt-8">
+              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                <SuccessIcon large />
+              </span>
+              <h3 className="mt-4 text-lg font-semibold text-slate-950">All done</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-600">
+                Your {connection.label} post was submitted
+                {defaultsUpdated
+                  ? `, and its text is now saved to the original video in ${VIDEO_LIBRARY_LABEL}.`
+                  : `. The original video's saved text in ${VIDEO_LIBRARY_LABEL} was left unchanged.`}
+              </p>
+            </div>
+            <ModalFooter align="center">
+              <Button onClick={onClose}>Done</Button>
+            </ModalFooter>
+          </>
         )}
       </section>
+    </div>
+  );
+}
+
+/**
+ * The action bar for one step of the flow.
+ *
+ * Pinned to the bottom of the scrolling dialog and padded past the device's
+ * bottom inset (`app-safe-bottom`). The dialog is a `position: fixed` bottom
+ * sheet on phones, so it sits outside `body`'s safe-area padding: without this
+ * the primary button of each step ends up underneath the Android
+ * three-button navigation bar / iOS home indicator.
+ */
+function ModalFooter({
+  children,
+  align,
+}: {
+  children: ReactNode;
+  align: "between" | "end" | "center";
+}) {
+  const justify =
+    align === "between"
+      ? "justify-between"
+      : align === "center"
+        ? "justify-center"
+        : "justify-end";
+  return (
+    <div
+      className={`app-safe-bottom sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t border-slate-100 bg-white px-5 pt-4 sm:gap-3 sm:px-6 ${justify}`}
+    >
+      {children}
     </div>
   );
 }

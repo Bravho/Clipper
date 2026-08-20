@@ -8,6 +8,10 @@ import {
   loadNativeAuthConfig,
   type NativeAuthConfig,
 } from "@/lib/mobile/nativeAuthConfig";
+import {
+  markAppleReturnConsumed,
+  watchAppleReturn,
+} from "@/lib/mobile/appleAndroidReturn";
 
 /**
  * Native (in-app) social sign-in for the Capacitor shells.
@@ -286,6 +290,22 @@ export class NativeSignInCancelled extends Error {
 }
 
 /**
+ * Thrown when Apple answered but the answer was a failure.
+ *
+ * On Android the failure is decided on our server — the callback route reports
+ * `reason` when the token exchange comes back without an `id_token`, which in
+ * practice means the Services ID, the Return URL, or an expired
+ * `APPLE_CLIENT_SECRET`. Carrying the reason through means the button can say
+ * something specific instead of resetting itself in silence.
+ */
+export class AppleReturnFailedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`Sign in with Apple failed on the callback: ${reason}`);
+    this.name = "AppleReturnFailedError";
+  }
+}
+
+/**
  * Android throws `GetCredentialCancellationException` ("activity is cancelled by
  * the user"); iOS throws `ASAuthorizationError.canceled`, surfaced as code 1001.
  */
@@ -308,42 +328,103 @@ async function runNativeLogin<T>(login: () => Promise<T>): Promise<T> {
  * the user backed out of the Custom Tab.
  *
  * The successful path also brings the app forward — Chrome fires the deep-link
- * intent, which resumes the activity — and `onNewIntent` lands a moment later.
+ * intent, which resumes the activity — and `appUrlOpen` lands a moment later.
  * Too short and a success is misread as a cancellation; too long and a genuine
  * back-press leaves the button spinning. A couple of seconds covers the gap.
+ *
+ * This is now only a tie-breaker: the timer fires a cancellation *only* if no
+ * apple-login deep link has been seen by the time it expires. A result that came
+ * back and was merely dropped no longer counts as a cancellation.
  */
 const APPLE_REDIRECT_GRACE_MS = 2500;
 
 /**
- * Wrap the Android Apple login so dismissing the Custom Tab settles the promise.
+ * How long to wait for the plugin to settle its own call once the deep link has
+ * already been seen.
  *
- * Unlike Credential Manager and ASAuthorizationController, the Custom Tab flow
- * has no cancellation callback: the plugin settles its call only when the deep
- * link arrives. Backing out therefore settles *nothing*, and the button spins
- * for ever with no way back.
- *
- * Known limitation: the plugin's internal `lastcall` stays pending, and nothing
- * it exposes can clear it, so a second attempt in the same app session rejects
- * with "Last call is not null". `describeSignInFailure` translates that into
- * "reopen the app" rather than showing the raw plugin string.
+ * Preferring the plugin's own path when it is only milliseconds behind is not
+ * cosmetic: resolving through the plugin is what clears its internal `lastcall`,
+ * and a `lastcall` left pending is what makes a *second* attempt in the same app
+ * session reject with "Last call is not null". So the deep link is used as a
+ * fallback, not a shortcut.
  */
-async function withCustomTabCancellation<T>(login: () => Promise<T>): Promise<T> {
-  let cancel: (() => void) | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+const PLUGIN_SETTLE_GRACE_MS = 1500;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Run the Android Apple login, taking the result from whichever path survives.
+ *
+ * Three things can end this flow, and the old code could only see one of them:
+ *
+ *  - **the plugin resolves** — the happy path, when the app stayed alive;
+ *  - **the deep link arrives but the plugin does not settle** — the app came
+ *    back without the pending call the plugin needed (see appleAndroidReturn.ts
+ *    for why). The identity token is right there in the intent, so it is used
+ *    directly rather than thrown away;
+ *  - **the app resumes with no deep link at all** — the user backed out of the
+ *    Custom Tab, which the flow genuinely has no callback for.
+ *
+ * Only the third is a cancellation. The previous implementation treated *any*
+ * resume followed by 2.5 s of silence as one, which meant a dropped result was
+ * reported as "the user changed their mind" — and `describeSignInFailure`
+ * deliberately shows nothing for that. Hence a failed sign-in with no error
+ * message anywhere, which is the hardest kind to diagnose.
+ */
+async function runAppleAndroidLogin<T>(
+  login: () => Promise<T>
+): Promise<{ source: "plugin"; value: T } | { source: "deepLink"; idToken: string }> {
+  const watcher = watchAppleReturn();
+
+  // Read inside the resume timer rather than awaited: the question it answers is
+  // "has Apple answered *by now*", not "will it ever".
+  let returnSeen = false;
+  void watcher.arrived.then(() => {
+    returnSeen = true;
+  });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancel: (() => void) | undefined;
   const cancelled = new Promise<never>((_, reject) => {
     cancel = () => reject(new NativeSignInCancelled());
   });
 
   // Registered before the tab opens, so a fast back-press is not missed.
   const listener = await App.addListener("resume", () => {
-    timer = setTimeout(() => cancel?.(), APPLE_REDIRECT_GRACE_MS);
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!returnSeen) cancel?.();
+    }, APPLE_REDIRECT_GRACE_MS);
   });
 
+  const pluginCall = login();
+  // The race may leave this promise unawaited; without a sink, a later rejection
+  // surfaces as an unhandled rejection and (in the WebView) a console error that
+  // looks like a crash.
+  void pluginCall.catch(() => undefined);
+
   try {
-    return await Promise.race([login(), cancelled]);
+    const settled = await Promise.race([
+      pluginCall.then((value) => ({ source: "plugin" as const, value })),
+      watcher.arrived.then((value) => ({ source: "deepLink" as const, value })),
+      cancelled,
+    ]);
+
+    if (settled.source === "plugin") return settled;
+
+    if (!settled.value.ok) throw new AppleReturnFailedError(settled.value.reason);
+
+    const viaPlugin = await Promise.race([
+      pluginCall.then((value) => ({ source: "plugin" as const, value })).catch(() => null),
+      sleep(PLUGIN_SETTLE_GRACE_MS).then(() => null),
+    ]);
+
+    return viaPlugin ?? { source: "deepLink", idToken: settled.value.idToken };
   } finally {
     if (timer) clearTimeout(timer);
+    watcher.dispose();
     await listener.remove().catch(() => undefined);
   }
 }
@@ -389,17 +470,44 @@ export async function getNativeIdToken(
       options: { scopes: ["name", "email"] },
     });
 
-  const { result } = await runNativeLogin(() =>
-    // Only Android leaves the app for a Custom Tab. iOS presents a sheet that
-    // rejects on dismissal by itself, so it must not be wrapped.
-    getMobilePlatform() === "android"
-      ? withCustomTabCancellation(appleLogin)
-      : appleLogin()
-  );
+  // Only Android leaves the app for a Custom Tab, and only Android can therefore
+  // lose the result on the way back. iOS presents a sheet that rejects on
+  // dismissal by itself, so it must not be wrapped.
+  if (getMobilePlatform() === "android") {
+    const outcome = await runNativeLogin(() => runAppleAndroidLogin(appleLogin));
 
+    if (outcome.source === "deepLink") {
+      // Claim the token so `AppleReturnRecovery` does not also try to spend it
+      // when the launch URL is read at the next boot.
+      markAppleReturnConsumed(outcome.idToken);
+      return { idToken: outcome.idToken };
+    }
+
+    return toSignInResult(outcome.value.result, { claim: true });
+  }
+
+  const { result } = await runNativeLogin(appleLogin);
+  return toSignInResult(result);
+}
+
+/**
+ * Shape an Apple plugin result into a {@link NativeSignInResult}.
+ *
+ * `claim` marks the token spent on the Android path, where the same token may
+ * also be sitting in `App.getLaunchUrl()` waiting for the recovery component.
+ */
+function toSignInResult(
+  result: {
+    idToken?: string | null;
+    profile?: { givenName?: string | null; familyName?: string | null } | null;
+  },
+  { claim = false }: { claim?: boolean } = {}
+): NativeSignInResult {
   if (!result.idToken) {
     throw new Error("Sign in with Apple returned no identity token.");
   }
+
+  if (claim) markAppleReturnConsumed(result.idToken);
 
   // Populated on iOS only. The Android provider builds its profile by decoding
   // the identity token, and Apple never puts a name in there — it arrives as a

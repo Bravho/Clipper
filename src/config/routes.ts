@@ -23,10 +23,28 @@ export const ROUTES = {
   VERIFY_EMAIL: "/verify-email",
   VERIFY_EMAIL_CONFIRM: "/verify-email/confirm",
 
+  // Password reset ("ลืมรหัสผ่าน"). Both are public — the whole premise is
+  // that the user cannot sign in, so neither may sit behind the auth gate.
+  FORGOT_PASSWORD: "/forgot-password",
+  RESET_PASSWORD: "/reset-password",
+
   // Authenticated (role-specific)
   DASHBOARD: "/dashboard",
   ADMIN: "/admin",
   ACCOUNT: "/account",
+
+  // Admin Portal sections. Every one of these sits under ROUTES.ADMIN, so the
+  // existing middleware matcher (`/admin/:path*`) gates them with no change.
+  ADMIN_REQUESTS: "/admin/requests",
+  ADMIN_QUEUE: "/admin/queue",
+  ADMIN_USERS: "/admin/users",
+  ADMIN_CREDITS: "/admin/credits",
+  ADMIN_PAYMENTS: "/admin/payments",
+  ADMIN_FEEDBACK: "/admin/feedback",
+  ADMIN_ANALYTICS_FUNNEL: "/admin/analytics/funnel",
+  ADMIN_ANALYTICS_PIPELINE: "/admin/analytics/pipeline",
+  ADMIN_ANALYTICS_APPROVALS: "/admin/analytics/approvals",
+  ADMIN_ANALYTICS_CAPACITY: "/admin/analytics/capacity",
 
   // Requester Portal — Phase 2B
   REQUESTS: "/dashboard/requests",

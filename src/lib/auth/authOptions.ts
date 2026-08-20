@@ -5,10 +5,11 @@ import AppleProvider from "next-auth/providers/apple";
 import { Role } from "@/domain/enums/Role";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { authService } from "@/services/AuthService";
-import { ROUTES, getRoleHomePath } from "@/config/routes";
+import { ROUTES } from "@/config/routes";
 import { logAuthEvent } from "@/lib/auth/diagnostics";
 import { verifyGoogleIdToken } from "@/lib/auth/googleIdToken";
 import { verifyAppleIdToken } from "@/lib/auth/appleIdToken";
+import { loginEventService } from "@/services/analytics/LoginEventService";
 
 /**
  * Provider ids used by the native in-app sign-in flows (Android Credential
@@ -24,6 +25,65 @@ import { verifyAppleIdToken } from "@/lib/auth/appleIdToken";
  */
 export const GOOGLE_NATIVE_PROVIDER_ID = "google-native";
 export const APPLE_NATIVE_PROVIDER_ID = "apple-native";
+
+/**
+ * How recently `users.created_at` must be for a sign-in to count as the one that
+ * created the account.
+ *
+ * `authService.findOrCreateOAuthUser()` returns the same `User` shape whether it
+ * found or created the row, so newness is inferred from the row's own age. The
+ * create and this check happen within the same request, milliseconds apart; the
+ * window is wide enough to absorb a slow `createRequesterAccount` (wallet +
+ * deleted-account registry) and far too narrow to catch a returning user.
+ */
+const ACCOUNT_JUST_CREATED_MS = 15_000;
+
+function isAccountJustCreated(createdAt: Date | string | undefined): boolean {
+  if (!createdAt) return false;
+  // Tolerates a raw timestamp string: the Postgres repository hydrates a Date,
+  // but this value also arrives through NextAuth's `user` object, which is
+  // serialized on some paths.
+  const at = createdAt instanceof Date ? createdAt : new Date(createdAt);
+  const age = Date.now() - at.getTime();
+  return Number.isFinite(age) && age >= 0 && age < ACCOUNT_JUST_CREATED_MS;
+}
+
+/**
+ * Append the `user_login_events` row for a successful sign-in.
+ *
+ * Fire-and-forget by construction: `recordLogin` swallows its own errors and is
+ * not awaited by the caller's return path, so neither a slow nor a failing
+ * analytics INSERT can delay or reject authentication. This is the ONLY thing
+ * this file does with the request headers — no auth behaviour depends on them.
+ *
+ * `headers()` is read defensively: it throws outside a request scope (which the
+ * NextAuth route handler always provides today, but a future non-request caller
+ * would not), and losing the IP/UA is not worth losing the event over.
+ */
+async function recordSignInEvent(params: {
+  userId: string;
+  provider: string;
+  isNewUser: boolean;
+}): Promise<void> {
+  let ip: string | null = null;
+  let userAgent: string | null = null;
+  try {
+    const { headers } = await import("next/headers");
+    const h = headers();
+    // x-forwarded-for is a comma-separated chain; the first entry is the client.
+    ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip");
+    userAgent = h.get("user-agent");
+  } catch {
+    /* No request scope — record the event without network context. */
+  }
+  await loginEventService.recordLogin({
+    userId: params.userId,
+    provider: params.provider,
+    isNewUser: params.isNewUser,
+    ip,
+    userAgent,
+  });
+}
 
 /**
  * Shared authorize() body for the native providers: verify the ID token, then
@@ -73,6 +133,14 @@ async function authorizeNativeIdToken({
     name: user.name,
     role: user.role,
     provider: authProvider,
+    // Carried purely so the signIn callback can tell a native SIGN-UP from a
+    // native sign-in: the account-creation branch lives inside
+    // findOrCreateOAuthUser, and the authorize() return value is the only
+    // channel from here to signIn(). NextAuth passes Credentials authorize()
+    // results through untouched (that is how `role`/`provider` already travel),
+    // and the jwt callback copies only id/role/provider, so this never reaches
+    // the token or the session.
+    createdAt: user.createdAt,
   };
 }
 
@@ -208,8 +276,16 @@ export const authOptions: NextAuthOptions = {
     /**
      * signIn callback — runs on every sign-in attempt.
      * Used to handle Google OAuth account creation/linking.
+     *
+     * Also the single choke point where `user_login_events` is appended: it
+     * fires for every provider (credentials, google, apple, and the
+     * google-native / apple-native Credentials providers the mobile shells use),
+     * and only on a sign-in that is about to succeed. The recording is additive —
+     * it changes no return value, redirect, or cookie.
      */
-    async signIn({ user, account, profile }) {
+    async signIn({ user, account }) {
+      const providerId = account?.provider ?? "credentials";
+
       if (account?.provider === "google" || account?.provider === "apple") {
         const provider =
           account.provider === "google"
@@ -229,6 +305,12 @@ export const authOptions: NextAuthOptions = {
           user.role = oauthUser.role;
           user.provider = provider;
 
+          void recordSignInEvent({
+            userId: oauthUser.id,
+            provider: providerId,
+            isNewUser: isAccountJustCreated(oauthUser.createdAt),
+          });
+
           return true;
         } catch (error) {
           console.error(`[Clipper] ${account.provider} signIn error:`, error);
@@ -239,7 +321,20 @@ export const authOptions: NextAuthOptions = {
       // Credentials provider: authorize() already validated the user
       logAuthEvent("signin_callback_accepted", {
         userId: user.id,
-        provider: account?.provider ?? "credentials",
+        provider: providerId,
+      });
+
+      // The native providers run findOrCreateOAuthUser in authorize() and carry
+      // the account's age back on `user.createdAt` (see authorizeNativeIdToken),
+      // so a native SIGN-UP is recorded as one. Email+password sign-in never
+      // creates an account — registration is a separate POST /api/register that
+      // issues no session — so it is always a returning user here.
+      void recordSignInEvent({
+        userId: user.id,
+        provider: providerId,
+        isNewUser: isAccountJustCreated(
+          (user as { createdAt?: Date | string }).createdAt
+        ),
       });
       return true;
     },

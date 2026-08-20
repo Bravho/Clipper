@@ -48,6 +48,12 @@ const config: CapacitorConfig = {
     appendUserAgent: " RClipperNative/android",
   },
   plugins: {
+    // Pipeline notices tell the requester it is their turn to act, so they are
+    // worth showing even while the app is open. Without presentationOptions iOS
+    // silently swallows a foreground notification.
+    PushNotifications: {
+      presentationOptions: ["badge", "sound", "alert"],
+    },
     SocialLogin: {
       providers: {
         google: true,

@@ -1,0 +1,71 @@
+af99e84ce9225023c89ec1f04a958cf3
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CHANNEL_PUBLISH_FIELDS = exports.PUBLISHABLE_PLATFORMS = void 0;
+exports.getPublishFieldConfig = getPublishFieldConfig;
+exports.isPublishablePlatform = isPublishablePlatform;
+/**
+ * Phase 8 — per-channel publishing form field configuration.
+ *
+ * Each distribution channel exposes a different set of publishable fields on the
+ * real platform APIs (see src/lib/social/*), so the auto-filled distribution-
+ * review form is tailored per channel rather than showing one uniform shape:
+ *
+ *   - YouTube  → title + description (caption) + tags (hashtags)
+ *   - TikTok   → caption + hashtags (the API packs these into `title`/`description`)
+ *   - Instagram→ caption + hashtags (Reels caption)
+ *   - Facebook → caption + hashtags (video description)
+ *
+ * This drives BOTH the Gemini draft-generation prompt (which fields to write per
+ * channel) and the DistributionReviewPanel UI (which inputs to render). Travy
+ * (TravyApp) is intentionally excluded — it is rendered + posted automatically
+ * in the background (EN+ZH), never edited/published from this form. CDN is
+ * internal-only.
+ */
+const Platform_1 = require("@/domain/enums/Platform");
+/**
+ * Channels that appear on the distribution-review publishing form (editable +
+ * auto-posted on confirm). Order = display order. Travy/CDN excluded on purpose.
+ */
+exports.PUBLISHABLE_PLATFORMS = [
+    Platform_1.Platform.TikTok,
+    Platform_1.Platform.Instagram,
+    Platform_1.Platform.Facebook,
+    Platform_1.Platform.YouTube,
+];
+exports.CHANNEL_PUBLISH_FIELDS = {
+    [Platform_1.Platform.YouTube]: {
+        fields: ["title", "caption", "hashtags"],
+        captionLabel: "รายละเอียด (Description)",
+        hasTitle: true,
+    },
+    [Platform_1.Platform.TikTok]: {
+        fields: ["caption", "hashtags"],
+        captionLabel: "คำบรรยาย (Caption)",
+        hasTitle: false,
+    },
+    [Platform_1.Platform.Instagram]: {
+        fields: ["caption", "hashtags"],
+        captionLabel: "คำบรรยาย (Caption)",
+        hasTitle: false,
+    },
+    [Platform_1.Platform.Facebook]: {
+        fields: ["caption", "hashtags"],
+        captionLabel: "คำบรรยาย (Caption)",
+        hasTitle: false,
+    },
+};
+/** Field config for a platform, defaulting to caption+hashtags for unknowns. */
+function getPublishFieldConfig(platform) {
+    var _a;
+    return ((_a = exports.CHANNEL_PUBLISH_FIELDS[platform]) !== null && _a !== void 0 ? _a : {
+        fields: ["caption", "hashtags"],
+        captionLabel: "คำบรรยาย (Caption)",
+        hasTitle: false,
+    });
+}
+/** Whether a platform is shown on the distribution-review publishing form. */
+function isPublishablePlatform(platform) {
+    return exports.PUBLISHABLE_PLATFORMS.includes(platform);
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxjb25maWdcXHB1Ymxpc2hGaWVsZHMudHMiLCJtYXBwaW5ncyI6Ijs7O0FBa0VBLHNEQVFDO0FBR0Qsc0RBRUM7QUEvRUQ7Ozs7Ozs7Ozs7Ozs7Ozs7O0dBaUJHO0FBQ0gsc0RBQW1EO0FBYW5EOzs7R0FHRztBQUNVLFFBQUEscUJBQXFCLEdBQWU7SUFDL0MsbUJBQVEsQ0FBQyxNQUFNO0lBQ2YsbUJBQVEsQ0FBQyxTQUFTO0lBQ2xCLG1CQUFRLENBQUMsUUFBUTtJQUNqQixtQkFBUSxDQUFDLE9BQU87Q0FDakIsQ0FBQztBQUVXLFFBQUEsc0JBQXNCLEdBQThDO0lBQy9FLENBQUMsbUJBQVEsQ0FBQyxPQUFPLENBQUMsRUFBRTtRQUNsQixNQUFNLEVBQUUsQ0FBQyxPQUFPLEVBQUUsU0FBUyxFQUFFLFVBQVUsQ0FBQztRQUN4QyxZQUFZLEVBQUUsMEJBQTBCO1FBQ3hDLFFBQVEsRUFBRSxJQUFJO0tBQ2Y7SUFDRCxDQUFDLG1CQUFRLENBQUMsTUFBTSxDQUFDLEVBQUU7UUFDakIsTUFBTSxFQUFFLENBQUMsU0FBUyxFQUFFLFVBQVUsQ0FBQztRQUMvQixZQUFZLEVBQUUsb0JBQW9CO1FBQ2xDLFFBQVEsRUFBRSxLQUFLO0tBQ2hCO0lBQ0QsQ0FBQyxtQkFBUSxDQUFDLFNBQVMsQ0FBQyxFQUFFO1FBQ3BCLE1BQU0sRUFBRSxDQUFDLFNBQVMsRUFBRSxVQUFVLENBQUM7UUFDL0IsWUFBWSxFQUFFLG9CQUFvQjtRQUNsQyxRQUFRLEVBQUUsS0FBSztLQUNoQjtJQUNELENBQUMsbUJBQVEsQ0FBQyxRQUFRLENBQUMsRUFBRTtRQUNuQixNQUFNLEVBQUUsQ0FBQyxTQUFTLEVBQUUsVUFBVSxDQUFDO1FBQy9CLFlBQVksRUFBRSxvQkFBb0I7UUFDbEMsUUFBUSxFQUFFLEtBQUs7S0FDaEI7Q0FDRixDQUFDO0FBRUYsZ0ZBQWdGO0FBQ2hGLFNBQWdCLHFCQUFxQixDQUFDLFFBQWdCOztJQUNwRCxPQUFPLENBQ0wsTUFBQSw4QkFBc0IsQ0FBQyxRQUFRLENBQUMsbUNBQUk7UUFDbEMsTUFBTSxFQUFFLENBQUMsU0FBUyxFQUFFLFVBQVUsQ0FBQztRQUMvQixZQUFZLEVBQUUsb0JBQW9CO1FBQ2xDLFFBQVEsRUFBRSxLQUFLO0tBQ2hCLENBQ0YsQ0FBQztBQUNKLENBQUM7QUFFRCw4RUFBOEU7QUFDOUUsU0FBZ0IscUJBQXFCLENBQUMsUUFBa0I7SUFDdEQsT0FBTyw2QkFBcUIsQ0FBQyxRQUFRLENBQUMsUUFBUSxDQUFDLENBQUM7QUFDbEQsQ0FBQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyJEOlxcY29kaW5nXFxjbGlwcGVyX2FnZW50XFxzcmNcXGNvbmZpZ1xccHVibGlzaEZpZWxkcy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIFBoYXNlIDgg4oCUIHBlci1jaGFubmVsIHB1Ymxpc2hpbmcgZm9ybSBmaWVsZCBjb25maWd1cmF0aW9uLlxuICpcbiAqIEVhY2ggZGlzdHJpYnV0aW9uIGNoYW5uZWwgZXhwb3NlcyBhIGRpZmZlcmVudCBzZXQgb2YgcHVibGlzaGFibGUgZmllbGRzIG9uIHRoZVxuICogcmVhbCBwbGF0Zm9ybSBBUElzIChzZWUgc3JjL2xpYi9zb2NpYWwvKiksIHNvIHRoZSBhdXRvLWZpbGxlZCBkaXN0cmlidXRpb24tXG4gKiByZXZpZXcgZm9ybSBpcyB0YWlsb3JlZCBwZXIgY2hhbm5lbCByYXRoZXIgdGhhbiBzaG93aW5nIG9uZSB1bmlmb3JtIHNoYXBlOlxuICpcbiAqICAgLSBZb3VUdWJlICDihpIgdGl0bGUgKyBkZXNjcmlwdGlvbiAoY2FwdGlvbikgKyB0YWdzIChoYXNodGFncylcbiAqICAgLSBUaWtUb2sgICDihpIgY2FwdGlvbiArIGhhc2h0YWdzICh0aGUgQVBJIHBhY2tzIHRoZXNlIGludG8gYHRpdGxlYC9gZGVzY3JpcHRpb25gKVxuICogICAtIEluc3RhZ3JhbeKGkiBjYXB0aW9uICsgaGFzaHRhZ3MgKFJlZWxzIGNhcHRpb24pXG4gKiAgIC0gRmFjZWJvb2sg4oaSIGNhcHRpb24gKyBoYXNodGFncyAodmlkZW8gZGVzY3JpcHRpb24pXG4gKlxuICogVGhpcyBkcml2ZXMgQk9USCB0aGUgR2VtaW5pIGRyYWZ0LWdlbmVyYXRpb24gcHJvbXB0ICh3aGljaCBmaWVsZHMgdG8gd3JpdGUgcGVyXG4gKiBjaGFubmVsKSBhbmQgdGhlIERpc3RyaWJ1dGlvblJldmlld1BhbmVsIFVJICh3aGljaCBpbnB1dHMgdG8gcmVuZGVyKS4gVHJhdnlcbiAqIChUcmF2eUFwcCkgaXMgaW50ZW50aW9uYWxseSBleGNsdWRlZCDigJQgaXQgaXMgcmVuZGVyZWQgKyBwb3N0ZWQgYXV0b21hdGljYWxseVxuICogaW4gdGhlIGJhY2tncm91bmQgKEVOK1pIKSwgbmV2ZXIgZWRpdGVkL3B1Ymxpc2hlZCBmcm9tIHRoaXMgZm9ybS4gQ0ROIGlzXG4gKiBpbnRlcm5hbC1vbmx5LlxuICovXG5pbXBvcnQgeyBQbGF0Zm9ybSB9IGZyb20gXCJAL2RvbWFpbi9lbnVtcy9QbGF0Zm9ybVwiO1xuXG5leHBvcnQgdHlwZSBQdWJsaXNoRmllbGQgPSBcInRpdGxlXCIgfCBcImNhcHRpb25cIiB8IFwiaGFzaHRhZ3NcIjtcblxuZXhwb3J0IGludGVyZmFjZSBDaGFubmVsUHVibGlzaEZpZWxkQ29uZmlnIHtcbiAgLyoqIEZpZWxkcyBzaG93bi9lZGl0ZWQgZm9yIHRoaXMgY2hhbm5lbCwgaW4gZGlzcGxheSBvcmRlci4gKi9cbiAgZmllbGRzOiBQdWJsaXNoRmllbGRbXTtcbiAgLyoqIFRoYWkgbGFiZWwgZm9yIHRoZSBjYXB0aW9uIGZpZWxkICh2YXJpZXM6IFwi4LiE4Liz4Lia4Lij4Lij4Lii4Liy4LiiXCIgdnMgXCLguKPguLLguKLguKXguLDguYDguK3guLXguKLguJRcIikuICovXG4gIGNhcHRpb25MYWJlbDogc3RyaW5nO1xuICAvKiogV2hldGhlciBhIHRpdGxlIGZpZWxkIGFwcGxpZXMgKG9ubHkgWW91VHViZSB1c2VzIGEgZGlzdGluY3QgdGl0bGUpLiAqL1xuICBoYXNUaXRsZTogYm9vbGVhbjtcbn1cblxuLyoqXG4gKiBDaGFubmVscyB0aGF0IGFwcGVhciBvbiB0aGUgZGlzdHJpYnV0aW9uLXJldmlldyBwdWJsaXNoaW5nIGZvcm0gKGVkaXRhYmxlICtcbiAqIGF1dG8tcG9zdGVkIG9uIGNvbmZpcm0pLiBPcmRlciA9IGRpc3BsYXkgb3JkZXIuIFRyYXZ5L0NETiBleGNsdWRlZCBvbiBwdXJwb3NlLlxuICovXG5leHBvcnQgY29uc3QgUFVCTElTSEFCTEVfUExBVEZPUk1TOiBQbGF0Zm9ybVtdID0gW1xuICBQbGF0Zm9ybS5UaWtUb2ssXG4gIFBsYXRmb3JtLkluc3RhZ3JhbSxcbiAgUGxhdGZvcm0uRmFjZWJvb2ssXG4gIFBsYXRmb3JtLllvdVR1YmUsXG5dO1xuXG5leHBvcnQgY29uc3QgQ0hBTk5FTF9QVUJMSVNIX0ZJRUxEUzogUmVjb3JkPHN0cmluZywgQ2hhbm5lbFB1Ymxpc2hGaWVsZENvbmZpZz4gPSB7XG4gIFtQbGF0Zm9ybS5Zb3VUdWJlXToge1xuICAgIGZpZWxkczogW1widGl0bGVcIiwgXCJjYXB0aW9uXCIsIFwiaGFzaHRhZ3NcIl0sXG4gICAgY2FwdGlvbkxhYmVsOiBcIuC4o+C4suC4ouC4peC4sOC5gOC4reC4teC4ouC4lCAoRGVzY3JpcHRpb24pXCIsXG4gICAgaGFzVGl0bGU6IHRydWUsXG4gIH0sXG4gIFtQbGF0Zm9ybS5UaWtUb2tdOiB7XG4gICAgZmllbGRzOiBbXCJjYXB0aW9uXCIsIFwiaGFzaHRhZ3NcIl0sXG4gICAgY2FwdGlvbkxhYmVsOiBcIuC4hOC4s+C4muC4o+C4o+C4ouC4suC4oiAoQ2FwdGlvbilcIixcbiAgICBoYXNUaXRsZTogZmFsc2UsXG4gIH0sXG4gIFtQbGF0Zm9ybS5JbnN0YWdyYW1dOiB7XG4gICAgZmllbGRzOiBbXCJjYXB0aW9uXCIsIFwiaGFzaHRhZ3NcIl0sXG4gICAgY2FwdGlvbkxhYmVsOiBcIuC4hOC4s+C4muC4o+C4o+C4ouC4suC4oiAoQ2FwdGlvbilcIixcbiAgICBoYXNUaXRsZTogZmFsc2UsXG4gIH0sXG4gIFtQbGF0Zm9ybS5GYWNlYm9va106IHtcbiAgICBmaWVsZHM6IFtcImNhcHRpb25cIiwgXCJoYXNodGFnc1wiXSxcbiAgICBjYXB0aW9uTGFiZWw6IFwi4LiE4Liz4Lia4Lij4Lij4Lii4Liy4LiiIChDYXB0aW9uKVwiLFxuICAgIGhhc1RpdGxlOiBmYWxzZSxcbiAgfSxcbn07XG5cbi8qKiBGaWVsZCBjb25maWcgZm9yIGEgcGxhdGZvcm0sIGRlZmF1bHRpbmcgdG8gY2FwdGlvbitoYXNodGFncyBmb3IgdW5rbm93bnMuICovXG5leHBvcnQgZnVuY3Rpb24gZ2V0UHVibGlzaEZpZWxkQ29uZmlnKHBsYXRmb3JtOiBzdHJpbmcpOiBDaGFubmVsUHVibGlzaEZpZWxkQ29uZmlnIHtcbiAgcmV0dXJuIChcbiAgICBDSEFOTkVMX1BVQkxJU0hfRklFTERTW3BsYXRmb3JtXSA/PyB7XG4gICAgICBmaWVsZHM6IFtcImNhcHRpb25cIiwgXCJoYXNodGFnc1wiXSxcbiAgICAgIGNhcHRpb25MYWJlbDogXCLguITguLPguJrguKPguKPguKLguLLguKIgKENhcHRpb24pXCIsXG4gICAgICBoYXNUaXRsZTogZmFsc2UsXG4gICAgfVxuICApO1xufVxuXG4vKiogV2hldGhlciBhIHBsYXRmb3JtIGlzIHNob3duIG9uIHRoZSBkaXN0cmlidXRpb24tcmV2aWV3IHB1Ymxpc2hpbmcgZm9ybS4gKi9cbmV4cG9ydCBmdW5jdGlvbiBpc1B1Ymxpc2hhYmxlUGxhdGZvcm0ocGxhdGZvcm06IFBsYXRmb3JtKTogYm9vbGVhbiB7XG4gIHJldHVybiBQVUJMSVNIQUJMRV9QTEFURk9STVMuaW5jbHVkZXMocGxhdGZvcm0pO1xufVxuIl0sInZlcnNpb24iOjN9

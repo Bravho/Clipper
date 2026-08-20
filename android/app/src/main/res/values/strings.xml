@@ -4,4 +4,6 @@
     <string name="title_activity_main">RClipper</string>
     <string name="package_name">com.rclipper.app</string>
     <string name="custom_url_scheme">com.rclipper.app</string>
+    <!-- Keep in step with ANDROID_CHANNEL_ID in src/config/push.ts. -->
+    <string name="default_notification_channel_id">rclipper_pipeline</string>
 </resources>

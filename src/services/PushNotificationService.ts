@@ -1,6 +1,8 @@
+import http2 from "node:http2";
 import { SignJWT, importPKCS8 } from "jose";
 import webpush from "web-push";
 import { pool } from "@/lib/db";
+import { ANDROID_CHANNEL_ID } from "@/config/push";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 
 type DevicePlatform = "ios" | "android" | "web";
@@ -131,7 +133,31 @@ function requestPath(requestId: string): string {
   return `/dashboard/requests/${encodeURIComponent(requestId)}`;
 }
 
+/**
+ * A delivery failure that carries the HTTP status the push service returned, so
+ * the caller can prune a subscription the service reports as gone. Plain
+ * `Error`s thrown here used to lose the status, which meant native tokens were
+ * retried forever after the app was uninstalled.
+ */
+class PushDeliveryError extends Error {
+  readonly statusCode?: number;
+  constructor(message: string, statusCode?: number) {
+    super(message);
+    this.name = "PushDeliveryError";
+    this.statusCode = statusCode;
+  }
+}
+
+/* -- FCM (Android) --------------------------------------------------------- */
+
+/** Google's OAuth access tokens last an hour. Minting one per notification adds
+ *  a round trip to every send, so keep it until just before it expires. */
+let fcmAccessToken: { value: string; expiresAt: number } | null = null;
+
 async function googleAccessToken(): Promise<string> {
+  if (fcmAccessToken && fcmAccessToken.expiresAt > Date.now() + 60_000) {
+    return fcmAccessToken.value;
+  }
   const clientEmail = process.env.FCM_CLIENT_EMAIL?.trim();
   const privateKey = process.env.FCM_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
   if (!clientEmail || !privateKey) throw new Error("FCM credentials are not configured.");
@@ -156,10 +182,17 @@ async function googleAccessToken(): Promise<string> {
       assertion,
     }),
   });
-  if (!response.ok) throw new Error(`FCM OAuth failed (${response.status}).`);
-  const result = (await response.json()) as { access_token?: string };
+  if (!response.ok) {
+    fcmAccessToken = null;
+    throw new Error(`FCM OAuth failed (${response.status}).`);
+  }
+  const result = (await response.json()) as { access_token?: string; expires_in?: number };
   if (!result.access_token) throw new Error("FCM OAuth returned no access token.");
-  return result.access_token;
+  fcmAccessToken = {
+    value: result.access_token,
+    expiresAt: Date.now() + (result.expires_in ?? 3600) * 1000,
+  };
+  return fcmAccessToken.value;
 }
 
 async function sendAndroid(
@@ -182,15 +215,75 @@ async function sendAndroid(
         message: {
           token,
           notification: { title: notice.title, body: notice.body },
+          // `data` is what the app reads on tap. Every value must be a string —
+          // FCM rejects the whole message if one is not.
           data: { path: requestPath(requestId), requestId, eventKey: notice.eventKey },
-          android: { priority: "high" },
+          android: {
+            priority: "high",
+            notification: {
+              // Must match the channel NativePushRegistration creates, or
+              // Android 8+ drops the notification silently.
+              channel_id: ANDROID_CHANNEL_ID,
+              // Collapse a repeat of the same pipeline event rather than stack it.
+              tag: notice.eventKey,
+              sound: "default",
+            },
+          },
         },
       }),
     }
   );
-  if (!response.ok) throw new Error(`FCM send failed (${response.status}).`);
+  if (response.ok) return;
+
+  const body = await response.text().catch(() => "");
+  // Only two responses mean "this token is dead": UNREGISTERED (app uninstalled
+  // or token rotated) and SENDER_ID_MISMATCH (token belongs to another Firebase
+  // project). A bare 400 usually means OUR payload is wrong — pruning on that
+  // would disable every device on the account, so it is deliberately not mapped.
+  const gone = response.status === 404 || /UNREGISTERED|SENDER_ID_MISMATCH/i.test(body);
+  throw new PushDeliveryError(
+    `FCM send failed (${response.status}): ${body.slice(0, 300)}`,
+    gone ? 410 : response.status
+  );
 }
 
+/* -- APNs (iOS) ------------------------------------------------------------ */
+
+/**
+ * Apple rejects a provider token refreshed more often than once every 20 minutes
+ * (403 TooManyProviderTokenUpdates) AND one older than 60 minutes (403
+ * ExpiredProviderToken), so the JWT must be cached and re-minted somewhere in
+ * between — not generated per notification, which the previous version did.
+ */
+let apnsProviderJwt: { value: string; issuedAt: number } | null = null;
+const APNS_TOKEN_TTL_MS = 45 * 60 * 1000;
+
+async function apnsProviderToken(
+  keyId: string,
+  teamId: string,
+  privateKeyPem: string
+): Promise<string> {
+  if (apnsProviderJwt && Date.now() - apnsProviderJwt.issuedAt < APNS_TOKEN_TTL_MS) {
+    return apnsProviderJwt.value;
+  }
+  const key = await importPKCS8(privateKeyPem, "ES256");
+  const value = await new SignJWT({})
+    .setProtectedHeader({ alg: "ES256", kid: keyId })
+    .setIssuer(teamId)
+    .setIssuedAt()
+    .sign(key);
+  apnsProviderJwt = { value, issuedAt: Date.now() };
+  return value;
+}
+
+/**
+ * Deliver one APNs alert.
+ *
+ * This MUST go over HTTP/2: the APNs provider API speaks HTTP/2 only, and Node's
+ * global `fetch` (undici) is HTTP/1.1 — so the previous `fetch`-based version
+ * could never have delivered a single iOS notification. `node:http2` is the
+ * supported client.
+ */
 async function sendIos(
   token: string,
   notice: PipelineNotice,
@@ -202,36 +295,88 @@ async function sendIos(
   const privateKey = process.env.APNS_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
   if (!keyId || !teamId || !privateKey) throw new Error("APNs credentials are not configured.");
 
-  const key = await importPKCS8(privateKey, "ES256");
-  const bearer = await new SignJWT({})
-    .setProtectedHeader({ alg: "ES256", kid: keyId })
-    .setIssuer(teamId)
-    .setIssuedAt()
-    .sign(key);
+  const bearer = await apnsProviderToken(keyId, teamId, privateKey);
   const host =
     process.env.APNS_ENVIRONMENT === "production"
       ? "https://api.push.apple.com"
       : "https://api.sandbox.push.apple.com";
-  const response = await fetch(`${host}/3/device/${encodeURIComponent(token)}`, {
-    method: "POST",
-    headers: {
+
+  const payload = JSON.stringify({
+    aps: {
+      alert: { title: notice.title, body: notice.body },
+      sound: "default",
+      // Group every notice for one request into the same iOS notification thread.
+      "thread-id": requestId,
+    },
+    path: requestPath(requestId),
+    requestId,
+    eventKey: notice.eventKey,
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const session = http2.connect(host);
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      session.close();
+      if (err) reject(err);
+      else resolve();
+    };
+
+    session.on("error", (err) => finish(err));
+    session.setTimeout(15_000, () =>
+      finish(new PushDeliveryError("APNs request timed out."))
+    );
+
+    const request = session.request({
+      ":method": "POST",
+      ":path": `/3/device/${encodeURIComponent(token)}`,
       authorization: `bearer ${bearer}`,
       "apns-topic": bundleId,
       "apns-push-type": "alert",
       "apns-priority": "10",
+      // Replace an undelivered notice for the same pipeline event instead of
+      // stacking a second copy on the lock screen. Max 64 bytes.
+      "apns-collapse-id": notice.eventKey.slice(0, 64),
       "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      aps: {
-        alert: { title: notice.title, body: notice.body },
-        sound: "default",
-      },
-      path: requestPath(requestId),
-      requestId,
-      eventKey: notice.eventKey,
-    }),
+      "content-length": Buffer.byteLength(payload),
+    });
+
+    let status = 0;
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("response", (headers) => {
+      status = Number(headers[":status"]) || 0;
+    });
+    request.on("data", (chunk) => {
+      body += chunk;
+    });
+    request.on("error", (err) => finish(err));
+    request.on("end", () => {
+      if (status === 200) {
+        finish();
+        return;
+      }
+      let reason = "";
+      try {
+        reason = String((JSON.parse(body) as { reason?: unknown })?.reason ?? "");
+      } catch {
+        reason = body.slice(0, 200);
+      }
+      // A stale provider JWT is recoverable — drop it so the next send re-mints.
+      if (status === 403 && /ExpiredProviderToken|InvalidProviderToken/.test(reason)) {
+        apnsProviderJwt = null;
+      }
+      // 410 Unregistered, and 400 BadDeviceToken, both mean the token is dead.
+      // Anything else (payload/auth/config errors) must NOT prune the device.
+      const gone = status === 410 || (status === 400 && /BadDeviceToken/.test(reason));
+      finish(
+        new PushDeliveryError(`APNs send failed (${status} ${reason}).`, gone ? 410 : status)
+      );
+    });
+    request.end(payload);
   });
-  if (!response.ok) throw new Error(`APNs send failed (${response.status}).`);
 }
 
 /**

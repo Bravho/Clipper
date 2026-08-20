@@ -73,7 +73,7 @@ export async function uploadVideo(params: {
     }
   );
   if (!finishRes.ok) throw new Error(`Facebook publish finish failed: ${finishRes.status}`);
-  const result = await finishRes.json() as FBPublishResponse;
+  const _result = await finishRes.json() as FBPublishResponse;
 
   return {
     platformVideoId: video_id,

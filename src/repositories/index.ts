@@ -22,6 +22,7 @@ import { PostgresCreditWalletRepository } from "./postgres/PostgresCreditWalletR
 import { PostgresCreditTransactionRepository } from "./postgres/PostgresCreditTransactionRepository";
 import { PostgresTermsAcceptanceRepository } from "./postgres/PostgresTermsAcceptanceRepository";
 import { PostgresEmailVerificationTokenRepository } from "./postgres/PostgresEmailVerificationTokenRepository";
+import { PostgresPasswordResetTokenRepository } from "./postgres/PostgresPasswordResetTokenRepository";
 
 export const userRepository = new PostgresUserRepository();
 export const authIdentityRepository = new PostgresAuthIdentityRepository();
@@ -29,6 +30,8 @@ export const creditWalletRepository = new PostgresCreditWalletRepository();
 export const creditTransactionRepository = new PostgresCreditTransactionRepository();
 export const termsAcceptanceRepository = new PostgresTermsAcceptanceRepository();
 export const emailVerificationTokenRepository = new PostgresEmailVerificationTokenRepository();
+// "ลืมรหัสผ่าน" reset links. Requires migration 029.
+export const passwordResetTokenRepository = new PostgresPasswordResetTokenRepository();
 
 // ── New Repositories — PostgreSQL ────────────────────────────────────────────
 import { PostgresDeletedAccountRegistryRepository } from "./postgres/PostgresDeletedAccountRegistryRepository";

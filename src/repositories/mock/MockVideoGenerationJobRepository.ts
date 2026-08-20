@@ -1,4 +1,7 @@
-import { IVideoGenerationJobRepository } from "@/repositories/interfaces/IVideoGenerationJobRepository";
+import {
+  IVideoGenerationJobRepository,
+  JobUpdateActor,
+} from "@/repositories/interfaces/IVideoGenerationJobRepository";
 import {
   VideoGenerationJob,
   CreateVideoGenerationJobInput,
@@ -36,6 +39,8 @@ export class MockVideoGenerationJobRepository
 {
   private store: Map<string, VideoGenerationJob>;
   private history: VideoGenerationStepHistoryEntry[];
+  /** Actor passed to the most recent `update()`. Test-observability only. */
+  lastUpdateActor: JobUpdateActor | null = null;
 
   constructor(
     store?: Map<string, VideoGenerationJob>,
@@ -88,10 +93,18 @@ export class MockVideoGenerationJobRepository
     return { ...job };
   }
 
+  /**
+   * `actor` is accepted and recorded on `lastUpdateActor` but drives no mock
+   * behaviour: it exists only to feed the `pipeline_gate_events` analytics the
+   * Postgres implementation writes, which have no in-memory counterpart. Tests
+   * that assert on actor threading read it from there.
+   */
   async update(
     id: string,
-    input: UpdateVideoGenerationJobInput
+    input: UpdateVideoGenerationJobInput,
+    actor?: JobUpdateActor
   ): Promise<VideoGenerationJob> {
+    this.lastUpdateActor = actor ?? null;
     const existing = this.store.get(id);
     if (!existing) throw new Error(`VideoGenerationJob not found: ${id}`);
     const updated: VideoGenerationJob = {

@@ -1,6 +1,6 @@
 import { Role } from "@/domain/enums/Role";
 import { User } from "@/domain/models/User";
-import { userRepository, authIdentityRepository, creditWalletRepository } from "@/repositories";
+import { userRepository, creditWalletRepository } from "@/repositories";
 
 /**
  * AdminUserService — admin-side user visibility and management.

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "567065072374",
+    "project_id": "rclipper-5f755",
+    "storage_bucket": "rclipper-5f755.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:567065072374:android:3057728fad539613e492d7",
+        "android_client_info": {
+          "package_name": "com.rclipper.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBXHlfWoWV0kmrXDNbFBwYo6PFYNMXsBIM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

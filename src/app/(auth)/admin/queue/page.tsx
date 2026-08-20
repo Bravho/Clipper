@@ -52,13 +52,6 @@ export default async function AdminQueuePage() {
       urgency: false,
     },
     {
-      title: "Pending Admin Production Review",
-      items: snapshot.productionReviewRequests,
-      emptyText: "No clips awaiting admin review.",
-      urgency: true,
-      actionHref: "/admin/production-review",
-    },
-    {
       title: "Published — Awaiting Delivery",
       items: snapshot.publishedRequests,
       emptyText: "No published requests awaiting delivery.",
@@ -170,7 +163,7 @@ export default async function AdminQueuePage() {
       </div>
 
       {/* Stage counts */}
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((s) => (
           <div
             key={s.title}
@@ -201,7 +194,7 @@ export default async function AdminQueuePage() {
       {/* Per-stage tables */}
       {sections.map((section) => (
         <div key={section.title}>
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
               {section.title}
               <span
@@ -214,14 +207,6 @@ export default async function AdminQueuePage() {
                 {section.items.length}
               </span>
             </h2>
-            {section.actionHref && section.items.length > 0 && (
-              <Link
-                href={section.actionHref}
-                className="text-xs text-orange-600 hover:underline font-medium"
-              >
-                Review queue →
-              </Link>
-            )}
           </div>
 
           {section.items.length === 0 ? (

@@ -1,0 +1,32 @@
+dd1cf245d6c179f8005896a302d99c6d
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PRODUCTION_REVIEW_STATUS_LABELS = exports.ProductionReviewStatus = void 0;
+/**
+ * Admin production review status.
+ *
+ * When staff submit a completed clip for admin review
+ * (Editing → ScheduledForPublishing), a ProductionReview record is created
+ * with status Pending. Admin then acts on it.
+ *
+ * This status is internal — it never surfaces directly to requesters.
+ * The requester-facing status remains the canonical RequestStatus.
+ *
+ * TODO: PostgreSQL — store as TEXT CHECK constraint on production_reviews table.
+ */
+var ProductionReviewStatus;
+(function (ProductionReviewStatus) {
+    ProductionReviewStatus["Pending"] = "pending";
+    ProductionReviewStatus["Approved"] = "approved";
+    ProductionReviewStatus["ReturnedToEditing"] = "returned_to_editing";
+    ProductionReviewStatus["OnHold"] = "on_hold";
+    ProductionReviewStatus["Rejected"] = "rejected";
+})(ProductionReviewStatus || (exports.ProductionReviewStatus = ProductionReviewStatus = {}));
+exports.PRODUCTION_REVIEW_STATUS_LABELS = {
+    [ProductionReviewStatus.Pending]: "Pending Review",
+    [ProductionReviewStatus.Approved]: "Approved",
+    [ProductionReviewStatus.ReturnedToEditing]: "Returned to Editing",
+    [ProductionReviewStatus.OnHold]: "Review On Hold",
+    [ProductionReviewStatus.Rejected]: "Rejected",
+};
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxQcm9kdWN0aW9uUmV2aWV3U3RhdHVzLnRzIiwibWFwcGluZ3MiOiI7OztBQUFBOzs7Ozs7Ozs7OztHQVdHO0FBQ0gsSUFBWSxzQkFNWDtBQU5ELFdBQVksc0JBQXNCO0lBQ2hDLDZDQUFtQixDQUFBO0lBQ25CLCtDQUFxQixDQUFBO0lBQ3JCLG1FQUF5QyxDQUFBO0lBQ3pDLDRDQUFrQixDQUFBO0lBQ2xCLCtDQUFxQixDQUFBO0FBQ3ZCLENBQUMsRUFOVyxzQkFBc0Isc0NBQXRCLHNCQUFzQixRQU1qQztBQUVZLFFBQUEsK0JBQStCLEdBQTJDO0lBQ3JGLENBQUMsc0JBQXNCLENBQUMsT0FBTyxDQUFDLEVBQUUsZ0JBQWdCO0lBQ2xELENBQUMsc0JBQXNCLENBQUMsUUFBUSxDQUFDLEVBQUUsVUFBVTtJQUM3QyxDQUFDLHNCQUFzQixDQUFDLGlCQUFpQixDQUFDLEVBQUUscUJBQXFCO0lBQ2pFLENBQUMsc0JBQXNCLENBQUMsTUFBTSxDQUFDLEVBQUUsZ0JBQWdCO0lBQ2pELENBQUMsc0JBQXNCLENBQUMsUUFBUSxDQUFDLEVBQUUsVUFBVTtDQUM5QyxDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIkQ6XFxjb2RpbmdcXGNsaXBwZXJfYWdlbnRcXHNyY1xcZG9tYWluXFxlbnVtc1xcUHJvZHVjdGlvblJldmlld1N0YXR1cy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyIvKipcbiAqIEFkbWluIHByb2R1Y3Rpb24gcmV2aWV3IHN0YXR1cy5cbiAqXG4gKiBXaGVuIHN0YWZmIHN1Ym1pdCBhIGNvbXBsZXRlZCBjbGlwIGZvciBhZG1pbiByZXZpZXdcbiAqIChFZGl0aW5nIOKGkiBTY2hlZHVsZWRGb3JQdWJsaXNoaW5nKSwgYSBQcm9kdWN0aW9uUmV2aWV3IHJlY29yZCBpcyBjcmVhdGVkXG4gKiB3aXRoIHN0YXR1cyBQZW5kaW5nLiBBZG1pbiB0aGVuIGFjdHMgb24gaXQuXG4gKlxuICogVGhpcyBzdGF0dXMgaXMgaW50ZXJuYWwg4oCUIGl0IG5ldmVyIHN1cmZhY2VzIGRpcmVjdGx5IHRvIHJlcXVlc3RlcnMuXG4gKiBUaGUgcmVxdWVzdGVyLWZhY2luZyBzdGF0dXMgcmVtYWlucyB0aGUgY2Fub25pY2FsIFJlcXVlc3RTdGF0dXMuXG4gKlxuICogVE9ETzogUG9zdGdyZVNRTCDigJQgc3RvcmUgYXMgVEVYVCBDSEVDSyBjb25zdHJhaW50IG9uIHByb2R1Y3Rpb25fcmV2aWV3cyB0YWJsZS5cbiAqL1xuZXhwb3J0IGVudW0gUHJvZHVjdGlvblJldmlld1N0YXR1cyB7XG4gIFBlbmRpbmcgPSBcInBlbmRpbmdcIixcbiAgQXBwcm92ZWQgPSBcImFwcHJvdmVkXCIsXG4gIFJldHVybmVkVG9FZGl0aW5nID0gXCJyZXR1cm5lZF90b19lZGl0aW5nXCIsXG4gIE9uSG9sZCA9IFwib25faG9sZFwiLFxuICBSZWplY3RlZCA9IFwicmVqZWN0ZWRcIixcbn1cblxuZXhwb3J0IGNvbnN0IFBST0RVQ1RJT05fUkVWSUVXX1NUQVRVU19MQUJFTFM6IFJlY29yZDxQcm9kdWN0aW9uUmV2aWV3U3RhdHVzLCBzdHJpbmc+ID0ge1xuICBbUHJvZHVjdGlvblJldmlld1N0YXR1cy5QZW5kaW5nXTogXCJQZW5kaW5nIFJldmlld1wiLFxuICBbUHJvZHVjdGlvblJldmlld1N0YXR1cy5BcHByb3ZlZF06IFwiQXBwcm92ZWRcIixcbiAgW1Byb2R1Y3Rpb25SZXZpZXdTdGF0dXMuUmV0dXJuZWRUb0VkaXRpbmddOiBcIlJldHVybmVkIHRvIEVkaXRpbmdcIixcbiAgW1Byb2R1Y3Rpb25SZXZpZXdTdGF0dXMuT25Ib2xkXTogXCJSZXZpZXcgT24gSG9sZFwiLFxuICBbUHJvZHVjdGlvblJldmlld1N0YXR1cy5SZWplY3RlZF06IFwiUmVqZWN0ZWRcIixcbn07XG4iXSwidmVyc2lvbiI6M30=

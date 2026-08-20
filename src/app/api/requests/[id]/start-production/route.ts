@@ -4,6 +4,10 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
+import {
+  DEFAULT_ELEVENLABS_VOICE_ID,
+  isSupportedElevenLabsVoiceId,
+} from "@/config/elevenLabsVoices";
 
 /**
  * POST /api/requests/[id]/start-production
@@ -44,11 +48,16 @@ export async function POST(
     captionEnglish,
     captionChinese,
     storyboard,
+    voiceId,
   } = body;
 
   if (typeof scriptThai !== "string" || !scriptThai.trim()) {
     return NextResponse.json({ error: "Missing required speaking script." }, { status: 400 });
   }
+  if (voiceId !== undefined && !isSupportedElevenLabsVoiceId(voiceId)) {
+    return NextResponse.json({ error: "Invalid voice selection." }, { status: 400 });
+  }
+  const selectedVoiceId = voiceId ?? DEFAULT_ELEVENLABS_VOICE_ID;
 
   try {
     const job = await videoGenerationService.startFromRequesterApproval(
@@ -64,7 +73,8 @@ export async function POST(
         captionEnglish: captionEnglish ?? "",
         captionChinese: captionChinese ?? "",
         storyboard: Array.isArray(storyboard) ? storyboard : undefined,
-      }
+      },
+      selectedVoiceId
     );
     return NextResponse.json({ jobId: job.id });
   } catch (err) {

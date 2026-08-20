@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
-import { Role } from "@/domain/enums/Role";
 import { businessProfileService } from "@/services/BusinessProfileService";
 
 export async function GET() {
@@ -23,6 +22,15 @@ export async function GET() {
   }
 }
 
+/** Shape the POST handler reads off the JSON body. */
+type ProfileRequestBody = {
+  businessName?: string;
+  category?: string;
+  location?: string | null;
+  description?: string | null;
+  menuDetails?: string | null;
+};
+
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
 
@@ -30,9 +38,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
   }
 
-  let body: any;
+  let body: ProfileRequestBody;
   try {
-    body = await request.json();
+    body = (await request.json()) as ProfileRequestBody;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }

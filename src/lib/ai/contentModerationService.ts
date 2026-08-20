@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { AI_CONFIG } from "@/config/aiTools";
 import { spacesClient, SPACES_BUCKET } from "@/lib/spaces";
-import { extractVideoFrames, framesForDuration } from "@/lib/ai/videoFrames";
+import { extractVideoFrames } from "@/lib/ai/videoFrames";
 
 /**
  * Phase 8 — pre-publishing content moderation.

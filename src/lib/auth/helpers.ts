@@ -57,3 +57,42 @@ export async function hasRole(...roles: Role[]): Promise<boolean> {
   if (!user) return false;
   return roles.includes(user.role);
 }
+
+/** Thrown by `requireApiRole`. Carries the HTTP status the handler should return. */
+export class ApiAuthError extends Error {
+  readonly status: 401 | 403;
+
+  constructor(message: string, status: 401 | 403) {
+    super(message);
+    this.name = "ApiAuthError";
+    this.status = status;
+  }
+}
+
+/**
+ * Role gate for ROUTE HANDLERS.
+ *
+ * `requireRole` is for pages: it calls `redirect()`, which throws a Next
+ * navigation error. Inside a route handler that error gets caught by the
+ * handler's own try/catch and surfaces as a confusing 400 carrying a
+ * "NEXT_REDIRECT" message, rather than a 401/403. This helper throws a typed
+ * error instead so handlers can answer with the correct status.
+ *
+ * Usage:
+ *   try {
+ *     const user = await requireApiRole(Role.Admin);
+ *     ...
+ *   } catch (err) {
+ *     return apiErrorResponse(err);
+ *   }
+ */
+export async function requireApiRole(...allowedRoles: Role[]) {
+  const user = await getCurrentUser();
+  if (!user) {
+    throw new ApiAuthError("Authentication required", 401);
+  }
+  if (!allowedRoles.includes(user.role)) {
+    throw new ApiAuthError("Forbidden", 403);
+  }
+  return user;
+}

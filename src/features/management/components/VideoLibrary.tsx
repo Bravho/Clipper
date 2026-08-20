@@ -408,6 +408,19 @@ function VideoRow({
   const publishBlockedByQuota = !publishReady;
   const publishDisabled = !video.usable || publishBlockedByQuota;
 
+  /**
+   * One muted line of card metadata. This — not the editable title — is where
+   * the aspect ratio belongs: it is a property of the stored file, not part of
+   * the name the user publishes under.
+   */
+  const metaParts = [
+    video.sourceType === "user_upload" ? "Uploaded" : "Transferred",
+    ...formatMetadata,
+    video.spaceExpiry
+      ? `kept until ~${new Date(video.spaceExpiry).toLocaleDateString("en-GB")}`
+      : "storage expiry not set",
+  ];
+
   useEffect(() => {
     setTitle(video.title);
     setCaption(video.defaultCaption ?? "");
@@ -503,103 +516,40 @@ function VideoRow({
 
           {/* Details */}
           <div className="min-w-0 flex-1 space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <label className="block text-xs font-medium text-slate-600">
-                  Video title
-                  <input
-                    value={title}
-                    onChange={(event) => {
-                      setTitle(event.target.value);
-                      setSavedAt(null);
-                    }}
-                    maxLength={200}
-                    required
-                    className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm font-semibold text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                  />
-                </label>
-                <p className="text-xs text-slate-500">
-                  {video.sourceType === "user_upload" ? "Uploaded" : "Transferred"}
-                  {formatMetadata.length > 0 ? ` · ${formatMetadata.join(", ")}` : ""}
-                </p>
+            {/*
+              Everything here is a full-width stack. The title input and the
+              action buttons used to share one row, which on a phone squeezed the
+              input down to a meaningless empty box and let the (wide, Thai)
+              top-up button sit on top of its own label. Actions now live in a
+              single wrapping bar at the foot of the card instead.
+            */}
+            <label className="block text-xs font-medium text-slate-600">
+              Video title
+              <input
+                value={title}
+                onChange={(event) => {
+                  setTitle(event.target.value);
+                  setSavedAt(null);
+                }}
+                maxLength={200}
+                required
+                className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm font-semibold text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+
+            {/* Source, available formats and storage expiry on one muted line. */}
+            <p className="text-xs leading-5 text-slate-500">{metaParts.join(" · ")}</p>
+
+            {/* Publishing status per channel. */}
+            {video.channels.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {video.channels.map((c, i) => (
+                  <ChannelStatusBadge key={i} platform={c.platform} status={c.status} />
+                ))}
               </div>
-              <div className="flex shrink-0 flex-col items-end gap-2">
-                <div className="flex gap-2">
-                  <Link
-                    href={managementPaymentsPath(
-                      managementPublishReturnPath(video.id)
-                    )}
-                  >
-                    <Button size="sm" variant="secondary">
-                      เติมเงินเพื่อใช้งาน
-                    </Button>
-                  </Link>
-                  <span
-                    className="group relative inline-flex"
-                    tabIndex={publishBlockedByQuota ? 0 : undefined}
-                  >
-                    <Button
-                      size="sm"
-                      variant={publishReady ? "success" : "outline"}
-                      disabled={publishDisabled}
-                      aria-describedby={
-                        publishBlockedByQuota ? quotaTooltipId : undefined
-                      }
-                      title={
-                        publishBlockedByQuota
-                          ? undefined
-                          : video.usable
-                            ? "Publish to a connected channel"
-                            : "Media unavailable"
-                      }
-                      onClick={() =>
-                        onPublish({
-                          id: video.id,
-                          title: title.trim(),
-                          description: video.description,
-                          defaultCaption: caption,
-                          defaultHashtags: parseHashtagText(hashtags),
-                          assets: video.assets,
-                          suggestions: video.suggestions,
-                        })
-                      }
-                    >
-                      Publish
-                    </Button>
-                    {publishBlockedByQuota && (
-                      <span
-                        id={quotaTooltipId}
-                        role="tooltip"
-                        className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg group-hover:block group-focus:block"
-                      >
-                        Please use or top up credits.
-                        <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
-                      </span>
-                    )}
-                  </span>
-                  <Button size="sm" variant="danger" onClick={remove} loading={busy === "deleting"}>
-                    Delete
-                  </Button>
-                </div>
+            )}
 
-                {/* Publishing status per channel — sits just under the actions. */}
-                {video.channels.length > 0 && (
-                  <div className="flex flex-wrap justify-end gap-1.5">
-                    {video.channels.map((c, i) => (
-                      <ChannelStatusBadge key={i} platform={c.platform} status={c.status} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-400">
-              {video.spaceExpiry
-                ? `Stored file kept until ~${new Date(video.spaceExpiry).toLocaleDateString("en-GB")}`
-                : "Storage expiry not set"}
-            </p>
-
-            {/* Editable title/default caption/default hashtags */}
+            {/* Editable default caption / hashtags */}
             <div className="space-y-2">
               <label className="block text-xs font-medium text-slate-600">
                 Default caption
@@ -626,12 +576,80 @@ function VideoRow({
                   placeholder="#restaurant #chiangmai #foodie"
                 />
               </label>
-              <div className="flex items-center gap-3">
-                <Button size="sm" onClick={save} loading={busy === "saving"}>
-                  Save
+            </div>
+
+            {/* Action bar — wraps rather than overlaps on a narrow screen. */}
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+              <Button size="sm" onClick={save} loading={busy === "saving"}>
+                Save
+              </Button>
+              {savedAt && <span className="text-xs text-emerald-700">Saved</span>}
+              {error && <span className="text-xs text-red-600">{error}</span>}
+
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                {/*
+                  The top-up link is only meaningful while publishing is actually
+                  blocked. Rendering it unconditionally put a permanent, wide
+                  button beside every video — including for users on an active
+                  unlimited pass, who have nothing to top up.
+                */}
+                {publishBlockedByQuota && (
+                  <Link
+                    href={managementPaymentsPath(
+                      managementPublishReturnPath(video.id)
+                    )}
+                  >
+                    <Button size="sm" variant="secondary">
+                      เติมเงินเพื่อใช้งาน
+                    </Button>
+                  </Link>
+                )}
+                <span
+                  className="group relative inline-flex"
+                  tabIndex={publishBlockedByQuota ? 0 : undefined}
+                >
+                  <Button
+                    size="sm"
+                    variant={publishReady ? "success" : "outline"}
+                    disabled={publishDisabled}
+                    aria-describedby={
+                      publishBlockedByQuota ? quotaTooltipId : undefined
+                    }
+                    title={
+                      publishBlockedByQuota
+                        ? undefined
+                        : video.usable
+                          ? "Publish to a connected channel"
+                          : "Media unavailable"
+                    }
+                    onClick={() =>
+                      onPublish({
+                        id: video.id,
+                        title: title.trim(),
+                        description: video.description,
+                        defaultCaption: caption,
+                        defaultHashtags: parseHashtagText(hashtags),
+                        assets: video.assets,
+                        suggestions: video.suggestions,
+                      })
+                    }
+                  >
+                    Publish
+                  </Button>
+                  {publishBlockedByQuota && (
+                    <span
+                      id={quotaTooltipId}
+                      role="tooltip"
+                      className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg group-hover:block group-focus:block"
+                    >
+                      Please use or top up credits.
+                      <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
+                    </span>
+                  )}
+                </span>
+                <Button size="sm" variant="danger" onClick={remove} loading={busy === "deleting"}>
+                  Delete
                 </Button>
-                {savedAt && <span className="text-xs text-emerald-700">Saved</span>}
-                {error && <span className="text-xs text-red-600">{error}</span>}
               </div>
             </div>
           </div>

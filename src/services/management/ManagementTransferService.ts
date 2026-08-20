@@ -46,6 +46,37 @@ import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import { isPublishablePlatform } from "@/config/publishFields";
 import type { ChannelPublishingDraft } from "@/domain/models/VideoGenerationJob";
 
+/** "16:9", "4:5", "9:16", "1:1" — an export variant that is only a ratio. */
+const ASPECT_RATIO_VARIANT = /^\d{1,2}\s*[:x/]\s*\d{1,2}$/;
+
+/** Pre-standardisation spelling of the Travy export variant. */
+const LEGACY_TRAVY_VARIANT = ["tv", "ent"].join("");
+
+/**
+ * The library title for one transferred export.
+ *
+ * The export variant used to be appended unconditionally (`"<title> · 4:5"`),
+ * which put a technical aspect ratio inside a user-facing, editable field that
+ * is then carried into the YouTube video title and the publish composer — the
+ * ratio is a property of the file, not of the video, and the library card
+ * already shows it as metadata. So a ratio-only variant contributes nothing to
+ * the title. A named variant (the Travy multilingual export) still does, since
+ * it is the only thing distinguishing two otherwise identical rows.
+ */
+export function transferredVideoTitle(
+  requestTitle: string,
+  variant: string | null | undefined
+): string {
+  const base = (requestTitle ?? "").trim();
+  const normalized = (variant ?? "").trim();
+  if (!normalized || ASPECT_RATIO_VARIANT.test(normalized)) return base;
+
+  const lower = normalized.toLowerCase();
+  const label =
+    lower === "travy" || lower === LEGACY_TRAVY_VARIANT ? "Travy" : normalized;
+  return base ? `${base} · ${label}` : label;
+}
+
 export class ManagementTransferNotAllowedError extends Error {
   constructor(readonly eligibility: ManagementTransferEligibility) {
     super(`Transfer not allowed: ${eligibility.reason ?? "unknown"}`);
@@ -367,7 +398,7 @@ export class ManagementTransferService {
         userId: user.id,
         sourceGenerationId,
         sourceAssetId: assetId,
-        title: `${request.title} · ${target.variant}`,
+        title: transferredVideoTitle(request.title, target.variant),
         description: request.description ?? null,
         defaultCaption,
         defaultHashtags,

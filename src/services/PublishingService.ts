@@ -3,7 +3,6 @@ import { Platform } from "@/domain/enums/Platform";
 import {
   clipRequestRepository,
   publishingLinkRepository,
-  requestStatusHistoryRepository,
 } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { requestWorkflowService } from "./RequestWorkflowService";

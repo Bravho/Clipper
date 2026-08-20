@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { redirect } from "next/navigation";
-import { getRoleHomePath, ROUTES } from "@/config/routes";
+import { getRoleHomePath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { SignupForm } from "@/features/auth/components/SignupForm";
 

@@ -21,11 +21,48 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+                App Links for app.rclipper.com.
+
+                Scoped to UI paths ON PURPOSE. This filter used to claim the
+                whole host with no android:path* attribute, which also claimed
+                https://app.rclipper.com/api/auth/apple/android-callback — the
+                Return URL Apple posts to during Sign in with Apple on Android
+                (APPLE_ANDROID_REDIRECT_URL). Once link verification succeeds,
+                Android may hand that URL to this activity instead of letting
+                the Chrome Custom Tab load it: the callback route never runs, no
+                authorization code is ever exchanged, the tab is left sitting on
+                Apple's own page, and the app is brought forward (and reloaded)
+                still signed out. The failure looks exactly like a spontaneous
+                app restart, which is what makes it so hard to place.
+
+                So: never claim /api/**. Add new prefixes here as user-facing
+                sections are added; a path that is not listed simply stays in
+                the browser, which is the safe direction to fail.
+            -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="app.rclipper.com" />
+                <!-- The bare origin, with and without a trailing slash. -->
+                <data android:scheme="https" android:host="app.rclipper.com" android:path="/" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:path="" />
+                <!-- Authenticated sections -->
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/dashboard" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/staff" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/admin" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/account" />
+                <!-- Public sections -->
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/login" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/signup" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/support" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/terms" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/privacy" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/ownership" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/delete-account" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/verify-email" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/forgot-password" />
+                <data android:scheme="https" android:host="app.rclipper.com" android:pathPrefix="/reset-password" />
             </intent-filter>
 
             <!--
@@ -44,6 +81,28 @@
 
         </activity>
 
+        <!--
+            Push notifications. Without these two meta-data entries Android draws
+            the full-colour launcher icon in the status bar, which the system
+            masks to a solid white square ("the white blob"). The icon must be a
+            transparent white silhouette; the colour tints it.
+        -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_rclipper" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
+        <!--
+            Fallback channel for any message that arrives without one. The server
+            always sets android.notification.channel_id (ANDROID_CHANNEL_ID in
+            src/config/push.ts) and the app creates that channel at registration;
+            this only covers a message sent from the Firebase console by hand.
+        -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="@string/default_notification_channel_id" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -58,6 +117,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+ (API 33) requires this at runtime before any notification
+         can be posted. @capacitor/push-notifications asks for it in
+         requestPermissions(); the app targets API 36, so it is mandatory. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="com.android.vending.BILLING" />
 </manifest>

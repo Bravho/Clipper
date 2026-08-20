@@ -89,6 +89,15 @@ export function LoginForm() {
         {...register("password")}
       />
 
+      <div className="-mt-2 text-right">
+        <Link
+          href={ROUTES.FORGOT_PASSWORD}
+          className="text-sm font-medium text-blue-700 hover:underline"
+        >
+          ลืมรหัสผ่าน?
+        </Link>
+      </div>
+
       <Button type="submit" fullWidth loading={isSubmitting}>
         เข้าสู่ระบบ
       </Button>

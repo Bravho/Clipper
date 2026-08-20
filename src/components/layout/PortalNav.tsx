@@ -100,3 +100,28 @@ export function useRegisterPortalNav(section: PortalNavSection): void {
     return () => unregister(id);
   }, [register, unregister, id, title, serialisedLinks]);
 }
+
+/**
+ * Register SEVERAL sections at once, for shells whose navigation is grouped.
+ *
+ * The single-section hook cannot be called in a loop without breaking the rules
+ * of hooks, and the admin sidebar has four groups. Registering them separately
+ * is what gives the mobile drawer its group headings for free — the drawer
+ * already renders one heading per registered section.
+ *
+ * Like `useRegisterPortalNav`, the sections are serialised for the dependency
+ * comparison, so callers may pass a freshly-built array on every render.
+ */
+export function useRegisterPortalNavSections(sections: PortalNavSection[]): void {
+  const ctx = useContext(PortalNavContext);
+  const register = ctx?.register;
+  const unregister = ctx?.unregister;
+  const serialised = JSON.stringify(sections);
+
+  useEffect(() => {
+    if (!register || !unregister) return;
+    const parsed = JSON.parse(serialised) as PortalNavSection[];
+    parsed.forEach((section) => register(section));
+    return () => parsed.forEach((section) => unregister(section.id));
+  }, [register, unregister, serialised]);
+}

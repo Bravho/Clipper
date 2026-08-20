@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "incremental": false, "skipLibCheck": true },
+  "include": [
+    "next-env.d.ts",
+    "src/types/next-auth.d.ts",
+    "src/lib/mobile/pushSupport.ts",
+    "src/lib/mobile/appleAndroidReturn.ts",
+    "src/lib/mobile/nativeSocialAuth.ts",
+    "src/lib/mobile/oauth.ts",
+    "src/lib/mobile/signOutEverywhere.ts",
+    "src/components/mobile/NativePushRegistration.tsx",
+    "src/components/mobile/AppleReturnRecovery.tsx",
+    "src/app/layout.tsx"
+  ]
+}

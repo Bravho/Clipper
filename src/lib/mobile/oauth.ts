@@ -3,6 +3,7 @@
 import { signIn } from "next-auth/react";
 import { isNativeMobile } from "@/lib/mobile/platform";
 import {
+  AppleReturnFailedError,
   getNativeIdToken,
   nativeSignInDiagnostics,
   NativeSignInCancelled,
@@ -141,6 +142,15 @@ function sameOriginPath(url: string | null | undefined, fallback: string): strin
  */
 export function describeSignInFailure(error: unknown): string | null {
   if (error instanceof NativeSignInCancelled) return null;
+
+  // Apple answered and the answer was "no". The reason comes from our own
+  // callback route, so it names the misconfiguration (`invalid_client`,
+  // `server_not_configured`, …) rather than leaving the user guessing — and,
+  // more importantly, it means this case is no longer silently misfiled as a
+  // cancellation the way a dropped result used to be.
+  if (error instanceof AppleReturnFailedError) {
+    return `เข้าสู่ระบบด้วย Apple ไม่สำเร็จ (${error.reason}) กรุณาลองใหม่หรือใช้อีเมลและรหัสผ่าน`;
+  }
 
   // Not a misconfiguration the user can do anything about — point them at the
   // sign-in methods that do work in-app rather than showing a diagnostic.

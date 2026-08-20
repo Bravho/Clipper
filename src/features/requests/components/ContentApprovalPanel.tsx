@@ -6,6 +6,11 @@ import { Button } from "@/components/ui/Button";
 import { type StoryboardAssetThumb } from "@/features/requests/components/StoryboardView";
 import { StoryboardEditor } from "@/features/requests/components/StoryboardEditor";
 import type { StoryboardScene } from "@/domain/models/VideoGenerationJob";
+import { VoiceSelector } from "@/features/requests/components/VoiceSelector";
+import {
+  DEFAULT_ELEVENLABS_VOICE_ID,
+  type ElevenLabsVoiceId,
+} from "@/config/elevenLabsVoices";
 
 interface ContentApprovalPanelProps {
   requestId: string;
@@ -36,6 +41,9 @@ export function ContentApprovalPanel({
   const [scriptThai, setScriptThai] = useState(initialScriptThai ?? "");
   const [captionThai, setCaptionThai] = useState(initialCaptionThai ?? "");
   const [storyboardScenes, setStoryboardScenes] = useState<StoryboardScene[]>(storyboard ?? []);
+  const [voiceId, setVoiceId] = useState<ElevenLabsVoiceId>(
+    DEFAULT_ELEVENLABS_VOICE_ID
+  );
   const [isApproving, setIsApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,6 +62,7 @@ export function ContentApprovalPanel({
           captionEnglish: initialCaptionEnglish,
           captionChinese: initialCaptionChinese,
           storyboard: storyboardScenes,
+          voiceId,
         }),
       });
       if (!res.ok) {
@@ -73,7 +82,7 @@ export function ContentApprovalPanel({
         <p className="text-sm font-semibold text-blue-800">บทพูดพร้อมให้ตรวจสอบ</p>
         <p className="mt-0.5 text-sm text-blue-700">
           AI สร้างบทพูดจากข้อมูลคำขอแล้ว ตรวจสอบหรือแก้ไขบทพูดก่อนกด{" "}
-          <strong>สร้างเสียงพากย์</strong> ระบบจะสร้างเสียงด้วย iAppTTS
+          <strong>สร้างเสียงพากย์</strong> ระบบจะสร้างเสียงด้วย ElevenLabs
           ก่อน แล้วค่อยออกแบบฉากและฮุกในขั้นตอนถัดไป
         </p>
       </div>
@@ -108,6 +117,17 @@ export function ContentApprovalPanel({
           rows={3}
           className={`${ta} text-sm text-slate-700`}
         />
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-5">
+        <VoiceSelector
+          value={voiceId}
+          onChange={setVoiceId}
+          disabled={isApproving}
+        />
+        <p className="mt-2 text-xs text-slate-400">
+          เสียงที่เลือกจะใช้สร้างเสียงพากย์ และสามารถเปลี่ยนพร้อมสร้างใหม่ได้ในขั้นตอนตรวจสอบเสียง
+        </p>
       </div>
 
       {error && (

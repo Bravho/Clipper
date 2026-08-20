@@ -1,9 +1,7 @@
 import bcrypt from "bcryptjs";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
-import { Role } from "@/domain/enums/Role";
 import { User } from "@/domain/models/User";
 import { userRepository, authIdentityRepository } from "@/repositories";
-import { creditService } from "@/services/CreditService";
 
 /**
  * AuthService — handles credential verification and OAuth user resolution.

@@ -7,11 +7,14 @@ Updated: 4 August 2026
 - App name: RClipper
 - Package: `com.rclipper.app`
 - Play Console app ID: `4972504518557350406`
-- Current Android version: version code `3`, version name `1.0.2`
+- Current Android version: version code `6`, version name `1.0.5`
 - Minimum Android API: 24
 - Target and compile API: 36
 - Intended audience: ages 13–15, 16–17, and 18+ (13+)
-- Native Android push: not included; Firebase is not required
+- Native Android push: included (FCM HTTP v1). Requires a Firebase project and
+  `android/app/google-services.json`, and a Data safety update declaring the
+  registration token as a collected device identifier —
+  see `docs/PUSH_NOTIFICATIONS_SETUP.md`
 
 ## Android Studio release steps
 

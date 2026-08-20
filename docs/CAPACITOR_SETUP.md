@@ -51,8 +51,11 @@ round trips on device before store submission.
 
 - Android uses camera, share, network, status-bar, splash-screen, preferences,
   filesystem, browser, and Google Play Billing integrations.
-- Native Android push is intentionally not included, so Firebase/FCM and
-  `google-services.json` are not required for the Play build.
+- Native push (FCM on Android, APNs on iOS) notifies the requester when a
+  pipeline step finishes and it is their turn to act. Android therefore DOES
+  require a Firebase project and `android/app/google-services.json`; iOS talks
+  to APNs directly and needs no Firebase SDK. Full setup:
+  `docs/PUSH_NOTIFICATIONS_SETUP.md`.
 
 ## 6. Store compliance
 

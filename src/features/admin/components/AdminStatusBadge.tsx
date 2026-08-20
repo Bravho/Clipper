@@ -15,6 +15,7 @@ const STATUS_CONFIG: Record<
   [RequestStatus.OnHold]:                { label: "On Hold",                className: "bg-amber-100 text-amber-700" },
   [RequestStatus.Rejected]:              { label: "Rejected",               className: "bg-red-100 text-red-700" },
   [RequestStatus.RevisionRequested]:     { label: "Revision Requested",     className: "bg-yellow-100 text-yellow-700" },
+  [RequestStatus.AutoCancelled]:         { label: "Auto-Cancelled",         className: "bg-red-100 text-red-700" },
 };
 
 export function AdminStatusBadge({ status }: { status: RequestStatus }) {

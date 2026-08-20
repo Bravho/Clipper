@@ -1,5 +1,5 @@
 import { businessProfileRepository } from "@/repositories/index";
-import { CreateBusinessProfileInput, UpdateBusinessProfileInput } from "@/domain/models/BusinessProfile";
+import { CreateBusinessProfileInput } from "@/domain/models/BusinessProfile";
 
 export class BusinessProfileService {
   async getProfile(userId: string) {

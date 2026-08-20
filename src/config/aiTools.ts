@@ -1,3 +1,5 @@
+import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/config/elevenLabsVoices";
+
 /**
  * Returns the Gemini API key or throws a clear setup error.
  * Prevents cryptic 403 PERMISSION_DENIED ("unregistered callers") responses
@@ -43,8 +45,8 @@ export const AI_CONFIG = {
   elevenLabs: {
     // ElevenLabs cloud TTS — current pipeline voice engine. No local server.
     apiKey: (process.env.ELEVENLABS_API_KEY ?? "").trim(),
-    // "Sarah" premade voice (free-tier API usable)
-    voiceId: (process.env.ELEVENLABS_VOICE_ID ?? "EXAVITQu4vr4xnSDxMaL").trim(),
+    // Original female voice. Per-job selection overrides this in the TTS call.
+    voiceId: (process.env.ELEVENLABS_VOICE_ID ?? DEFAULT_ELEVENLABS_VOICE_ID).trim(),
     // eleven_v3 is the only ElevenLabs model that supports Thai
     model: (process.env.ELEVENLABS_TTS_MODEL ?? "eleven_v3").trim(),
     // v3 stability presets: 0.0 = Creative, 0.5 = Natural, 1.0 = Robust

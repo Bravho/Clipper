@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Status-bar notification icon.
+
+    Android masks this to a single colour, so it MUST be a flat white silhouette
+    on transparency: any colour or gradient renders as a featureless white blob.
+    Shape: a rounded "play" triangle, matching the app's clip mark.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM10.2,16.1L10.2,7.9c0,-0.4 0.44,-0.64 0.78,-0.43l6.5,4.1c0.32,0.2 0.32,0.66 0,0.86l-6.5,4.1c-0.34,0.21 -0.78,-0.03 -0.78,-0.43z" />
+</vector>

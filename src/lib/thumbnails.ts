@@ -132,7 +132,7 @@ export async function storePosterThumbnail(
   dataUrl: string,
   destKey: string
 ): Promise<number> {
-  const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/s.exec(dataUrl.trim());
+  const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,([\s\S]+)$/.exec(dataUrl.trim());
   if (!match) throw new Error("Invalid poster data URL (expected base64 image)");
   const buffer = Buffer.from(match[1], "base64");
   if (buffer.byteLength === 0) throw new Error("Poster data URL decoded to empty buffer");

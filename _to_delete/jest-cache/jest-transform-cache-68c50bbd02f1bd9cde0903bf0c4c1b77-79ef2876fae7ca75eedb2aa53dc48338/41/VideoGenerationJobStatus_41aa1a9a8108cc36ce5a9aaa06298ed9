@@ -1,0 +1,11 @@
+defe0b09f3910ff2b8d1acce04a98238
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.VideoGenerationJobStatus = void 0;
+var VideoGenerationJobStatus;
+(function (VideoGenerationJobStatus) {
+    VideoGenerationJobStatus["Active"] = "active";
+    VideoGenerationJobStatus["Complete"] = "complete";
+    VideoGenerationJobStatus["Failed"] = "failed";
+})(VideoGenerationJobStatus || (exports.VideoGenerationJobStatus = VideoGenerationJobStatus = {}));
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxWaWRlb0dlbmVyYXRpb25Kb2JTdGF0dXMudHMiLCJtYXBwaW5ncyI6Ijs7O0FBQUEsSUFBWSx3QkFJWDtBQUpELFdBQVksd0JBQXdCO0lBQ2xDLDZDQUFtQixDQUFBO0lBQ25CLGlEQUFxQixDQUFBO0lBQ3JCLDZDQUFtQixDQUFBO0FBQ3JCLENBQUMsRUFKVyx3QkFBd0Isd0NBQXhCLHdCQUF3QixRQUluQyIsIm5hbWVzIjpbXSwic291cmNlcyI6WyJEOlxcY29kaW5nXFxjbGlwcGVyX2FnZW50XFxzcmNcXGRvbWFpblxcZW51bXNcXFZpZGVvR2VuZXJhdGlvbkpvYlN0YXR1cy50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJleHBvcnQgZW51bSBWaWRlb0dlbmVyYXRpb25Kb2JTdGF0dXMge1xuICBBY3RpdmUgICA9IFwiYWN0aXZlXCIsXG4gIENvbXBsZXRlID0gXCJjb21wbGV0ZVwiLFxuICBGYWlsZWQgICA9IFwiZmFpbGVkXCIsXG59XG4iXSwidmVyc2lvbiI6M30=

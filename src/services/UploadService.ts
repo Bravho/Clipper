@@ -22,7 +22,6 @@ import {
   MAX_UPLOAD_COUNT,
   MAX_IMAGE_SIZE_BYTES,
   MAX_VIDEO_SIZE_BYTES,
-  MAX_UPLOAD_SIZE_BYTES,
   ACCEPTED_VIDEO_MIME_TYPES,
 } from "@/domain/enums/AssetType";
 import { validateClipDuration, validateTotalUploadSize } from "@/features/requests/validation/clipRequestSchema";

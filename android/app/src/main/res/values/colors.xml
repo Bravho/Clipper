@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tint applied to the status-bar notification icon and the accent line in
+         the expanded notification. Matches the app's primary blue. -->
+    <color name="notification_accent">#1D4ED8</color>
+</resources>

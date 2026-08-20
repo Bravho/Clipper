@@ -1,0 +1,28 @@
+07a6dbbc6a9f35583a98903f7012c277
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TransactionType = void 0;
+/**
+ * Types of credit wallet transactions.
+ *
+ * - SignupBonus:    30 free credits granted on new account creation
+ * - RequestCharge: Credits deducted when a clip request is submitted (future)
+ * - AdminCredit:   Manual credit grant by admin (future)
+ * - AdminDebit:    Manual credit removal by admin (future)
+ */
+var TransactionType;
+(function (TransactionType) {
+    TransactionType["SignupBonus"] = "signup_bonus";
+    TransactionType["RequestCharge"] = "request_charge";
+    TransactionType["RequestRefund"] = "request_refund";
+    TransactionType["AdminCredit"] = "admin_credit";
+    TransactionType["AdminDebit"] = "admin_debit";
+    TransactionType["DiscountApplied"] = "discount_applied";
+    /** Credits added by a confirmed PromptPay top-up via Stripe. */
+    TransactionType["TopUp"] = "top_up";
+    /** Credits spent on an RClipper Management package (bundle or access pass). */
+    TransactionType["ManagementPurchase"] = "management_purchase";
+    /** Credits returned when a Management purchase is refunded. */
+    TransactionType["ManagementRefund"] = "management_refund";
+})(TransactionType || (exports.TransactionType = TransactionType = {}));
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxUcmFuc2FjdGlvblR5cGUudHMiLCJtYXBwaW5ncyI6Ijs7O0FBQUE7Ozs7Ozs7R0FPRztBQUNILElBQVksZUFhWDtBQWJELFdBQVksZUFBZTtJQUN6QiwrQ0FBNEIsQ0FBQTtJQUM1QixtREFBZ0MsQ0FBQTtJQUNoQyxtREFBZ0MsQ0FBQTtJQUNoQywrQ0FBNEIsQ0FBQTtJQUM1Qiw2Q0FBMEIsQ0FBQTtJQUMxQix1REFBb0MsQ0FBQTtJQUNwQyxnRUFBZ0U7SUFDaEUsbUNBQWdCLENBQUE7SUFDaEIsK0VBQStFO0lBQy9FLDZEQUEwQyxDQUFBO0lBQzFDLCtEQUErRDtJQUMvRCx5REFBc0MsQ0FBQTtBQUN4QyxDQUFDLEVBYlcsZUFBZSwrQkFBZixlQUFlLFFBYTFCIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIkQ6XFxjb2RpbmdcXGNsaXBwZXJfYWdlbnRcXHNyY1xcZG9tYWluXFxlbnVtc1xcVHJhbnNhY3Rpb25UeXBlLnRzIl0sInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogVHlwZXMgb2YgY3JlZGl0IHdhbGxldCB0cmFuc2FjdGlvbnMuXG4gKlxuICogLSBTaWdudXBCb251czogICAgMzAgZnJlZSBjcmVkaXRzIGdyYW50ZWQgb24gbmV3IGFjY291bnQgY3JlYXRpb25cbiAqIC0gUmVxdWVzdENoYXJnZTogQ3JlZGl0cyBkZWR1Y3RlZCB3aGVuIGEgY2xpcCByZXF1ZXN0IGlzIHN1Ym1pdHRlZCAoZnV0dXJlKVxuICogLSBBZG1pbkNyZWRpdDogICBNYW51YWwgY3JlZGl0IGdyYW50IGJ5IGFkbWluIChmdXR1cmUpXG4gKiAtIEFkbWluRGViaXQ6ICAgIE1hbnVhbCBjcmVkaXQgcmVtb3ZhbCBieSBhZG1pbiAoZnV0dXJlKVxuICovXG5leHBvcnQgZW51bSBUcmFuc2FjdGlvblR5cGUge1xuICBTaWdudXBCb251cyA9IFwic2lnbnVwX2JvbnVzXCIsXG4gIFJlcXVlc3RDaGFyZ2UgPSBcInJlcXVlc3RfY2hhcmdlXCIsXG4gIFJlcXVlc3RSZWZ1bmQgPSBcInJlcXVlc3RfcmVmdW5kXCIsXG4gIEFkbWluQ3JlZGl0ID0gXCJhZG1pbl9jcmVkaXRcIixcbiAgQWRtaW5EZWJpdCA9IFwiYWRtaW5fZGViaXRcIixcbiAgRGlzY291bnRBcHBsaWVkID0gXCJkaXNjb3VudF9hcHBsaWVkXCIsXG4gIC8qKiBDcmVkaXRzIGFkZGVkIGJ5IGEgY29uZmlybWVkIFByb21wdFBheSB0b3AtdXAgdmlhIFN0cmlwZS4gKi9cbiAgVG9wVXAgPSBcInRvcF91cFwiLFxuICAvKiogQ3JlZGl0cyBzcGVudCBvbiBhbiBSQ2xpcHBlciBNYW5hZ2VtZW50IHBhY2thZ2UgKGJ1bmRsZSBvciBhY2Nlc3MgcGFzcykuICovXG4gIE1hbmFnZW1lbnRQdXJjaGFzZSA9IFwibWFuYWdlbWVudF9wdXJjaGFzZVwiLFxuICAvKiogQ3JlZGl0cyByZXR1cm5lZCB3aGVuIGEgTWFuYWdlbWVudCBwdXJjaGFzZSBpcyByZWZ1bmRlZC4gKi9cbiAgTWFuYWdlbWVudFJlZnVuZCA9IFwibWFuYWdlbWVudF9yZWZ1bmRcIixcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

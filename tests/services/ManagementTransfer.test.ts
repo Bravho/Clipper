@@ -12,6 +12,7 @@
 import {
   ManagementTransferService,
   ManagementTransferNotAllowedError,
+  transferredVideoTitle,
 } from "@/services/management/ManagementTransferService";
 import { Platform } from "@/domain/enums/Platform";
 import { eligibleExportAssetIds } from "@/services/management/ManagementEntitlementService";
@@ -163,6 +164,28 @@ function build(o: Opts = {}) {
   return { service, requests, jobs, assets, content, entitlements, audit, ensurePoster };
 }
 
+describe("transferredVideoTitle", () => {
+  it.each(["16:9", "9:16", "4:5", "1:1"])(
+    "drops a ratio-only variant (%s) from the title",
+    (ratio) => {
+      expect(transferredVideoTitle("My Clip", ratio)).toBe("My Clip");
+    }
+  );
+
+  it("keeps a named variant, which is what tells two rows apart", () => {
+    expect(transferredVideoTitle("My Clip", "travy")).toBe("My Clip · Travy");
+    expect(transferredVideoTitle("My Clip", ["tv", "ent"].join(""))).toBe(
+      "My Clip · Travy"
+    );
+  });
+
+  it("tolerates a missing variant or title", () => {
+    expect(transferredVideoTitle("My Clip", null)).toBe("My Clip");
+    expect(transferredVideoTitle("  My Clip  ", "")).toBe("My Clip");
+    expect(transferredVideoTitle("", "travy")).toBe("Travy");
+  });
+});
+
 describe("transferVideo", () => {
   it("creates a per-video item for the chosen export, keyed by its asset", async () => {
     const h = build();
@@ -175,7 +198,10 @@ describe("transferVideo", () => {
     expect(h.content.createOrGetTransferredVideo).toHaveBeenCalledTimes(1);
     const arg = h.content.createOrGetTransferredVideo.mock.calls[0][0];
     expect(arg.sourceAssetId).toBe("asset-916");
-    expect(arg.title).toContain("9:16");
+    // The aspect ratio is metadata of the file, not part of the name the user
+    // publishes under — the title is the project title, untouched.
+    expect(arg.title).toBe("My Clip");
+    expect(arg.title).not.toContain("9:16");
     // One asset row, for this video only.
     expect(h.content.replaceAssets.mock.calls[0][1]).toHaveLength(1);
     expect(h.content.replaceChannelSuggestions.mock.calls[0][1]).toEqual([

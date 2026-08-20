@@ -88,7 +88,9 @@ function fakePublications(targets: Record<string, unknown>[]) {
   };
   return {
     state,
-    findById: jest.fn(async () => state.publication),
+    findById: jest.fn(
+      async (): Promise<typeof state.publication | null> => state.publication
+    ),
     findTargets: jest.fn(async () => state.targets.map((t) => ({ ...t }))),
     updateTarget: jest.fn(async (id: string, fields: Record<string, unknown>) => {
       const t = state.targets.find((x) => x.id === id)!;

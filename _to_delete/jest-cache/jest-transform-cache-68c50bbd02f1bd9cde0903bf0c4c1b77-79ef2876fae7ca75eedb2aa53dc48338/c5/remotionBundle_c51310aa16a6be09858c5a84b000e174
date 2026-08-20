@@ -1,0 +1,94 @@
+b24dfbb0506b5515eaba006e00d98723
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getRemotionBundle = getRemotionBundle;
+const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
+/**
+ * Shared, process-cached Remotion bundle.
+ *
+ * Bundling the `remotion/` entry point (React + webpack) takes several seconds,
+ * so it is done once per process, lazily, and reused by every renderer that
+ * needs it (`remotionService` overlays and `montageService` scenes). Bundling
+ * lazily (rather than at module load) keeps `npm test` and non-pipeline routes
+ * fast, since this module is only imported dynamically from the pipeline.
+ *
+ * Two hardening measures below exist because the render worker is a LONG-RUNNING
+ * process (days/weeks):
+ *   1. The bundle is written to a STABLE dir under the working directory, not the
+ *      OS temp dir. On macOS `/var/folders/.../T` is purged after ~3 days, which
+ *      would delete a running worker's cached bundle out from under it — the next
+ *      render then throws "index.html does not exist".
+ *   2. The cached location is re-validated on every use; if the bundle dir has
+ *      gone missing for any reason, it is transparently rebuilt instead of failing.
+ */
+let bundleLocationPromise = null;
+function bundleOutDir() {
+    return path.join(process.cwd(), ".remotion-bundle");
+}
+async function buildBundle() {
+    const { bundle } = await Promise.resolve().then(() => __importStar(require("@remotion/bundler")));
+    const outDir = bundleOutDir();
+    // Clear any stale/partial contents so bundle() writes a clean tree.
+    await fs.promises.rm(outDir, { recursive: true, force: true }).catch(() => { });
+    return bundle({
+        entryPoint: path.join(process.cwd(), "remotion", "index.ts"),
+        outDir,
+        onProgress: () => { },
+    });
+}
+async function getRemotionBundle() {
+    // Reuse the cached bundle only if it still physically exists. A long-running
+    // worker can outlive its bundle dir (OS temp cleanup, manual rm), after which
+    // Remotion fails with "index.html does not exist" on every render. Detect the
+    // missing bundle and rebuild transparently rather than serving a dead path.
+    if (bundleLocationPromise) {
+        try {
+            const loc = await bundleLocationPromise;
+            if (fs.existsSync(path.join(loc, "index.html")))
+                return loc;
+        }
+        catch (_a) {
+            // Previous build rejected — fall through and rebuild.
+        }
+        bundleLocationPromise = null;
+    }
+    if (!bundleLocationPromise) {
+        bundleLocationPromise = buildBundle();
+    }
+    return bundleLocationPromise;
+}
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxsaWJcXGFpXFxyZW1vdGlvbkJ1bmRsZS50cyIsIm1hcHBpbmdzIjoiOzs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQXdDQSw4Q0FtQkM7QUEzREQsMkNBQTZCO0FBQzdCLHVDQUF5QjtBQUV6Qjs7Ozs7Ozs7Ozs7Ozs7Ozs7R0FpQkc7QUFFSCxJQUFJLHFCQUFxQixHQUEyQixJQUFJLENBQUM7QUFFekQsU0FBUyxZQUFZO0lBQ25CLE9BQU8sSUFBSSxDQUFDLElBQUksQ0FBQyxPQUFPLENBQUMsR0FBRyxFQUFFLEVBQUUsa0JBQWtCLENBQUMsQ0FBQztBQUN0RCxDQUFDO0FBRUQsS0FBSyxVQUFVLFdBQVc7SUFDeEIsTUFBTSxFQUFFLE1BQU0sRUFBRSxHQUFHLHdEQUFhLG1CQUFtQixHQUFDLENBQUM7SUFDckQsTUFBTSxNQUFNLEdBQUcsWUFBWSxFQUFFLENBQUM7SUFDOUIsb0VBQW9FO0lBQ3BFLE1BQU0sRUFBRSxDQUFDLFFBQVEsQ0FBQyxFQUFFLENBQUMsTUFBTSxFQUFFLEVBQUUsU0FBUyxFQUFFLElBQUksRUFBRSxLQUFLLEVBQUUsSUFBSSxFQUFFLENBQUMsQ0FBQyxLQUFLLENBQUMsR0FBRyxFQUFFLEdBQUUsQ0FBQyxDQUFDLENBQUM7SUFDL0UsT0FBTyxNQUFNLENBQUM7UUFDWixVQUFVLEVBQUUsSUFBSSxDQUFDLElBQUksQ0FBQyxPQUFPLENBQUMsR0FBRyxFQUFFLEVBQUUsVUFBVSxFQUFFLFVBQVUsQ0FBQztRQUM1RCxNQUFNO1FBQ04sVUFBVSxFQUFFLEdBQUcsRUFBRSxHQUFFLENBQUM7S0FDckIsQ0FBQyxDQUFDO0FBQ0wsQ0FBQztBQUVNLEtBQUssVUFBVSxpQkFBaUI7SUFDckMsNkVBQTZFO0lBQzdFLDhFQUE4RTtJQUM5RSw4RUFBOEU7SUFDOUUsNEVBQTRFO0lBQzVFLElBQUkscUJBQXFCLEVBQUUsQ0FBQztRQUMxQixJQUFJLENBQUM7WUFDSCxNQUFNLEdBQUcsR0FBRyxNQUFNLHFCQUFxQixDQUFDO1lBQ3hDLElBQUksRUFBRSxDQUFDLFVBQVUsQ0FBQyxJQUFJLENBQUMsSUFBSSxDQUFDLEdBQUcsRUFBRSxZQUFZLENBQUMsQ0FBQztnQkFBRSxPQUFPLEdBQUcsQ0FBQztRQUM5RCxDQUFDO1FBQUMsV0FBTSxDQUFDO1lBQ1Asc0RBQXNEO1FBQ3hELENBQUM7UUFDRCxxQkFBcUIsR0FBRyxJQUFJLENBQUM7SUFDL0IsQ0FBQztJQUVELElBQUksQ0FBQyxxQkFBcUIsRUFBRSxDQUFDO1FBQzNCLHFCQUFxQixHQUFHLFdBQVcsRUFBRSxDQUFDO0lBQ3hDLENBQUM7SUFDRCxPQUFPLHFCQUFxQixDQUFDO0FBQy9CLENBQUMiLCJuYW1lcyI6W10sInNvdXJjZXMiOlsiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxsaWJcXGFpXFxyZW1vdGlvbkJ1bmRsZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgKiBhcyBwYXRoIGZyb20gXCJwYXRoXCI7XG5pbXBvcnQgKiBhcyBmcyBmcm9tIFwiZnNcIjtcblxuLyoqXG4gKiBTaGFyZWQsIHByb2Nlc3MtY2FjaGVkIFJlbW90aW9uIGJ1bmRsZS5cbiAqXG4gKiBCdW5kbGluZyB0aGUgYHJlbW90aW9uL2AgZW50cnkgcG9pbnQgKFJlYWN0ICsgd2VicGFjaykgdGFrZXMgc2V2ZXJhbCBzZWNvbmRzLFxuICogc28gaXQgaXMgZG9uZSBvbmNlIHBlciBwcm9jZXNzLCBsYXppbHksIGFuZCByZXVzZWQgYnkgZXZlcnkgcmVuZGVyZXIgdGhhdFxuICogbmVlZHMgaXQgKGByZW1vdGlvblNlcnZpY2VgIG92ZXJsYXlzIGFuZCBgbW9udGFnZVNlcnZpY2VgIHNjZW5lcykuIEJ1bmRsaW5nXG4gKiBsYXppbHkgKHJhdGhlciB0aGFuIGF0IG1vZHVsZSBsb2FkKSBrZWVwcyBgbnBtIHRlc3RgIGFuZCBub24tcGlwZWxpbmUgcm91dGVzXG4gKiBmYXN0LCBzaW5jZSB0aGlzIG1vZHVsZSBpcyBvbmx5IGltcG9ydGVkIGR5bmFtaWNhbGx5IGZyb20gdGhlIHBpcGVsaW5lLlxuICpcbiAqIFR3byBoYXJkZW5pbmcgbWVhc3VyZXMgYmVsb3cgZXhpc3QgYmVjYXVzZSB0aGUgcmVuZGVyIHdvcmtlciBpcyBhIExPTkctUlVOTklOR1xuICogcHJvY2VzcyAoZGF5cy93ZWVrcyk6XG4gKiAgIDEuIFRoZSBidW5kbGUgaXMgd3JpdHRlbiB0byBhIFNUQUJMRSBkaXIgdW5kZXIgdGhlIHdvcmtpbmcgZGlyZWN0b3J5LCBub3QgdGhlXG4gKiAgICAgIE9TIHRlbXAgZGlyLiBPbiBtYWNPUyBgL3Zhci9mb2xkZXJzLy4uLi9UYCBpcyBwdXJnZWQgYWZ0ZXIgfjMgZGF5cywgd2hpY2hcbiAqICAgICAgd291bGQgZGVsZXRlIGEgcnVubmluZyB3b3JrZXIncyBjYWNoZWQgYnVuZGxlIG91dCBmcm9tIHVuZGVyIGl0IOKAlCB0aGUgbmV4dFxuICogICAgICByZW5kZXIgdGhlbiB0aHJvd3MgXCJpbmRleC5odG1sIGRvZXMgbm90IGV4aXN0XCIuXG4gKiAgIDIuIFRoZSBjYWNoZWQgbG9jYXRpb24gaXMgcmUtdmFsaWRhdGVkIG9uIGV2ZXJ5IHVzZTsgaWYgdGhlIGJ1bmRsZSBkaXIgaGFzXG4gKiAgICAgIGdvbmUgbWlzc2luZyBmb3IgYW55IHJlYXNvbiwgaXQgaXMgdHJhbnNwYXJlbnRseSByZWJ1aWx0IGluc3RlYWQgb2YgZmFpbGluZy5cbiAqL1xuXG5sZXQgYnVuZGxlTG9jYXRpb25Qcm9taXNlOiBQcm9taXNlPHN0cmluZz4gfCBudWxsID0gbnVsbDtcblxuZnVuY3Rpb24gYnVuZGxlT3V0RGlyKCk6IHN0cmluZyB7XG4gIHJldHVybiBwYXRoLmpvaW4ocHJvY2Vzcy5jd2QoKSwgXCIucmVtb3Rpb24tYnVuZGxlXCIpO1xufVxuXG5hc3luYyBmdW5jdGlvbiBidWlsZEJ1bmRsZSgpOiBQcm9taXNlPHN0cmluZz4ge1xuICBjb25zdCB7IGJ1bmRsZSB9ID0gYXdhaXQgaW1wb3J0KFwiQHJlbW90aW9uL2J1bmRsZXJcIik7XG4gIGNvbnN0IG91dERpciA9IGJ1bmRsZU91dERpcigpO1xuICAvLyBDbGVhciBhbnkgc3RhbGUvcGFydGlhbCBjb250ZW50cyBzbyBidW5kbGUoKSB3cml0ZXMgYSBjbGVhbiB0cmVlLlxuICBhd2FpdCBmcy5wcm9taXNlcy5ybShvdXREaXIsIHsgcmVjdXJzaXZlOiB0cnVlLCBmb3JjZTogdHJ1ZSB9KS5jYXRjaCgoKSA9PiB7fSk7XG4gIHJldHVybiBidW5kbGUoe1xuICAgIGVudHJ5UG9pbnQ6IHBhdGguam9pbihwcm9jZXNzLmN3ZCgpLCBcInJlbW90aW9uXCIsIFwiaW5kZXgudHNcIiksXG4gICAgb3V0RGlyLFxuICAgIG9uUHJvZ3Jlc3M6ICgpID0+IHt9LFxuICB9KTtcbn1cblxuZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGdldFJlbW90aW9uQnVuZGxlKCk6IFByb21pc2U8c3RyaW5nPiB7XG4gIC8vIFJldXNlIHRoZSBjYWNoZWQgYnVuZGxlIG9ubHkgaWYgaXQgc3RpbGwgcGh5c2ljYWxseSBleGlzdHMuIEEgbG9uZy1ydW5uaW5nXG4gIC8vIHdvcmtlciBjYW4gb3V0bGl2ZSBpdHMgYnVuZGxlIGRpciAoT1MgdGVtcCBjbGVhbnVwLCBtYW51YWwgcm0pLCBhZnRlciB3aGljaFxuICAvLyBSZW1vdGlvbiBmYWlscyB3aXRoIFwiaW5kZXguaHRtbCBkb2VzIG5vdCBleGlzdFwiIG9uIGV2ZXJ5IHJlbmRlci4gRGV0ZWN0IHRoZVxuICAvLyBtaXNzaW5nIGJ1bmRsZSBhbmQgcmVidWlsZCB0cmFuc3BhcmVudGx5IHJhdGhlciB0aGFuIHNlcnZpbmcgYSBkZWFkIHBhdGguXG4gIGlmIChidW5kbGVMb2NhdGlvblByb21pc2UpIHtcbiAgICB0cnkge1xuICAgICAgY29uc3QgbG9jID0gYXdhaXQgYnVuZGxlTG9jYXRpb25Qcm9taXNlO1xuICAgICAgaWYgKGZzLmV4aXN0c1N5bmMocGF0aC5qb2luKGxvYywgXCJpbmRleC5odG1sXCIpKSkgcmV0dXJuIGxvYztcbiAgICB9IGNhdGNoIHtcbiAgICAgIC8vIFByZXZpb3VzIGJ1aWxkIHJlamVjdGVkIOKAlCBmYWxsIHRocm91Z2ggYW5kIHJlYnVpbGQuXG4gICAgfVxuICAgIGJ1bmRsZUxvY2F0aW9uUHJvbWlzZSA9IG51bGw7XG4gIH1cblxuICBpZiAoIWJ1bmRsZUxvY2F0aW9uUHJvbWlzZSkge1xuICAgIGJ1bmRsZUxvY2F0aW9uUHJvbWlzZSA9IGJ1aWxkQnVuZGxlKCk7XG4gIH1cbiAgcmV0dXJuIGJ1bmRsZUxvY2F0aW9uUHJvbWlzZTtcbn1cbiJdLCJ2ZXJzaW9uIjozfQ==

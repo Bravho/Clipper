@@ -17,7 +17,13 @@ import {
   musicTrackLabel,
   subtitleLangsLabel,
 } from "@/features/requests/components/CreativeSettingsPickers";
+import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import { Platform, PLATFORM_LABELS, OPTIONAL_FORM_PLATFORMS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
+import { VoiceSelector } from "@/features/requests/components/VoiceSelector";
+import {
+  resolveElevenLabsVoiceId,
+  type ElevenLabsVoiceId,
+} from "@/config/elevenLabsVoices";
 
 /** Short Thai label for an aspect ratio, e.g. "แนวตั้ง (9:16)". */
 function ratioLabel(ratio: string): string {
@@ -104,9 +110,11 @@ interface Props {
   isGeneratingVoice?: boolean;
   voiceRecordingUrl?: string | null;
   voiceRecordingAssetId?: string | null;
+  /** Persisted ElevenLabs voice used for the current generated audio. */
+  selectedVoiceId?: string | null;
   animatedVideoUrl?: string | null;
   savedMusicTrack?: string | null;
-  finalClips?: any[];
+  finalClips?: UploadedAsset[];
   /** Aspect ratio of the primary distribution channel — the final review shows this ratio only. */
   primaryRatio?: string | null;
   scenes: ScenePlan[];
@@ -153,6 +161,7 @@ export function VideoApprovalPanel({
   isGeneratingVoice = false,
   voiceRecordingUrl = null,
   voiceRecordingAssetId = null,
+  selectedVoiceId = null,
   // animatedVideoUrl is still accepted (page passes it) but no longer rendered
   // here — the animation/graphic review moved to the final-approval step.
   savedMusicTrack = null,
@@ -225,6 +234,9 @@ export function VideoApprovalPanel({
   const [voiceRecreating, setVoiceRecreating] = useState(false);
   const [displayedVoiceUrl, setDisplayedVoiceUrl] = useState<string | null>(voiceRecordingUrl);
   const [displayedVoiceAssetId, setDisplayedVoiceAssetId] = useState<string | null>(voiceRecordingAssetId);
+  const [voiceId, setVoiceId] = useState<ElevenLabsVoiceId>(() =>
+    resolveElevenLabsVoiceId(selectedVoiceId)
+  );
 
   // First voice step — suggested MAX voiceover length, estimated from the
   // uploaded media (each still ≈ a few seconds, each clip its real footage), and
@@ -470,7 +482,7 @@ export function VideoApprovalPanel({
       const res = await fetch(`/api/requests/${requestId}/voice/regenerate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId }),
+        body: JSON.stringify({ jobId, voiceId }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -1052,6 +1064,17 @@ export function VideoApprovalPanel({
                 />
                 <p className="mt-1 text-xs text-slate-400">
                   แก้ไขบทพูดได้ตามต้องการ แล้วกด &quot;สร้างเสียงพากย์ใหม่&quot; เพื่อให้ AI อ่านบทที่แก้ไข
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <VoiceSelector
+                  value={voiceId}
+                  onChange={setVoiceId}
+                  disabled={voiceRecreating || voiceApproving}
+                />
+                <p className="mt-1.5 text-xs text-slate-400">
+                  หากเปลี่ยนเสียง ให้กด &quot;สร้างเสียงพากย์ใหม่&quot; เพื่อฟังผลลัพธ์
                 </p>
               </div>
 

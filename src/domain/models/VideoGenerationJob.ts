@@ -71,7 +71,10 @@ export interface VideoGenerationJob {
   // see VideoGenerationStep for the audio-first pipeline reorder)
   /** TTS async task ID returned by the local TTS server (currently iAppTTS) - used for polling. */
   ttsTaskId: string | null;
-  /** Legacy field retained for database compatibility. iAppTTS always uses its default voice. */
+  /**
+   * Selected ElevenLabs voice ID. The legacy property name is retained for
+   * repository/test compatibility; PostgreSQL stores it as eleven_labs_voice_id.
+   */
   rvcVoiceModel: string;
   voiceRecordingAssetId: string | null;
   processedVoiceAssetId: string | null;
@@ -331,6 +334,26 @@ export type CreateVideoGenerationJobInput = Omit<
   VideoGenerationJob,
   "id" | "createdAt" | "updatedAt" | "stepStartedAt"
 >;
+
+/**
+ * Keys of the per-ratio merged MASTER exports. Narrower than
+ * `keyof UpdateVideoGenerationJobInput` so a computed write
+ * (`updates[fieldForRatio(r)] = id`) typechecks: TypeScript requires the
+ * assigned value to satisfy the intersection of every key's value type, which
+ * collapses to `undefined` for the full `keyof` union.
+ */
+export type FinalExportField =
+  | "finalExport_9_16_assetId"
+  | "finalExport_16_9_assetId"
+  | "finalExport_1_1_assetId"
+  | "finalExport_4_5_assetId";
+
+/** Keys of the per-ratio captioned/overlaid exports. See {@link FinalExportField}. */
+export type CaptionedExportField =
+  | "captionedExport_9_16_assetId"
+  | "captionedExport_16_9_assetId"
+  | "captionedExport_1_1_assetId"
+  | "captionedExport_4_5_assetId";
 
 export type UpdateVideoGenerationJobInput = Partial<
   Omit<

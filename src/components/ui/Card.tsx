@@ -31,7 +31,8 @@ interface CardHeaderProps extends HTMLAttributes<HTMLDivElement> {
   padding?: "none" | "sm" | "md" | "lg";
 }
 
-export function CardHeader({ children, className, padding, ...props }: CardHeaderProps) {
+// `padding` is pulled out of `props` so it never lands on the DOM node.
+export function CardHeader({ children, className, padding: _padding, ...props }: CardHeaderProps) {
   return (
     <div
       className={clsx("mb-4 flex flex-col gap-1", className)}
@@ -42,7 +43,7 @@ export function CardHeader({ children, className, padding, ...props }: CardHeade
   );
 }
 
-interface CardTitleProps extends HTMLAttributes<HTMLHeadingElement> {}
+type CardTitleProps = HTMLAttributes<HTMLHeadingElement>;
 
 export function CardTitle({ children, className, ...props }: CardTitleProps) {
   return (
@@ -55,7 +56,7 @@ export function CardTitle({ children, className, ...props }: CardTitleProps) {
   );
 }
 
-interface CardDescriptionProps extends HTMLAttributes<HTMLParagraphElement> {}
+type CardDescriptionProps = HTMLAttributes<HTMLParagraphElement>;
 
 export function CardDescription({
   children,

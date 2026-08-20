@@ -1,0 +1,79 @@
+0c0702a4c1cdb0d7ebbccc33af7e107e
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PLATFORM_ASPECT_RATIOS = exports.OPTIONAL_FORM_PLATFORMS = exports.FORM_PLATFORMS = exports.ALL_PLATFORMS = exports.PLATFORM_LABELS = exports.Platform = void 0;
+/**
+ * Publishing platforms supported by the Clipper service.
+ *
+ * These are used in two contexts:
+ * 1. Requester form — requester selects intended target platforms.
+ * 2. Publishing links — staff records which platforms the clip was published to.
+ *
+ * TODO: PostgreSQL — store as TEXT[] on clip_requests (target_platforms)
+ *       and as TEXT on publishing_links (platform).
+ */
+var Platform;
+(function (Platform) {
+    Platform["TikTok"] = "tiktok";
+    Platform["Facebook"] = "facebook";
+    Platform["Instagram"] = "instagram";
+    Platform["YouTube"] = "youtube";
+    Platform["TravyApp"] = "travy_app";
+    Platform["CDN"] = "cdn";
+})(Platform || (exports.Platform = Platform = {}));
+/** Human-readable labels for display in the UI. */
+exports.PLATFORM_LABELS = {
+    [Platform.TikTok]: "TikTok",
+    [Platform.Facebook]: "Facebook",
+    [Platform.Instagram]: "Instagram",
+    [Platform.YouTube]: "YouTube",
+    [Platform.TravyApp]: "Travy",
+    [Platform.CDN]: "Download / CDN Link",
+};
+/** All selectable platforms in preferred display order. */
+exports.ALL_PLATFORMS = [
+    Platform.TikTok,
+    Platform.Facebook,
+    Platform.Instagram,
+    Platform.YouTube,
+    Platform.TravyApp,
+    Platform.CDN,
+];
+/**
+ * Platforms shown in the requester request form.
+ * TravyApp is mandatory (always pre-selected). CDN is excluded (internal only).
+ */
+exports.FORM_PLATFORMS = [
+    Platform.TravyApp, // mandatory — always selected, shown first
+    Platform.TikTok,
+    Platform.Facebook,
+    Platform.Instagram,
+    Platform.YouTube,
+];
+/** Platforms that the requester may optionally check (Travy is mandatory, not optional). */
+exports.OPTIONAL_FORM_PLATFORMS = [
+    Platform.TikTok,
+    Platform.Facebook,
+    Platform.Instagram,
+    Platform.YouTube,
+];
+/**
+ * Maps each platform to its preferred aspect ratio for base video generation.
+ * The requester's #1 priority platform determines which ratio is sent to the
+ * video generator (Veo). Veo only accepts "16:9"/"9:16", so other ratios are
+ * mapped onto the nearest of those for the source clip; the final per-platform
+ * crops are produced later by FFmpeg. This mapping also drives FFmpeg export
+ * priority.
+ */
+exports.PLATFORM_ASPECT_RATIOS = {
+    [Platform.TikTok]: "9:16",
+    [Platform.Facebook]: "16:9",
+    [Platform.Instagram]: "4:5",
+    [Platform.YouTube]: "16:9",
+    // Travy is FIXED at 16:9 (same as YouTube): the Travy clip is uploaded to
+    // YouTube and embedded in the Travy web app, so it never mirrors the
+    // primary channel's ratio.
+    [Platform.TravyApp]: "16:9",
+    [Platform.CDN]: "16:9",
+};
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxQbGF0Zm9ybS50cyIsIm1hcHBpbmdzIjoiOzs7QUFBQTs7Ozs7Ozs7O0dBU0c7QUFDSCxJQUFZLFFBT1g7QUFQRCxXQUFZLFFBQVE7SUFDbEIsNkJBQWlCLENBQUE7SUFDakIsaUNBQXFCLENBQUE7SUFDckIsbUNBQXVCLENBQUE7SUFDdkIsK0JBQW1CLENBQUE7SUFDbkIsa0NBQXNCLENBQUE7SUFDdEIsdUJBQVcsQ0FBQTtBQUNiLENBQUMsRUFQVyxRQUFRLHdCQUFSLFFBQVEsUUFPbkI7QUFFRCxtREFBbUQ7QUFDdEMsUUFBQSxlQUFlLEdBQTZCO0lBQ3ZELENBQUMsUUFBUSxDQUFDLE1BQU0sQ0FBQyxFQUFFLFFBQVE7SUFDM0IsQ0FBQyxRQUFRLENBQUMsUUFBUSxDQUFDLEVBQUUsVUFBVTtJQUMvQixDQUFDLFFBQVEsQ0FBQyxTQUFTLENBQUMsRUFBRSxXQUFXO0lBQ2pDLENBQUMsUUFBUSxDQUFDLE9BQU8sQ0FBQyxFQUFFLFNBQVM7SUFDN0IsQ0FBQyxRQUFRLENBQUMsUUFBUSxDQUFDLEVBQUUsT0FBTztJQUM1QixDQUFDLFFBQVEsQ0FBQyxHQUFHLENBQUMsRUFBRSxxQkFBcUI7Q0FDdEMsQ0FBQztBQUVGLDJEQUEyRDtBQUM5QyxRQUFBLGFBQWEsR0FBZTtJQUN2QyxRQUFRLENBQUMsTUFBTTtJQUNmLFFBQVEsQ0FBQyxRQUFRO0lBQ2pCLFFBQVEsQ0FBQyxTQUFTO0lBQ2xCLFFBQVEsQ0FBQyxPQUFPO0lBQ2hCLFFBQVEsQ0FBQyxRQUFRO0lBQ2pCLFFBQVEsQ0FBQyxHQUFHO0NBQ2IsQ0FBQztBQUVGOzs7R0FHRztBQUNVLFFBQUEsY0FBYyxHQUFlO0lBQ3hDLFFBQVEsQ0FBQyxRQUFRLEVBQUksMkNBQTJDO0lBQ2hFLFFBQVEsQ0FBQyxNQUFNO0lBQ2YsUUFBUSxDQUFDLFFBQVE7SUFDakIsUUFBUSxDQUFDLFNBQVM7SUFDbEIsUUFBUSxDQUFDLE9BQU87Q0FDakIsQ0FBQztBQUVGLDRGQUE0RjtBQUMvRSxRQUFBLHVCQUF1QixHQUFlO0lBQ2pELFFBQVEsQ0FBQyxNQUFNO0lBQ2YsUUFBUSxDQUFDLFFBQVE7SUFDakIsUUFBUSxDQUFDLFNBQVM7SUFDbEIsUUFBUSxDQUFDLE9BQU87Q0FDakIsQ0FBQztBQUVGOzs7Ozs7O0dBT0c7QUFDVSxRQUFBLHNCQUFzQixHQUE2QjtJQUM5RCxDQUFDLFFBQVEsQ0FBQyxNQUFNLENBQUMsRUFBRSxNQUFNO0lBQ3pCLENBQUMsUUFBUSxDQUFDLFFBQVEsQ0FBQyxFQUFFLE1BQU07SUFDM0IsQ0FBQyxRQUFRLENBQUMsU0FBUyxDQUFDLEVBQUUsS0FBSztJQUMzQixDQUFDLFFBQVEsQ0FBQyxPQUFPLENBQUMsRUFBRSxNQUFNO0lBQzFCLDBFQUEwRTtJQUMxRSxxRUFBcUU7SUFDckUsMkJBQTJCO0lBQzNCLENBQUMsUUFBUSxDQUFDLFFBQVEsQ0FBQyxFQUFFLE1BQU07SUFDM0IsQ0FBQyxRQUFRLENBQUMsR0FBRyxDQUFDLEVBQUUsTUFBTTtDQUN2QixDQUFDIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIkQ6XFxjb2RpbmdcXGNsaXBwZXJfYWdlbnRcXHNyY1xcZG9tYWluXFxlbnVtc1xcUGxhdGZvcm0udHMiXSwic291cmNlc0NvbnRlbnQiOlsiLyoqXG4gKiBQdWJsaXNoaW5nIHBsYXRmb3JtcyBzdXBwb3J0ZWQgYnkgdGhlIENsaXBwZXIgc2VydmljZS5cbiAqXG4gKiBUaGVzZSBhcmUgdXNlZCBpbiB0d28gY29udGV4dHM6XG4gKiAxLiBSZXF1ZXN0ZXIgZm9ybSDigJQgcmVxdWVzdGVyIHNlbGVjdHMgaW50ZW5kZWQgdGFyZ2V0IHBsYXRmb3Jtcy5cbiAqIDIuIFB1Ymxpc2hpbmcgbGlua3Mg4oCUIHN0YWZmIHJlY29yZHMgd2hpY2ggcGxhdGZvcm1zIHRoZSBjbGlwIHdhcyBwdWJsaXNoZWQgdG8uXG4gKlxuICogVE9ETzogUG9zdGdyZVNRTCDigJQgc3RvcmUgYXMgVEVYVFtdIG9uIGNsaXBfcmVxdWVzdHMgKHRhcmdldF9wbGF0Zm9ybXMpXG4gKiAgICAgICBhbmQgYXMgVEVYVCBvbiBwdWJsaXNoaW5nX2xpbmtzIChwbGF0Zm9ybSkuXG4gKi9cbmV4cG9ydCBlbnVtIFBsYXRmb3JtIHtcbiAgVGlrVG9rID0gXCJ0aWt0b2tcIixcbiAgRmFjZWJvb2sgPSBcImZhY2Vib29rXCIsXG4gIEluc3RhZ3JhbSA9IFwiaW5zdGFncmFtXCIsXG4gIFlvdVR1YmUgPSBcInlvdXR1YmVcIixcbiAgVHJhdnlBcHAgPSBcInRyYXZ5X2FwcFwiLFxuICBDRE4gPSBcImNkblwiLFxufVxuXG4vKiogSHVtYW4tcmVhZGFibGUgbGFiZWxzIGZvciBkaXNwbGF5IGluIHRoZSBVSS4gKi9cbmV4cG9ydCBjb25zdCBQTEFURk9STV9MQUJFTFM6IFJlY29yZDxQbGF0Zm9ybSwgc3RyaW5nPiA9IHtcbiAgW1BsYXRmb3JtLlRpa1Rva106IFwiVGlrVG9rXCIsXG4gIFtQbGF0Zm9ybS5GYWNlYm9va106IFwiRmFjZWJvb2tcIixcbiAgW1BsYXRmb3JtLkluc3RhZ3JhbV06IFwiSW5zdGFncmFtXCIsXG4gIFtQbGF0Zm9ybS5Zb3VUdWJlXTogXCJZb3VUdWJlXCIsXG4gIFtQbGF0Zm9ybS5UcmF2eUFwcF06IFwiVHJhdnlcIixcbiAgW1BsYXRmb3JtLkNETl06IFwiRG93bmxvYWQgLyBDRE4gTGlua1wiLFxufTtcblxuLyoqIEFsbCBzZWxlY3RhYmxlIHBsYXRmb3JtcyBpbiBwcmVmZXJyZWQgZGlzcGxheSBvcmRlci4gKi9cbmV4cG9ydCBjb25zdCBBTExfUExBVEZPUk1TOiBQbGF0Zm9ybVtdID0gW1xuICBQbGF0Zm9ybS5UaWtUb2ssXG4gIFBsYXRmb3JtLkZhY2Vib29rLFxuICBQbGF0Zm9ybS5JbnN0YWdyYW0sXG4gIFBsYXRmb3JtLllvdVR1YmUsXG4gIFBsYXRmb3JtLlRyYXZ5QXBwLFxuICBQbGF0Zm9ybS5DRE4sXG5dO1xuXG4vKipcbiAqIFBsYXRmb3JtcyBzaG93biBpbiB0aGUgcmVxdWVzdGVyIHJlcXVlc3QgZm9ybS5cbiAqIFRyYXZ5QXBwIGlzIG1hbmRhdG9yeSAoYWx3YXlzIHByZS1zZWxlY3RlZCkuIENETiBpcyBleGNsdWRlZCAoaW50ZXJuYWwgb25seSkuXG4gKi9cbmV4cG9ydCBjb25zdCBGT1JNX1BMQVRGT1JNUzogUGxhdGZvcm1bXSA9IFtcbiAgUGxhdGZvcm0uVHJhdnlBcHAsICAgLy8gbWFuZGF0b3J5IOKAlCBhbHdheXMgc2VsZWN0ZWQsIHNob3duIGZpcnN0XG4gIFBsYXRmb3JtLlRpa1RvayxcbiAgUGxhdGZvcm0uRmFjZWJvb2ssXG4gIFBsYXRmb3JtLkluc3RhZ3JhbSxcbiAgUGxhdGZvcm0uWW91VHViZSxcbl07XG5cbi8qKiBQbGF0Zm9ybXMgdGhhdCB0aGUgcmVxdWVzdGVyIG1heSBvcHRpb25hbGx5IGNoZWNrIChUcmF2eSBpcyBtYW5kYXRvcnksIG5vdCBvcHRpb25hbCkuICovXG5leHBvcnQgY29uc3QgT1BUSU9OQUxfRk9STV9QTEFURk9STVM6IFBsYXRmb3JtW10gPSBbXG4gIFBsYXRmb3JtLlRpa1RvayxcbiAgUGxhdGZvcm0uRmFjZWJvb2ssXG4gIFBsYXRmb3JtLkluc3RhZ3JhbSxcbiAgUGxhdGZvcm0uWW91VHViZSxcbl07XG5cbi8qKlxuICogTWFwcyBlYWNoIHBsYXRmb3JtIHRvIGl0cyBwcmVmZXJyZWQgYXNwZWN0IHJhdGlvIGZvciBiYXNlIHZpZGVvIGdlbmVyYXRpb24uXG4gKiBUaGUgcmVxdWVzdGVyJ3MgIzEgcHJpb3JpdHkgcGxhdGZvcm0gZGV0ZXJtaW5lcyB3aGljaCByYXRpbyBpcyBzZW50IHRvIHRoZVxuICogdmlkZW8gZ2VuZXJhdG9yIChWZW8pLiBWZW8gb25seSBhY2NlcHRzIFwiMTY6OVwiL1wiOToxNlwiLCBzbyBvdGhlciByYXRpb3MgYXJlXG4gKiBtYXBwZWQgb250byB0aGUgbmVhcmVzdCBvZiB0aG9zZSBmb3IgdGhlIHNvdXJjZSBjbGlwOyB0aGUgZmluYWwgcGVyLXBsYXRmb3JtXG4gKiBjcm9wcyBhcmUgcHJvZHVjZWQgbGF0ZXIgYnkgRkZtcGVnLiBUaGlzIG1hcHBpbmcgYWxzbyBkcml2ZXMgRkZtcGVnIGV4cG9ydFxuICogcHJpb3JpdHkuXG4gKi9cbmV4cG9ydCBjb25zdCBQTEFURk9STV9BU1BFQ1RfUkFUSU9TOiBSZWNvcmQ8UGxhdGZvcm0sIHN0cmluZz4gPSB7XG4gIFtQbGF0Zm9ybS5UaWtUb2tdOiBcIjk6MTZcIixcbiAgW1BsYXRmb3JtLkZhY2Vib29rXTogXCIxNjo5XCIsXG4gIFtQbGF0Zm9ybS5JbnN0YWdyYW1dOiBcIjQ6NVwiLFxuICBbUGxhdGZvcm0uWW91VHViZV06IFwiMTY6OVwiLFxuICAvLyBUcmF2eSBpcyBGSVhFRCBhdCAxNjo5IChzYW1lIGFzIFlvdVR1YmUpOiB0aGUgVHJhdnkgY2xpcCBpcyB1cGxvYWRlZCB0b1xuICAvLyBZb3VUdWJlIGFuZCBlbWJlZGRlZCBpbiB0aGUgVHJhdnkgd2ViIGFwcCwgc28gaXQgbmV2ZXIgbWlycm9ycyB0aGVcbiAgLy8gcHJpbWFyeSBjaGFubmVsJ3MgcmF0aW8uXG4gIFtQbGF0Zm9ybS5UcmF2eUFwcF06IFwiMTY6OVwiLFxuICBbUGxhdGZvcm0uQ0ROXTogXCIxNjo5XCIsXG59O1xuIl0sInZlcnNpb24iOjN9

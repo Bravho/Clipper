@@ -1,0 +1,10 @@
+838b5ef9855b0b63f146e28da1229ad9
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.EditorType = void 0;
+var EditorType;
+(function (EditorType) {
+    EditorType["AI"] = "ai";
+    EditorType["Human"] = "human";
+})(EditorType || (exports.EditorType = EditorType = {}));
+//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJmaWxlIjoiRDpcXGNvZGluZ1xcY2xpcHBlcl9hZ2VudFxcc3JjXFxkb21haW5cXGVudW1zXFxFZGl0b3JUeXBlLnRzIiwibWFwcGluZ3MiOiI7OztBQUFBLElBQVksVUFHWDtBQUhELFdBQVksVUFBVTtJQUNwQix1QkFBUyxDQUFBO0lBQ1QsNkJBQWUsQ0FBQTtBQUNqQixDQUFDLEVBSFcsVUFBVSwwQkFBVixVQUFVLFFBR3JCIiwibmFtZXMiOltdLCJzb3VyY2VzIjpbIkQ6XFxjb2RpbmdcXGNsaXBwZXJfYWdlbnRcXHNyY1xcZG9tYWluXFxlbnVtc1xcRWRpdG9yVHlwZS50cyJdLCJzb3VyY2VzQ29udGVudCI6WyJleHBvcnQgZW51bSBFZGl0b3JUeXBlIHtcbiAgQUkgPSBcImFpXCIsXG4gIEh1bWFuID0gXCJodW1hblwiLFxufVxuIl0sInZlcnNpb24iOjN9

@@ -4,16 +4,23 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
+import {
+  ELEVENLABS_FEMALE_VOICE_ID,
+  ELEVENLABS_MALE_VOICE_ID,
+} from "@/config/elevenLabsVoices";
 
 const schema = z.object({
   jobId: z.string().min(1),
+  voiceId: z
+    .enum([ELEVENLABS_FEMALE_VOICE_ID, ELEVENLABS_MALE_VOICE_ID])
+    .optional(),
 });
 
 /**
  * POST /api/requests/[id]/voice/regenerate
  *
- * Requester requests a new iAppTTS voice generation after listening to the
- * current result. The server always uses default.wav and default.txt.
+ * Requester requests a new ElevenLabs voice generation after listening to the
+ * current result. The selected allow-listed voice is persisted on the job.
  */
 export async function POST(
   req: NextRequest,
@@ -37,7 +44,8 @@ export async function POST(
 
     const updated = await videoGenerationService.regenerateVoice(
       body.jobId,
-      requester.id
+      requester.id,
+      body.voiceId
     );
 
     return NextResponse.json({ currentStep: updated.currentStep }, { status: 200 });

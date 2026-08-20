@@ -3,8 +3,7 @@
 import { signOut } from "next-auth/react";
 import { ROUTES } from "@/config/routes";
 import { clearNativeSignIn } from "@/lib/mobile/nativeSocialAuth";
-
-const PUSH_TOKEN_STORAGE_KEY = "rclipper-push-token";
+import { PUSH_TOKEN_STORAGE_KEY } from "@/config/push";
 
 /**
  * The one sign-out path for every surface.
@@ -24,7 +23,11 @@ const PUSH_TOKEN_STORAGE_KEY = "rclipper-push-token";
 export async function signOutEverywhere(
   callbackUrl: string = ROUTES.HOME
 ): Promise<void> {
-  await Promise.all([unregisterPushDevice(), clearNativeSignIn()]);
+  await Promise.all([
+    unregisterPushDevice(),
+    unregisterWebPushSubscription(),
+    clearNativeSignIn(),
+  ]);
   await signOut({ callbackUrl });
 }
 
@@ -45,5 +48,31 @@ async function unregisterPushDevice(): Promise<void> {
     // registers cleanly. The server-side row is reconciled on re-registration.
   } finally {
     window.localStorage.removeItem(PUSH_TOKEN_STORAGE_KEY);
+  }
+}
+
+/**
+ * The browser counterpart of `unregisterPushDevice`.
+ *
+ * A Web Push subscription is keyed to the BROWSER, not the account, so leaving
+ * it registered means a shared or family device keeps showing the previous
+ * user's pipeline notifications after they sign out. Unsubscribing also frees
+ * the push service endpoint; WebPushRegistration re-subscribes on the next
+ * sign-in because the local opt-in flag survives.
+ */
+async function unregisterWebPushSubscription(): Promise<void> {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = await registration?.pushManager.getSubscription();
+    if (!subscription) return;
+    await fetch("/api/mobile/push-device", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: subscription.endpoint }),
+    }).catch(() => undefined);
+    await subscription.unsubscribe().catch(() => undefined);
+  } catch {
+    // Never block sign-out on a push cleanup failure.
   }
 }
