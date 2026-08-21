@@ -1,0 +1,49 @@
+{
+	"appId": "com.rclipper.app",
+	"appName": "RClipper",
+	"webDir": "capacitor-shell",
+	"server": {
+		"url": "https://app.rclipper.com",
+		"cleartext": false,
+		"allowNavigation": [
+			"app.rclipper.com",
+			"*.rclipper.com"
+		]
+	},
+	"ios": {
+		"contentInset": "always",
+		"appendUserAgent": " RClipperNative/ios"
+	},
+	"android": {
+		"allowMixedContent": false,
+		"appendUserAgent": " RClipperNative/android"
+	},
+	"plugins": {
+		"SocialLogin": {
+			"providers": {
+				"google": true,
+				"facebook": false,
+				"apple": true,
+				"twitter": false
+			}
+		},
+		"SplashScreen": {
+			"launchShowDuration": 1500,
+			"backgroundColor": "#0f172aff",
+			"showSpinner": false
+		}
+	},
+	"packageClassList": [
+		"AppPlugin",
+		"CAPBrowserPlugin",
+		"CAPCameraPlugin",
+		"FilesystemPlugin",
+		"CAPNetworkPlugin",
+		"PreferencesPlugin",
+		"SharePlugin",
+		"SplashScreenPlugin",
+		"StatusBarPlugin",
+		"SocialLoginPlugin",
+		"NativePurchasesPlugin"
+	]
+}

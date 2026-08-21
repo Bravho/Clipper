@@ -29,6 +29,8 @@ PODS:
     - Capacitor
   - CapacitorPreferences (8.0.1):
     - Capacitor
+  - CapacitorPushNotifications (8.1.2):
+    - Capacitor
   - CapacitorShare (8.0.1):
     - Capacitor
   - CapacitorSplashScreen (8.0.2):
@@ -75,6 +77,7 @@ DEPENDENCIES:
   - "CapacitorFilesystem (from `../../node_modules/@capacitor/filesystem`)"
   - "CapacitorNetwork (from `../../node_modules/@capacitor/network`)"
   - "CapacitorPreferences (from `../../node_modules/@capacitor/preferences`)"
+  - "CapacitorPushNotifications (from `../../node_modules/@capacitor/push-notifications`)"
   - "CapacitorShare (from `../../node_modules/@capacitor/share`)"
   - "CapacitorSplashScreen (from `../../node_modules/@capacitor/splash-screen`)"
   - "CapacitorStatusBar (from `../../node_modules/@capacitor/status-bar`)"
@@ -114,6 +117,8 @@ EXTERNAL SOURCES:
     :path: "../../node_modules/@capacitor/network"
   CapacitorPreferences:
     :path: "../../node_modules/@capacitor/preferences"
+  CapacitorPushNotifications:
+    :path: "../../node_modules/@capacitor/push-notifications"
   CapacitorShare:
     :path: "../../node_modules/@capacitor/share"
   CapacitorSplashScreen:
@@ -137,6 +142,7 @@ SPEC CHECKSUMS:
   CapacitorFilesystem: 2db285a1ac6e475cc27cae2e1bea999000f9e2be
   CapacitorNetwork: 8812ce60d11fb63d8f2e4ba51a49b2e59892ebe2
   CapacitorPreferences: cca2021f386efb75947c850334447d9ff22b14f1
+  CapacitorPushNotifications: 32a7f840815f319fd9ba1c1c9b0b914be9d95237
   CapacitorShare: 0c58305114538568059bfc07111f22dcb9cb2a82
   CapacitorSplashScreen: 7bf61c2001557ff9e195e601c6b87344480d3c65
   CapacitorStatusBar: eca7bc2b58d9f886f1ef9edb66e57a9b29c121af
@@ -152,6 +158,6 @@ SPEC CHECKSUMS:
   PromisesSwift: 217dea0fd5d2ad65222a109c48698add13cc1c5b
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
 
-PODFILE CHECKSUM: 0178756cfad0477c005c3f68fbcd4e50e1c9ad32
+PODFILE CHECKSUM: f149be9d4b8bee92c60dd5e3c2737daaf1033221
 
 COCOAPODS: 1.16.2
