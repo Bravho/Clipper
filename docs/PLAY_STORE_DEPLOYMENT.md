@@ -1,13 +1,13 @@
 # RClipper Google Play deployment handoff
 
-Updated: 4 August 2026
+Updated: 21 August 2026
 
 ## Release identity
 
 - App name: RClipper
 - Package: `com.rclipper.app`
 - Play Console app ID: `4972504518557350406`
-- Current Android version: version code `6`, version name `1.0.5`
+- Current Android version: version code `7`, version name `1.0.6`
 - Minimum Android API: 24
 - Target and compile API: 36
 - Intended audience: ages 13–15, 16–17, and 18+ (13+)
@@ -41,6 +41,9 @@ is unsigned and must not be uploaded to Google Play.
 
 The store icon uses the same RClipper artwork as
 `android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png`.
+
+The upload steps, localized release notes, tester invitation, and test checklist
+for Android 1.0.6 (7) are in `docs/GOOGLE_PLAY_CLOSED_TEST_1.0.6.md`.
 
 ## Play Console status and remaining fields
 

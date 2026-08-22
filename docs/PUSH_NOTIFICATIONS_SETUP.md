@@ -194,7 +194,7 @@ One less SDK in the binary and one less privacy disclosure to make.
 The app already ships; these are the settings to change for this release.
 
 1. **Test and release → App bundle** — upload the new AAB. `versionCode` is now
-   `6` (`versionName 1.0.5`).
+   `7` (`versionName 1.0.6`).
 2. **Policy → App content → Data safety.** This is the one that is easy to miss:
    an FCM registration token is a **device identifier**, and it is now collected.
    Update the form:

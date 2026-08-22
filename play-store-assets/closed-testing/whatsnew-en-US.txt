@@ -1,0 +1,5 @@
+Closed testing update 1.0.6
+
+- Improved Google and Apple sign-in reliability.
+- Fixed permission handling on mobile devices.
+- Included general stability improvements for tester feedback.
