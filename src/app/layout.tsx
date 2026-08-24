@@ -5,6 +5,7 @@ import SessionProvider from "./providers";
 import { Navbar } from "@/components/layout/Navbar";
 import { PortalNavProvider } from "@/components/layout/PortalNav";
 import { Footer } from "@/components/layout/Footer";
+import { ChunkErrorRecovery } from "@/components/pwa/ChunkErrorRecovery";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 import { WebPushRegistration } from "@/components/pwa/WebPushRegistration";
 import { NativeDeepLinkHandler } from "@/components/mobile/NativeDeepLinkHandler";
@@ -62,6 +63,11 @@ export default async function RootLayout({
       <body className="flex min-h-screen w-full flex-col overflow-x-hidden">
         <SessionProvider session={session} locale={locale}>
           <PortalNavProvider>
+            {/* First: a stale `_next/static` chunk from a superseded deployment
+                can break any of the components below it. This listens for those
+                failures (which never reach a React error boundary) and heals the
+                shell instead of leaving the app half-loaded. */}
+            <ChunkErrorRecovery />
             <ServiceWorkerRegister />
             <WebPushRegistration />
             <NativeDeepLinkHandler />

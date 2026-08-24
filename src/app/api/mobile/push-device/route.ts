@@ -33,12 +33,25 @@ export async function POST(request: Request) {
       { status: 422 }
     );
   }
-  await pushNotificationService.registerDevice(
-    session.user.id,
-    parsed.data.platform,
-    parsed.data.token,
-    parsed.data.keys
-  );
+  // Push registration is an optional enhancement: the app is fully usable
+  // without it. An unhandled throw here became a 500 that the client logged as
+  // a hard failure and retried on every app start — and, because the route
+  // never caught it, the underlying cause showed up only as a raw pg error in
+  // the pm2 log with no request context. Fail soft and say so instead.
+  try {
+    await pushNotificationService.registerDevice(
+      session.user.id,
+      parsed.data.platform,
+      parsed.data.token,
+      parsed.data.keys
+    );
+  } catch (err) {
+    console.error("[POST /api/mobile/push-device] registration failed:", err);
+    return NextResponse.json(
+      { ok: false, error: "Push registration unavailable." },
+      { status: 503 }
+    );
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -53,7 +66,14 @@ export async function DELETE(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid device token." }, { status: 422 });
   }
-  await pushNotificationService.disableDevice(session.user.id, parsed.data.token);
+  try {
+    await pushNotificationService.disableDevice(session.user.id, parsed.data.token);
+  } catch (err) {
+    console.error("[DELETE /api/mobile/push-device] disable failed:", err);
+    return NextResponse.json(
+      { ok: false, error: "Push deregistration unavailable." },
+      { status: 503 }
+    );
+  }
   return NextResponse.json({ ok: true });
 }
-

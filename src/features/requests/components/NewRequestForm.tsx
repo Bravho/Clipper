@@ -347,18 +347,52 @@ async function withNetworkRetry<T>(fn: () => Promise<T>, attempts = 2, label = "
   throw lastErr;
 }
 
-/** Read a File fully into an in-memory Blob, detached from the on-disk file.
- *  WHY: on mobile — notably Android/OPPO camera HEVC clips — the file's on-disk
- *  modification time can shift between selection and the actual PUT (the gallery
- *  provider re-stats or touches it). Chrome then aborts the upload with
+/** Read a byte range of a File into an in-memory Blob, detached from the on-disk
+ *  file.
+ *
+ *  WHY DETACH: on mobile — notably Android/OPPO camera HEVC clips — the file's
+ *  on-disk modification time can shift between selection and the actual PUT (the
+ *  gallery provider re-stats or touches it). Chrome then aborts the upload with
  *  net::ERR_UPLOAD_FILE_CHANGED, which XHR can only surface as a bare onerror /
  *  "Failed to fetch" with sent=0 — exactly the symptom seen (one file uploads,
  *  the next fails instantly on a healthy 4G link). Uploading from an in-memory
- *  copy removes that send-time re-validation entirely. Done once per file, and
- *  files upload sequentially, so peak memory is bounded to a single clip. */
-async function materializeFile(file: File): Promise<Blob> {
-  const buf = await file.arrayBuffer();
+ *  copy removes that send-time re-validation entirely.
+ *
+ *  WHY A RANGE AND NOT THE WHOLE FILE: this used to snapshot each entire file,
+ *  and `addFiles` kicked those reads off for EVERY selected file the moment the
+ *  picker returned. The old comment claimed peak memory was "bounded to a single
+ *  clip"; it was not — every snapshot was retained in `fileBlobPromises` until
+ *  submit, so peak was the sum of the whole batch (up to MAX_UPLOAD_SIZE_BYTES,
+ *  500 MB), and `arrayBuffer()` → `new Blob()` transiently doubles each file on
+ *  top of that. A handful of camera clips was enough to push the Android WebView
+ *  renderer over its memory budget; locking the screen mid-upload then gave
+ *  Android every reason to kill it, losing the upload and forcing a cold reload.
+ *
+ *  Reading one range at a time keeps peak memory at ~2× the part size (10 MB)
+ *  regardless of batch size, and makes the detach *stronger*: the bytes are read
+ *  moments before their own PUT instead of minutes earlier. */
+async function materializeRange(file: File, start: number, end: number): Promise<Blob> {
+  const buf = await file.slice(start, end).arrayBuffer();
   return new Blob([buf], { type: file.type });
+}
+
+/** Whole-file variant. Only ever used for files below MULTIPART_THRESHOLD_BYTES
+ *  (5 MB), which upload in a single PUT — larger files go part by part. */
+async function materializeFile(file: File): Promise<Blob> {
+  return materializeRange(file, 0, file.size);
+}
+
+/** Bytes read at selection to prove a file is actually present on the device.
+ *  A cloud/SD placeholder (Google Photos "free up space", an unmounted SD card)
+ *  throws NotReadableError on the very first read, so a small slice detects it
+ *  just as reliably as a full read — and costs nothing. */
+const READABILITY_PROBE_BYTES = 256 * 1024;
+
+/** Fail fast at selection time when a file's bytes cannot be read at all, so the
+ *  user can re-pick it immediately instead of discovering it mid-upload after a
+ *  long wait. Resolves on success, rejects on an unreadable file. */
+async function probeReadable(file: File): Promise<void> {
+  await file.slice(0, Math.min(READABILITY_PROBE_BYTES, file.size)).arrayBuffer();
 }
 
 /** PUT one blob (whole file or one part), annotating a thrown network error with
@@ -488,13 +522,6 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // draft's id. canRetry shows the "resume upload" button after a partial failure.
   // resumeInfo shows the banner when a returning user has an unfinished draft.
   const draftIdRef = useRef<string | null>(existingRequestId ?? null);
-  // Per-file in-memory snapshot READ, started at selection while the picker's file
-  // reference is still fresh, keyed by pending-file id. Uploads await THIS promise
-  // (the fresh read) instead of reading the live File at upload time — closing the
-  // race where a fast submit outruns the snapshot, and guaranteeing a file the OS
-  // later makes unreadable (NotReadableError) still uploads from bytes captured
-  // while it was readable. A ref (not state) so it's immune to render/closure timing.
-  const fileBlobPromises = useRef<Map<string, Promise<Blob>>>(new Map());
   // Guards against concurrent submits (double-tap / retry racing itself), which
   // could otherwise double-charge credits.
   const submittingRef = useRef(false);
@@ -598,21 +625,21 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
     setPendingFiles((prev) => [...prev, ...newItems].slice(0, MAX_UPLOAD_COUNT));
 
-    // Snapshot each accepted file's bytes into memory NOW, while the picker's
-    // reference is fresh. On mobile the OS re-indexes/moves camera clips shortly
-    // after selection, which otherwise makes the live File unreadable minutes
-    // later at upload (NotReadableError) — reading it up front avoids that. The
-    // read promise is stored so the upload awaits THIS read (not a fresh, possibly-
-    // too-late one). A read failure is surfaced immediately so the user can re-pick
-    // the file rather than discovering it mid-upload after a long wait — and it
-    // usually means that specific file isn't fully on the device (a cloud/SD
+    // Prove each accepted file is genuinely readable NOW, while the picker's
+    // reference is fresh, and surface a failure immediately so the user can
+    // re-pick rather than discovering it mid-upload after a long wait — an
+    // unreadable file usually means it isn't fully on the device (a cloud/SD
     // placeholder), which no retry can fix.
+    //
+    // This deliberately reads only a probe slice. Snapshotting whole files here
+    // is what made a multi-clip batch hold the entire selection in memory at
+    // once and got the WebView killed by Android when the screen locked; the
+    // real bytes are now read per part, immediately before each PUT. See
+    // materializeRange.
     for (const item of newItems) {
       if (item.error) continue;
-      const p = materializeFile(item.file);
-      fileBlobPromises.current.set(item.id, p);
-      p.catch((err) => {
-        console.error(`[upload] snapshot ${item.file.name} failed at selection:`, err);
+      void probeReadable(item.file).catch((err) => {
+        console.error(`[upload] readability probe ${item.file.name} failed at selection:`, err);
         setPendingFiles((prev) =>
           prev.map((f) =>
             f.id === item.id
@@ -674,7 +701,6 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
   const removeFile = (id: string) => {
     setPendingFiles((prev) => prev.filter((f) => f.id !== id));
-    fileBlobPromises.current.delete(id); // release the in-memory snapshot
   };
 
   // Drop previews for removed files, revoking any blob: object URLs (image
@@ -822,9 +848,10 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     }
     const { assetId, presignedUrl } = await metaRes.json();
     const ctx = `${item.file.name} single-PUT (${(item.file.size / 1e6).toFixed(1)}MB)`;
-    // Await the selection-time read; fall back to a fresh read only if none exists
-    // (e.g. a resumed draft). Either way the upload runs off in-memory bytes.
-    const body = await (fileBlobPromises.current.get(item.id) ?? materializeFile(item.file));
+    // Read the bytes into memory immediately before the PUT, detached from the
+    // on-disk file. This path only ever handles files under
+    // MULTIPART_THRESHOLD_BYTES (5 MB), so the whole file is safe to hold.
+    const body = await materializeFile(item.file);
     console.info(`[upload] ${ctx} → ${hostOf(presignedUrl)} — ${connInfo()}`);
     await withNetworkRetry(
       () =>
@@ -905,10 +932,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     }
 
     const { key, uploadId, assetId } = session;
-    // Await the in-memory snapshot READ started at selection (detached from disk) so
-    // no part PUT can be aborted by ERR_UPLOAD_FILE_CHANGED / NotReadableError if the
-    // OS touches the file mid-batch. Fall back to a fresh read only if none exists.
-    const fileBlob = await (fileBlobPromises.current.get(item.id) ?? materializeFile(item.file));
+    // NOTE: the file's bytes are NOT read here. Each part is read from disk into
+    // memory immediately before its own PUT (see materializeRange in the part
+    // loop below), so a 300 MB clip costs ~10 MB of memory instead of 600 MB.
     console.info(
       `[upload] ${item.file.name} multipart start: ${(item.file.size / 1e6).toFixed(1)}MB in ${partCount} parts, ` +
         `${uploadedParts.length} already landed — ${connInfo()}`
@@ -959,7 +985,14 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
         for (const { partNumber, url } of partUrls) {
           const start = (partNumber - 1) * partSize;
-          const chunk = fileBlob.slice(start, Math.min(start + partSize, item.file.size));
+          // Read THIS part only, right before sending it: bounded memory, and the
+          // bytes are detached from disk moments before the PUT so the send-time
+          // ERR_UPLOAD_FILE_CHANGED re-validation has nothing to check.
+          const chunk = await materializeRange(
+            item.file,
+            start,
+            Math.min(start + partSize, item.file.size)
+          );
           const partCtx = `${item.file.name} part ${partNumber}/${partCount} r${round}`;
           const etag = await withNetworkRetry(
             () =>
