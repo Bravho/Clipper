@@ -32,6 +32,16 @@ import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { useI18n } from "@/i18n/client";
+import {
+  DRAFT_ID_KEY,
+  clearDraftPersistence,
+  clearMpuSession,
+  getMpuSession,
+  loadMpuMap,
+  lsGet,
+  lsSet,
+  saveMpuSession,
+} from "@/features/requests/draftStorage";
 
 const GoogleMapLocationPicker = dynamic(() =>
   import("@/features/requests/components/GoogleMapLocationPicker").then(
@@ -42,7 +52,21 @@ const GoogleMapLocationPicker = dynamic(() =>
 interface PendingFile {
   id: string;
   file: File;
+  /** Blocking problem — the file is excluded from upload until the user acts. */
   error?: string;
+  /**
+   * The browser could not decode this clip well enough to measure its length,
+   * so the ≤MAX_CLIP_DURATION_SECONDS rule could not be checked locally. Not an
+   * error: the clip may well be fine, and the server's ffprobe is authoritative.
+   * Surfaced so an eventual server rejection is not a surprise.
+   */
+  durationUnverified?: boolean;
+  /**
+   * The SERVER rejected this file on a business rule (e.g. over the length cap).
+   * Distinct from a network failure: re-uploading identical bytes will be
+   * rejected identically, so retry must skip it instead of looping for ever.
+   */
+  rejected?: string;
 }
 
 /** A source file already uploaded to a resumed draft — shown as done, not re-uploaded. */
@@ -84,85 +108,133 @@ const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE_BYTES / (1024 * 1024);
 const MAX_UPLOAD_SIZE_MB = Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024));
 
 /**
- * Read a video file's duration (seconds) in the browser via a detached
- * <video> element's metadata. Resolves NaN on failure so callers can treat
- * "unknown" as non-blocking (the server ffprobe is the authoritative guard).
+ * Serialise every `<video>` decode this form performs.
+ *
+ * WHY THIS QUEUE EXISTS — this is the root cause of "some clips can never be
+ * uploaded, however many times I retry".
+ *
+ * A phone's hardware video decoder is a fixed, shared resource. Android's
+ * Codec2 layer allows only a handful of concurrent decoder instances, and HEVC
+ * (H.265) — what OPPO/OnePlus cameras record by default — is the most expensive
+ * of them. `addFiles` used to open TWO detached `<video>` elements per selected
+ * file (one to read the duration, one to grab a poster frame) and start them all
+ * at once, in unbounded parallel `for` loops. Ten clips meant twenty simultaneous
+ * decoder instances, which the SoC answers with:
+ *
+ *     QC2Comp  [hvcD_243][ERROR] entered
+ *     OplusFeedback  PkgName#com.rclipper.app#ErrorCode#C2_NO_MEMORY
+ *     chromium  PipelineStatus::PIPELINE_ERROR_DECODE
+ *
+ * Whichever clips lost that race got `onerror`, so `readVideoDuration` resolved
+ * NaN — and NaN is deliberately treated as "unknown, don't block". The
+ * client-side length check was therefore SILENTLY SKIPPED for exactly those
+ * files. They uploaded in full, and only then did the server's ffprobe measure
+ * them and reject anything over the cap, which the UI could only show as a bare
+ * "ผิดพลาด". Retrying re-ran the identical race and re-uploaded the identical
+ * file to the identical rejection, for ever.
+ *
+ * One decode at a time makes the probe deterministic, so an over-length clip is
+ * caught at selection instead of after a 100 MB upload.
  */
-function readVideoDuration(file: File): Promise<number> {
-  return new Promise((resolve) => {
-    try {
-      const url = URL.createObjectURL(file);
-      const video = document.createElement("video");
-      video.preload = "auto";
-      video.onloadedmetadata = () => {
-        URL.revokeObjectURL(url);
-        resolve(video.duration);
-      };
-      video.onerror = () => {
-        URL.revokeObjectURL(url);
-        resolve(NaN);
-      };
-      video.src = url;
-    } catch {
-      resolve(NaN);
-    }
-  });
+let videoProbeChain: Promise<unknown> = Promise.resolve();
+function queueVideoProbe<T>(task: () => Promise<T>): Promise<T> {
+  const run = videoProbeChain.then(task, task);
+  // Never let one rejection poison the chain for every later probe.
+  videoProbeChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+export interface VideoProbeResult {
+  /** Seconds, or NaN when the browser could not decode the clip at all. */
+  durationSeconds: number;
+  /** JPEG data URL of a frame ~0.5s in, or null when extraction failed. */
+  poster: string | null;
 }
 
 /**
- * Capture a poster frame from a local video File and return it as a JPEG data
- * URL, so the pending-file grid shows the clip's actual content instead of a
- * generic icon. Seeks slightly past the start to avoid a black first frame.
- * Resolves null on any failure (unsupported codec, decode error) so the caller
- * falls back to the placeholder icon. Object URL is always revoked.
+ * Read a clip's duration AND poster frame from ONE `<video>` element.
+ *
+ * Previously these were two independent functions, each opening its own element
+ * and its own object URL — doubling decoder pressure for no benefit, since the
+ * poster pass already has to load metadata to seek. Sharing the element halves
+ * the cost and guarantees the two values describe the same decode.
+ *
+ * Always resolves; never rejects. `preload="metadata"` (not `"auto"`, which the
+ * duration path used to request) is enough for both jobs and avoids pulling a
+ * whole 300 MB clip through the decoder just to learn how long it is.
  */
-function generateVideoThumbnail(file: File): Promise<string | null> {
+function probeVideo(file: File): Promise<VideoProbeResult> {
   return new Promise((resolve) => {
+    let url: string | null = null;
+    let video: HTMLVideoElement | null = null;
+    let settled = false;
+
+    const finish = (result: VideoProbeResult) => {
+      if (settled) return;
+      settled = true;
+      if (url) URL.revokeObjectURL(url);
+      if (video) {
+        // Detach the source and load() the empty element so Chromium releases
+        // the decoder NOW rather than at some later GC. Without this the queue
+        // would still pile up instances and defeat the whole point.
+        video.removeAttribute("src");
+        video.srcObject = null;
+        try {
+          video.load();
+        } catch {
+          /* nothing to release */
+        }
+        video = null;
+      }
+      resolve(result);
+    };
+
     try {
-      const url = URL.createObjectURL(file);
-      const video = document.createElement("video");
+      url = URL.createObjectURL(file);
+      video = document.createElement("video");
       video.preload = "metadata";
       video.muted = true;
       video.playsInline = true;
 
-      let settled = false;
-      const finish = (result: string | null) => {
-        if (settled) return;
-        settled = true;
-        URL.revokeObjectURL(url);
-        resolve(result);
-      };
-
-      const capture = () => {
+      const capture = (durationSeconds: number) => {
         try {
           const canvas = document.createElement("canvas");
-          canvas.width = video.videoWidth || 320;
-          canvas.height = video.videoHeight || 180;
+          canvas.width = video?.videoWidth || 320;
+          canvas.height = video?.videoHeight || 180;
           const ctx = canvas.getContext("2d");
-          if (!ctx) return finish(null);
+          if (!ctx || !video) return finish({ durationSeconds, poster: null });
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          finish(canvas.toDataURL("image/jpeg", 0.7));
+          finish({ durationSeconds, poster: canvas.toDataURL("image/jpeg", 0.7) });
         } catch {
-          finish(null);
+          finish({ durationSeconds, poster: null });
         }
       };
 
-      video.onloadeddata = () => {
-        video.onseeked = capture;
-        const target = Math.min(0.5, (Number.isFinite(video.duration) ? video.duration : 1) / 2);
+      video.onloadedmetadata = () => {
+        // Duration is known here even if the frame grab later fails, so a clip
+        // whose codec cannot be rendered is still length-checked.
+        const durationSeconds = video?.duration ?? NaN;
+        if (!video) return finish({ durationSeconds, poster: null });
+        video.onseeked = () => capture(durationSeconds);
+        video.onerror = () => finish({ durationSeconds, poster: null });
+        const target = Math.min(0.5, (Number.isFinite(durationSeconds) ? durationSeconds : 1) / 2);
         try {
           video.currentTime = target;
         } catch {
-          capture();
+          capture(durationSeconds);
         }
       };
-      video.onerror = () => finish(null);
-      // Safety net if metadata/seek never fires.
-      setTimeout(() => finish(null), 5000);
+      video.onerror = () => finish({ durationSeconds: NaN, poster: null });
+      // Safety net if metadata/seek never fires — without it a wedged decoder
+      // would stall the whole serial queue behind it.
+      setTimeout(() => finish({ durationSeconds: NaN, poster: null }), 15_000);
       video.src = url;
       video.load();
     } catch {
-      resolve(null);
+      finish({ durationSeconds: NaN, poster: null });
     }
   });
 }
@@ -177,11 +249,14 @@ function generateVideoThumbnail(file: File): Promise<string | null> {
 const MULTIPART_THRESHOLD_BYTES = 5 * 1024 * 1024;
 
 /**
- * MUST equal the server's MULTIPART_PART_SIZE (5 MB). On the RESUME path there is
- * no initiate response to echo the server's partSize, so the client recomputes
- * part boundaries from this constant — if the two ever diverge, a resumed upload
- * would slice at different offsets than the already-stored parts and corrupt the
- * object. Keep this in lockstep with UploadService.MULTIPART_PART_SIZE.
+ * Fallback part size, used only when a session carries no recorded partSize —
+ * i.e. one persisted by a build before partSize was stored. Should match the
+ * server's MULTIPART_PART_SIZE (5 MB), because that is what those older sessions
+ * were sliced at.
+ *
+ * The live value now comes from the server's initiate response and is persisted
+ * in the MpuSession, so a resume re-slices at exactly the boundaries its stored
+ * parts used rather than at whatever this constant currently says.
  */
 const MULTIPART_PART_SIZE = 5 * 1024 * 1024;
 
@@ -194,72 +269,20 @@ const MULTIPART_PART_SIZE = 5 * 1024 * 1024;
 // The one thing that CANNOT be persisted is the File's bytes — so a file that
 // never finished must be re-selected by the user; we then resume it via ListParts.
 
-/** localStorage helpers — never throw (some WebView configs restrict storage). */
-function lsGet(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-function lsSet(key: string, value: string): void {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* ignore */
-  }
-}
-function lsRemove(key: string): void {
-  try {
-    window.localStorage.removeItem(key);
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Persisted id of the in-progress draft, so a reload/return resumes it instead
- *  of minting a new request (which previously orphaned already-uploaded files). */
-const DRAFT_ID_KEY = "clipper:newreq:draftId";
-
-/** A resumable multipart session for one file. No bytes — only the ids needed to
- *  resume via ListParts once the same file is re-selected. */
-interface MpuSession {
-  assetId: string;
-  key: string;
-  uploadId: string;
-}
-
-const mpuMapKey = (draftId: string) => `clipper:newreq:mpu:${draftId}`;
-function loadMpuMap(draftId: string): Record<string, MpuSession> {
-  try {
-    return JSON.parse(lsGet(mpuMapKey(draftId)) || "{}") as Record<string, MpuSession>;
-  } catch {
-    return {};
-  }
-}
-function getMpuSession(draftId: string, sig: string): MpuSession | null {
-  return loadMpuMap(draftId)[sig] ?? null;
-}
-function saveMpuSession(draftId: string, sig: string, s: MpuSession): void {
-  const m = loadMpuMap(draftId);
-  m[sig] = s;
-  lsSet(mpuMapKey(draftId), JSON.stringify(m));
-}
-function clearMpuSession(draftId: string, sig: string): void {
-  const m = loadMpuMap(draftId);
-  delete m[sig];
-  lsSet(mpuMapKey(draftId), JSON.stringify(m));
-}
-function clearDraftPersistence(draftId: string | null): void {
-  lsRemove(DRAFT_ID_KEY);
-  if (draftId) lsRemove(mpuMapKey(draftId));
-}
-
 /** Stable per-file signature (client only) for matching a re-selected file to a
- *  persisted multipart session. */
-const fileSig = (f: File) => `${f.name}::${f.size}::${f.lastModified}`;
+ *  persisted multipart session.
+ *
+ *  DELIBERATELY EXCLUDES `lastModified`. It used to be part of this key, which
+ *  defeated the entire resume feature on the platform it exists for: Android's
+ *  gallery provider re-stats a clip when it is re-picked, so the same file comes
+ *  back with a *different* lastModified. The session lookup then missed, the
+ *  client initiated a brand-new multipart upload, and a video that was 90%
+ *  uploaded restarted from zero — while leaving another orphaned Pending record
+ *  behind. Name + size + type is what actually survives a re-pick, and it is the
+ *  same identity the server already uses to match an asset (nameSizeSig). */
+const fileSig = (f: File) => `${f.name}::${f.size}::${f.type}`;
 /** name+size signature — used to match a local file to a server-side asset (the
- *  server has no access to lastModified). */
+ *  server records no MIME-independent identity beyond these two). */
 const nameSizeSig = (name: string, size: number) => `${name}::${size}`;
 
 const hostOf = (u: string) => {
@@ -285,6 +308,35 @@ async function netFetch(label: string, url: string, init: RequestInit): Promise<
         `การเชื่อมต่อถูกบล็อกหรือขาดหาย ไม่ใช่ข้อผิดพลาดจากเซิร์ฟเวอร์`
     );
   }
+}
+
+/**
+ * The SERVER refused this file on a business rule — HTTP 422 from the presign,
+ * multipart-initiate, or confirm step. The bytes are irrelevant: it will refuse
+ * the identical file identically, every time.
+ *
+ * This is carried as its own error type because the three rejection points are
+ * spread across the upload flow, and the generic `catch` around an upload used
+ * to flatten all of them into the same retryable "อัปโหลดไม่สำเร็จ" as a dropped
+ * connection. That is what let a permanently-refused clip sit in the retry loop
+ * being re-uploaded and re-refused indefinitely.
+ *
+ * Current 422s: over the per-request total size cap, over the per-file size cap,
+ * over the file-count cap, unsupported type, clip longer than the duration cap.
+ */
+class UploadRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UploadRejectedError";
+  }
+}
+
+/** Throw the right error type for a failed upload-control response. */
+async function throwForUploadResponse(res: Response, fallback: string): Promise<never> {
+  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+  const message = typeof body.error === "string" && body.error ? body.error : fallback;
+  if (res.status === 422) throw new UploadRejectedError(message);
+  throw new Error(message);
 }
 
 /** A dropped part on a flaky mobile connection surfaces as XHR onerror with an
@@ -323,7 +375,7 @@ function connInfo(): string {
  *  whole-file "Failed to fetch" that forces the user to press the retry button.
  *  Non-transient errors bubble up on the first occurrence. `label` is threaded
  *  into the retry log so we can see exactly which part is flaking. */
-async function withNetworkRetry<T>(fn: () => Promise<T>, attempts = 2, label = ""): Promise<T> {
+async function withNetworkRetry<T>(fn: () => Promise<T>, attempts = 3, label = ""): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -494,7 +546,7 @@ function putBlobWithProgress(
   });
 }
 
-type UploadStage = "pending" | "uploading" | "done" | "error";
+type UploadStage = "pending" | "uploading" | "done" | "error" | "rejected";
 interface UploadItemProgress {
   pct: number;
   stage: UploadStage;
@@ -526,6 +578,37 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // could otherwise double-charge credits.
   const submittingRef = useRef(false);
   const [canRetry, setCanRetry] = useState(false);
+  /**
+   * An unfinished draft found via localStorage but NOT yet adopted.
+   *
+   * The mount effect used to adopt it outright (`draftIdRef.current = saved`),
+   * which quietly turned "create a new request" into "keep filling in the old
+   * one". A user who abandoned a half-finished upload and came back to start
+   * fresh got the previous request's already-uploaded files attached to what
+   * they believed was a new request — with no way to tell, because the id is
+   * never shown. Nothing is adopted now until the user says so.
+   */
+  const [recoverableDraft, setRecoverableDraft] = useState<{
+    draftId: string;
+    uploadedNames: string[];
+  } | null>(null);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+  /**
+   * Bytes ALREADY stored on the server for this draft. Counts toward the
+   * per-request total cap exactly as it does server-side, so the selection check
+   * and the presign check agree. Seeded from a resumed draft's assets and
+   * refreshed from the reconcile fetch on every submit/retry. A ref, not state:
+   * addFiles reads it synchronously while building the accepted list.
+   */
+  const serverUploadedBytesRef = useRef(
+    (uploadedAssets ?? []).reduce((sum, a) => sum + (Number(a.fileSizeBytes) || 0), 0)
+  );
+  /**
+   * COUNT of files already stored on this request — the count half of the same
+   * problem as serverUploadedBytesRef. MAX_UPLOAD_COUNT is a per-request cap, so
+   * the picker's own list is not the whole story on a resumed draft.
+   */
+  const serverUploadedCountRef = useRef((uploadedAssets ?? []).length);
   const [resumeInfo, setResumeInfo] = useState<{ uploadedNames: string[] } | null>(
     existingRequestId
       ? { uploadedNames: (uploadedAssets ?? []).map((a) => a.fileName) }
@@ -593,11 +676,40 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   };
 
   const addFiles = (files: File[]) => {
-    // Running total of bytes already accepted, so the per-request total cap is
-    // enforced as files are added (matches the server presign-route check).
-    let runningBytes = pendingFiles
-      .filter((f) => !f.error)
-      .reduce((sum, f) => sum + f.file.size, 0);
+    // Running total of bytes against the per-request cap, enforced as files are
+    // added so the cap is hit HERE rather than mid-upload.
+    //
+    // It must start from the bytes already stored on the server, not from zero.
+    // The server checks `sumUploadedBytes(requestId) + thisFile` against the same
+    // cap, and on a resumed or partly-uploaded draft those stored bytes are
+    // invisible to this list — so the two sides disagreed. The client waved
+    // everything through; the server then refused each file whose turn came after
+    // the cap was reached, one at a time, mid-batch. Because a *smaller* file can
+    // still fit under the remaining headroom while a large one cannot, the
+    // refusals interleaved with successes rather than forming a clean cut-off,
+    // which made them look like random per-file failures instead of one budget
+    // running out. And the refusal is permanent: the stored bytes stay stored, so
+    // every retry hits the identical wall.
+    let runningBytes =
+      serverUploadedBytesRef.current +
+      pendingFiles
+        .filter((f) => !f.error && !f.rejected)
+        .reduce((sum, f) => sum + f.file.size, 0);
+
+    // Running FILE COUNT against MAX_UPLOAD_COUNT, on the same basis the server
+    // uses: files already stored on this request PLUS the ones staged here.
+    //
+    // This was `pendingFiles.length + files.indexOf(file)` — the picker's list
+    // alone, starting from zero. On a resumed draft the server already holds N
+    // uploaded files that this list knows nothing about, so the client happily
+    // accepted a full batch of 10 while the server counted its own stored files
+    // too and refused with "Maximum 10 files per request." the moment the true
+    // total crossed the cap. Exactly the same client/server divergence as the
+    // byte budget above, and permanent for the same reason: the stored files stay
+    // stored, so every retry re-computes the identical count and refuses again.
+    let runningCount =
+      serverUploadedCountRef.current +
+      pendingFiles.filter((f) => !f.error && !f.rejected).length;
 
     const newItems: PendingFile[] = files.map((file) => {
       const id = crypto.randomUUID();
@@ -609,8 +721,11 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
       if (imageOnly && isVideo) {
         error = "แพ็กเกจนี้รับเฉพาะไฟล์รูปภาพเท่านั้น";
-      } else if (pendingFiles.length + files.indexOf(file) >= MAX_UPLOAD_COUNT) {
-        error = `อัพโหลดได้สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์`;
+      } else if (runningCount >= MAX_UPLOAD_COUNT) {
+        error =
+          serverUploadedCountRef.current > 0
+            ? `คำขอนี้มีไฟล์ครบ ${MAX_UPLOAD_COUNT} ไฟล์แล้ว (อัปโหลดไว้ก่อนหน้า ${serverUploadedCountRef.current} ไฟล์)`
+            : `อัพโหลดได้สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์`;
       } else if (file.size > (isVideo ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES)) {
         error = `ไฟล์เกินขนาดสูงสุด ${isVideo ? MAX_VIDEO_SIZE_MB : MAX_IMAGE_SIZE_MB} MB`;
       } else if (!acceptedTypes.includes(file.type as never)) {
@@ -619,11 +734,26 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         error = `ขนาดไฟล์รวมเกิน ${MAX_UPLOAD_SIZE_MB} MB ต่อคำขอ`;
       }
 
-      if (!error) runningBytes += file.size;
+      if (!error) {
+        runningBytes += file.size;
+        runningCount += 1;
+      }
       return { id, file, error };
     });
 
-    setPendingFiles((prev) => [...prev, ...newItems].slice(0, MAX_UPLOAD_COUNT));
+    // The hard slice must leave room for what the server already holds, or it
+    // would silently re-admit files the count check just rejected. Rejected and
+    // errored entries are kept: they carry the reason the user needs to see.
+    setPendingFiles((prev) => {
+      const combined = [...prev, ...newItems];
+      const room = Math.max(0, MAX_UPLOAD_COUNT - serverUploadedCountRef.current);
+      let kept = 0;
+      return combined.filter((f) => {
+        if (f.error || f.rejected) return true;
+        kept += 1;
+        return kept <= room;
+      });
+    });
 
     // Prove each accepted file is genuinely readable NOW, while the picker's
     // reference is fresh, and surface a failure immediately so the user can
@@ -650,34 +780,26 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       });
     }
 
-    // Generate previews for accepted files: images use an object URL; videos get
-    // an async poster-frame capture (data URL) so the grid shows real content.
+    // Images: an object URL is enough, and costs no decoder.
     for (const item of newItems) {
       if (item.error) continue;
-      const isVideo = ACCEPTED_VIDEO_MIME_TYPES.includes(
-        item.file.type as (typeof ACCEPTED_VIDEO_MIME_TYPES)[number]
-      );
-      if (isVideo) {
-        // Show the selected local video immediately. This is also the fallback
-        // on iOS/WKWebView when canvas frame extraction cannot decode the clip.
-        const videoUrl = URL.createObjectURL(item.file);
-        setPreviews((prev) => ({ ...prev, [item.id]: videoUrl }));
-        void generateVideoThumbnail(item.file).then((thumb) => {
-          if (!thumb) return;
-          setPreviews((prev) => {
-            const previous = prev[item.id];
-            if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
-            return { ...prev, [item.id]: thumb };
-          });
-        });
-      } else if (item.file.type.startsWith("image/")) {
+      if (item.file.type.startsWith("image/")) {
         const objUrl = URL.createObjectURL(item.file);
         setPreviews((prev) => ({ ...prev, [item.id]: objUrl }));
       }
     }
 
-    // Asynchronously verify each accepted video's duration (≤45s) and flag any
-    // that are too long. The server re-checks with ffprobe at confirm time.
+    // Videos: ONE queued probe per clip yields both the poster frame and the
+    // duration. Two things changed here and both matter:
+    //
+    //  • It is queued (one decode at a time). Firing every clip's probe at once
+    //    exhausted the phone's hardware decoder — see queueVideoProbe — and the
+    //    clips that lost the race silently skipped the length check.
+    //  • The length check now treats an UNREADABLE clip as unverified rather
+    //    than as fine. It used to pass NaN straight through validateClipDuration,
+    //    which returns null for NaN by design, so an unreadable clip sailed
+    //    through selection, uploaded in full, and was rejected by the server's
+    //    ffprobe at the very last step with nothing the user could act on.
     for (const item of newItems) {
       if (item.error) continue;
       const isVideo = ACCEPTED_VIDEO_MIME_TYPES.includes(
@@ -685,17 +807,53 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       );
       if (!isVideo) continue;
 
-      void readVideoDuration(item.file).then((duration) => {
-        if (validateClipDuration(duration)) {
-          setPendingFiles((prev) =>
-            prev.map((f) =>
-              f.id === item.id
-                ? { ...f, error: `คลิปต้องยาวไม่เกิน ${MAX_CLIP_DURATION_SECONDS} วินาที` }
-                : f
-            )
-          );
+      // NOTE: no object URL is created here any more. Rendering a live <video>
+      // per pending clip meant the grid itself held one decoder instance per
+      // file — on top of the probes — which is the other half of what exhausted
+      // the codec. The tile shows a placeholder until the probe returns, then a
+      // still poster (an <img>, no decoder). A blob URL is created ONLY when the
+      // frame grab failed, so the <video> fallback stays available for the
+      // iOS/WKWebView codecs that canvas cannot read.
+      void queueVideoProbe(() => probeVideo(item.file)).then(
+        ({ durationSeconds, poster }) => {
+          // Computed outside the updater: a state updater can be invoked more
+          // than once (StrictMode), and createObjectURL inside it would leak a
+          // URL on every extra call.
+          const preview = poster ?? URL.createObjectURL(item.file);
+          setPreviews((prev) => {
+            const previous = prev[item.id];
+            if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
+            return { ...prev, [item.id]: preview };
+          });
+
+          const tooLong = validateClipDuration(durationSeconds);
+          if (tooLong) {
+            setPendingFiles((prev) =>
+              prev.map((f) =>
+                f.id === item.id
+                  ? {
+                      ...f,
+                      error:
+                        `คลิปยาว ${Math.round(durationSeconds)} วินาที ` +
+                        `เกินกำหนด ${MAX_CLIP_DURATION_SECONDS} วินาที — กรุณาตัดให้สั้นลงแล้วเลือกใหม่`,
+                    }
+                  : f
+              )
+            );
+            return;
+          }
+
+          if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+            // Could not be measured here. Say so instead of uploading it and
+            // letting the server reject it after the bytes are already sent.
+            setPendingFiles((prev) =>
+              prev.map((f) =>
+                f.id === item.id ? { ...f, durationUnverified: true } : f
+              )
+            );
+          }
         }
-      });
+      );
     }
   };
 
@@ -731,10 +889,10 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // On mount, recover an unfinished draft (survives reload / app relaunch on
-  // iOS/Android). If it still exists and has uploaded files or an in-progress
-  // multipart session, adopt its id and show the resume banner; otherwise clear
-  // the stale pointer. Offline is left intact for a later attempt.
+  // On mount, LOOK FOR an unfinished draft (survives reload / app relaunch on
+  // iOS/Android) and offer it — but never adopt it silently. If the user does
+  // nothing, this page creates a brand-new request on submit, which is what
+  // "new request" has to mean. Offline is left intact for a later attempt.
   useEffect(() => {
     // Explicit resume from the dashboard wins — adopt that draft id and don't let
     // a stale localStorage pointer from an earlier draft override it.
@@ -768,8 +926,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           clearDraftPersistence(saved);
           return;
         }
-        draftIdRef.current = saved;
-        setResumeInfo({ uploadedNames: uploaded.map((a) => a.fileName) });
+        // Offer it. `draftIdRef` stays null so an untouched form still mints a
+        // fresh request — adoption happens in handleResumeDraft, on a click.
+        setRecoverableDraft({ draftId: saved, uploadedNames: uploaded.map((a) => a.fileName) });
       } catch {
         /* offline — keep persistence for a later attempt */
       }
@@ -843,8 +1002,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       }),
     });
     if (!metaRes.ok) {
-      const body = await metaRes.json().catch(() => ({}));
-      throw new Error(body.error ?? `error ${metaRes.status}`);
+      // 422 here = the server refused the file itself (size caps, count cap,
+      // type). Not retryable — see UploadRejectedError.
+      await throwForUploadResponse(metaRes, `error ${metaRes.status}`);
     }
     const { assetId, presignedUrl } = await metaRes.json();
     const ctx = `${item.file.name} single-PUT (${(item.file.size / 1e6).toFixed(1)}MB)`;
@@ -862,7 +1022,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           item.file.type,
           ctx
         ),
-      2,
+      3,
       ctx
     );
     return assetId;
@@ -884,8 +1044,6 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       });
 
     const sig = fileSig(item.file);
-    const partSize = MULTIPART_PART_SIZE;
-    const partCount = Math.max(1, Math.ceil(item.file.size / partSize));
 
     // 1) Resume a persisted session if present; otherwise initiate a fresh one.
     let session = getMpuSession(requestId, sig);
@@ -922,16 +1080,34 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         mimeType: item.file.type,
       });
       if (!initRes.ok) {
-        const body = await initRes.json().catch(() => ({}));
-        throw new Error(body.error ?? `error ${initRes.status}`);
+        // Same as the single-PUT path: a 422 is a refusal of this file, not a
+        // transport problem, and must not be retried.
+        await throwForUploadResponse(initRes, `error ${initRes.status}`);
       }
-      const init = (await initRes.json()) as { assetId: string; key: string; uploadId: string };
-      session = { assetId: init.assetId, key: init.key, uploadId: init.uploadId };
+      const init = (await initRes.json()) as {
+        assetId: string;
+        key: string;
+        uploadId: string;
+        partSize?: number;
+      };
+      session = {
+        assetId: init.assetId,
+        key: init.key,
+        uploadId: init.uploadId,
+        // Record the size the SERVER says to slice at, so a later resume
+        // reproduces these exact boundaries even if the constant changes.
+        partSize:
+          typeof init.partSize === "number" && init.partSize > 0
+            ? init.partSize
+            : MULTIPART_PART_SIZE,
+      };
       saveMpuSession(requestId, sig, session);
       uploadedParts = [];
     }
 
     const { key, uploadId, assetId } = session;
+    const partSize = session.partSize ?? MULTIPART_PART_SIZE;
+    const partCount = Math.max(1, Math.ceil(item.file.size / partSize));
     // NOTE: the file's bytes are NOT read here. Each part is read from disk into
     // memory immediately before its own PUT (see materializeRange in the part
     // loop below), so a 300 MB clip costs ~10 MB of memory instead of 600 MB.
@@ -968,52 +1144,105 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     let uploadedBytes = bytesFor(etags);
     setItemProgress(item.id, { pct: Math.min(99, Math.round((uploadedBytes / item.file.size) * 100)) });
 
-    const MAX_ROUNDS = 2;
+    // Three rounds, not two: a phone coming back from a locked screen often
+    // needs one whole round just for the radio to settle. Each round is cheap —
+    // it re-asks ListParts and re-sends only genuinely-missing parts — so the
+    // extra attempt costs a backoff, not a re-upload.
+    const MAX_ROUNDS = 3;
     for (let round = 1; missing.length > 0; round++) {
       console.info(
         `[upload] ${item.file.name} round ${round}/${MAX_ROUNDS}: ${missing.length} part(s) still missing — ${connInfo()}`
       );
       try {
-        const signRes = await mp("ขอที่อยู่อัปโหลด", { action: "sign", key, uploadId, partNumbers: missing });
-        if (!signRes.ok) {
-          const body = await signRes.json().catch(() => ({}));
-          throw new Error(body.error ?? `error ${signRes.status}`);
-        }
-        const { parts: partUrls } = (await signRes.json()) as {
-          parts: { partNumber: number; url: string }[];
+        /** Mint presigned URLs for a handful of part numbers, on demand. */
+        const signParts = async (
+          partNumbers: number[]
+        ): Promise<{ partNumber: number; url: string }[]> => {
+          const signRes = await mp("ขอที่อยู่อัปโหลด", {
+            action: "sign",
+            key,
+            uploadId,
+            partNumbers,
+          });
+          if (!signRes.ok) {
+            const body = await signRes.json().catch(() => ({}));
+            throw new Error(body.error ?? `error ${signRes.status}`);
+          }
+          const { parts } = (await signRes.json()) as {
+            parts: { partNumber: number; url: string }[];
+          };
+          return parts;
         };
 
-        for (const { partNumber, url } of partUrls) {
-          const start = (partNumber - 1) * partSize;
-          // Read THIS part only, right before sending it: bounded memory, and the
-          // bytes are detached from disk moments before the PUT so the send-time
-          // ERR_UPLOAD_FILE_CHANGED re-validation has nothing to check.
-          const chunk = await materializeRange(
-            item.file,
-            start,
-            Math.min(start + partSize, item.file.size)
-          );
-          const partCtx = `${item.file.name} part ${partNumber}/${partCount} r${round}`;
-          const etag = await withNetworkRetry(
-            () =>
-              putPart(
-                url,
-                chunk,
-                (loaded) =>
-                  setItemProgress(item.id, {
-                    pct: Math.min(99, Math.round(((uploadedBytes + loaded) / item.file.size) * 100)),
-                  }),
-                undefined,
+        // Sign JUST-IN-TIME, a few parts at a time, instead of minting a URL for
+        // every remaining part up front.
+        //
+        // WHY: presigned URLs carry a fixed TTL (PRESIGNED_URL_TTL, 15 minutes)
+        // that starts ticking the moment they are signed, and parts are PUT
+        // sequentially. Signing all of a large file's parts at once therefore
+        // races the upload against the clock: a 109 MB clip is 22 parts, and on a
+        // typical mobile uplink the last parts can easily be reached more than 15
+        // minutes after they were signed — at which point Spaces answers 403 for
+        // a URL that was valid when the round began. The bigger the file, the
+        // more reliably it happens, so the same large clips fail every attempt
+        // while smaller ones always succeed. Signing a batch immediately before
+        // sending it means every URL is used seconds after it is minted, and the
+        // TTL stops being a function of file size.
+        const SIGN_BATCH = 4;
+        for (let offset = 0; offset < missing.length; offset += SIGN_BATCH) {
+          const batch = missing.slice(offset, offset + SIGN_BATCH);
+          const partUrls = await signParts(batch);
+
+          for (const { partNumber, url } of partUrls) {
+            const start = (partNumber - 1) * partSize;
+            // Read THIS part only, right before sending it: bounded memory, and
+            // the bytes are detached from disk moments before the PUT so the
+            // send-time ERR_UPLOAD_FILE_CHANGED re-validation has nothing to check.
+            const chunk = await materializeRange(
+              item.file,
+              start,
+              Math.min(start + partSize, item.file.size)
+            );
+            const partCtx = `${item.file.name} part ${partNumber}/${partCount} r${round}`;
+            const onProgress = (loaded: number) =>
+              setItemProgress(item.id, {
+                pct: Math.min(99, Math.round(((uploadedBytes + loaded) / item.file.size) * 100)),
+              });
+
+            let etag: string;
+            try {
+              etag = await withNetworkRetry(
+                () => putPart(url, chunk, onProgress, undefined, partCtx),
+                3,
                 partCtx
-              ),
-            2,
-            partCtx
-          );
-          if (!etag) throw new Error(`ไม่ได้รับ ETag ของส่วนที่ ${partNumber}`);
-          etags.push({ PartNumber: partNumber, ETag: etag });
-          uploadedBytes += chunk.size;
+              );
+            } catch (partErr) {
+              // A 403 on a part URL means the signature is expired or invalid —
+              // NOT a transport failure, so withNetworkRetry (which only retries
+              // network-shaped errors) correctly refused to retry it and it would
+              // otherwise abort the whole file. But it is trivially recoverable:
+              // mint a fresh URL for this one part and send it again. Without
+              // this, one expired URL discards every part still to come.
+              const partMsg = partErr instanceof Error ? partErr.message : String(partErr);
+              if (!/HTTP 403/.test(partMsg)) throw partErr;
+              console.warn(
+                `[upload] ${partCtx} presign rejected (403) — re-signing this part and retrying`
+              );
+              const [fresh] = await signParts([partNumber]);
+              if (!fresh?.url) throw partErr;
+              etag = await withNetworkRetry(
+                () => putPart(fresh.url, chunk, onProgress, undefined, `${partCtx} resigned`),
+                2,
+                partCtx
+              );
+            }
+
+            if (!etag) throw new Error(`ไม่ได้รับ ETag ของส่วนที่ ${partNumber}`);
+            etags.push({ PartNumber: partNumber, ETag: etag });
+            uploadedBytes += chunk.size;
+          }
         }
-        missing = []; // every signed part uploaded — exit the round loop
+        missing = []; // every part uploaded — exit the round loop
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (round >= MAX_ROUNDS) {
@@ -1076,7 +1305,11 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // attempt and the retry button — it reconciles against what already landed on
   // the server so nothing is uploaded twice.
   const finalizeSubmission = async (requestId: string): Promise<void> => {
-    const uploadItems = pendingFiles.filter((f) => !f.error);
+    // `rejected` files are excluded alongside `error` ones: the server has
+    // already refused these exact bytes on a business rule, so a retry would
+    // re-upload the whole clip only to be refused again. Skipping them is what
+    // lets the retry button finish the files that CAN succeed.
+    const uploadItems = pendingFiles.filter((f) => !f.error && !f.rejected);
 
     // Reconcile with the server: skip any file whose name+size is already an
     // uploaded asset on this request (resume after reload/return).
@@ -1087,14 +1320,67 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         const { assets } = (await listRes.json()) as {
           assets: { fileName: string; fileSizeBytes: number; uploadStatus: string }[];
         };
+        const stored = assets.filter((a) => a.uploadStatus === "uploaded");
         uploadedSigs = new Set(
-          assets
-            .filter((a) => a.uploadStatus === "uploaded")
-            .map((a) => nameSizeSig(a.fileName, a.fileSizeBytes))
+          stored.map((a) => nameSizeSig(a.fileName, a.fileSizeBytes))
         );
+        // Keep the size budget in step with what the server actually holds, so
+        // the next addFiles() measures against the same number the presign route
+        // will use.
+        serverUploadedBytesRef.current = stored.reduce(
+          (sum, a) => sum + (Number(a.fileSizeBytes) || 0),
+          0
+        );
+        serverUploadedCountRef.current = stored.length;
       }
     } catch {
       /* non-fatal: fall through and (re)upload */
+    }
+
+    // Pre-flight the per-request total cap for the files about to go up, in the
+    // order they will go up. The server enforces this one file at a time and
+    // only says "no" when that file's turn arrives — which is why the failures
+    // appeared scattered through the batch. Deciding it up front means the user
+    // is told which clips do not fit BEFORE anything is uploaded.
+    const overBudget = new Map<string, string>();
+    {
+      let budget = serverUploadedBytesRef.current;
+      // Both caps, in the order the server will apply them. The COUNT cap is
+      // what produced "Maximum 10 files per request." on a resumed draft: the
+      // server counts its own stored files, this list did not.
+      let count = serverUploadedCountRef.current;
+      for (const item of uploadItems) {
+        if (uploadedSigs.has(nameSizeSig(item.file.name, item.file.size))) {
+          continue; // already stored, and already counted in the seeds above
+        }
+        if (count >= MAX_UPLOAD_COUNT) {
+          overBudget.set(
+            item.id,
+            `คำขอนี้รับได้สูงสุด ${MAX_UPLOAD_COUNT} ไฟล์ และมีครบแล้ว — กรุณาลบไฟล์นี้ออก หรือส่งเป็นคำขอใหม่`
+          );
+          continue;
+        }
+        const capError = validateTotalUploadSize(budget, item.file.size);
+        if (capError) {
+          overBudget.set(item.id, capError);
+          continue; // does not fit — leave the budget for the files that might
+        }
+        budget += item.file.size;
+        count += 1;
+      }
+    }
+    if (overBudget.size > 0) {
+      const totalMb = Math.round(
+        (serverUploadedBytesRef.current +
+          uploadItems
+            .filter((i) => !uploadedSigs.has(nameSizeSig(i.file.name, i.file.size)))
+            .reduce((sum, i) => sum + i.file.size, 0)) /
+          (1024 * 1024)
+      );
+      console.warn(
+        `[submit] ${overBudget.size} file(s) exceed the per-request total cap ` +
+          `(${totalMb} MB selected vs ${MAX_UPLOAD_SIZE_MB} MB allowed)`
+      );
     }
 
     // Seed progress: already-uploaded files show done; the rest show 0%.
@@ -1110,8 +1396,22 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     );
 
     const failedUploads: string[] = [];
+    const rejectedUploads: string[] = [];
     for (const item of uploadItems) {
       if (uploadedSigs.has(nameSizeSig(item.file.name, item.file.size))) continue; // already stored
+
+      // Known ahead of time not to fit — don't spend the user's data uploading
+      // a clip the presign route is certain to refuse.
+      const capError = overBudget.get(item.id);
+      if (capError) {
+        setItemProgress(item.id, { stage: "rejected" });
+        setPendingFiles((prev) =>
+          prev.map((f) => (f.id === item.id ? { ...f, rejected: capError } : f))
+        );
+        rejectedUploads.push(`${item.file.name} — ${capError}`);
+        continue;
+      }
+
       console.log(
         `[submit] uploading ${item.file.name} (${(item.file.size / 1e6).toFixed(1)} MB, ${
           item.file.size > MULTIPART_THRESHOLD_BYTES ? "multipart" : "single"
@@ -1127,6 +1427,19 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             : await uploadSingle(requestId, item);
       } catch (uploadErr) {
         const detail = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+
+        // The server refused the file before a single byte moved (size caps,
+        // count cap, type). Retrying re-asks the identical question.
+        if (uploadErr instanceof UploadRejectedError) {
+          console.warn(`[submit] ${item.file.name} rejected by the server: ${detail}`);
+          setItemProgress(item.id, { stage: "rejected" });
+          setPendingFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, rejected: detail } : f))
+          );
+          rejectedUploads.push(`${item.file.name} — ${detail}`);
+          continue;
+        }
+
         console.error(
           `[submit] upload ${item.file.name} failed: ${detail} — ${connInfo()} — scroll up for the per-part [upload] logs that name the root cause`,
           uploadErr
@@ -1149,22 +1462,61 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       });
       if (!confirmRes.ok) {
         const body = await confirmRes.json().catch(() => ({}));
+        const reason = typeof body?.error === "string" ? body.error : "ยืนยันไฟล์ไม่สำเร็จ";
+
+        // 422 is a BUSINESS rejection (currently: the clip is longer than the
+        // cap), not a transport failure. The bytes arrived intact; the server
+        // looked at them and said no. Re-sending the same file produces the same
+        // answer, so retrying is pure waste — and that is exactly what used to
+        // happen: the file was marked "error" alongside genuine network failures,
+        // the retry button re-uploaded all of it, and it was rejected again, for
+        // ever. Mark it rejected so retry SKIPS it and the reason is shown.
+        if (confirmRes.status === 422) {
+          console.warn(`[submit] ${item.file.name} rejected by the server: ${reason}`);
+          setItemProgress(item.id, { stage: "rejected" });
+          setPendingFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, rejected: reason } : f))
+          );
+          rejectedUploads.push(`${item.file.name} — ${reason}`);
+          continue;
+        }
+
         setItemProgress(item.id, { stage: "error" });
-        failedUploads.push(`${item.file.name} (${body.error ?? "ยืนยันไฟล์ไม่สำเร็จ"})`);
+        failedUploads.push(`${item.file.name} (${reason})`);
         continue;
       }
       setItemProgress(item.id, { stage: "done", pct: 100 });
     }
 
-    // Partial failure: keep the draft + everything uploaded so far, and offer to
-    // resume. The retry button re-runs this function against the same request.
-    if (failedUploads.length > 0) {
+    // Two very different outcomes, which used to be merged into one unactionable
+    // "ผิดพลาด" list:
+    //
+    //   failedUploads   — transport failures. Retrying genuinely helps, and the
+    //                     multipart resume means it continues rather than restarts.
+    //   rejectedUploads — the server refused these bytes on a rule. Retrying can
+    //                     never help; the user has to remove or trim the clip.
+    //
+    // A rejected file alone must NOT arm the retry button, or the user is invited
+    // to repeat an upload that is guaranteed to fail — which is precisely the loop
+    // that made these four clips look un-uploadable.
+    if (failedUploads.length > 0 || rejectedUploads.length > 0) {
       setPhase("form");
-      setCanRetry(true);
-      setSubmitError(
-        `ไฟล์บางรายการยังอัปโหลดไม่สำเร็จ กด "ลองอัปโหลดต่อ" เพื่ออัปโหลดเฉพาะไฟล์ที่เหลือ ` +
-          `(ระบบจะอัปโหลดต่อจากจุดที่ค้างไว้ ไม่เริ่มใหม่): ${failedUploads.join(" · ")}`
-      );
+      setCanRetry(failedUploads.length > 0);
+
+      const parts: string[] = [];
+      if (rejectedUploads.length > 0) {
+        parts.push(
+          `ไฟล์เหล่านี้ระบบไม่รับ กรุณาลบออกหรือตัดให้สั้นลงแล้วเลือกใหม่ ` +
+            `(กดอัปโหลดซ้ำก็จะไม่สำเร็จ): ${rejectedUploads.join(" · ")}`
+        );
+      }
+      if (failedUploads.length > 0) {
+        parts.push(
+          `ไฟล์บางรายการยังอัปโหลดไม่สำเร็จ กด "ลองอัปโหลดต่อ" เพื่ออัปโหลดเฉพาะไฟล์ที่เหลือ ` +
+            `(ระบบจะอัปโหลดต่อจากจุดที่ค้างไว้ ไม่เริ่มใหม่): ${failedUploads.join(" · ")}`
+        );
+      }
+      setSubmitError(parts.join("\n\n"));
       return;
     }
 
@@ -1247,15 +1599,129 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     }
   };
 
-  // Discard an unfinished draft and start fresh (clears the resume banner and all
-  // persisted state).
-  const handleDiscardResume = () => {
-    clearDraftPersistence(draftIdRef.current);
-    draftIdRef.current = null;
-    setResumeInfo(null);
-    setCanRetry(false);
-    setUploadProgress({});
+  /**
+   * Delete a draft server-side, with its uploaded files.
+   *
+   * DELETE /api/requests/[id] → cancelRequest() → deleteAssetsByRequestId(),
+   * which removes every object from Spaces and every uploaded_assets row before
+   * dropping the request. Without this call the draft and its files simply stay
+   * there: invisible on this page, still listed on the dashboard, still holding
+   * storage, and still offered back by the resume banner on the next visit.
+   *
+   * Returns false if the server refused, so the caller can keep the local
+   * pointer rather than orphaning a request it failed to delete.
+   */
+  const deleteDraftOnServer = async (draftId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/requests/${draftId}`, { method: "DELETE" });
+      // 404 = already gone, which is the outcome we wanted.
+      return res.ok || res.status === 404;
+    } catch {
+      return false;
+    }
+  };
+
+  /** Adopt the recovered draft: continue filling it in and resume its uploads. */
+  const handleResumeDraft = () => {
+    if (!recoverableDraft) return;
+    draftIdRef.current = recoverableDraft.draftId;
+    lsSet(DRAFT_ID_KEY, recoverableDraft.draftId);
+    setResumeInfo({ uploadedNames: recoverableDraft.uploadedNames });
+    setRecoverableDraft(null);
     setSubmitError(null);
+  };
+
+  /**
+   * Discard an unfinished draft and start fresh.
+   *
+   * This used to clear localStorage only, which left the draft and every file
+   * already uploaded to it alive on the server — the user pressed "start a new
+   * request" and the old one quietly persisted, files and all. The delete now
+   * goes to the server first; local state is only cleared once it succeeds.
+   */
+  const handleDiscardResume = async () => {
+    const draftId = recoverableDraft?.draftId ?? draftIdRef.current;
+    if (!draftId) return;
+
+    if (
+      !confirm(
+        "ล้างข้อมูลที่ค้างไว้และเริ่มคำขอใหม่?\n\n" +
+          "ไฟล์ที่อัปโหลดไว้กับคำขอเดิมจะถูกลบถาวร ไม่สามารถย้อนกลับได้"
+      )
+    ) {
+      return;
+    }
+
+    setDiscardingDraft(true);
+    try {
+      const deleted = await deleteDraftOnServer(draftId);
+      if (!deleted) {
+        setSubmitError(
+          "ลบคำขอเดิมไม่สำเร็จ กรุณาลองใหม่อีกครั้ง หรือลบคำขอนั้นจากหน้ารายการคำขอ"
+        );
+        return;
+      }
+      clearDraftPersistence(draftId);
+      draftIdRef.current = null;
+      setRecoverableDraft(null);
+      setResumeInfo(null);
+      setCanRetry(false);
+      setUploadProgress({});
+      setSubmitError(null);
+    } finally {
+      setDiscardingDraft(false);
+    }
+  };
+
+  /**
+   * "ยกเลิก" — leave the form.
+   *
+   * This was a bare <Link> to the requests list. Leaving that way abandoned
+   * everything in place: the Draft request stayed on the server with every file
+   * already uploaded to it, and the localStorage pointer stayed set — so the
+   * next visit to "new request" silently re-adopted the abandoned draft and
+   * showed its files, including the half-finished ones, as if they belonged to
+   * the new request. Cancelling now means cancelling.
+   */
+  const handleCancel = async () => {
+    // Only the draft THIS form owns. A recovered-but-not-adopted draft is a
+    // separate request the user declined to continue — cancelling out of a new
+    // request must not delete it behind their back; it stays on the dashboard
+    // with its own delete button.
+    const draftId = draftIdRef.current;
+
+    // Nothing was ever created server-side — just leave.
+    if (!draftId) {
+      router.push(ROUTES.REQUESTS);
+      return;
+    }
+
+    if (
+      !confirm(
+        "ยกเลิกคำขอนี้?\n\n" +
+          "ไฟล์ที่อัปโหลดไปแล้วจะถูกลบถาวร ไม่สามารถย้อนกลับได้"
+      )
+    ) {
+      return;
+    }
+
+    setDiscardingDraft(true);
+    try {
+      const deleted = await deleteDraftOnServer(draftId);
+      if (!deleted) {
+        setSubmitError(
+          "ยกเลิกคำขอไม่สำเร็จ กรุณาลองใหม่อีกครั้ง หรือลบคำขอนั้นจากหน้ารายการคำขอ"
+        );
+        return;
+      }
+      // Only after the server confirms: drop the local pointer, so a failed
+      // delete never leaves an unreachable draft behind.
+      clearDraftPersistence(draftId);
+      draftIdRef.current = null;
+      router.push(ROUTES.REQUESTS);
+    } finally {
+      setDiscardingDraft(false);
+    }
   };
 
   // If client-side validation fails, react-hook-form doesn't scroll to the
@@ -1305,27 +1771,45 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             {progressEntries.map((f) => {
               const p = uploadProgress[f.id];
               const isError = p.stage === "error";
+              // A server rejection is not a failed transfer. Showing it as the
+              // same red "ผิดพลาด" as a dropped connection is what made these
+              // clips look like they just needed another try.
+              const isRejected = p.stage === "rejected";
               const isDone = p.stage === "done";
+              const barColour = isRejected
+                ? "bg-amber-500"
+                : isError
+                  ? "bg-red-500"
+                  : isDone
+                    ? "bg-green-500"
+                    : "bg-blue-600";
               return (
                 <li key={f.id} className="flex flex-col gap-1">
                   <div className="flex items-center justify-between gap-3 text-sm">
                     <span className="truncate text-slate-700">{f.file.name}</span>
                     <span
                       className={`tabular-nums ${
-                        isError ? "text-red-600" : isDone ? "text-green-600" : "text-slate-500"
+                        isRejected
+                          ? "text-amber-700"
+                          : isError
+                            ? "text-red-600"
+                            : isDone
+                              ? "text-green-600"
+                              : "text-slate-500"
                       }`}
                     >
-                      {isError ? "ผิดพลาด" : `${p.pct}%`}
+                      {isRejected ? "ไม่รับไฟล์นี้" : isError ? "ผิดพลาด" : `${p.pct}%`}
                     </span>
                   </div>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
                     <div
-                      className={`h-full rounded-full transition-all duration-200 ${
-                        isError ? "bg-red-500" : isDone ? "bg-green-500" : "bg-blue-600"
-                      }`}
-                      style={{ width: `${isError ? 100 : p.pct}%` }}
+                      className={`h-full rounded-full transition-all duration-200 ${barColour}`}
+                      style={{ width: `${isError || isRejected ? 100 : p.pct}%` }}
                     />
                   </div>
+                  {isRejected && f.rejected && (
+                    <p className="text-xs text-amber-700">{f.rejected}</p>
+                  )}
                 </li>
               );
             })}
@@ -1374,6 +1858,45 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         </div>
       )}
 
+      {/* An unfinished draft was found locally but NOT adopted. The user chooses.
+          Until they pick "ทำต่อ", this form is a genuinely new request and will
+          create its own id on submit — nothing from the old draft comes along. */}
+      {recoverableDraft && !resumeInfo && (
+        <div className="rounded-xl border border-slate-300 bg-slate-50 p-4">
+          <p className="text-sm font-medium text-slate-800">
+            พบคำขอที่ยังอัปโหลดไม่เสร็จจากครั้งก่อน
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            {recoverableDraft.uploadedNames.length > 0
+              ? `คำขอเดิมมีไฟล์ที่อัปโหลดสำเร็จแล้ว ${recoverableDraft.uploadedNames.length} ไฟล์ ` +
+                "คุณต้องการทำต่อจากคำขอเดิม หรือเริ่มคำขอใหม่ทั้งหมด?"
+              : "คุณต้องการทำต่อจากคำขอเดิม หรือเริ่มคำขอใหม่ทั้งหมด?"}
+          </p>
+          <p className="mt-2 text-xs text-slate-500">
+            หากเริ่มใหม่ คำขอเดิมและไฟล์ทั้งหมดของคำขอนั้นจะถูกลบถาวร
+            และคำขอใหม่จะไม่เกี่ยวข้องกับไฟล์เดิม
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleResumeDraft}
+              disabled={discardingDraft}
+              className="rounded-md bg-slate-800 px-3 py-2 text-xs font-medium text-white disabled:opacity-60"
+            >
+              ทำต่อจากคำขอเดิม
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDiscardResume()}
+              disabled={discardingDraft}
+              className="rounded-md border border-slate-300 px-3 py-2 text-xs text-slate-700 disabled:opacity-60"
+            >
+              {discardingDraft ? "กำลังลบ..." : "เริ่มคำขอใหม่ (ลบคำขอเดิม)"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Resume notice — an unfinished draft was found on return */}
       {resumeInfo && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -1399,10 +1922,13 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           {!existingRequestId && (
             <button
               type="button"
-              onClick={handleDiscardResume}
-              className="mt-2 text-xs text-amber-700 underline hover:text-amber-900"
+              onClick={() => void handleDiscardResume()}
+              disabled={discardingDraft}
+              className="mt-2 text-xs text-amber-700 underline hover:text-amber-900 disabled:opacity-60"
             >
-              เริ่มคำขอใหม่ (ล้างข้อมูลที่ค้างไว้)
+              {discardingDraft
+                ? "กำลังลบ..."
+                : "เริ่มคำขอใหม่ (ลบคำขอเดิมและไฟล์ทั้งหมด)"}
             </button>
           )}
         </div>
@@ -1581,16 +2107,72 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           />
         </div>
 
+        {/* Running total against the per-request cap. With 4K clips at ~8 MB per
+            second, a handful of short videos reaches 500 MB without looking like
+            much — and until now the only sign of that was individual files being
+            refused part-way through the upload. */}
+        {pendingFiles.length > 0 &&
+          (() => {
+            const selectedBytes = pendingFiles
+              .filter((f) => !f.error && !f.rejected)
+              .reduce((sum, f) => sum + f.file.size, 0);
+            const totalBytes = serverUploadedBytesRef.current + selectedBytes;
+            const usedMb = totalBytes / (1024 * 1024);
+            const pct = Math.min(100, (totalBytes / MAX_UPLOAD_SIZE_BYTES) * 100);
+            const over = totalBytes > MAX_UPLOAD_SIZE_BYTES;
+            const tight = !over && pct >= 80;
+            return (
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500">
+                    ขนาดรวมของคำขอนี้
+                    {/* File COUNT, on the same per-request basis the server uses
+                        — including anything already uploaded to this draft. This
+                        total being invisible is what let a resumed draft accept
+                        an 11th file and then refuse it mid-upload. */}
+                    <span className="ml-2 tabular-nums text-slate-400">
+                      ({serverUploadedCountRef.current +
+                        pendingFiles.filter((f) => !f.error && !f.rejected).length}
+                      /{MAX_UPLOAD_COUNT} ไฟล์)
+                    </span>
+                  </span>
+                  <span
+                    className={`tabular-nums ${
+                      over ? "text-red-600" : tight ? "text-amber-600" : "text-slate-500"
+                    }`}
+                  >
+                    {usedMb.toFixed(0)} / {MAX_UPLOAD_SIZE_MB} MB
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className={`h-full rounded-full ${
+                      over ? "bg-red-500" : tight ? "bg-amber-500" : "bg-blue-600"
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                {over && (
+                  <p className="mt-1 text-xs text-red-600">
+                    เกินขนาดรวมที่รับได้ กรุณาลบไฟล์บางรายการออกก่อนส่งคำขอ
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
         {/* File list */}
         {pendingFiles.length > 0 && (
-          <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+          <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {pendingFiles.map((item) => (
               <li
                 key={item.id}
                 className={`relative overflow-hidden rounded-lg border ${
                   item.error
                     ? "border-red-200 bg-red-50"
-                    : "border-slate-200 bg-white"
+                    : item.rejected
+                      ? "border-amber-200 bg-amber-50"
+                      : "border-slate-200 bg-white"
                 }`}
               >
                 <div className="flex aspect-square items-center justify-center bg-slate-50">
@@ -1637,10 +2219,22 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                   <p className="truncate text-xs text-slate-700">{item.file.name}</p>
                   {item.error ? (
                     <p className="text-xs text-red-600">{item.error}</p>
+                  ) : item.rejected ? (
+                    <p className="text-xs text-amber-700">{item.rejected}</p>
                   ) : (
-                    <p className="text-xs text-slate-400">
-                      {(item.file.size / (1024 * 1024)).toFixed(1)} MB
-                    </p>
+                    <>
+                      <p className="text-xs text-slate-400">
+                        {(item.file.size / (1024 * 1024)).toFixed(1)} MB
+                      </p>
+                      {item.durationUnverified && (
+                        // The clip could not be decoded here, so its length is
+                        // unknown until the server measures it. Say so up front
+                        // rather than letting a late rejection look arbitrary.
+                        <p className="text-xs text-amber-600">
+                          ตรวจความยาวคลิปในเครื่องไม่ได้ — ระบบจะตรวจอีกครั้งตอนอัปโหลด
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               </li>
@@ -1765,11 +2359,16 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         </button>
 
         <div className="flex gap-3">
-          <Link href={ROUTES.REQUESTS}>
-            <Button type="button" variant="outline">
-              {t("request.cancel")}
-            </Button>
-          </Link>
+          {/* Not a <Link>. Cancelling has to delete the draft and everything
+              uploaded to it — see handleCancel. */}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleCancel()}
+            disabled={discardingDraft || isSubmitting}
+          >
+            {discardingDraft ? "กำลังยกเลิก..." : t("request.cancel")}
+          </Button>
           <Button
             type="submit"
             loading={isSubmitting}

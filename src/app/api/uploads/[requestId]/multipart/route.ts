@@ -94,6 +94,12 @@ export async function POST(
       // and per-request total size.
       const currentCount = await uploadService.countAssets(requestId);
       if (currentCount >= MAX_UPLOAD_COUNT) {
+        // As in the single-PUT route: a silent 422 left no server-side record of
+        // a file the server itself refused, so "this clip will not upload" had
+        // nothing in the logs to explain it.
+        console.warn(
+          `[upload:422] request=${requestId} reason=count currentCount=${currentCount}/${MAX_UPLOAD_COUNT}`
+        );
         return NextResponse.json(
           { error: `Maximum ${MAX_UPLOAD_COUNT} files per request.` },
           { status: 422 }
@@ -106,8 +112,19 @@ export async function POST(
         existingBytes
       );
       if (!validation.valid) {
+        console.warn(
+          `[upload:422] request=${requestId} file="${fileName}" ` +
+            `size=${fileSizeBytes}B type=${mimeType} existingBytes=${existingBytes}B ` +
+            `reason=${validation.error}`
+        );
         return NextResponse.json({ error: validation.error }, { status: 422 });
       }
+      // Positive trace too: without it the log cannot distinguish "the client
+      // never asked to upload this file" from "it asked and the PUTs failed",
+      // which is exactly the gap that made the browser→Spaces leg invisible.
+      console.info(
+        `[upload:initiate] request=${requestId} file="${fileName}" size=${fileSizeBytes}B`
+      );
 
       const result = await uploadService.createMultipartUpload({
         requestId,

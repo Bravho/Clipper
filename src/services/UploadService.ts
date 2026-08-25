@@ -121,6 +121,37 @@ export interface MultipartInitResult {
   partSize: number;
 }
 
+/**
+ * A requester-uploaded SOURCE file that is actually stored.
+ *
+ * Both per-request caps — MAX_UPLOAD_COUNT and MAX_UPLOAD_SIZE_BYTES — are about
+ * the material the requester supplies. Two filters, both load-bearing:
+ *
+ *  • uploadStatus === Uploaded. A Pending row is an upload *attempt*, created up
+ *    front by every presign/initiate; counting those made each failed retry leave
+ *    a phantom that still consumed a slot and its full byte size, so a few
+ *    retries on one draft tripped "Maximum N files per request." before the
+ *    upload even started.
+ *
+ *  • assetType is Image or Video. Everything else on a request is machine
+ *    output — AI base videos, per-scene renders, final exports, watermarked
+ *    previews, voice tracks. Counting those against a *requester upload* cap
+ *    means a request that has been through the pipeline can never accept another
+ *    source file, and its exports (hundreds of MB) blow the 500 MB budget on
+ *    their own. Harmless while a request is still a Draft, which is why it has
+ *    not bitten yet — and guaranteed to bite the moment either cap is checked
+ *    after generation has run.
+ */
+function isStoredSourceAsset(asset: {
+  uploadStatus: AssetUploadStatus;
+  assetType: AssetType;
+}): boolean {
+  return (
+    asset.uploadStatus === AssetUploadStatus.Uploaded &&
+    (asset.assetType === AssetType.Image || asset.assetType === AssetType.Video)
+  );
+}
+
 export class UploadService {
   /**
    * Validate file metadata before creating a presigned upload URL.
@@ -173,18 +204,13 @@ export class UploadService {
    */
   async sumUploadedBytes(requestId: string): Promise<number> {
     const assets = await uploadedAssetRepository.findByRequestId(requestId);
-    return assets
-      // Only CONFIRMED (Uploaded) assets count toward the per-request total.
-      // Counting Pending/Failed too made every failed multipart retry leave a
-      // phantom Pending record that still added its full size to the tally, so a
-      // handful of retries on large clips falsely tripped the 500 MB cap with a
-      // 422 on later files ("Total upload size exceeds the 500 MB limit"). Those
-      // records are never actually stored (or are swept from tmp/), so they must
-      // not count.
-      .filter((a) => a.uploadStatus === AssetUploadStatus.Uploaded)
-      // Number() guard: some repos surface fileSizeBytes as a string (Postgres
-      // BIGINT), and `+` would concatenate rather than add.
-      .reduce((sum, a) => sum + (Number(a.fileSizeBytes) || 0), 0);
+    return (
+      assets
+        .filter(isStoredSourceAsset)
+        // Number() guard: some repos surface fileSizeBytes as a string (Postgres
+        // BIGINT), and `+` would concatenate rather than add.
+        .reduce((sum, a) => sum + (Number(a.fileSizeBytes) || 0), 0)
+    );
   }
 
   /**
@@ -229,6 +255,73 @@ export class UploadService {
   }
 
   /**
+   * Drop any *Pending* asset rows for the same file on the same request before
+   * minting a new one.
+   *
+   * WHY: both upload entry points (`createPresignedUpload` and
+   * `createMultipartUpload`) create a Pending `uploaded_assets` row up front, and
+   * nothing ever removed it if that attempt then failed — a dropped connection,
+   * an expired multipart session, the app being killed mid-upload. Every retry
+   * of the same file therefore left another phantom row behind, and the request
+   * detail page renders every non-Deleted asset, so the user saw a growing list
+   * of files that look half-uploaded but can never complete.
+   *
+   * `countAssets()` already had to filter these out to stop them tripping the
+   * MAX_UPLOAD_COUNT cap — that was treating the symptom. This removes them at
+   * the source, so a retry supersedes the previous attempt instead of stacking
+   * on top of it.
+   *
+   * Only Pending rows are touched: an Uploaded row is a real stored file, and a
+   * Deleted row is already accounted for. The orphaned tmp/ object is removed
+   * too (best-effort — it may never have been written, and the bucket's 1-day
+   * tmp/ lifecycle rule is the backstop). An abandoned multipart upload's parts
+   * are swept by the bucket's AbortIncompleteMultipartUpload rule.
+   */
+  private async discardSupersededPending(input: {
+    requestId: string;
+    fileName: string;
+    fileSizeBytes: number;
+  }): Promise<void> {
+    let superseded;
+    try {
+      const assets = await uploadedAssetRepository.findByRequestId(input.requestId);
+      superseded = assets.filter(
+        (a) =>
+          a.uploadStatus === AssetUploadStatus.Pending &&
+          a.fileName === input.fileName &&
+          Number(a.fileSizeBytes) === input.fileSizeBytes
+      );
+    } catch (err) {
+      // Never block a fresh upload because cleanup could not run.
+      console.error("[upload] could not scan for superseded pending assets:", err);
+      return;
+    }
+
+    for (const asset of superseded) {
+      if (asset.storageKey) {
+        try {
+          await spacesClient.send(
+            new DeleteObjectCommand({ Bucket: SPACES_BUCKET, Key: asset.storageKey })
+          );
+        } catch {
+          /* object may never have been written — the tmp/ lifecycle rule sweeps it */
+        }
+      }
+      try {
+        await uploadedAssetRepository.deleteById(asset.id);
+      } catch (err) {
+        console.error(`[upload] could not delete superseded pending asset ${asset.id}:`, err);
+      }
+    }
+
+    if (superseded.length > 0) {
+      console.info(
+        `[upload] discarded ${superseded.length} superseded Pending record(s) for "${input.fileName}" on request ${input.requestId}`
+      );
+    }
+  }
+
+  /**
    * Step 1 of the upload flow.
    *
    * Generates a presigned PUT URL for the tmp/ folder and creates a Pending
@@ -242,6 +335,8 @@ export class UploadService {
     fileSizeBytes: number;
     mimeType: string;
   }): Promise<PresignedUploadResult> {
+    await this.discardSupersededPending(input);
+
     const key = buildTmpKey(input.userId, input.requestId, input.fileName);
 
     const command = new PutObjectCommand({
@@ -297,6 +392,11 @@ export class UploadService {
     fileSizeBytes: number;
     mimeType: string;
   }): Promise<MultipartInitResult> {
+    // A fresh initiate means the previous attempt at this file is dead (its
+    // session expired, or the client lost it). Retire its Pending record so
+    // retries supersede rather than accumulate.
+    await this.discardSupersededPending(input);
+
     const key = buildTmpKey(input.userId, input.requestId, input.fileName);
 
     const created = await spacesClient.send(
@@ -640,15 +740,30 @@ export class UploadService {
    */
   async deleteAssetsByRequestId(requestId: string): Promise<void> {
     const assets = await uploadedAssetRepository.findByRequestId(requestId);
-    await Promise.all(
-      assets
-        .filter((a) => a.storageKey)
-        .map((a) =>
-          spacesClient.send(
-            new DeleteObjectCommand({ Bucket: SPACES_BUCKET, Key: a.storageKey })
-          )
-        )
+
+    // Every object the request owns: the file itself AND its generated poster.
+    // thumbnailKey used to be skipped, so cancelling a request left its posters
+    // in the bucket with no row pointing at them — unreachable, unbilled to any
+    // request, and invisible to the retention sweep.
+    const keys = assets.flatMap((a) =>
+      [a.storageKey, a.thumbnailKey].filter((k): k is string => Boolean(k))
     );
+
+    // One failed delete must not abort the rest, or a single missing object
+    // would leave the remaining files orphaned in the bucket. allSettled +
+    // per-key logging; the DB rows go regardless, and the bucket lifecycle
+    // rules are the backstop for anything that genuinely failed to delete.
+    const results = await Promise.allSettled(
+      keys.map((Key) =>
+        spacesClient.send(new DeleteObjectCommand({ Bucket: SPACES_BUCKET, Key }))
+      )
+    );
+    results.forEach((result, i) => {
+      if (result.status === "rejected") {
+        console.error(`[upload] failed to delete ${keys[i]}:`, result.reason);
+      }
+    });
+
     await uploadedAssetRepository.deleteByRequestId(requestId);
   }
 
@@ -664,7 +779,7 @@ export class UploadService {
    */
   async countAssets(requestId: string): Promise<number> {
     const assets = await uploadedAssetRepository.findByRequestId(requestId);
-    return assets.filter((a) => a.uploadStatus === AssetUploadStatus.Uploaded).length;
+    return assets.filter(isStoredSourceAsset).length;
   }
 }
 

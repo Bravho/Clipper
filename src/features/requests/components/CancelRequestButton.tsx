@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { forgetDeletedDraft } from "@/features/requests/draftStorage";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 
 interface CancelRequestButtonProps {
@@ -30,6 +31,11 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
       if (res.ok || res.status === 404) {
         // 404 means the request is already gone server-side (e.g. stale data
         // after a dev server restart) — refresh either way to clear it from the UI.
+        //
+        // Also drop this draft's local resume state. Without it the "new request"
+        // page keeps offering to resume a request that no longer exists, and its
+        // stale multipart session ids linger in localStorage indefinitely.
+        forgetDeletedDraft(requestId);
         router.refresh();
       } else {
         const data = await res.json().catch(() => null);

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { forgetDeletedDraft } from "@/features/requests/draftStorage";
 
 interface DeleteDraftButtonProps {
   requestId: string;
@@ -22,6 +23,9 @@ export function DeleteDraftButton({ requestId, onDeleted }: DeleteDraftButtonPro
     try {
       const res = await fetch(`/api/requests/${requestId}`, { method: "DELETE" });
       if (res.ok) {
+        // Drop this draft's local resume state too, so the "new request" page
+        // stops offering to resume a draft that no longer exists.
+        forgetDeletedDraft(requestId);
         onDeleted?.(requestId);
         router.refresh();
       } else {

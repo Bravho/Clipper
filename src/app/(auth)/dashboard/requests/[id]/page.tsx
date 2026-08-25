@@ -932,13 +932,16 @@ export default async function RequestDetailPage({
         <p className="mb-4 text-xs text-slate-500">
           {uploadedMaterialsNote().text}
         </p>
-        {assets.filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted && (a.assetType === AssetType.Image || a.assetType === AssetType.Video)).length === 0 ? (
+        {/* Only CONFIRMED uploads are source files. This used to show everything
+            that wasn't Deleted, which meant every Pending record — one per
+            abandoned upload attempt — appeared here as a file that looked
+            half-uploaded and could never finish. A Pending row is an attempt,
+            not a file; the upload UI is where in-flight progress belongs. */}
+        {sourceAssets.length === 0 ? (
           <p className="text-sm text-slate-400">No source files attached.</p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {assets
-              .filter((a) => a.uploadStatus !== AssetUploadStatus.Deleted && (a.assetType === AssetType.Image || a.assetType === AssetType.Video))
-              .map((asset) => {
+            {sourceAssets.map((asset) => {
                 const thumbSrc = asset.thumbnailUrl || (asset.assetType === AssetType.Image ? asset.storageUrl : "");
                 return (
                   <li

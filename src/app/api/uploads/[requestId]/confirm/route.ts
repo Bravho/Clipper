@@ -73,7 +73,13 @@ export async function POST(
     return NextResponse.json({ asset }, { status: 200 });
   } catch (err) {
     // Business-rule rejections (e.g. clip too long) → 422, not 500.
+    // Logged, not silent: this branch returned without a trace, so a file the
+    // server measured and refused was invisible in the server log — the failure
+    // existed only as a red bar on the user's phone.
     if (err instanceof UploadValidationError) {
+      console.warn(
+        `[upload:422] request=${requestId} assetId=${assetId} stage=confirm reason=${err.message}`
+      );
       return NextResponse.json({ error: err.message }, { status: 422 });
     }
     console.error("[POST /api/uploads/[requestId]/confirm]", err);

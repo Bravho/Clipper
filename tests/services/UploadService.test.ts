@@ -130,15 +130,20 @@ describe("upload validation helpers", () => {
 describe("UploadService.sumUploadedBytes", () => {
   afterEach(() => jest.restoreAllMocks());
 
-  it("sums only non-deleted asset bytes", async () => {
+  // Only CONFIRMED uploads count. A Pending row is an upload *attempt* — every
+  // failed multipart retry leaves one behind — so counting them made a handful
+  // of retries on large clips falsely trip the 500 MB cap. This test still
+  // asserted the old count-everything-not-deleted behaviour and had been failing
+  // ever since the implementation was corrected to match its own doc comment.
+  it("sums only CONFIRMED (Uploaded) bytes, ignoring Pending and Deleted", async () => {
     jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
-      { fileSizeBytes: 1000, uploadStatus: AssetUploadStatus.Uploaded },
-      { fileSizeBytes: 2000, uploadStatus: AssetUploadStatus.Pending },
-      { fileSizeBytes: 9999, uploadStatus: AssetUploadStatus.Deleted },
+      { fileSizeBytes: 1000, uploadStatus: AssetUploadStatus.Uploaded, assetType: AssetType.Video },
+      { fileSizeBytes: 2000, uploadStatus: AssetUploadStatus.Pending, assetType: AssetType.Video },
+      { fileSizeBytes: 9999, uploadStatus: AssetUploadStatus.Deleted, assetType: AssetType.Video },
     ] as never);
 
     const total = await svc.sumUploadedBytes("req-x");
-    expect(total).toBe(3000);
+    expect(total).toBe(1000);
   });
 
   it("returns 0 when there are no assets", async () => {
@@ -148,11 +153,153 @@ describe("UploadService.sumUploadedBytes", () => {
 
   it("sums numerically when fileSizeBytes arrives as a string (Postgres BIGINT)", async () => {
     jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
-      { fileSizeBytes: "3040870", uploadStatus: AssetUploadStatus.Uploaded },
-      { fileSizeBytes: "5033165", uploadStatus: AssetUploadStatus.Uploaded },
+      {
+        fileSizeBytes: "3040870",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        assetType: AssetType.Video,
+      },
+      {
+        fileSizeBytes: "5033165",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        assetType: AssetType.Image,
+      },
     ] as never);
     // Must be 8,074,035 — not the concatenated "30408705033165".
     expect(await svc.sumUploadedBytes("req-strings")).toBe(8074035);
+  });
+
+  // Both per-request caps are about REQUESTER-SUPPLIED material. Machine output
+  // (AI base video, final exports, watermarked previews, voice tracks) lives on
+  // the same request and is often hundreds of MB — counting it would blow the
+  // 500 MB budget and fill the 10-file slot count on its own, so a request that
+  // has been through the pipeline could never accept another source file.
+  it("ignores pipeline-generated assets, counting only requester source files", async () => {
+    jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
+      { fileSizeBytes: 1000, uploadStatus: AssetUploadStatus.Uploaded, assetType: AssetType.Video },
+      { fileSizeBytes: 2000, uploadStatus: AssetUploadStatus.Uploaded, assetType: AssetType.Image },
+      {
+        fileSizeBytes: 500_000_000,
+        uploadStatus: AssetUploadStatus.Uploaded,
+        assetType: AssetType.FinalClip,
+      },
+      {
+        fileSizeBytes: 400_000_000,
+        uploadStatus: AssetUploadStatus.Uploaded,
+        assetType: AssetType.AIGeneratedBaseVideo,
+      },
+      {
+        fileSizeBytes: 300_000_000,
+        uploadStatus: AssetUploadStatus.Uploaded,
+        assetType: AssetType.WatermarkedPreview,
+      },
+    ] as never);
+
+    expect(await svc.sumUploadedBytes("req-pipeline")).toBe(3000);
+    expect(await svc.countAssets("req-pipeline")).toBe(2);
+  });
+});
+
+/**
+ * The per-request FILE COUNT cap, which produced "Maximum 10 files per request."
+ * on a resumed draft.
+ */
+describe("UploadService.countAssets", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("counts only stored source files, not upload attempts", async () => {
+    jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
+      { fileSizeBytes: 1, uploadStatus: AssetUploadStatus.Uploaded, assetType: AssetType.Video },
+      { fileSizeBytes: 1, uploadStatus: AssetUploadStatus.Uploaded, assetType: AssetType.Image },
+      // Attempts and tombstones — never occupy a slot.
+      { fileSizeBytes: 1, uploadStatus: AssetUploadStatus.Pending, assetType: AssetType.Video },
+      { fileSizeBytes: 1, uploadStatus: AssetUploadStatus.Failed, assetType: AssetType.Video },
+      { fileSizeBytes: 1, uploadStatus: AssetUploadStatus.Deleted, assetType: AssetType.Video },
+    ] as never);
+
+    expect(await svc.countAssets("req-count")).toBe(2);
+  });
+});
+
+/**
+ * Retrying a file must SUPERSEDE its previous attempt, not stack on top of it.
+ *
+ * Both upload entry points create a Pending asset row up front, and nothing used
+ * to remove it when that attempt died (dropped connection, expired multipart
+ * session, app killed mid-upload). The rows accumulated forever and surfaced in
+ * the UI as files that look half-uploaded and can never finish.
+ */
+describe("UploadService — superseded Pending records", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  const pendingAttempt = (id: string) => ({
+    id,
+    requestId: "req-1",
+    fileName: "clip.mp4",
+    fileSizeBytes: 12_000_000,
+    uploadStatus: AssetUploadStatus.Pending,
+    storageKey: `tmp/u/2026-08-24/req-1/${id}-clip.mp4`,
+  });
+
+  it("deletes earlier Pending rows for the same file when a retry initiates", async () => {
+    const deleteById = jest
+      .spyOn(uploadedAssetRepository, "deleteById")
+      .mockResolvedValue(undefined);
+
+    jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
+      pendingAttempt("attempt-1"),
+      pendingAttempt("attempt-2"),
+    ] as never);
+
+    // discardSupersededPending is private; exercise it the way the upload
+    // routes do, via the public entry point, and assert the rows it retires.
+    await (
+      svc as unknown as {
+        discardSupersededPending(input: {
+          requestId: string;
+          fileName: string;
+          fileSizeBytes: number;
+        }): Promise<void>;
+      }
+    ).discardSupersededPending({
+      requestId: "req-1",
+      fileName: "clip.mp4",
+      fileSizeBytes: 12_000_000,
+    });
+
+    expect(deleteById).toHaveBeenCalledTimes(2);
+    expect(deleteById).toHaveBeenCalledWith("attempt-1");
+    expect(deleteById).toHaveBeenCalledWith("attempt-2");
+  });
+
+  it("never touches a CONFIRMED upload, or a different file", async () => {
+    const deleteById = jest
+      .spyOn(uploadedAssetRepository, "deleteById")
+      .mockResolvedValue(undefined);
+
+    jest.spyOn(uploadedAssetRepository, "findByRequestId").mockResolvedValue([
+      // Same file, but already stored — this is a real source file.
+      { ...pendingAttempt("stored"), uploadStatus: AssetUploadStatus.Uploaded },
+      // Pending, but a different file entirely.
+      { ...pendingAttempt("other-name"), fileName: "other.mp4" },
+      // Pending, same name but a different size — not the same file.
+      { ...pendingAttempt("other-size"), fileSizeBytes: 999 },
+    ] as never);
+
+    await (
+      svc as unknown as {
+        discardSupersededPending(input: {
+          requestId: string;
+          fileName: string;
+          fileSizeBytes: number;
+        }): Promise<void>;
+      }
+    ).discardSupersededPending({
+      requestId: "req-1",
+      fileName: "clip.mp4",
+      fileSizeBytes: 12_000_000,
+    });
+
+    expect(deleteById).not.toHaveBeenCalled();
   });
 });
 

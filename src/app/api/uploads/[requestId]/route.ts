@@ -94,6 +94,13 @@ export async function POST(
   // Check existing upload count
   const currentCount = await uploadService.countAssets(requestId);
   if (currentCount >= MAX_UPLOAD_COUNT) {
+    // Every 422 on this route is logged. A business rejection used to return
+    // silently, so a file the server refused left NO trace in the server log at
+    // all — the only record was a red bar on the user's phone. Debugging "this
+    // file will not upload" then had nothing server-side to work from.
+    console.warn(
+      `[upload:422] request=${requestId} reason=count currentCount=${currentCount}/${MAX_UPLOAD_COUNT}`
+    );
     return NextResponse.json(
       { error: `Maximum ${MAX_UPLOAD_COUNT} files per request.` },
       { status: 422 }
@@ -132,6 +139,11 @@ export async function POST(
     existingBytes
   );
   if (!validation.valid) {
+    console.warn(
+      `[upload:422] request=${requestId} file="${fileName}" ` +
+        `size=${fileSizeBytesRaw}B type=${mimeType} existingBytes=${existingBytes}B ` +
+        `reason=${validation.error}`
+    );
     return NextResponse.json({ error: validation.error }, { status: 422 });
   }
 
