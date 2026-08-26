@@ -22,6 +22,11 @@ import { ClipTrimBar } from "@/features/requests/components/ClipTrimBar";
  * duration. The scene total is the sum of per-asset durations and AUTO-GROWS as
  * clips are trimmed longer; the editor never redistributes existing durations,
  * so dragging one clip never silently changes another asset's length.
+ *
+ * Row identity is POSITIONAL. A scene plan can legitimately list the same source
+ * index twice (the AI may reuse a clip, and nothing rejects it), so editing "the
+ * asset with index N" would edit both rows at once — one row's trim landing on
+ * the other. Every mutation therefore addresses a row by its place in the list.
  */
 
 const MOTION_LABELS: Record<MotionPreset, string> = {
@@ -34,6 +39,13 @@ const MOTION_LABELS: Record<MotionPreset, string> = {
 
 const VIDEO_URL_RE = /\.(mp4|mov|webm|avi|m4v)(?:[?#]|$)/i;
 
+/** The generated poster JPEG for an asset, or null when the asset predates
+ *  poster generation and `thumbnailUrl` still falls back to the raw video. */
+function posterFor(src: OrderedSourceAsset): string | null {
+  if (!src.thumbnailUrl) return null;
+  return VIDEO_URL_RE.test(src.thumbnailUrl) ? null : src.thumbnailUrl;
+}
+
 /**
  * Thumbnail for one source asset. Always renders as a lightweight <img> using
  * the generated poster (images and clips both get a poster JPEG at upload).
@@ -44,9 +56,9 @@ const VIDEO_URL_RE = /\.(mp4|mov|webm|avi|m4v)(?:[?#]|$)/i;
  * to replace the placeholder with a real frame.)
  */
 function AssetThumb({ src }: { src: OrderedSourceAsset }) {
-  const hasPoster = !!src.thumbnailUrl && !VIDEO_URL_RE.test(src.thumbnailUrl);
-  if (hasPoster) {
-    return <img src={src.thumbnailUrl} alt={src.fileName} className="h-full w-full object-cover" />;
+  const poster = posterFor(src);
+  if (poster) {
+    return <img src={poster} alt={src.fileName} className="h-full w-full object-cover" />;
   }
   return (
     <div className="flex h-full w-full items-center justify-center bg-slate-100 text-[10px] font-medium text-slate-400">
@@ -87,9 +99,9 @@ export function MontageSceneAssetsEditor({
 
   // Every mutation reads the LATEST list from this ref rather than the render's
   // props. Several clip trim bars commit their default full-clip window as soon
-  // as their <video> metadata loads, and two of those landing in the same tick
-  // would otherwise both build on the same stale props array — the second
-  // silently discarding the first clip's window.
+  // as their length is known, and two of those landing in the same tick would
+  // otherwise both build on the same stale props array — the second silently
+  // discarding the first clip's window.
   const assetsRef = useRef(assets);
   assetsRef.current = assets;
   const commit = (next: MontageSceneAsset[]) => {
@@ -116,16 +128,19 @@ export function MontageSceneAssetsEditor({
     }
   };
 
-  const updateAsset = (assetIndex: number, patch: Partial<MontageSceneAsset>) => {
-    commit(
-      assetsRef.current.map((a) => (a.assetIndex === assetIndex ? { ...a, ...patch } : a))
-    );
+  /** Remove exactly the row at `position` (not every row sharing its index). */
+  const removeAt = (position: number) => {
+    commit(assetsRef.current.filter((_, i) => i !== position));
+  };
+
+  const updateAssetAt = (position: number, patch: Partial<MontageSceneAsset>) => {
+    commit(assetsRef.current.map((a, i) => (i === position ? { ...a, ...patch } : a)));
   };
 
   /** A clip's trim window IS its on-screen play time, so update both together. */
-  const handleTrimChange = (assetIndex: number, trim: { start: number; end: number }) => {
+  const handleTrimChange = (position: number, trim: { start: number; end: number }) => {
     const durationSeconds = Math.max(0.1, round2(trim.end - trim.start));
-    updateAsset(assetIndex, {
+    updateAssetAt(position, {
       trimStartSeconds: round2(trim.start),
       trimEndSeconds: round2(trim.end),
       durationSeconds,
@@ -212,7 +227,7 @@ export function MontageSceneAssetsEditor({
                           <select
                             value={asset.motion}
                             onChange={(e) =>
-                              updateAsset(asset.assetIndex, {
+                              updateAssetAt(i, {
                                 motion: e.target.value as MotionPreset,
                               })
                             }
@@ -251,7 +266,7 @@ export function MontageSceneAssetsEditor({
                   </div>
                   <button
                     type="button"
-                    onClick={() => toggleAsset(src)}
+                    onClick={() => removeAt(i)}
                     className="flex-shrink-0 rounded border border-red-200 px-2 py-1 text-xs text-red-500 hover:bg-red-50"
                     aria-label="นำออก"
                   >
@@ -260,12 +275,18 @@ export function MontageSceneAssetsEditor({
                 </div>
 
                 {isClip && (
+                  // Keyed by the clip's own URL: a trim bar must never be reused
+                  // across two different clips, or its seeded window, filmstrip
+                  // and <video> would describe one clip while showing another.
                   <ClipTrimBar
+                    key={src.url}
                     url={src.url}
+                    posterUrl={posterFor(src)}
+                    sourceDurationSeconds={src.durationSeconds}
                     trimStartSeconds={asset.trimStartSeconds}
                     trimEndSeconds={asset.trimEndSeconds}
                     aspectRatio={aspectRatio}
-                    onChange={(trim) => handleTrimChange(asset.assetIndex, trim)}
+                    onChange={(trim) => handleTrimChange(i, trim)}
                   />
                 )}
               </div>

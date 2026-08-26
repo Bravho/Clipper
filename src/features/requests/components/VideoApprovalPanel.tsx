@@ -44,6 +44,7 @@ import {
   suggestVoiceDurationRange,
   VOICE_OVER_SUGGESTION_TOLERANCE_SECONDS,
 } from "@/config/montage";
+import { VoiceAudioPlayer } from "@/features/requests/components/VoiceAudioPlayer";
 
 const ta =
   "w-full resize-none rounded-md border border-slate-200 bg-slate-50 px-3 py-2 focus:border-blue-400 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-300";
@@ -1103,16 +1104,10 @@ export function VideoApprovalPanel({
               ) : displayedVoiceUrl ? (
                 <div className="mb-4">
                   <p className="text-xs font-semibold text-blue-600 mb-1">เสียงพากย์ AI</p>
-                  <audio
+                  <VoiceAudioPlayer
                     key={displayedVoiceAssetId ?? displayedVoiceUrl}
                     src={displayedVoiceUrl}
-                    controls
-                    preload="metadata"
-                    onLoadedMetadata={(e) => {
-                      const d = (e.target as HTMLAudioElement).duration;
-                      if (Number.isFinite(d) && d > 0) setVoiceSeconds(d);
-                    }}
-                    className="w-full"
+                    onDurationKnown={(d) => setVoiceSeconds(d)}
                   />
                 </div>
               ) : (
@@ -1289,13 +1284,10 @@ export function VideoApprovalPanel({
               {displayedVoiceUrl && (
                 <div className="mb-4">
                   <p className="text-xs font-semibold text-purple-700 mb-1">เสียงพากย์ AI</p>
-                  <audio
-                    ref={voicePreviewAudioRef}
+                  <VoiceAudioPlayer
                     key={displayedVoiceAssetId ?? displayedVoiceUrl}
+                    audioRef={voicePreviewAudioRef}
                     src={displayedVoiceUrl}
-                    controls
-                    preload="metadata"
-                    className="w-full"
                   />
                 </div>
               )}

@@ -23,6 +23,7 @@ import {
   reallocateSceneAssetDurations,
   sceneMontageSeconds,
 } from "@/config/montage";
+import { VoiceAudioPlayer } from "@/features/requests/components/VoiceAudioPlayer";
 
 interface SceneDesignApprovalPanelProps {
   requestId: string;
@@ -481,12 +482,9 @@ export function SceneDesignApprovalPanel({
                 สร้างเสียงพากย์ใหม่
               </Button>
             </div>
-            <audio
+            <VoiceAudioPlayer
               key={voiceRecordingAssetId ?? voiceRecordingUrl}
               src={voiceRecordingUrl}
-              controls
-              preload="metadata"
-              className="w-full"
             />
           </div>
         )}

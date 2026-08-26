@@ -7,6 +7,7 @@ import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerati
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
+import { VoiceAudioPlayer } from "@/features/requests/components/VoiceAudioPlayer";
 
 interface SceneScriptApprovalPanelProps {
   requestId: string;
@@ -135,12 +136,9 @@ export function SceneScriptApprovalPanel({
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
             เสียงพากย์ที่อนุมัติ
           </p>
-          <audio
+          <VoiceAudioPlayer
             key={voiceRecordingAssetId ?? voiceRecordingUrl}
             src={voiceRecordingUrl}
-            controls
-            preload="metadata"
-            className="w-full"
           />
         </div>
       )}

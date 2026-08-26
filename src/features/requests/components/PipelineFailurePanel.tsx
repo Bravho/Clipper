@@ -8,6 +8,7 @@ import {
   PIPELINE_PHASES,
   getPipelineStepPresentation,
 } from "@/config/pipelinePresentation";
+import { VoiceAudioPlayer } from "@/features/requests/components/VoiceAudioPlayer";
 
 interface EditedScene {
   visualDescriptionThai: string;
@@ -402,7 +403,7 @@ export function PipelineFailurePanel({
               )}
               <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 {voiceRecordingUrl ? (
-                  <audio controls src={voiceRecordingUrl} className="w-full" />
+                  <VoiceAudioPlayer src={voiceRecordingUrl} />
                 ) : (
                   <p className="text-xs text-slate-500">No generated voice is available yet.</p>
                 )}
