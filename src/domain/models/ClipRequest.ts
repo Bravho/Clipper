@@ -70,6 +70,10 @@ export interface ClipRequest {
   // Legal confirmations collected at submission
   creditConfirmed: boolean;
   rightsConfirmed: boolean;
+  /** Explicit, request-scoped permission for the disclosed third-party AI processing. */
+  aiProcessingConfirmed?: boolean;
+  aiConsentVersion?: string | null;
+  aiConsentAcceptedAt?: Date | null;
 
   // Credits
   creditsCost: number;
@@ -179,6 +183,7 @@ export type UpdateClipRequestInput = Partial<
 export type SubmitClipRequestInput = {
   creditConfirmed: true;
   rightsConfirmed: true;
+  aiProcessingConfirmed: true;
 };
 
 /**

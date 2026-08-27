@@ -17,7 +17,7 @@ export default function PrivacyPage() {
           RClipper Privacy Policy
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.4.0 — Effective 3 August 2026
+          Version 1.5.0 — Effective 26 August 2026
         </p>
       </div>
 
@@ -62,16 +62,50 @@ export default function PrivacyPage() {
               3. AI and service providers
             </h2>
             <p>
-              RClipper may transmit the request information and media required for a
-              production step to contracted hosting, storage, authentication,
-              payment, email, AI, voice, video-generation, and media-processing
-              providers. When you use Channel Management, RClipper also uses a
+              RClipper uses third-party services only after you give permission on
+              the request submission screen. We send uploaded images, sampled frames
+              from uploaded videos (or the video where frame extraction is unavailable),
+              clip title and description, place or business information, selected
+              location, target audience, selected platforms, style choices, and
+              related production instructions to <strong>Google LLC&apos;s Gemini API</strong>{" "}
+              to analyse the submitted content and help produce scripts, storyboards,
+              captions, subtitles, moderation results, and creative production plans.
+            </p>
+            <p>
+              After you approve a script, we send the approved script and selected
+              voice settings to <strong>ElevenLabs Inc.</strong> to generate the voice-over.
+              RClipper does not use Google Veo and does not send your data to Google
+              for generative video creation. The finished video is assembled from
+              your source media using RClipper&apos;s media-processing infrastructure.
+            </p>
+            <p>
+              These AI providers act as service providers for the stated production
+              purposes. RClipper requires them through applicable service terms and
+              data-protection arrangements to protect personal data to the same or an
+              equivalent standard as described in this policy, use it only to provide
+              the contracted service, and apply appropriate security safeguards.
+              Processing may occur in other countries. Provider retention and
+              deletion are governed by the production API account settings and the
+              applicable provider agreements.
+            </p>
+            <p>
+              Permission is request-specific and is recorded before any AI transfer.
+              You may save a draft without giving permission. If you do not give
+              permission, the AI video-production request cannot be submitted. You
+              may withdraw permission for future processing by deleting the draft or
+              contacting support before processing begins; withdrawal cannot reverse
+              processing already completed at your request.
+            </p>
+            <p>
+              RClipper may also transmit information required for a production step
+              to contracted hosting, storage, authentication, payment, email, and
+              media-processing providers. When you use Channel Management, RClipper uses a
               contracted social-publishing provider to connect the accounts you
               authorize and to submit your selected video and post information to the
               chosen social platform. Only data reasonably needed for the relevant
               service should be transmitted. These providers and social platforms may
-              process data in other countries under their applicable contractual,
-              privacy, and security terms.
+              process data in other countries under applicable contractual, privacy,
+              and security terms.
             </p>
           </section>
 

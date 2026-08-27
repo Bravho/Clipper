@@ -39,6 +39,13 @@ export async function POST(
     return NextResponse.json({ error: "Request not found." }, { status: 404 });
   }
 
+  if (!clipRequest.aiProcessingConfirmed || !clipRequest.aiConsentAcceptedAt) {
+    return NextResponse.json(
+      { error: "AI processing permission is required before analysis." },
+      { status: 403 }
+    );
+  }
+
   const assets = await uploadedAssetRepository.findByRequestId(id);
   // Use the canonical ordering so storyboard asset indexes line up with the
   // StoryboardView thumbnails and the montage renderer.

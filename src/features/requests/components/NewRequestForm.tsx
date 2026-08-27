@@ -623,6 +623,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     register,
     handleSubmit,
     watch,
+    getValues,
     setFocus,
     setValue,
     formState: { errors, isSubmitting },
@@ -642,6 +643,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       durationSeconds: initialValues?.durationSeconds ?? PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS,
       creditConfirmed: undefined,
       rightsConfirmed: undefined,
+      aiProcessingConfirmed: undefined,
     },
   });
 
@@ -978,7 +980,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     const res = await netFetch("สร้างคำขอ", "/api/requests", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...data, creditConfirmed: true, rightsConfirmed: true }),
+      body: JSON.stringify({ ...data, creditConfirmed: true, rightsConfirmed: true, aiProcessingConfirmed: true }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -1305,6 +1307,10 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // attempt and the retry button — it reconciles against what already landed on
   // the server so nothing is uploaded twice.
   const finalizeSubmission = async (requestId: string): Promise<void> => {
+    const confirmations = getValues();
+    if (!confirmations.aiProcessingConfirmed) {
+      throw new Error("กรุณาอนุญาตการประมวลผลด้วย AI ก่อนส่งคำขอ");
+    }
     // `rejected` files are excluded alongside `error` ones: the server has
     // already refused these exact bytes on a business rule, so a retry would
     // re-upload the whole clip only to be refused again. Skipping them is what
@@ -1523,7 +1529,11 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     const submitRes = await netFetch("ส่งคำขอ", `/api/requests/${requestId}/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ creditConfirmed: true, rightsConfirmed: true }),
+      body: JSON.stringify({
+        creditConfirmed: confirmations.creditConfirmed,
+        rightsConfirmed: confirmations.rightsConfirmed,
+        aiProcessingConfirmed: confirmations.aiProcessingConfirmed,
+      }),
     });
     if (!submitRes.ok) {
       const body = await submitRes.json().catch(() => ({}));
@@ -2328,6 +2338,44 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             {...register("rightsConfirmed")}
             error={errors.rightsConfirmed?.message}
           />
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+            <Checkbox
+              label={
+                <>
+                  ฉันอนุญาตให้ RClipper ส่งไฟล์และข้อมูลในคำขอนี้ไปยัง Google Gemini และ ElevenLabs เพื่อวิเคราะห์เนื้อหาและสร้างเสียง
+                </>
+              }
+              {...register("aiProcessingConfirmed")}
+              error={errors.aiProcessingConfirmed?.message}
+            />
+            <details className="group ml-7 mt-2 text-sm text-slate-600">
+              <summary className="cursor-pointer list-none font-medium text-blue-700 hover:text-blue-800">
+                ดูข้อมูลที่ส่งและวัตถุประสงค์ <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">⌄</span>
+              </summary>
+              <div className="mt-3 space-y-2 border-l-2 border-blue-100 pl-3 leading-relaxed">
+                <p>
+                  <strong className="font-semibold text-slate-800">Google Gemini:</strong>{" "}
+                  รูปภาพ เฟรมจากวิดีโอ ชื่อและรายละเอียดคลิป ข้อมูลสถานที่หรือธุรกิจ ตำแหน่ง และตัวเลือกการผลิต เพื่อวิเคราะห์เนื้อหาและช่วยสร้างบทพูด สตอรีบอร์ด และคำบรรยาย
+                </p>
+                <p>
+                  <strong className="font-semibold text-slate-800">ElevenLabs:</strong>{" "}
+                  บทพูดที่คุณอนุมัติและตัวเลือกเสียง เพื่อสร้างเสียงบรรยาย
+                </p>
+                <p>
+                  ไฟล์อาจมีใบหน้า เสียง ตำแหน่ง หรือข้อมูลส่วนบุคคลของคุณหรือผู้อื่น การอนุญาตนี้ใช้กับคำขอนี้และต้องให้ก่อนเริ่มประมวลผล AI
+                </p>
+                <Link
+                  href={ROUTES.PRIVACY}
+                  target="_blank"
+                  className="inline-flex font-medium text-blue-700 underline hover:text-blue-800"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  อ่านรายละเอียดการประมวลผลและนโยบายความเป็นส่วนตัว
+                </Link>
+              </div>
+            </details>
+          </div>
         </div>
       </fieldset>
 

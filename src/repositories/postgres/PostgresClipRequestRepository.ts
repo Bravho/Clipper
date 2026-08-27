@@ -46,6 +46,11 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
       row.queue_position != null ? (row.queue_position as number) : null,
     creditConfirmed: row.credit_confirmed as boolean,
     rightsConfirmed: row.rights_confirmed as boolean,
+    aiProcessingConfirmed: (row.ai_processing_confirmed as boolean) ?? false,
+    aiConsentVersion: (row.ai_consent_version as string) ?? null,
+    aiConsentAcceptedAt: row.ai_consent_accepted_at
+      ? new Date(row.ai_consent_accepted_at as string)
+      : null,
     creditsCost: row.credits_cost as number,
     assignedEditorId: (row.assigned_editor_id as string) ?? null,
     editorType: (row.editor_type as EditorType) ?? null,
@@ -91,6 +96,9 @@ const STATUS_EXTRA_COLS: Record<string, string> = {
   submittedAt: "submitted_at",
   creditConfirmed: "credit_confirmed",
   rightsConfirmed: "rights_confirmed",
+  aiProcessingConfirmed: "ai_processing_confirmed",
+  aiConsentVersion: "ai_consent_version",
+  aiConsentAcceptedAt: "ai_consent_accepted_at",
   assignedStaffId: "assigned_staff_id",
   assignedEditorId: "assigned_editor_id",
   editorType: "editor_type",
@@ -330,6 +338,9 @@ export class PostgresClipRequestRepository
         | "submittedAt"
         | "creditConfirmed"
         | "rightsConfirmed"
+        | "aiProcessingConfirmed"
+        | "aiConsentVersion"
+        | "aiConsentAcceptedAt"
         | "assignedStaffId"
         | "assignedEditorId"
         | "editorType"

@@ -101,7 +101,8 @@ export class ClipRequestService {
     requestId: string,
     userId: string,
     creditConfirmed: boolean,
-    rightsConfirmed: boolean
+    rightsConfirmed: boolean,
+    aiProcessingConfirmed: boolean
   ): Promise<ClipRequest> {
     const existing = await this.getOwnedRequest(requestId, userId);
 
@@ -115,6 +116,10 @@ export class ClipRequestService {
 
     if (!rightsConfirmed) {
       throw new Error("Rights confirmation is required to submit.");
+    }
+
+    if (!aiProcessingConfirmed) {
+      throw new Error("AI processing permission is required to submit.");
     }
 
     // Trial model: a user's FIRST request generates for free (preview only) —
@@ -164,6 +169,9 @@ export class ClipRequestService {
         queuePosition: queuePos,
         creditConfirmed: true,
         rightsConfirmed: true,
+        aiProcessingConfirmed: true,
+        aiConsentVersion: "1.0.0",
+        aiConsentAcceptedAt: now,
         isTrialRequest: isTrial,
         // Paid-at-submit requests are immediately downloadable; the free trial
         // request is not until unlockDownload() is paid.

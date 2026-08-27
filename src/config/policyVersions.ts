@@ -26,8 +26,8 @@ export const CURRENT_POLICY_VERSIONS: Record<PolicyType, PolicyVersion> = {
   },
   [PolicyType.PrivacyPolicy]: {
     type: PolicyType.PrivacyPolicy,
-    version: "1.4.0",
-    effectiveDate: new Date("2026-08-03"),
+    version: "1.5.0",
+    effectiveDate: new Date("2026-08-26"),
     description: "RClipper Privacy Policy",
   },
   [PolicyType.StorageRetention]: {

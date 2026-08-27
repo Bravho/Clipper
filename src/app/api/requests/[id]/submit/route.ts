@@ -11,6 +11,7 @@ import { z } from "zod";
 const submitBodySchema = z.object({
   creditConfirmed: z.literal(true),
   rightsConfirmed: z.literal(true),
+  aiProcessingConfirmed: z.literal(true),
 });
 
 /**
@@ -45,7 +46,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json(
       {
-        error: "Both credit and rights confirmations are required.",
+        error: "Credit, rights, and AI processing confirmations are required.",
         details: parsed.error.flatten(),
       },
       { status: 422 }
@@ -57,7 +58,8 @@ export async function POST(
       id,
       session.user.id,
       parsed.data.creditConfirmed,
-      parsed.data.rightsConfirmed
+      parsed.data.rightsConfirmed,
+      parsed.data.aiProcessingConfirmed
     );
 
     const assets = await uploadedAssetRepository.findByRequestId(id);

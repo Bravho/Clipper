@@ -157,7 +157,11 @@ async function createRequestWithImages(imageCount: number) {
     preferredLanguage: "Thai",
     durationSeconds: 14,
   });
-  await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {});
+  await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {
+    aiProcessingConfirmed: true,
+    aiConsentVersion: "1.0.0",
+    aiConsentAcceptedAt: new Date(),
+  });
 
   for (let i = 0; i < imageCount; i++) {
     await mockAssetRepo.create({

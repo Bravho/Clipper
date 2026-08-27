@@ -98,6 +98,11 @@ export const submitClipRequestSchema = clipRequestFormSchema.extend({
         "You must confirm the required content rights and accept RClipper's publication terms.",
     }),
   }),
+  aiProcessingConfirmed: z.literal(true, {
+    errorMap: () => ({
+      message: "You must allow the disclosed AI processing before submitting this request.",
+    }),
+  }),
 });
 
 export type ClipRequestFormValues = z.infer<typeof clipRequestFormSchema>;

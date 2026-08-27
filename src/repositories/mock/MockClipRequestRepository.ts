@@ -160,6 +160,9 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       queuePosition: null,
       creditConfirmed: false,
       rightsConfirmed: false,
+      aiProcessingConfirmed: false,
+      aiConsentVersion: null,
+      aiConsentAcceptedAt: null,
       creditsCost: CREDITS_CONFIG.REQUEST_COST_CREDITS,
       // Marketplace fields
       assignedEditorId: null,
@@ -223,6 +226,9 @@ export class MockClipRequestRepository implements IClipRequestRepository {
         | "submittedAt"
         | "creditConfirmed"
         | "rightsConfirmed"
+        | "aiProcessingConfirmed"
+        | "aiConsentVersion"
+        | "aiConsentAcceptedAt"
         | "assignedStaffId"
         | "assignedEditorId"
         | "editorType"

@@ -131,6 +131,7 @@ describe("submitClipRequestSchema", () => {
     ...validBase,
     creditConfirmed: true as const,
     rightsConfirmed: true as const,
+    aiProcessingConfirmed: true as const,
   };
 
   it("accepts a valid submission with both confirmations", () => {
@@ -164,6 +165,18 @@ describe("submitClipRequestSchema", () => {
     const { rightsConfirmed, ...rest } = validSubmit;
     const result = submitClipRequestSchema.safeParse(rest);
     expect(result.success).toBe(false);
+  });
+
+  it("rejects if aiProcessingConfirmed is false", () => {
+    expect(
+      submitClipRequestSchema.safeParse({ ...validSubmit, aiProcessingConfirmed: false }).success
+    ).toBe(false);
+  });
+
+  it("rejects if aiProcessingConfirmed is missing", () => {
+    const { aiProcessingConfirmed, ...rest } = validSubmit;
+    expect(aiProcessingConfirmed).toBe(true);
+    expect(submitClipRequestSchema.safeParse(rest).success).toBe(false);
   });
 });
 

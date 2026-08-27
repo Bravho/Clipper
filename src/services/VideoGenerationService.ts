@@ -240,6 +240,18 @@ async function probeAudioDurationSeconds(storageKey: string): Promise<number> {
 }
 
 export class VideoGenerationService {
+  private async requireAiProcessingConsent(requestId: string): Promise<void> {
+    const request = await clipRequestRepository.findById(requestId);
+    if (
+      !request ||
+      !request.aiProcessingConfirmed ||
+      !request.aiConsentAcceptedAt ||
+      request.aiConsentVersion !== "1.0.0"
+    ) {
+      throw new Error("Current AI processing permission is required before sharing request data.");
+    }
+  }
+
   /**
    * Start a new pipeline for a request. Triggers ChatGPT Vision analysis.
    */
@@ -333,6 +345,7 @@ export class VideoGenerationService {
     requestId: string,
     params: Omit<GenerateContentParams, "videoDurationSeconds">
   ): Promise<void> {
+    await this.requireAiProcessingConsent(requestId);
     const { clipRequestRepository } = await import("@/repositories/index");
     const { businessProfileService } = await import("@/services/BusinessProfileService");
 
@@ -1199,6 +1212,7 @@ export class VideoGenerationService {
    * Uses job.approvedScriptThai (the staff/requester-approved speaking script).
    */
   private async _runIAppTtsGeneration(job: VideoGenerationJob): Promise<void> {
+    await this.requireAiProcessingConsent(job.requestId);
     const scriptThai = sanitizeThaiVoiceScript(job.approvedScriptThai ?? job.scriptThai ?? "");
     if (!scriptThai) throw new Error("No approved Thai script available for TTS");
     const voiceId = resolveElevenLabsVoiceId(job.rvcVoiceModel);
@@ -1484,6 +1498,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   private async _runSceneDesignGeneration(job: VideoGenerationJob): Promise<void> {
+    await this.requireAiProcessingConsent(job.requestId);
     const { clipRequestRepository } = await import("@/repositories/index");
     const { businessProfileService } = await import("@/services/BusinessProfileService");
 
