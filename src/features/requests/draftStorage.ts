@@ -51,6 +51,12 @@ export interface MpuSession {
   assetId: string;
   key: string;
   uploadId: string;
+  /**
+   * Spaces has assembled all parts into the tmp object, but the application has
+   * not yet received a successful /confirm response. Keeping this phase lets a
+   * retry repeat only confirmation instead of restarting a 100%-uploaded file.
+   */
+  completed?: boolean;
   /** The part size the ALREADY-UPLOADED parts were sliced at, echoed by the
    *  server on initiate and persisted here. Resuming must re-slice at exactly
    *  the same boundaries — computing them from a shared constant instead meant

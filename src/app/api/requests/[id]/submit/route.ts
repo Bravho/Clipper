@@ -6,6 +6,7 @@ import { clipRequestService } from "@/services/ClipRequestService";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 import { uploadedAssetRepository } from "@/repositories/index";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
+import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { z } from "zod";
 
 const submitBodySchema = z.object({
@@ -54,13 +55,45 @@ export async function POST(
   }
 
   try {
-    const submitted = await clipRequestService.submitRequest(
-      id,
-      session.user.id,
-      parsed.data.creditConfirmed,
-      parsed.data.rightsConfirmed,
-      parsed.data.aiProcessingConfirmed
-    );
+    const beforeSubmit = await clipRequestService.getOwnedRequest(id, session.user.id);
+    let submitted = beforeSubmit;
+
+    if (beforeSubmit.status === RequestStatus.Draft) {
+      submitted = await clipRequestService.submitRequest(
+        id,
+        session.user.id,
+        parsed.data.creditConfirmed,
+        parsed.data.rightsConfirmed,
+        parsed.data.aiProcessingConfirmed
+      );
+    } else {
+      // Idempotent recovery for a lost/failed response after the request was
+      // already committed as Submitted. Previously the first call could update
+      // status (and charge credits), then fail while creating the pipeline. The
+      // upload screen reported that failure only after its final file reached
+      // 100%; every Continue attempt then got "Only Draft" forever.
+      if (
+        beforeSubmit.status !== RequestStatus.Submitted ||
+        !beforeSubmit.creditConfirmed ||
+        !beforeSubmit.rightsConfirmed ||
+        !beforeSubmit.aiProcessingConfirmed
+      ) {
+        throw new Error("Only Draft requests can be submitted.");
+      }
+
+      const existingJob = await videoGenerationService.getCurrentJob(id);
+      if (existingJob) {
+        return NextResponse.json({
+          request: beforeSubmit,
+          jobId: existingJob.id,
+          resumed: true,
+        });
+      }
+      // Submitted with no job is the precise partial state produced when the
+      // first call committed the request but pipeline initialization failed.
+      // Continue below and create only the missing job; submitRequest is not
+      // called again, so credits and history cannot be duplicated.
+    }
 
     const assets = await uploadedAssetRepository.findByRequestId(id);
     const imageUrls = assets
@@ -71,6 +104,14 @@ export async function POST(
       )
       .map((asset) => asset.storageUrl)
       .filter((url): url is string => Boolean(url));
+
+    // A concurrent/lost-response call may have created the job after the status
+    // check above. Reuse it instead of asking initializePipeline to create a
+    // duplicate (or throw "active pipeline already exists").
+    const currentJob = await videoGenerationService.getCurrentJob(id);
+    if (currentJob) {
+      return NextResponse.json({ request: submitted, jobId: currentJob.id, resumed: true });
+    }
 
     const job = await videoGenerationService.initializePipeline(id, session.user.id, {
       imageUrls,

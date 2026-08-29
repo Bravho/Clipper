@@ -42,6 +42,16 @@ import {
   lsSet,
   saveMpuSession,
 } from "@/features/requests/draftStorage";
+import {
+  describeError,
+  diagDump,
+  diagLog,
+  diagReset,
+  envSnapshot,
+  isUnreadableFileError,
+  startHandleMonitor,
+  watchPageLifecycle,
+} from "@/features/requests/uploadDiagnostics";
 
 const GoogleMapLocationPicker = dynamic(() =>
   import("@/features/requests/components/GoogleMapLocationPicker").then(
@@ -137,7 +147,7 @@ const MAX_UPLOAD_SIZE_MB = Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024));
  * caught at selection instead of after a 100 MB upload.
  */
 let videoProbeChain: Promise<unknown> = Promise.resolve();
-function queueVideoProbe<T>(task: () => Promise<T>): Promise<T> {
+function queueFilePrep<T>(task: () => Promise<T>): Promise<T> {
   const run = videoProbeChain.then(task, task);
   // Never let one rejection poison the chain for every later probe.
   videoProbeChain = run.then(
@@ -423,9 +433,52 @@ async function withNetworkRetry<T>(fn: () => Promise<T>, attempts = 3, label = "
  *  Reading one range at a time keeps peak memory at ~2× the part size (10 MB)
  *  regardless of batch size, and makes the detach *stronger*: the bytes are read
  *  moments before their own PUT instead of minutes earlier. */
+/**
+ * The file's BYTES are gone — the OS reference died between selection and this
+ * read. On Android that is either the SAF `content://` grant lapsing (it is
+ * scoped to the Activity that received the picker result) or the gallery
+ * provider re-stating the clip so Blink's `(size, lastModified)` snapshot no
+ * longer validates. Chromium reports both as `NotReadableError`.
+ *
+ * Carried as its own type because it is the exact opposite of a transient
+ * network failure, and used to be treated as one. There is nothing to retry
+ * against: the web layer cannot re-open a `content://` URI whose grant it no
+ * longer holds, so every retry re-reads the same dead reference and fails
+ * identically — which is precisely why a batch of clips looked permanently
+ * un-uploadable however many times the user pressed "ลองอัปโหลดต่อ".
+ *
+ * The only real recovery is re-selecting the file, which resumes rather than
+ * restarts: the multipart session is keyed on `fileSig` (name+size+type), so the
+ * parts that already landed are still credited.
+ */
+class FileUnreadableError extends Error {
+  readonly fileName: string;
+  constructor(fileName: string) {
+    super(
+      "อ่านไฟล์นี้จากเครื่องไม่ได้แล้ว (สิทธิ์เข้าถึงไฟล์หมดอายุระหว่างอัปโหลด) — " +
+        "กรุณาลบไฟล์นี้ออกแล้วเลือกใหม่อีกครั้ง ระบบจะอัปโหลดต่อจากส่วนที่ค้างไว้ ไม่เริ่มใหม่"
+    );
+    this.name = "FileUnreadableError";
+    this.fileName = fileName;
+  }
+}
+
 async function materializeRange(file: File, start: number, end: number): Promise<Blob> {
-  const buf = await file.slice(start, end).arrayBuffer();
-  return new Blob([buf], { type: file.type });
+  try {
+    const buf = await file.slice(start, end).arrayBuffer();
+    return new Blob([buf], { type: file.type });
+  } catch (err) {
+    // Distinguish "this file is gone" from a genuine I/O hiccup BEFORE the
+    // retry machinery sees it — withNetworkRetry and the multipart round loop
+    // both treat an unclassified throw as worth another attempt.
+    if (isUnreadableFileError(err)) {
+      // The exact byte range and moment a handle stopped working — the single
+      // most useful line in the whole timeline.
+      diagLog("READ-FAIL@upload", `${file.name} bytes=${start}-${end} ${describeError(err)}`);
+      throw new FileUnreadableError(file.name);
+    }
+    throw err;
+  }
 }
 
 /** Whole-file variant. Only ever used for files below MULTIPART_THRESHOLD_BYTES
@@ -568,6 +621,16 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const [phase, setPhase] = useState<SubmitPhase>("form");
   const [uploadProgress, setUploadProgress] = useState<Record<string, UploadItemProgress>>({});
   const [mapOpen, setMapOpen] = useState(false);
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
+
+  /**
+   * Local picker rows that the server has confirmed as Uploaded. They remain in
+   * the grid so the user can see what succeeded, but must not be added to the
+   * server totals a second time after reconciliation.
+   */
+  const [confirmedItemIds, setConfirmedItemIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   // Resume state. draftIdRef holds the single reused draft id (never recreated on
   // retry). When resuming a draft opened from the dashboard, it starts as that
@@ -578,6 +641,12 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // could otherwise double-charge credits.
   const submittingRef = useRef(false);
   const [canRetry, setCanRetry] = useState(false);
+  /** Latest pendingFiles, so the handle monitor can poll without re-subscribing. */
+  const pendingFilesRef = useRef<PendingFile[]>([]);
+  /** In-flight selection probes, awaited before any byte is uploaded. */
+  const prepTasksRef = useRef<Map<string, Promise<void>>>(new Map());
+  /** Reveals the diagnostic timeline so it can be copied off the device. */
+  const [showDiag, setShowDiag] = useState(false);
   /**
    * An unfinished draft found via localStorage but NOT yet adopted.
    *
@@ -591,6 +660,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const [recoverableDraft, setRecoverableDraft] = useState<{
     draftId: string;
     uploadedNames: string[];
+    uploadedBytes: number;
   } | null>(null);
   const [discardingDraft, setDiscardingDraft] = useState(false);
   /**
@@ -652,6 +722,35 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const watchedPlaceName = watch("placeName");
   const watchedLatitude = watch("latitude");
   const watchedLongitude = watch("longitude");
+  const creditConfirmed = watch("creditConfirmed") === true;
+  const rightsConfirmed = watch("rightsConfirmed") === true;
+  const aiProcessingConfirmed = watch("aiProcessingConfirmed") === true;
+  const allConfirmationsAccepted =
+    creditConfirmed && rightsConfirmed && aiProcessingConfirmed;
+
+  const isPendingFileCounted = useCallback(
+    (item: PendingFile) =>
+      !item.error &&
+      !item.rejected &&
+      !confirmedItemIds.has(item.id) &&
+      uploadProgress[item.id]?.stage !== "error" &&
+      uploadProgress[item.id]?.stage !== "rejected",
+    [confirmedItemIds, uploadProgress]
+  );
+
+  useEffect(() => {
+    if (!confirmationOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirmationOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [confirmationOpen]);
 
   useEffect(() => {
     const duration = typeof watchedDuration === "number" && !isNaN(watchedDuration)
@@ -695,7 +794,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     let runningBytes =
       serverUploadedBytesRef.current +
       pendingFiles
-        .filter((f) => !f.error && !f.rejected)
+        .filter(isPendingFileCounted)
         .reduce((sum, f) => sum + f.file.size, 0);
 
     // Running FILE COUNT against MAX_UPLOAD_COUNT, on the same basis the server
@@ -711,7 +810,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     // stored, so every retry re-computes the identical count and refuses again.
     let runningCount =
       serverUploadedCountRef.current +
-      pendingFiles.filter((f) => !f.error && !f.rejected).length;
+      pendingFiles.filter(isPendingFileCounted).length;
 
     const newItems: PendingFile[] = files.map((file) => {
       const id = crypto.randomUUID();
@@ -752,34 +851,60 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       let kept = 0;
       return combined.filter((f) => {
         if (f.error || f.rejected) return true;
+        if (
+          confirmedItemIds.has(f.id) ||
+          uploadProgress[f.id]?.stage === "error" ||
+          uploadProgress[f.id]?.stage === "rejected"
+        ) {
+          return true;
+        }
         kept += 1;
         return kept <= room;
       });
     });
 
-    // Prove each accepted file is genuinely readable NOW, while the picker's
-    // reference is fresh, and surface a failure immediately so the user can
-    // re-pick rather than discovering it mid-upload after a long wait — an
-    // unreadable file usually means it isn't fully on the device (a cloud/SD
-    // placeholder), which no retry can fix.
-    //
-    // This deliberately reads only a probe slice. Snapshotting whole files here
-    // is what made a multi-clip batch hold the entire selection in memory at
-    // once and got the WebView killed by Android when the screen locked; the
-    // real bytes are now read per part, immediately before each PUT. See
-    // materializeRange.
+    // Open (or extend) the diagnostic timeline for this selection.
+    if (pendingFiles.length === 0) {
+      diagReset();
+      void envSnapshot().then((env) => diagLog("ENV", env));
+    }
+    diagLog(
+      "SELECT",
+      newItems
+        .map(
+          (i) =>
+            `${i.file.name} ${(i.file.size / 1e6).toFixed(1)}MB ${i.file.type || "unknown"}` +
+            (i.error ? ` [not accepted: ${i.error}]` : "")
+        )
+        .join(" | ")
+    );
+
+    // Baseline liveness: read a slice of every accepted file IMMEDIATELY, in
+    // parallel, while the picker's reference is as fresh as it will ever be.
+    // This is the t≈0 datum the rest of the timeline is measured against —
+    // without it a handle that died at t=90s is indistinguishable from one that
+    // was never readable (a cloud/SD placeholder that is not on the device).
     for (const item of newItems) {
       if (item.error) continue;
-      void probeReadable(item.file).catch((err) => {
-        console.error(`[upload] readability probe ${item.file.name} failed at selection:`, err);
-        setPendingFiles((prev) =>
-          prev.map((f) =>
-            f.id === item.id
-              ? { ...f, error: "อ่านไฟล์นี้ไม่สำเร็จ (ไฟล์อาจไม่ได้อยู่ในเครื่อง) กรุณาเปิดไฟล์ในแกลเลอรีให้ดาวน์โหลดลงเครื่องก่อน แล้วเลือกใหม่" }
-              : f
-          )
-        );
-      });
+      const at = Date.now();
+      void probeReadable(item.file).then(
+        () => diagLog("READ-OK@select", `${item.file.name} (${Date.now() - at}ms)`),
+        (err) => {
+          diagLog("READ-FAIL@select", `${item.file.name} ${describeError(err)}`);
+          console.error(`[upload] readability probe ${item.file.name} failed at selection:`, err);
+          setPendingFiles((prev) =>
+            prev.map((f) =>
+              f.id === item.id
+                ? {
+                    ...f,
+                    error:
+                      "อ่านไฟล์นี้ไม่สำเร็จ (ไฟล์อาจไม่ได้อยู่ในเครื่อง) กรุณาเปิดไฟล์ในแกลเลอรีให้ดาวน์โหลดลงเครื่องก่อน แล้วเลือกใหม่",
+                  }
+                : f
+            )
+          );
+        }
+      );
     }
 
     // Images: an object URL is enough, and costs no decoder.
@@ -792,16 +917,13 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     }
 
     // Videos: ONE queued probe per clip yields both the poster frame and the
-    // duration. Two things changed here and both matter:
+    // duration, one decode at a time — firing every clip's probe at once
+    // exhausted the phone's hardware decoder (see queueFilePrep).
     //
-    //  • It is queued (one decode at a time). Firing every clip's probe at once
-    //    exhausted the phone's hardware decoder — see queueVideoProbe — and the
-    //    clips that lost the race silently skipped the length check.
-    //  • The length check now treats an UNREADABLE clip as unverified rather
-    //    than as fine. It used to pass NaN straight through validateClipDuration,
-    //    which returns null for NaN by design, so an unreadable clip sailed
-    //    through selection, uploaded in full, and was rejected by the server's
-    //    ffprobe at the very last step with nothing the user could act on.
+    // Every probe's outcome AND duration is now recorded, because the decoder is
+    // a prime suspect for killing the file handles. If HANDLES-DIED lands during
+    // this phase, decoder pressure is the trigger; if the handles sail through
+    // it and die later, it is not, and the C2_NO_MEMORY lead is dead.
     for (const item of newItems) {
       if (item.error) continue;
       const isVideo = ACCEPTED_VIDEO_MIME_TYPES.includes(
@@ -809,58 +931,67 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       );
       if (!isVideo) continue;
 
-      // NOTE: no object URL is created here any more. Rendering a live <video>
-      // per pending clip meant the grid itself held one decoder instance per
-      // file — on top of the probes — which is the other half of what exhausted
-      // the codec. The tile shows a placeholder until the probe returns, then a
-      // still poster (an <img>, no decoder). A blob URL is created ONLY when the
-      // frame grab failed, so the <video> fallback stays available for the
-      // iOS/WKWebView codecs that canvas cannot read.
-      void queueVideoProbe(() => probeVideo(item.file)).then(
-        ({ durationSeconds, poster }) => {
-          // Computed outside the updater: a state updater can be invoked more
-          // than once (StrictMode), and createObjectURL inside it would leak a
-          // URL on every extra call.
-          const preview = poster ?? URL.createObjectURL(item.file);
-          setPreviews((prev) => {
-            const previous = prev[item.id];
-            if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
-            return { ...prev, [item.id]: preview };
-          });
+      const task = queueFilePrep(async () => {
+        const at = Date.now();
+        const { durationSeconds, poster } = await probeVideo(item.file);
+        diagLog(
+          "PROBE",
+          `${item.file.name} ` +
+            `duration=${Number.isFinite(durationSeconds) ? `${durationSeconds.toFixed(1)}s` : "FAILED"} ` +
+            `poster=${poster ? "yes" : "no"} (${Date.now() - at}ms)`
+        );
 
-          const tooLong = validateClipDuration(durationSeconds);
-          if (tooLong) {
-            setPendingFiles((prev) =>
-              prev.map((f) =>
-                f.id === item.id
-                  ? {
-                      ...f,
-                      error:
-                        `คลิปยาว ${Math.round(durationSeconds)} วินาที ` +
-                        `เกินกำหนด ${MAX_CLIP_DURATION_SECONDS} วินาที — กรุณาตัดให้สั้นลงแล้วเลือกใหม่`,
-                    }
-                  : f
-              )
-            );
-            return;
-          }
+        // Computed outside the updater: a state updater can be invoked more than
+        // once (StrictMode), and createObjectURL inside it would leak a URL on
+        // every extra call.
+        const preview = poster ?? URL.createObjectURL(item.file);
+        setPreviews((prev) => {
+          const previous = prev[item.id];
+          if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
+          return { ...prev, [item.id]: preview };
+        });
 
-          if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-            // Could not be measured here. Say so instead of uploading it and
-            // letting the server reject it after the bytes are already sent.
-            setPendingFiles((prev) =>
-              prev.map((f) =>
-                f.id === item.id ? { ...f, durationUnverified: true } : f
-              )
-            );
-          }
+        const tooLong = validateClipDuration(durationSeconds);
+        if (tooLong) {
+          setPendingFiles((prev) =>
+            prev.map((f) =>
+              f.id === item.id
+                ? {
+                    ...f,
+                    error:
+                      `คลิปยาว ${Math.round(durationSeconds)} วินาที ` +
+                      `เกินกำหนด ${MAX_CLIP_DURATION_SECONDS} วินาที — กรุณาตัดให้สั้นลงแล้วเลือกใหม่`,
+                  }
+                : f
+            )
+          );
+          return;
         }
-      );
+
+        if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+          // Could not be measured here. Say so instead of uploading it and
+          // letting the server reject it after the bytes are already sent.
+          setPendingFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, durationUnverified: true } : f))
+          );
+        }
+      }).catch((err) => {
+        diagLog("PROBE-THREW", `${item.file.name} ${describeError(err)}`);
+      });
+      prepTasksRef.current.set(item.id, task);
     }
   };
 
   const removeFile = (id: string) => {
     setPendingFiles((prev) => prev.filter((f) => f.id !== id));
+    setConfirmedItemIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    prepTasksRef.current.delete(id);
+    diagLog("REMOVE", id);
   };
 
   // Drop previews for removed files, revoking any blob: object URLs (image
@@ -891,6 +1022,27 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep the monitor's view of the file list current without re-subscribing.
+  useEffect(() => {
+    pendingFilesRef.current = pendingFiles;
+  }, [pendingFiles]);
+
+  // The measurement this build exists for: poll every picked file for
+  // readability, timestamping the moment each one dies, alongside the page
+  // lifecycle events that are the candidate triggers. See uploadDiagnostics.
+  useEffect(() => {
+    const stopLifecycle = watchPageLifecycle();
+    const stopMonitor = startHandleMonitor(() =>
+      pendingFilesRef.current
+        .filter((f) => !f.error && !f.rejected)
+        .map((f) => ({ id: f.id, file: f.file }))
+    );
+    return () => {
+      stopLifecycle();
+      stopMonitor();
+    };
+  }, []);
+
   // On mount, LOOK FOR an unfinished draft (survives reload / app relaunch on
   // iOS/Android) and offer it — but never adopt it silently. If the user does
   // nothing, this page creates a brand-new request on submit, which is what
@@ -915,7 +1067,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         }
         const data = (await res.json()) as {
           status: string;
-          assets: { fileName: string; uploadStatus: string }[];
+          assets: { fileName: string; fileSizeBytes: number; uploadStatus: string }[];
         };
         if (cancelled) return;
         if (data.status !== "draft") {
@@ -930,7 +1082,14 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         }
         // Offer it. `draftIdRef` stays null so an untouched form still mints a
         // fresh request — adoption happens in handleResumeDraft, on a click.
-        setRecoverableDraft({ draftId: saved, uploadedNames: uploaded.map((a) => a.fileName) });
+        setRecoverableDraft({
+          draftId: saved,
+          uploadedNames: uploaded.map((a) => a.fileName),
+          uploadedBytes: uploaded.reduce(
+            (sum, asset) => sum + (Number(asset.fileSizeBytes) || 0),
+            0
+          ),
+        });
       } catch {
         /* offline — keep persistence for a later attempt */
       }
@@ -1050,6 +1209,14 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     // 1) Resume a persisted session if present; otherwise initiate a fresh one.
     let session = getMpuSession(requestId, sig);
     let uploadedParts: { PartNumber: number; ETag: string }[] = [];
+
+    // The bytes and multipart assembly already finished; only application-level
+    // confirmation failed or its response was lost. Return the original asset
+    // id so finalizeSubmission retries /confirm without uploading any byte.
+    if (session?.completed) {
+      console.info(`[upload] ${item.file.name} already assembled — retrying confirmation only`);
+      return session.assetId;
+    }
 
     if (session) {
       const res = await mp("ตรวจสอบการอัปโหลดเดิม", {
@@ -1247,6 +1414,16 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         missing = []; // every part uploaded — exit the round loop
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // A dead file handle is not a transport failure. There is nothing to
+        // reconcile against and nothing to re-send from, so spending the two
+        // remaining rounds (and two ListParts round-trips) on it only delays
+        // telling the user the one thing that helps: re-pick the file.
+        if (err instanceof FileUnreadableError) {
+          console.error(
+            `[upload] ${item.file.name} ABORTED at ${etags.length}/${partCount} parts — file handle died; rounds skipped`
+          );
+          throw err;
+        }
         if (round >= MAX_ROUNDS) {
           console.error(
             `[upload] ${item.file.name} FAILED after ${MAX_ROUNDS} rounds (${etags.length}/${partCount} parts landed): ${msg} — ${connInfo()}`
@@ -1286,9 +1463,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     }
 
     // 4) Assemble. NOTE: we deliberately do NOT abort on failure above — keeping
-    // the parts is what lets the next attempt resume. Only clear the session once
-    // the object is successfully assembled (abandoned MPUs are swept by the
-    // bucket's AbortIncompleteMultipartUpload lifecycle rule).
+    // the parts is what lets the next attempt resume. The session also remains
+    // after assembly until /confirm succeeds; otherwise a confirmation timeout
+    // at 100% makes the next attempt upload the entire file again.
     etags.sort((a, b) => a.PartNumber - b.PartNumber);
     const completeRes = await mp("รวมไฟล์", { action: "complete", key, uploadId, parts: etags });
     if (!completeRes.ok) {
@@ -1299,7 +1476,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       throw new Error(body.error ?? `error ${completeRes.status}`);
     }
     console.info(`[upload] ${item.file.name} multipart complete: ${etags.length} parts assembled ✓`);
-    clearMpuSession(requestId, sig);
+    saveMpuSession(requestId, sig, { ...session, completed: true });
     return assetId;
   };
 
@@ -1311,36 +1488,68 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     if (!confirmations.aiProcessingConfirmed) {
       throw new Error("กรุณาอนุญาตการประมวลผลด้วย AI ก่อนส่งคำขอ");
     }
+
+    // Let any still-running selection probe finish before uploading. A probe
+    // that lands mid-upload would otherwise mark a clip over-length after its
+    // bytes were already on the wire, and the diagnostic timeline would
+    // interleave decode work with upload work, making it far harder to read.
+    if (prepTasksRef.current.size > 0) {
+      await Promise.allSettled([...prepTasksRef.current.values()]);
+    }
     // `rejected` files are excluded alongside `error` ones: the server has
     // already refused these exact bytes on a business rule, so a retry would
     // re-upload the whole clip only to be refused again. Skipping them is what
     // lets the retry button finish the files that CAN succeed.
     const uploadItems = pendingFiles.filter((f) => !f.error && !f.rejected);
+    diagLog("SUBMIT", `${uploadItems.length} file(s) queued for upload`);
 
     // Reconcile with the server: skip any file whose name+size is already an
     // uploaded asset on this request (resume after reload/return).
-    let uploadedSigs = new Set<string>();
+    const confirmedOnServer = new Set<string>();
     try {
       const listRes = await fetch(`/api/uploads/${requestId}`);
-      if (listRes.ok) {
-        const { assets } = (await listRes.json()) as {
-          assets: { fileName: string; fileSizeBytes: number; uploadStatus: string }[];
-        };
-        const stored = assets.filter((a) => a.uploadStatus === "uploaded");
-        uploadedSigs = new Set(
-          stored.map((a) => nameSizeSig(a.fileName, a.fileSizeBytes))
-        );
-        // Keep the size budget in step with what the server actually holds, so
-        // the next addFiles() measures against the same number the presign route
-        // will use.
-        serverUploadedBytesRef.current = stored.reduce(
-          (sum, a) => sum + (Number(a.fileSizeBytes) || 0),
-          0
-        );
-        serverUploadedCountRef.current = stored.length;
+      if (!listRes.ok) {
+        throw new Error(`upload reconciliation HTTP ${listRes.status}`);
       }
-    } catch {
-      /* non-fatal: fall through and (re)upload */
+      const { assets } = (await listRes.json()) as {
+        assets: { fileName: string; fileSizeBytes: number; uploadStatus: string }[];
+      };
+      const stored = assets.filter((a) => a.uploadStatus === "uploaded");
+      // Match stored assets to picker rows as a MULTISET. A Set incorrectly
+      // treated two same-named, same-sized files as one file: after the first
+      // succeeded, a retry skipped both. Consuming one stored occurrence per
+      // picker row preserves duplicates while still skipping exactly what is
+      // already on the server.
+      const storedCounts = new Map<string, number>();
+      for (const asset of stored) {
+        const sig = nameSizeSig(asset.fileName, asset.fileSizeBytes);
+        storedCounts.set(sig, (storedCounts.get(sig) ?? 0) + 1);
+      }
+      for (const item of uploadItems) {
+        const sig = nameSizeSig(item.file.name, item.file.size);
+        const available = storedCounts.get(sig) ?? 0;
+        if (available <= 0) continue;
+        confirmedOnServer.add(item.id);
+        storedCounts.set(sig, available - 1);
+      }
+      setConfirmedItemIds(new Set(confirmedOnServer));
+      // Keep the size budget in step with what the server actually holds, so
+      // the next addFiles() measures against the same number the presign route
+      // will use.
+      serverUploadedBytesRef.current = stored.reduce(
+        (sum, a) => sum + (Number(a.fileSizeBytes) || 0),
+        0
+      );
+      serverUploadedCountRef.current = stored.length;
+    } catch (error) {
+      // Never guess after a partial upload. Re-uploading while reconciliation is
+      // unavailable can duplicate confirmed files and makes the client/server
+      // counters diverge again. Leave the draft intact and let Retry perform a
+      // fresh authoritative check.
+      console.error("[submit] could not reconcile uploaded files:", error);
+      throw new Error(
+        "ตรวจสอบไฟล์ที่อัปโหลดไว้แล้วไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วกดลองอัปโหลดต่อ"
+      );
     }
 
     // Pre-flight the per-request total cap for the files about to go up, in the
@@ -1356,7 +1565,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       // server counts its own stored files, this list did not.
       let count = serverUploadedCountRef.current;
       for (const item of uploadItems) {
-        if (uploadedSigs.has(nameSizeSig(item.file.name, item.file.size))) {
+        if (confirmedOnServer.has(item.id)) {
           continue; // already stored, and already counted in the seeds above
         }
         if (count >= MAX_UPLOAD_COUNT) {
@@ -1379,7 +1588,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       const totalMb = Math.round(
         (serverUploadedBytesRef.current +
           uploadItems
-            .filter((i) => !uploadedSigs.has(nameSizeSig(i.file.name, i.file.size)))
+            .filter((i) => !confirmedOnServer.has(i.id))
             .reduce((sum, i) => sum + i.file.size, 0)) /
           (1024 * 1024)
       );
@@ -1394,7 +1603,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       Object.fromEntries(
         uploadItems.map((i) => [
           i.id,
-          uploadedSigs.has(nameSizeSig(i.file.name, i.file.size))
+          confirmedOnServer.has(i.id)
             ? { pct: 100, stage: "done" as UploadStage }
             : { pct: 0, stage: "pending" as UploadStage },
         ])
@@ -1404,7 +1613,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     const failedUploads: string[] = [];
     const rejectedUploads: string[] = [];
     for (const item of uploadItems) {
-      if (uploadedSigs.has(nameSizeSig(item.file.name, item.file.size))) continue; // already stored
+      if (confirmedOnServer.has(item.id)) continue; // already stored
 
       // Known ahead of time not to fit — don't spend the user's data uploading
       // a clip the presign route is certain to refuse.
@@ -1424,6 +1633,11 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         })`
       );
       setItemProgress(item.id, { stage: "uploading" });
+      diagLog(
+        "UPLOAD-START",
+        `${item.file.name} ${(item.file.size / 1e6).toFixed(1)}MB ` +
+          `${item.file.size > MULTIPART_THRESHOLD_BYTES ? "multipart" : "single"}`
+      );
 
       let assetId: string;
       try {
@@ -1446,10 +1660,33 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           continue;
         }
 
+        // The file's bytes stopped being reachable partway through. Retrying
+        // re-reads the same dead reference and fails identically, so this must
+        // NOT arm the retry button — that loop is what made a batch of clips
+        // look permanently un-uploadable.
+        //
+        // Recorded as `rejected` so every existing filter (retry, submit gate,
+        // size budget) already skips it, exactly as it does for a server
+        // refusal. The difference is only in the message, which tells the user
+        // the one thing that works: remove the file and pick it again. The
+        // multipart session survives on `fileSig`, so that resumes rather than
+        // restarts.
+        if (uploadErr instanceof FileUnreadableError) {
+          diagLog("UPLOAD-DEAD-HANDLE", item.file.name);
+          console.error(`[submit] ${item.file.name} file handle died mid-upload: ${detail}`);
+          setItemProgress(item.id, { stage: "rejected" });
+          setPendingFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, rejected: detail } : f))
+          );
+          rejectedUploads.push(`${item.file.name} — ${detail}`);
+          continue;
+        }
+
         console.error(
           `[submit] upload ${item.file.name} failed: ${detail} — ${connInfo()} — scroll up for the per-part [upload] logs that name the root cause`,
           uploadErr
         );
+        diagLog("UPLOAD-FAIL", `${item.file.name} ${detail}`);
         setItemProgress(item.id, { stage: "error" });
         failedUploads.push(`${item.file.name} (อัปโหลดไม่สำเร็จ — ${detail})`);
         continue;
@@ -1461,11 +1698,27 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       const posterDataUrl =
         typeof poster === "string" && poster.startsWith("data:image/") ? poster : undefined;
 
-      const confirmRes = await netFetch("ยืนยันไฟล์", `/api/uploads/${requestId}/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assetId, posterDataUrl }),
-      });
+      let confirmRes: Response;
+      try {
+        confirmRes = await netFetch("ยืนยันไฟล์", `/api/uploads/${requestId}/confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assetId, posterDataUrl }),
+        });
+      } catch (confirmError) {
+        // Previously this escaped the per-file loop. The whole request then
+        // showed a generic failure after the final progress bar reached 100%,
+        // with no failed filename — exactly like all new files had disappeared.
+        // Keep the assembled multipart session so Retry repeats confirmation
+        // only, and identify the affected file in the UI.
+        const reason =
+          confirmError instanceof Error ? confirmError.message : String(confirmError);
+        console.error(`[submit] confirmation ${item.file.name} failed:`, confirmError);
+        diagLog("CONFIRM-FAIL", `${item.file.name} ${reason}`);
+        setItemProgress(item.id, { stage: "error", pct: 100 });
+        failedUploads.push(`${item.file.name} (อัปโหลดครบแล้ว แต่ยืนยันไฟล์ไม่สำเร็จ — ${reason})`);
+        continue;
+      }
       if (!confirmRes.ok) {
         const body = await confirmRes.json().catch(() => ({}));
         const reason = typeof body?.error === "string" ? body.error : "ยืนยันไฟล์ไม่สำเร็จ";
@@ -1478,6 +1731,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         // the retry button re-uploaded all of it, and it was rejected again, for
         // ever. Mark it rejected so retry SKIPS it and the reason is shown.
         if (confirmRes.status === 422) {
+          clearMpuSession(requestId, fileSig(item.file));
           console.warn(`[submit] ${item.file.name} rejected by the server: ${reason}`);
           setItemProgress(item.id, { stage: "rejected" });
           setPendingFiles((prev) =>
@@ -1491,7 +1745,16 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         failedUploads.push(`${item.file.name} (${reason})`);
         continue;
       }
+      clearMpuSession(requestId, fileSig(item.file));
       setItemProgress(item.id, { stage: "done", pct: 100 });
+      confirmedOnServer.add(item.id);
+      setConfirmedItemIds((prev) => new Set(prev).add(item.id));
+      // Keep the authoritative server seed current during this same attempt.
+      // If a later file fails, the form reappears immediately; without these
+      // increments its totals are stale until another retry fetch completes.
+      serverUploadedBytesRef.current += item.file.size;
+      serverUploadedCountRef.current += 1;
+      diagLog("UPLOAD-OK", item.file.name);
     }
 
     // Two very different outcomes, which used to be merged into one unactionable
@@ -1636,6 +1899,8 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     if (!recoverableDraft) return;
     draftIdRef.current = recoverableDraft.draftId;
     lsSet(DRAFT_ID_KEY, recoverableDraft.draftId);
+    serverUploadedBytesRef.current = recoverableDraft.uploadedBytes;
+    serverUploadedCountRef.current = recoverableDraft.uploadedNames.length;
     setResumeInfo({ uploadedNames: recoverableDraft.uploadedNames });
     setRecoverableDraft(null);
     setSubmitError(null);
@@ -1677,6 +1942,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       setResumeInfo(null);
       setCanRetry(false);
       setUploadProgress({});
+      setConfirmedItemIds(new Set());
+      serverUploadedBytesRef.current = 0;
+      serverUploadedCountRef.current = 0;
       setSubmitError(null);
     } finally {
       setDiscardingDraft(false);
@@ -2124,7 +2392,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
         {pendingFiles.length > 0 &&
           (() => {
             const selectedBytes = pendingFiles
-              .filter((f) => !f.error && !f.rejected)
+              .filter(isPendingFileCounted)
               .reduce((sum, f) => sum + f.file.size, 0);
             const totalBytes = serverUploadedBytesRef.current + selectedBytes;
             const usedMb = totalBytes / (1024 * 1024);
@@ -2142,7 +2410,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                         an 11th file and then refuse it mid-upload. */}
                     <span className="ml-2 tabular-nums text-slate-400">
                       ({serverUploadedCountRef.current +
-                        pendingFiles.filter((f) => !f.error && !f.rejected).length}
+                        pendingFiles.filter(isPendingFileCounted).length}
                       /{MAX_UPLOAD_COUNT} ไฟล์)
                     </span>
                   </span>
@@ -2236,6 +2504,16 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                       <p className="text-xs text-slate-400">
                         {(item.file.size / (1024 * 1024)).toFixed(1)} MB
                       </p>
+                      {uploadProgress[item.id]?.stage === "done" && (
+                        <p className="mt-0.5 text-xs font-medium text-green-700">
+                          อัปโหลดสำเร็จแล้ว · ไม่นับซ้ำในการอัปโหลดต่อ
+                        </p>
+                      )}
+                      {uploadProgress[item.id]?.stage === "error" && (
+                        <p className="mt-0.5 text-xs font-medium text-red-600">
+                          อัปโหลดไม่สำเร็จ · ยังไม่นับในจำนวนหรือขนาดรวม
+                        </p>
+                      )}
                       {item.durationUnverified && (
                         // The clip could not be decoded here, so its length is
                         // unknown until the server measures it. Say so up front
@@ -2309,73 +2587,38 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           </div>
         )}
 
-        <div className="flex flex-col gap-4">
-          <Checkbox
-            label={
-              trialAvailable
-                ? `ฉันเข้าใจว่าคำขอนี้เป็นคลิปทดลองฟรี และการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำจะมีค่าบริการ ${COST} เครดิต`
-                : `ฉันเข้าใจว่าการส่งคำขอนี้จะใช้ ${COST} เครดิต แบบชำระครั้งเดียว ครอบคลุมทุกขั้นตอนการผลิต`
-            }
-            {...register("creditConfirmed")}
-            error={errors.creditConfirmed?.message}
-          />
+        {/* Keep the three auditable server fields, but present one combined
+            acknowledgement. Agree in the disclosure sets all three together. */}
+        <input type="checkbox" className="sr-only" tabIndex={-1} {...register("creditConfirmed")} />
+        <input type="checkbox" className="sr-only" tabIndex={-1} {...register("rightsConfirmed")} />
+        <input type="checkbox" className="sr-only" tabIndex={-1} {...register("aiProcessingConfirmed")} />
 
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
           <Checkbox
-            label={
-              <>
-                ฉันยืนยันว่าเป็นเจ้าของหรือได้รับสิทธิ์และการอนุญาตที่จำเป็นสำหรับไฟล์ บุคคล เสียง เพลง เครื่องหมายการค้า ข้อความ ชื่อสถานที่ ตำแหน่งที่เลือก และเนื้อหาที่อัปโหลดหรือกรอกในคำขอ และยอมรับ{" "}
-                <Link
-                  href={ROUTES.TERMS}
-                  target="_blank"
-                  className="text-blue-600 underline hover:text-blue-800"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  ข้อกำหนดและเงื่อนไขของ RClipper
-                </Link>{" "}
-                รวมถึงสิทธิ์ของ RClipper ในการคัดเลือกวิดีโอบางรายการพร้อมข้อมูลที่เกี่ยวข้องเพื่อเผยแพร่บนแอป Travy เว็บไซต์ Travy.buzz และบัญชีโซเชียลมีเดียอย่างเป็นทางการที่ RClipper เป็นเจ้าของหรือควบคุม
-              </>
-            }
-            {...register("rightsConfirmed")}
-            error={errors.rightsConfirmed?.message}
-          />
-
-          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-            <Checkbox
-              label={
-                <>
-                  ฉันอนุญาตให้ RClipper ส่งไฟล์และข้อมูลในคำขอนี้ไปยัง Google Gemini และ ElevenLabs เพื่อวิเคราะห์เนื้อหาและสร้างเสียง
-                </>
+            checked={allConfirmationsAccepted}
+            onChange={(event) => {
+              if (event.target.checked) {
+                setConfirmationOpen(true);
+                return;
               }
-              {...register("aiProcessingConfirmed")}
-              error={errors.aiProcessingConfirmed?.message}
-            />
-            <details className="group ml-7 mt-2 text-sm text-slate-600">
-              <summary className="cursor-pointer list-none font-medium text-blue-700 hover:text-blue-800">
-                ดูข้อมูลที่ส่งและวัตถุประสงค์ <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">⌄</span>
-              </summary>
-              <div className="mt-3 space-y-2 border-l-2 border-blue-100 pl-3 leading-relaxed">
-                <p>
-                  <strong className="font-semibold text-slate-800">Google Gemini:</strong>{" "}
-                  รูปภาพ เฟรมจากวิดีโอ ชื่อและรายละเอียดคลิป ข้อมูลสถานที่หรือธุรกิจ ตำแหน่ง และตัวเลือกการผลิต เพื่อวิเคราะห์เนื้อหาและช่วยสร้างบทพูด สตอรีบอร์ด และคำบรรยาย
-                </p>
-                <p>
-                  <strong className="font-semibold text-slate-800">ElevenLabs:</strong>{" "}
-                  บทพูดที่คุณอนุมัติและตัวเลือกเสียง เพื่อสร้างเสียงบรรยาย
-                </p>
-                <p>
-                  ไฟล์อาจมีใบหน้า เสียง ตำแหน่ง หรือข้อมูลส่วนบุคคลของคุณหรือผู้อื่น การอนุญาตนี้ใช้กับคำขอนี้และต้องให้ก่อนเริ่มประมวลผล AI
-                </p>
-                <Link
-                  href={ROUTES.PRIVACY}
-                  target="_blank"
-                  className="inline-flex font-medium text-blue-700 underline hover:text-blue-800"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  อ่านรายละเอียดการประมวลผลและนโยบายความเป็นส่วนตัว
-                </Link>
-              </div>
-            </details>
-          </div>
+              setValue("creditConfirmed", undefined as never, { shouldValidate: true });
+              setValue("rightsConfirmed", undefined as never, { shouldValidate: true });
+              setValue("aiProcessingConfirmed", undefined as never, { shouldValidate: true });
+            }}
+            label="ฉันได้อ่านและยอมรับค่าใช้บริการ สิทธิ์ในเนื้อหา เงื่อนไขการเผยแพร่ และการประมวลผลด้วย AI สำหรับคำขอนี้"
+            error={
+              errors.creditConfirmed?.message ||
+              errors.rightsConfirmed?.message ||
+              errors.aiProcessingConfirmed?.message
+            }
+          />
+          <button
+            type="button"
+            onClick={() => setConfirmationOpen(true)}
+            className="ml-7 mt-2 text-sm font-medium text-blue-700 underline hover:text-blue-800"
+          >
+            อ่านรายละเอียดรวมก่อนยอมรับ
+          </button>
         </div>
       </fieldset>
 
@@ -2391,6 +2634,33 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             >
               ลองอัปโหลดต่อ
             </button>
+          )}
+
+          {/* The diagnostic timeline, in the user's hands. The failure is
+              entirely client-side, so this log is the only record of it — and a
+              phone in the field is not attached to a laptop running adb. */}
+          <button
+            type="button"
+            onClick={() => {
+              const dump = diagDump();
+              try {
+                void navigator.clipboard?.writeText?.(dump)?.catch(() => undefined);
+              } catch {
+                /* no clipboard in this WebView — the textarea below is the fallback */
+              }
+              setShowDiag((v) => !v);
+            }}
+            className="ml-2 mt-3 rounded-lg border border-red-300 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-100"
+          >
+            คัดลอกบันทึกปัญหา (ส่งให้ทีมงาน)
+          </button>
+          {showDiag && (
+            <textarea
+              readOnly
+              value={diagDump()}
+              onFocus={(event) => event.currentTarget.select()}
+              className="mt-2 h-56 w-full rounded border border-red-200 bg-white p-2 font-mono text-[10px] leading-tight text-slate-700"
+            />
           )}
         </div>
       )}
@@ -2426,6 +2696,157 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           </Button>
         </div>
       </div>
+
+      {confirmationOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmationOpen(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="request-confirmation-title"
+            className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+          >
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-5 py-4 sm:px-6">
+              <div>
+                <h2 id="request-confirmation-title" className="text-lg font-semibold text-slate-900">
+                  ข้อกำหนดและหนังสือยินยอมสำหรับคำขอนี้
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  โปรดอ่านรายละเอียดทั้งหมดก่อนเลือกยอมรับหรือไม่ยอมรับ
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmationOpen(false)}
+                aria-label="ปิดหน้าต่าง"
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-xl text-slate-500 hover:bg-slate-100"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Only this middle region scrolls. The decision buttons remain in
+                the non-scrolling footer below and are always available. */}
+            <div className="min-h-0 flex-1 overflow-y-auto bg-white px-5 py-5 text-[13px] leading-6 text-slate-800 sm:px-7">
+              <p className="mb-5">
+                เอกสารฉบับนี้กำหนดรายละเอียดเกี่ยวกับค่าใช้บริการ การรับรองสิทธิ์ในเนื้อหา การอนุญาตให้เผยแพร่ และการประมวลผลข้อมูลด้วยระบบปัญญาประดิษฐ์สำหรับคำขอนี้โดยเฉพาะ การเลือก “ยอมรับ” ถือเป็นการยืนยันว่าคุณได้มีโอกาสอ่าน ทำความเข้าใจ และตกลงตามข้อความทั้งหมดด้านล่าง
+              </p>
+
+              <section className="border-t border-slate-300 pt-4">
+                <h3 className="font-semibold text-slate-950">1. ค่าใช้บริการและการหักเครดิต</h3>
+                <p className="mt-2">
+                  {trialAvailable
+                    ? `คำขอนี้ได้รับสิทธิ์สร้างคลิปทดลองโดยไม่หักเครดิตในเวลาส่งคำขอ อย่างไรก็ตาม หากประสงค์ดาวน์โหลดวิดีโอฉบับไม่มีลายน้ำ คุณตกลงว่าระบบอาจเรียกเก็บ ${COST} เครดิตตามเงื่อนไขที่แสดงในหน้าบริการ ณ เวลาที่ปลดล็อกการดาวน์โหลด`
+                    : `เมื่อส่งคำขอนี้ คุณอนุญาตให้ RClipper หัก ${COST} เครดิตจากยอดคงเหลือของบัญชีเป็นค่าบริการแบบครั้งเดียวสำหรับกระบวนการผลิตที่ระบุในคำขอ การหักเครดิตจะบันทึกโดยอ้างอิงหมายเลขคำขอและจะไม่ถูกหักซ้ำสำหรับคำขอเดียวกัน`}
+                </p>
+                <p className="mt-2">
+                  ราคา ระยะเวลาโดยประมาณ และผลลัพธ์ของบริการอาจขึ้นอยู่กับรายละเอียดไฟล์ ตัวเลือกการผลิต และข้อจำกัดทางเทคนิค การยอมรับไม่ได้รับประกันว่าผลลัพธ์จะตรงกับความชอบเชิงอัตวิสัยทุกประการ แต่ไม่ตัดสิทธิ์ที่คุณมีตามกฎหมายหรือเงื่อนไขการคืนเครดิตของ RClipper
+                </p>
+              </section>
+
+              <section className="mt-5 border-t border-slate-300 pt-4">
+                <h3 className="font-semibold text-slate-950">2. การรับรองความเป็นเจ้าของและสิทธิ์ของบุคคลภายนอก</h3>
+                <p className="mt-2">
+                  คุณรับรองว่าคุณเป็นเจ้าของ หรือได้รับใบอนุญาต หนังสือยินยอม การปล่อยสิทธิ์ และอำนาจที่จำเป็นอย่างครบถ้วนสำหรับรูปภาพ วิดีโอ เสียง ดนตรี การแสดง ใบหน้า ชื่อบุคคล เครื่องหมายการค้า งานศิลปะ ข้อความ ข้อมูลธุรกิจ ชื่อสถานที่ ตำแหน่ง และเนื้อหาอื่นทั้งหมดที่อัปโหลดหรือระบุในคำขอ
+                </p>
+                <p className="mt-2">
+                  หากเนื้อหามีบุคคลอื่น ผู้เยาว์ ทรัพย์สินส่วนบุคคล หรือข้อมูลที่สามารถระบุตัวบุคคลได้ คุณยืนยันว่าได้แจ้งวัตถุประสงค์และได้รับความยินยอมที่จำเป็นก่อนอัปโหลด คุณจะไม่ส่งเนื้อหาที่ผิดกฎหมาย ละเมิดสิทธิ์ ทำให้เข้าใจผิด หรือไม่มีอำนาจอนุญาตให้ RClipper ดำเนินการ
+                </p>
+              </section>
+
+              <section className="mt-5 border-t border-slate-300 pt-4">
+                <h3 className="font-semibold text-slate-950">3. สิทธิ์ที่มอบให้เพื่อผลิตและเผยแพร่</h3>
+                <p className="mt-2">
+                  คุณอนุญาตให้ RClipper จัดเก็บ คัดลอก ตัดต่อ แปลงรูปแบบ ปรับขนาด ใส่คำบรรยาย ผสมเสียง สร้างงานต่อเนื่อง และดำเนินการทางเทคนิคอื่นที่จำเป็นเพื่อผลิต ตรวจสอบ ส่งมอบ และสนับสนุนวิดีโอตามคำขอ ทั้งนี้ สิทธิ์ในไฟล์ต้นฉบับยังคงเป็นของเจ้าของสิทธิ์เดิม
+                </p>
+                <p className="mt-2">
+                  คุณยอมรับว่า RClipper อาจคัดเลือกวิดีโอบางรายการ พร้อมข้อความ ชื่อสถานที่ ข้อมูลธุรกิจ คำบรรยาย และข้อมูลที่เกี่ยวข้อง เพื่อเผยแพร่ผ่านแอป Travy เว็บไซต์ Travy.buzz และบัญชีสื่อสังคมออนไลน์ที่ RClipper เป็นเจ้าของหรือควบคุม ภายใต้ขอบเขตและเงื่อนไขที่ระบุในข้อกำหนดฉบับเต็ม
+                </p>
+              </section>
+
+              <section className="mt-5 border-t border-slate-300 pt-4">
+                <h3 className="font-semibold text-slate-950">4. การส่งและประมวลผลข้อมูลด้วยผู้ให้บริการ AI ภายนอก</h3>
+                <p className="mt-2">
+                  เพื่อให้บริการสร้างวิดีโอ คุณอนุญาตให้ RClipper ส่งข้อมูลที่จำเป็นไปยังผู้ให้บริการ AI ภายนอกดังต่อไปนี้ก่อนเริ่มการประมวลผล:
+                </p>
+                <ol className="mt-2 list-decimal space-y-2 pl-5">
+                  <li>
+                    <strong className="font-semibold">Google Gemini:</strong> รูปภาพ ไฟล์หรือเฟรมตัวอย่างจากวิดีโอ ชื่อและคำอธิบายคำขอ กลุ่มเป้าหมาย ข้อมูลสถานที่หรือธุรกิจ ตำแหน่งที่เลือก และตัวเลือกการผลิต เพื่อวิเคราะห์เนื้อหา วางโครงเรื่อง และสร้างร่างบทพูด สตอรีบอร์ด คำบรรยาย และองค์ประกอบที่เกี่ยวข้อง
+                  </li>
+                  <li>
+                    <strong className="font-semibold">ElevenLabs:</strong> บทพูดที่คุณอนุมัติ ภาษา ตัวเลือกเสียง และข้อมูลที่จำเป็นต่อการสร้างหรือประมวลผลเสียงบรรยายสำหรับวิดีโอ
+                  </li>
+                </ol>
+                <p className="mt-2">
+                  ข้อมูลดังกล่าวอาจมีใบหน้า เสียง ตำแหน่ง ข้อมูลธุรกิจ หรือข้อมูลส่วนบุคคลของคุณและบุคคลอื่น ผู้ให้บริการแต่ละรายประมวลผลข้อมูลตามเงื่อนไขและมาตรการคุ้มครองข้อมูลของตน RClipper จำกัดการส่งข้อมูลให้สัมพันธ์กับวัตถุประสงค์ของคำขอนี้ และจะไม่เริ่มส่งข้อมูลเพื่อการประมวลผล AI จนกว่าคุณจะเลือก “ยอมรับ”
+                </p>
+              </section>
+
+              <section className="mt-5 border-t border-slate-300 pt-4">
+                <h3 className="font-semibold text-slate-950">5. การจัดเก็บ การลบ และการถอนความยินยอม</h3>
+                <p className="mt-2">
+                  ไฟล์ต้นฉบับเชื่อมโยงกับคำขอนี้และมีกำหนดลบตามระยะเวลาการเก็บรักษาที่แจ้งไว้ โดยทั่วไปคือ 90 วันนับจากการส่งคำขอ เว้นแต่จำเป็นต้องเก็บไว้นานกว่านั้นตามกฎหมาย การระงับข้อพิพาท หรือข้อกำหนดที่ใช้บังคับ คุณสามารถขอลบบัญชีหรือข้อมูลและศึกษาวิธีถอนความยินยอมได้จากนโยบายความเป็นส่วนตัว ทั้งนี้ การถอนก่อนเริ่มประมวลผลอาจทำให้ไม่สามารถให้บริการสร้างวิดีโอได้ และการถอนภายหลังไม่สามารถย้อนกลับการประมวลผลที่เสร็จสิ้นโดยชอบแล้ว
+                </p>
+              </section>
+
+              <section className="mt-5 border-y border-slate-300 py-4">
+                <h3 className="font-semibold text-slate-950">6. ผลของการตัดสินใจ</h3>
+                <p className="mt-2">
+                  หากเลือก “ไม่ยอมรับ” หน้าต่างนี้จะปิดโดยไม่มีการทำเครื่องหมายในช่องยืนยันและจะยังไม่สามารถส่งคำขอได้ หากเลือก “ยอมรับ” ระบบจะทำเครื่องหมายช่องยืนยันโดยอัตโนมัติ บันทึกการยืนยันค่าใช้บริการ สิทธิ์ในเนื้อหา และการประมวลผลด้วย AI สำหรับคำขอนี้ แล้วจึงอนุญาตให้ดำเนินการส่งคำขอต่อไป
+                </p>
+              </section>
+
+              <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 pb-2">
+                <Link href={ROUTES.TERMS} target="_blank" className="font-medium text-blue-700 underline hover:text-blue-900">
+                  ข้อกำหนดและเงื่อนไขฉบับเต็ม
+                </Link>
+                <Link href={ROUTES.PRIVACY} target="_blank" className="font-medium text-blue-700 underline hover:text-blue-900">
+                  นโยบายความเป็นส่วนตัว
+                </Link>
+              </div>
+            </div>
+
+            <div className="z-10 flex shrink-0 gap-3 border-t border-slate-300 bg-white px-5 py-4 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] sm:justify-end sm:px-6">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 sm:flex-none sm:min-w-32"
+                onClick={() => setConfirmationOpen(false)}
+              >
+                ไม่ยอมรับ
+              </Button>
+              <Button
+                type="button"
+                className="flex-1 sm:flex-none sm:min-w-32"
+                onClick={() => {
+                  setValue("creditConfirmed", true, {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                  setValue("rightsConfirmed", true, {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                  setValue("aiProcessingConfirmed", true, {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                    shouldTouch: true,
+                  });
+                  setConfirmationOpen(false);
+                }}
+              >
+                ยอมรับ
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <GoogleMapLocationPicker
         open={mapOpen}
