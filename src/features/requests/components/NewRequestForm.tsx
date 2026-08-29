@@ -33,6 +33,10 @@ import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { useI18n } from "@/i18n/client";
 import {
+  getMobilePlatform,
+  type MobilePlatform,
+} from "@/lib/mobile/platform";
+import {
   DRAFT_ID_KEY,
   clearDraftPersistence,
   clearMpuSession,
@@ -622,6 +626,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   const [uploadProgress, setUploadProgress] = useState<Record<string, UploadItemProgress>>({});
   const [mapOpen, setMapOpen] = useState(false);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const [mobilePlatform, setMobilePlatform] = useState<MobilePlatform>("web");
 
   /**
    * Local picker rows that the server has confirmed as Uploaded. They remain in
@@ -737,6 +742,10 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       uploadProgress[item.id]?.stage !== "rejected",
     [confirmedItemIds, uploadProgress]
   );
+
+  useEffect(() => {
+    setMobilePlatform(getMobilePlatform());
+  }, []);
 
   useEffect(() => {
     if (!confirmationOpen) return;
@@ -2810,7 +2819,22 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
               </div>
             </div>
 
-            <div className="z-10 flex shrink-0 gap-3 border-t border-slate-300 bg-white px-5 py-4 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] sm:justify-end sm:px-6">
+            <div
+              className="app-safe-bottom z-10 flex shrink-0 gap-3 border-t border-slate-300 bg-white px-5 pt-4 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] sm:justify-end sm:px-6"
+              style={
+                mobilePlatform === "android"
+                  ? {
+                      // Some Android System WebViews report a zero CSS safe-area
+                      // inset even though the three-button/gesture navigation
+                      // bar overlays the bottom of the viewport. Reserve one
+                      // navigation-bar height in native Android as a fallback;
+                      // max() still honours a larger real inset when supplied.
+                      paddingBottom:
+                        "calc(1rem + max(env(safe-area-inset-bottom, 0px), 3rem))",
+                    }
+                  : undefined
+              }
+            >
               <Button
                 type="button"
                 variant="outline"
