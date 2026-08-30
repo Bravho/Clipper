@@ -1,0 +1,826 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.rclipper.app"
+4    android:versionCode="8"
+5    android:versionName="1.0.7" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="36" />
+10
+11    <!-- Permissions -->
+12
+13    <uses-permission android:name="android.permission.INTERNET" />
+13-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:119:5-67
+13-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:119:22-64
+14    <!--
+15         Android 13+ (API 33) requires this at runtime before any notification
+16         can be posted. @capacitor/push-notifications asks for it in
+17         requestPermissions(); the app targets API 36, so it is mandatory.
+18    -->
+19    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+19-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:123:5-77
+19-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:123:22-74
+20    <uses-permission android:name="android.permission.CAMERA" />
+20-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:124:5-65
+20-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:124:22-62
+21    <uses-permission android:name="com.android.vending.BILLING" />
+21-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:125:5-67
+21-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:125:22-64
+22
+23    <queries>
+23-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:7:5-11:15
+24        <intent>
+24-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:8:9-10:18
+25            <action android:name="android.support.customtabs.action.CustomTabsService" />
+25-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:9:13-90
+25-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:9:21-87
+26        </intent>
+27        <intent>
+27-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:8:9-10:18
+28            <action android:name="android.media.action.IMAGE_CAPTURE" />
+28-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:9:13-73
+28-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:9:21-70
+29        </intent>
+30        <intent>
+30-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:11:9-13:18
+31            <action android:name="android.intent.action.GET_CONTENT" />
+31-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:12:13-72
+31-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:12:21-69
+32        </intent>
+33        <intent>
+33-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:14:9-16:18
+34            <action android:name="android.intent.action.PICK" />
+34-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:15:13-65
+34-->[:capacitor-camera] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:15:21-62
+35        </intent>
+36        <intent>
+36-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:13:9-15:18
+37            <action android:name="com.android.vending.billing.InAppBillingService.BIND" />
+37-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:14:13-91
+37-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:14:21-88
+38        </intent>
+39        <intent>
+39-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:16:9-18:18
+40            <action android:name="com.google.android.apps.play.billingtestcompanion.BillingOverrideService.BIND" />
+40-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:17:13-116
+40-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:17:21-113
+41        </intent>
+42        <intent>
+42-->[com.google.androidbrowserhelper:androidbrowserhelper:2.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\dc56fa67b3779ef3aa4551bed3c22500\transformed\androidbrowserhelper-2.5.0\AndroidManifest.xml:27:9-33:18
+43            <action android:name="android.intent.action.VIEW" />
+43-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:44:17-69
+43-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:44:25-66
+44
+45            <category android:name="android.intent.category.BROWSABLE" />
+45-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:46:17-78
+45-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:46:27-75
+46
+47            <data android:scheme="https" />
+47-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+47-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+48        </intent>
+49    </queries>
+50
+51    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+51-->[:capacitor-network] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-network\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:7:5-79
+51-->[:capacitor-network] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-network\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:7:22-76
+52    <uses-permission android:name="android.permission.USE_CREDENTIALS" />
+52-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:8:5-74
+52-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:8:22-71
+53    <uses-permission android:name="android.permission.USE_BIOMETRIC" /> <!-- suppress DeprecatedClassUsageInspection -->
+53-->[androidx.biometric:biometric:1.1.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\dc9ef75963441b6ff5f3064c4c90397d\transformed\biometric-1.1.0\AndroidManifest.xml:24:5-72
+53-->[androidx.biometric:biometric:1.1.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\dc9ef75963441b6ff5f3064c4c90397d\transformed\biometric-1.1.0\AndroidManifest.xml:24:22-69
+54    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+54-->[androidx.biometric:biometric:1.1.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\dc9ef75963441b6ff5f3064c4c90397d\transformed\biometric-1.1.0\AndroidManifest.xml:27:5-74
+54-->[androidx.biometric:biometric:1.1.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\dc9ef75963441b6ff5f3064c4c90397d\transformed\biometric-1.1.0\AndroidManifest.xml:27:22-71
+55    <uses-permission android:name="android.permission.WAKE_LOCK" /> <!-- Required by older versions of Google Play services to create IID tokens -->
+55-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:24:5-68
+55-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:24:22-65
+56    <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />
+56-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:26:5-82
+56-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:26:22-79
+57
+58    <permission
+58-->[androidx.core:core:1.17.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\d0cd4fcbb94d02521935763507b18f88\transformed\core-1.17.0\AndroidManifest.xml:22:5-24:47
+59        android:name="com.rclipper.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+59-->[androidx.core:core:1.17.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\d0cd4fcbb94d02521935763507b18f88\transformed\core-1.17.0\AndroidManifest.xml:23:9-81
+60        android:protectionLevel="signature" />
+60-->[androidx.core:core:1.17.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\d0cd4fcbb94d02521935763507b18f88\transformed\core-1.17.0\AndroidManifest.xml:24:9-44
+61
+62    <uses-permission android:name="com.rclipper.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+62-->[androidx.core:core:1.17.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\d0cd4fcbb94d02521935763507b18f88\transformed\core-1.17.0\AndroidManifest.xml:26:5-97
+62-->[androidx.core:core:1.17.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\d0cd4fcbb94d02521935763507b18f88\transformed\core-1.17.0\AndroidManifest.xml:26:22-94
+63
+64    <application
+64-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:4:5-115:19
+65        android:allowBackup="false"
+65-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:5:9-36
+66        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+66-->[androidx.core:core:1.17.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\d0cd4fcbb94d02521935763507b18f88\transformed\core-1.17.0\AndroidManifest.xml:28:18-86
+67        android:extractNativeLibs="false"
+68        android:icon="@mipmap/ic_launcher"
+68-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:6:9-43
+69        android:label="@string/app_name"
+69-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:7:9-41
+70        android:requestLegacyExternalStorage="true"
+70-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:8:18-61
+71        android:roundIcon="@mipmap/ic_launcher_round"
+71-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:8:9-54
+72        android:supportsRtl="true"
+72-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:9:9-35
+73        android:theme="@style/AppTheme" >
+73-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:10:9-40
+74        <activity
+74-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:12:9-82:20
+75            android:name="com.rclipper.app.MainActivity"
+75-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:14:13-41
+76            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+76-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:13:13-148
+77            android:exported="true"
+77-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:18:13-36
+78            android:label="@string/title_activity_main"
+78-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:15:13-56
+79            android:launchMode="singleTask"
+79-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:17:13-44
+80            android:theme="@style/AppTheme.NoActionBarLaunch" >
+80-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:16:13-62
+81            <intent-filter>
+81-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:20:13-23:29
+82                <action android:name="android.intent.action.MAIN" />
+82-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:21:17-69
+82-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:21:25-66
+83
+84                <category android:name="android.intent.category.LAUNCHER" />
+84-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:22:17-77
+84-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:22:27-74
+85            </intent-filter>
+86            <!--
+87                App Links for app.rclipper.com.
+88
+89                Scoped to UI paths ON PURPOSE. This filter used to claim the
+90                whole host with no android:path* attribute, which also claimed
+91                https://app.rclipper.com/api/auth/apple/android-callback — the
+92                Return URL Apple posts to during Sign in with Apple on Android
+93                (APPLE_ANDROID_REDIRECT_URL). Once link verification succeeds,
+94                Android may hand that URL to this activity instead of letting
+95                the Chrome Custom Tab load it: the callback route never runs, no
+96                authorization code is ever exchanged, the tab is left sitting on
+97                Apple's own page, and the app is brought forward (and reloaded)
+98                still signed out. The failure looks exactly like a spontaneous
+99                app restart, which is what makes it so hard to place.
+100
+101                So: never claim /api/**. Add new prefixes here as user-facing
+102                sections are added; a path that is not listed simply stays in
+103                the browser, which is the safe direction to fail.
+104            -->
+105            <intent-filter android:autoVerify="true" >
+105-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:43:13-66:29
+105-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:43:28-53
+106                <action android:name="android.intent.action.VIEW" />
+106-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:44:17-69
+106-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:44:25-66
+107
+108                <category android:name="android.intent.category.DEFAULT" />
+108-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:45:17-76
+108-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:45:27-73
+109                <category android:name="android.intent.category.BROWSABLE" />
+109-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:46:17-78
+109-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:46:27-75
+110                <!-- The bare origin, with and without a trailing slash. -->
+111                <data
+111-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+112                    android:host="app.rclipper.com"
+112-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+113                    android:path="/"
+113-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:78-94
+114                    android:scheme="https" />
+114-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+115                <data
+115-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+116                    android:host="app.rclipper.com"
+116-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+117                    android:path=""
+117-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:78-94
+118                    android:scheme="https" />
+118-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+119                <!-- Authenticated sections -->
+120                <data
+120-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+121                    android:host="app.rclipper.com"
+121-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+122                    android:pathPrefix="/dashboard"
+122-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+123                    android:scheme="https" />
+123-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+124                <data
+124-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+125                    android:host="app.rclipper.com"
+125-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+126                    android:pathPrefix="/staff"
+126-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+127                    android:scheme="https" />
+127-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+128                <data
+128-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+129                    android:host="app.rclipper.com"
+129-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+130                    android:pathPrefix="/admin"
+130-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+131                    android:scheme="https" />
+131-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+132                <data
+132-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+133                    android:host="app.rclipper.com"
+133-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+134                    android:pathPrefix="/account"
+134-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+135                    android:scheme="https" />
+135-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+136                <!-- Public sections -->
+137                <data
+137-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+138                    android:host="app.rclipper.com"
+138-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+139                    android:pathPrefix="/login"
+139-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+140                    android:scheme="https" />
+140-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+141                <data
+141-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+142                    android:host="app.rclipper.com"
+142-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+143                    android:pathPrefix="/signup"
+143-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+144                    android:scheme="https" />
+144-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+145                <data
+145-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+146                    android:host="app.rclipper.com"
+146-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+147                    android:pathPrefix="/support"
+147-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+148                    android:scheme="https" />
+148-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+149                <data
+149-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+150                    android:host="app.rclipper.com"
+150-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+151                    android:pathPrefix="/terms"
+151-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+152                    android:scheme="https" />
+152-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+153                <data
+153-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+154                    android:host="app.rclipper.com"
+154-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+155                    android:pathPrefix="/privacy"
+155-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+156                    android:scheme="https" />
+156-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+157                <data
+157-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+158                    android:host="app.rclipper.com"
+158-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+159                    android:pathPrefix="/ownership"
+159-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+160                    android:scheme="https" />
+160-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+161                <data
+161-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+162                    android:host="app.rclipper.com"
+162-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+163                    android:pathPrefix="/delete-account"
+163-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+164                    android:scheme="https" />
+164-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+165                <data
+165-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+166                    android:host="app.rclipper.com"
+166-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+167                    android:pathPrefix="/verify-email"
+167-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+168                    android:scheme="https" />
+168-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+169                <data
+169-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+170                    android:host="app.rclipper.com"
+170-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+171                    android:pathPrefix="/forgot-password"
+171-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+172                    android:scheme="https" />
+172-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+173                <data
+173-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+174                    android:host="app.rclipper.com"
+174-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+175                    android:pathPrefix="/reset-password"
+175-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:51:78-109
+176                    android:scheme="https" />
+176-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+177            </intent-filter>
+178
+179            <!--
+180                Return path for Sign in with Apple on Android. Apple posts the
+181                authorization code to /api/auth/apple/android-callback, which
+182                bounces the result back to this scheme; MainActivity.onNewIntent
+183                hands it to the SocialLogin plugin. Keep in step with
+184                APPLE_ANDROID_DEEP_LINK in src/lib/auth/appleAndroid.ts.
+185            -->
+186            <intent-filter>
+186-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:75:13-80:29
+187                <action android:name="android.intent.action.VIEW" />
+187-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:44:17-69
+187-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:44:25-66
+188
+189                <category android:name="android.intent.category.DEFAULT" />
+189-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:45:17-76
+189-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:45:27-73
+190                <category android:name="android.intent.category.BROWSABLE" />
+190-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:46:17-78
+190-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:46:27-75
+191
+192                <data
+192-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:17-97
+193                    android:host="apple-login"
+193-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:46-77
+194                    android:scheme="com.rclipper.app" />
+194-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:48:23-45
+195            </intent-filter>
+196        </activity>
+197
+198        <!--
+199            Push notifications. Without these two meta-data entries Android draws
+200            the full-colour launcher icon in the status bar, which the system
+201            masks to a solid white square ("the white blob"). The icon must be a
+202            transparent white silhouette; the colour tints it.
+203        -->
+204        <meta-data
+204-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:90:9-92:61
+205            android:name="com.google.firebase.messaging.default_notification_icon"
+205-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:91:13-83
+206            android:resource="@drawable/ic_stat_rclipper" />
+206-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:92:13-58
+207        <meta-data
+207-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:93:9-95:61
+208            android:name="com.google.firebase.messaging.default_notification_color"
+208-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:94:13-84
+209            android:resource="@color/notification_accent" />
+209-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:95:13-58
+210        <!--
+211            Fallback channel for any message that arrives without one. The server
+212            always sets android.notification.channel_id (ANDROID_CHANNEL_ID in
+213            src/config/push.ts) and the app creates that channel at registration;
+214            this only covers a message sent from the Firebase console by hand.
+215        -->
+216        <meta-data
+216-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:102:9-104:71
+217            android:name="com.google.firebase.messaging.default_notification_channel_id"
+217-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:103:13-89
+218            android:value="@string/default_notification_channel_id" />
+218-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:104:13-68
+219
+220        <provider
+221            android:name="androidx.core.content.FileProvider"
+221-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:107:13-62
+222            android:authorities="com.rclipper.app.fileprovider"
+222-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:108:13-64
+223            android:exported="false"
+223-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:109:13-37
+224            android:grantUriPermissions="true" >
+224-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:110:13-47
+225            <meta-data
+225-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:111:13-113:64
+226                android:name="android.support.FILE_PROVIDER_PATHS"
+226-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:112:17-67
+227                android:resource="@xml/file_paths" />
+227-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:113:17-51
+228        </provider>
+229
+230        <activity
+230-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:14:9-18:75
+231            android:name="com.capacitorjs.plugins.browser.BrowserControllerActivity"
+231-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:15:13-85
+232            android:exported="false"
+232-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:16:13-37
+233            android:launchMode="singleTask"
+233-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:17:13-44
+234            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+234-->[:capacitor-browser] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-browser\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:18:13-72
+235
+236        <service
+236-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:8:9-14:19
+237            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+237-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:9:13-86
+238            android:exported="false" >
+238-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:10:13-37
+239            <intent-filter>
+239-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:11:13-13:29
+240                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+240-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:12:17-78
+240-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:12:25-75
+241            </intent-filter>
+242        </service>
+243
+244        <activity
+244-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:18:9-21:84
+245            android:name="ee.forgr.capacitor.social.login.TwitterLoginActivity"
+245-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:19:13-80
+246            android:exported="false"
+246-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:20:13-37
+247            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+247-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:21:13-81
+248        <activity
+248-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:22:9-25:84
+249            android:name="ee.forgr.capacitor.social.login.OAuth2LoginActivity"
+249-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:23:13-79
+250            android:exported="false"
+250-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:24:13-37
+251            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+251-->[:capgo-capacitor-social-login] D:\coding\clipper_agent\android\.release-build-v8\_capgo-capacitor-social-login\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:25:13-81
+252        <activity
+252-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:9:9-11:86
+253            android:name="io.ionic.libs.ioncameralib.view.IONCAMRLoadingActivity"
+253-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:10:13-82
+254            android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" />
+254-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:11:13-83
+255        <activity
+255-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:12:9-16:36
+256            android:name="io.ionic.libs.ioncameralib.view.IONCAMRImageEditorActivity"
+256-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:13:13-86
+257            android:enableOnBackInvokedCallback="true"
+257-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:14:13-55
+258            android:theme="@android:style/Theme.Black.NoTitleBar" />
+258-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:15:13-66
+259        <activity
+259-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:17:9-20:86
+260            android:name="io.ionic.libs.ioncameralib.view.IONCAMROpenPhotoPickerActivity"
+260-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:18:13-90
+261            android:exported="false"
+261-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:19:13-37
+262            android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" /> <!-- Trigger Google Play services to install the backported photo picker module. -->
+262-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:20:13-83
+263        <service
+263-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:22:9-34:19
+264            android:name="com.google.android.gms.metadata.ModuleDependencies"
+264-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:23:13-78
+265            android:enabled="false"
+265-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:24:13-36
+266            android:exported="false" >
+266-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:25:13-37
+267            <intent-filter>
+267-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:27:13-29:29
+268                <action android:name="com.google.android.gms.metadata.MODULE_DEPENDENCIES" />
+268-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:28:17-94
+268-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:28:25-91
+269            </intent-filter>
+270
+271            <meta-data
+271-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:31:13-33:36
+272                android:name="photopicker_activity:0:required"
+272-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:32:17-63
+273                android:value="" />
+273-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:33:17-33
+274        </service>
+275
+276        <provider
+276-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:36:9-44:20
+277            android:name="io.ionic.libs.ioncameralib.IONCAMRFileProvider"
+277-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:37:13-74
+278            android:authorities="com.rclipper.app.camera.provider"
+278-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:38:13-67
+279            android:exported="false"
+279-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:39:13-37
+280            android:grantUriPermissions="true" >
+280-->[io.ionic.libs:ioncamera-android:1.0.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0b7fe75335a16c97646b2babf0ff6987\transformed\ioncamera-android-1.0.2\AndroidManifest.xml:40:13-47
+281            <meta-data
+281-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:111:13-113:64
+282                android:name="android.support.FILE_PROVIDER_PATHS"
+282-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:112:17-67
+283                android:resource="@xml/ioncamera_paths" />
+283-->D:\coding\clipper_agent\android\app\src\main\AndroidManifest.xml:113:17-51
+284        </provider>
+285
+286        <service
+286-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:24:9-32:19
+287            android:name="androidx.credentials.playservices.CredentialProviderMetadataHolder"
+287-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:25:13-94
+288            android:enabled="true"
+288-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:26:13-35
+289            android:exported="false" >
+289-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:27:13-37
+290            <meta-data
+290-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:29:13-31:104
+291                android:name="androidx.credentials.CREDENTIAL_PROVIDER_KEY"
+291-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:30:17-76
+292                android:value="androidx.credentials.playservices.CredentialProviderPlayServicesImpl" />
+292-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:31:17-101
+293        </service>
+294
+295        <activity
+295-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:34:9-41:20
+296            android:name="androidx.credentials.playservices.HiddenActivity"
+296-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:35:13-76
+297            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+297-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:36:13-87
+298            android:enabled="true"
+298-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:37:13-35
+299            android:exported="false"
+299-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:38:13-37
+300            android:fitsSystemWindows="true"
+300-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:39:13-45
+301            android:theme="@style/Theme.Hidden" >
+301-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:40:13-48
+302        </activity>
+303        <activity
+303-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:42:9-49:20
+304            android:name="androidx.credentials.playservices.IdentityCredentialApiHiddenActivity"
+304-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:43:13-97
+305            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+305-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:44:13-87
+306            android:enabled="true"
+306-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:45:13-35
+307            android:exported="false"
+307-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:46:13-37
+308            android:fitsSystemWindows="true"
+308-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:47:13-45
+309            android:theme="@style/Theme.Hidden" >
+309-->[androidx.credentials:credentials-play-services-auth:1.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\ee94e063ae1f5b1eaa0cdecb959594cb\transformed\credentials-play-services-auth-1.5.0\AndroidManifest.xml:48:13-48
+310        </activity>
+311        <activity
+311-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:23:9-27:75
+312            android:name="com.google.android.gms.auth.api.signin.internal.SignInHubActivity"
+312-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:24:13-93
+313            android:excludeFromRecents="true"
+313-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:25:13-46
+314            android:exported="false"
+314-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:26:13-37
+315            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+315-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:27:13-72
+316        <!--
+317            Service handling Google Sign-In user revocation. For apps that do not integrate with
+318            Google Sign-In, this service will never be started.
+319        -->
+320        <service
+320-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:33:9-37:51
+321            android:name="com.google.android.gms.auth.api.signin.RevocationBoundService"
+321-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:34:13-89
+322            android:exported="true"
+322-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:35:13-36
+323            android:permission="com.google.android.gms.auth.api.signin.permission.REVOCATION_NOTIFICATION"
+323-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:36:13-107
+324            android:visibleToInstantApps="true" />
+324-->[com.google.android.gms:play-services-auth:21.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\cc4e091bee9d5615ca5ab0d4cf1cc0d6\transformed\play-services-auth-21.4.0\AndroidManifest.xml:37:13-48
+325
+326        <receiver
+326-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:29:9-40:20
+327            android:name="com.google.firebase.iid.FirebaseInstanceIdReceiver"
+327-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:30:13-78
+328            android:exported="true"
+328-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:31:13-36
+329            android:permission="com.google.android.c2dm.permission.SEND" >
+329-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:32:13-73
+330            <intent-filter>
+330-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:33:13-35:29
+331                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+331-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:34:17-81
+331-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:34:25-78
+332            </intent-filter>
+333
+334            <meta-data
+334-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:37:13-39:40
+335                android:name="com.google.android.gms.cloudmessaging.FINISHED_AFTER_HANDLED"
+335-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:38:17-92
+336                android:value="true" />
+336-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:39:17-37
+337        </receiver>
+338        <!--
+339             FirebaseMessagingService performs security checks at runtime,
+340             but set to not exported to explicitly avoid allowing another app to call it.
+341        -->
+342        <service
+342-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:46:9-53:19
+343            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+343-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:47:13-82
+344            android:directBootAware="true"
+344-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:48:13-43
+345            android:exported="false" >
+345-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:49:13-37
+346            <intent-filter android:priority="-500" >
+346-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:11:13-13:29
+347                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+347-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:12:17-78
+347-->[:capacitor-push-notifications] D:\coding\clipper_agent\android\.release-build-v8\_capacitor-push-notifications\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml:12:25-75
+348            </intent-filter>
+349        </service>
+350        <service
+350-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:54:9-63:19
+351            android:name="com.google.firebase.components.ComponentDiscoveryService"
+351-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:55:13-84
+352            android:directBootAware="true"
+352-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:32:13-43
+353            android:exported="false" >
+353-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:56:13-37
+354            <meta-data
+354-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:57:13-59:85
+355                android:name="com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingKtxRegistrar"
+355-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:58:17-122
+356                android:value="com.google.firebase.components.ComponentRegistrar" />
+356-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:59:17-82
+357            <meta-data
+357-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:60:13-62:85
+358                android:name="com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingRegistrar"
+358-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:61:17-119
+359                android:value="com.google.firebase.components.ComponentRegistrar" />
+359-->[com.google.firebase:firebase-messaging:25.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\fa99cba005686cbd31b744231b6e311d\transformed\firebase-messaging-25.0.1\AndroidManifest.xml:62:17-82
+360            <meta-data
+360-->[com.google.firebase:firebase-installations:18.0.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\21242a0eac773cd92a70b67e0ed39c51\transformed\firebase-installations-18.0.0\AndroidManifest.xml:15:13-17:85
+361                android:name="com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsKtxRegistrar"
+361-->[com.google.firebase:firebase-installations:18.0.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\21242a0eac773cd92a70b67e0ed39c51\transformed\firebase-installations-18.0.0\AndroidManifest.xml:16:17-130
+362                android:value="com.google.firebase.components.ComponentRegistrar" />
+362-->[com.google.firebase:firebase-installations:18.0.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\21242a0eac773cd92a70b67e0ed39c51\transformed\firebase-installations-18.0.0\AndroidManifest.xml:17:17-82
+363            <meta-data
+363-->[com.google.firebase:firebase-installations:18.0.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\21242a0eac773cd92a70b67e0ed39c51\transformed\firebase-installations-18.0.0\AndroidManifest.xml:18:13-20:85
+364                android:name="com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsRegistrar"
+364-->[com.google.firebase:firebase-installations:18.0.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\21242a0eac773cd92a70b67e0ed39c51\transformed\firebase-installations-18.0.0\AndroidManifest.xml:19:17-127
+365                android:value="com.google.firebase.components.ComponentRegistrar" />
+365-->[com.google.firebase:firebase-installations:18.0.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\21242a0eac773cd92a70b67e0ed39c51\transformed\firebase-installations-18.0.0\AndroidManifest.xml:20:17-82
+366            <meta-data
+366-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:35:13-37:85
+367                android:name="com.google.firebase.components:com.google.firebase.FirebaseCommonKtxRegistrar"
+367-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:36:17-109
+368                android:value="com.google.firebase.components.ComponentRegistrar" />
+368-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:37:17-82
+369            <meta-data
+369-->[com.google.firebase:firebase-datatransport:18.2.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\150b8ca2614ed0f908197a3d9962e719\transformed\firebase-datatransport-18.2.0\AndroidManifest.xml:25:13-27:85
+370                android:name="com.google.firebase.components:com.google.firebase.datatransport.TransportRegistrar"
+370-->[com.google.firebase:firebase-datatransport:18.2.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\150b8ca2614ed0f908197a3d9962e719\transformed\firebase-datatransport-18.2.0\AndroidManifest.xml:26:17-115
+371                android:value="com.google.firebase.components.ComponentRegistrar" />
+371-->[com.google.firebase:firebase-datatransport:18.2.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\150b8ca2614ed0f908197a3d9962e719\transformed\firebase-datatransport-18.2.0\AndroidManifest.xml:27:17-82
+372        </service>
+373
+374        <meta-data
+374-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:22:9-24:37
+375            android:name="com.google.android.play.billingclient.version"
+375-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:23:13-73
+376            android:value="8.3.0" />
+376-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:24:13-34
+377
+378        <activity
+378-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:26:9-30:75
+379            android:name="com.android.billingclient.api.ProxyBillingActivity"
+379-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:27:13-78
+380            android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
+380-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:28:13-96
+381            android:exported="false"
+381-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:29:13-37
+382            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+382-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:30:13-72
+383        <activity
+383-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:31:9-35:75
+384            android:name="com.android.billingclient.api.ProxyBillingActivityV2"
+384-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:32:13-80
+385            android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
+385-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:33:13-96
+386            android:exported="false"
+386-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:34:13-37
+387            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+387-->[com.android.billingclient:billing:8.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\5241df4e6d1ef0687c431eedbe80777a\transformed\billing-8.3.0\AndroidManifest.xml:35:13-72
+388        <activity
+388-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e9d5192a30d04282aff0a173bf9c0753\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:9-173
+389            android:name="com.google.android.gms.common.api.GoogleApiActivity"
+389-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e9d5192a30d04282aff0a173bf9c0753\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:19-85
+390            android:exported="false"
+390-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e9d5192a30d04282aff0a173bf9c0753\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:146-170
+391            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+391-->[com.google.android.gms:play-services-base:18.5.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e9d5192a30d04282aff0a173bf9c0753\transformed\play-services-base-18.5.0\AndroidManifest.xml:5:86-145
+392
+393        <provider
+393-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:23:9-28:39
+394            android:name="com.google.firebase.provider.FirebaseInitProvider"
+394-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:24:13-77
+395            android:authorities="com.rclipper.app.firebaseinitprovider"
+395-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:25:13-72
+396            android:directBootAware="true"
+396-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:26:13-43
+397            android:exported="false"
+397-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:27:13-37
+398            android:initOrder="100" />
+398-->[com.google.firebase:firebase-common:22.0.1] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\75a3b0127b259b9c5da6e2edfb69a3fd\transformed\firebase-common-22.0.1\AndroidManifest.xml:28:13-36
+399        <provider
+399-->[androidx.emoji2:emoji2:1.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\7af4a3b0db834bb692032a4cdda125e0\transformed\emoji2-1.3.0\AndroidManifest.xml:24:9-32:20
+400            android:name="androidx.startup.InitializationProvider"
+400-->[androidx.emoji2:emoji2:1.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\7af4a3b0db834bb692032a4cdda125e0\transformed\emoji2-1.3.0\AndroidManifest.xml:25:13-67
+401            android:authorities="com.rclipper.app.androidx-startup"
+401-->[androidx.emoji2:emoji2:1.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\7af4a3b0db834bb692032a4cdda125e0\transformed\emoji2-1.3.0\AndroidManifest.xml:26:13-68
+402            android:exported="false" >
+402-->[androidx.emoji2:emoji2:1.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\7af4a3b0db834bb692032a4cdda125e0\transformed\emoji2-1.3.0\AndroidManifest.xml:27:13-37
+403            <meta-data
+403-->[androidx.emoji2:emoji2:1.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\7af4a3b0db834bb692032a4cdda125e0\transformed\emoji2-1.3.0\AndroidManifest.xml:29:13-31:52
+404                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+404-->[androidx.emoji2:emoji2:1.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\7af4a3b0db834bb692032a4cdda125e0\transformed\emoji2-1.3.0\AndroidManifest.xml:30:17-75
+405                android:value="androidx.startup" />
+405-->[androidx.emoji2:emoji2:1.3.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\7af4a3b0db834bb692032a4cdda125e0\transformed\emoji2-1.3.0\AndroidManifest.xml:31:17-49
+406            <meta-data
+406-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\59c34840d098ad2f8be2178d1a865a49\transformed\lifecycle-process-2.6.2\AndroidManifest.xml:29:13-31:52
+407                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+407-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\59c34840d098ad2f8be2178d1a865a49\transformed\lifecycle-process-2.6.2\AndroidManifest.xml:30:17-78
+408                android:value="androidx.startup" />
+408-->[androidx.lifecycle:lifecycle-process:2.6.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\59c34840d098ad2f8be2178d1a865a49\transformed\lifecycle-process-2.6.2\AndroidManifest.xml:31:17-49
+409            <meta-data
+409-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:29:13-31:52
+410                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+410-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:30:17-85
+411                android:value="androidx.startup" />
+411-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:31:17-49
+412        </provider>
+413        <!--
+414        Service for holding metadata. Cannot be instantiated.
+415        Metadata will be merged from other manifests.
+416        -->
+417        <service
+417-->[androidx.camera:camera-core:1.4.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e3ab39ceedaec5aa711917ea5ccf4cc2\transformed\camera-core-1.4.2\AndroidManifest.xml:29:9-33:78
+418            android:name="androidx.camera.core.impl.MetadataHolderService"
+418-->[androidx.camera:camera-core:1.4.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e3ab39ceedaec5aa711917ea5ccf4cc2\transformed\camera-core-1.4.2\AndroidManifest.xml:30:13-75
+419            android:enabled="false"
+419-->[androidx.camera:camera-core:1.4.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e3ab39ceedaec5aa711917ea5ccf4cc2\transformed\camera-core-1.4.2\AndroidManifest.xml:31:13-36
+420            android:exported="false" />
+420-->[androidx.camera:camera-core:1.4.2] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\e3ab39ceedaec5aa711917ea5ccf4cc2\transformed\camera-core-1.4.2\AndroidManifest.xml:32:13-37
+421
+422        <receiver
+422-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:34:9-52:20
+423            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+423-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:35:13-76
+424            android:directBootAware="false"
+424-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:36:13-44
+425            android:enabled="true"
+425-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:37:13-35
+426            android:exported="true"
+426-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:38:13-36
+427            android:permission="android.permission.DUMP" >
+427-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:39:13-57
+428            <intent-filter>
+428-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:40:13-42:29
+429                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+429-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:41:17-91
+429-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:41:25-88
+430            </intent-filter>
+431            <intent-filter>
+431-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:43:13-45:29
+432                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+432-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:44:17-85
+432-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:44:25-82
+433            </intent-filter>
+434            <intent-filter>
+434-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:46:13-48:29
+435                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+435-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:47:17-88
+435-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:47:25-85
+436            </intent-filter>
+437            <intent-filter>
+437-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:49:13-51:29
+438                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+438-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:50:17-95
+438-->[androidx.profileinstaller:profileinstaller:1.4.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\9f26f79230f359438a8fc5a31e0159cb\transformed\profileinstaller-1.4.0\AndroidManifest.xml:50:25-92
+439            </intent-filter>
+440        </receiver>
+441
+442        <meta-data
+442-->[com.google.android.gms:play-services-basement:18.9.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\79a11e6f03c72af4e23c4d8a3e29b30c\transformed\play-services-basement-18.9.0\AndroidManifest.xml:21:9-23:69
+443            android:name="com.google.android.gms.version"
+443-->[com.google.android.gms:play-services-basement:18.9.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\79a11e6f03c72af4e23c4d8a3e29b30c\transformed\play-services-basement-18.9.0\AndroidManifest.xml:22:13-58
+444            android:value="@integer/google_play_services_version" />
+444-->[com.google.android.gms:play-services-basement:18.9.0] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\79a11e6f03c72af4e23c4d8a3e29b30c\transformed\play-services-basement-18.9.0\AndroidManifest.xml:23:13-66
+445
+446        <service
+446-->[com.google.android.datatransport:transport-backend-cct:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\73c831053367dcec56bb733488e4cf23\transformed\transport-backend-cct-3.1.9\AndroidManifest.xml:28:9-34:19
+447            android:name="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery"
+447-->[com.google.android.datatransport:transport-backend-cct:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\73c831053367dcec56bb733488e4cf23\transformed\transport-backend-cct-3.1.9\AndroidManifest.xml:29:13-103
+448            android:exported="false" >
+448-->[com.google.android.datatransport:transport-backend-cct:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\73c831053367dcec56bb733488e4cf23\transformed\transport-backend-cct-3.1.9\AndroidManifest.xml:30:13-37
+449            <meta-data
+449-->[com.google.android.datatransport:transport-backend-cct:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\73c831053367dcec56bb733488e4cf23\transformed\transport-backend-cct-3.1.9\AndroidManifest.xml:31:13-33:39
+450                android:name="backend:com.google.android.datatransport.cct.CctBackendFactory"
+450-->[com.google.android.datatransport:transport-backend-cct:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\73c831053367dcec56bb733488e4cf23\transformed\transport-backend-cct-3.1.9\AndroidManifest.xml:32:17-94
+451                android:value="cct" />
+451-->[com.google.android.datatransport:transport-backend-cct:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\73c831053367dcec56bb733488e4cf23\transformed\transport-backend-cct-3.1.9\AndroidManifest.xml:33:17-36
+452        </service>
+453        <service
+453-->[com.google.android.datatransport:transport-runtime:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0f1000cf4a4c6e8798f62b9be56744da\transformed\transport-runtime-3.1.9\AndroidManifest.xml:26:9-30:19
+454            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService"
+454-->[com.google.android.datatransport:transport-runtime:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0f1000cf4a4c6e8798f62b9be56744da\transformed\transport-runtime-3.1.9\AndroidManifest.xml:27:13-117
+455            android:exported="false"
+455-->[com.google.android.datatransport:transport-runtime:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0f1000cf4a4c6e8798f62b9be56744da\transformed\transport-runtime-3.1.9\AndroidManifest.xml:28:13-37
+456            android:permission="android.permission.BIND_JOB_SERVICE" >
+456-->[com.google.android.datatransport:transport-runtime:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0f1000cf4a4c6e8798f62b9be56744da\transformed\transport-runtime-3.1.9\AndroidManifest.xml:29:13-69
+457        </service>
+458
+459        <receiver
+459-->[com.google.android.datatransport:transport-runtime:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0f1000cf4a4c6e8798f62b9be56744da\transformed\transport-runtime-3.1.9\AndroidManifest.xml:32:9-34:40
+460            android:name="com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver"
+460-->[com.google.android.datatransport:transport-runtime:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0f1000cf4a4c6e8798f62b9be56744da\transformed\transport-runtime-3.1.9\AndroidManifest.xml:33:13-132
+461            android:exported="false" />
+461-->[com.google.android.datatransport:transport-runtime:3.1.9] C:\Users\CodexSandboxOffline\.gradle\caches\8.14.3\transforms\0f1000cf4a4c6e8798f62b9be56744da\transformed\transport-runtime-3.1.9\AndroidManifest.xml:34:13-37
+462    </application>
+463
+464</manifest>

@@ -1,0 +1,46 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    xmlns:tools="http://schemas.android.com/tools"
+4    package="ee.forgr.capacitor.social.login" >
+5
+6    <uses-sdk android:minSdkVersion="24" />
+7
+8    <uses-permission android:name="android.permission.USE_CREDENTIALS" />
+8-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:3:5-74
+8-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:3:22-71
+9    <uses-permission android:name="android.permission.INTERNET" />
+9-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:4:5-66
+9-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:4:22-64
+10
+11    <application>
+11-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:6:5-20:19
+12        <provider
+12-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:7:9-11:35
+13            android:name="com.facebook.internal.FacebookInitProvider"
+13-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:8:13-70
+14            android:authorities="${applicationId}.FacebookInitProvider"
+14-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:9:13-72
+15            android:exported="false"
+15-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:10:13-37
+16            tools:node="remove" />
+16-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:11:13-32
+17
+18        <activity
+18-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:12:9-15:84
+19            android:name="ee.forgr.capacitor.social.login.TwitterLoginActivity"
+19-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:13:13-80
+20            android:exported="false"
+20-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:14:13-37
+21            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+21-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:15:13-81
+22        <activity
+22-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:16:9-19:84
+23            android:name="ee.forgr.capacitor.social.login.OAuth2LoginActivity"
+23-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:17:13-79
+24            android:exported="false"
+24-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:18:13-37
+25            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar" />
+25-->D:\coding\clipper_agent\node_modules\@capgo\capacitor-social-login\android\src\main\AndroidManifest.xml:19:13-81
+26    </application>
+27
+28</manifest>

@@ -1,5 +1,5 @@
-Closed testing update 1.0.6
+RClipper update 1.0.7
 
-- Improved Google and Apple sign-in reliability.
-- Fixed permission handling on mobile devices.
-- Included general stability improvements for tester feedback.
+- Improved upload reliability and fixed file-count validation.
+- Improved consent controls and agreement confirmation.
+- Clarified how AI providers process submitted content.

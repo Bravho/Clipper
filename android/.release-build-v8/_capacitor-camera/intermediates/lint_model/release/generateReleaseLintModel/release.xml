@@ -1,0 +1,31 @@
+<variant
+    name="release"
+    package="com.capacitorjs.plugins.camera"
+    minSdkVersion="24"
+    targetSdkVersion="36.0"
+    mergedManifest="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\merged_manifest\release\processReleaseManifest\AndroidManifest.xml"
+    manifestMergeReport="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\outputs\logs\manifest-merger-release-report.txt"
+    proguardFiles="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\default_proguard_files\global\proguard-android-optimize.txt-8.13.2;proguard-rules.pro"
+    partialResultsDir="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\lint_partial_results\release\lintAnalyzeRelease\out">
+  <buildFeatures
+      namespacing="REQUIRED"/>
+  <sourceProviders>
+    <sourceProvider
+        manifests="src\main\AndroidManifest.xml"
+        javaDirectories="src\main\java;src\release\java;src\main\kotlin;src\release\kotlin"
+        resDirectories="src\main\res;src\release\res"
+        assetsDirectories="src\main\assets;src\release\assets"/>
+  </sourceProviders>
+  <testSourceProviders>
+  </testSourceProviders>
+  <testFixturesSourceProviders>
+  </testFixturesSourceProviders>
+  <artifact
+      classOutputs="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\javac\release\compileReleaseJavaWithJavac\classes;D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\tmp\kotlin-classes\release;D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\intermediates\compile_r_class_jar\release\generateReleaseRFile\R.jar"
+      type="MAIN"
+      applicationId="com.capacitorjs.plugins.camera"
+      generatedSourceFolders="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\generated\ap_generated_sources\release\out"
+      generatedResourceFolders="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera\generated\res\resValues\release"
+      desugaredMethodsFiles="C:\Users\Tho\.gradle\caches\8.14.3\transforms\0d2f5d244d105bd9df55300a35d78a89\transformed\D8BackportedDesugaredMethods.txt">
+  </artifact>
+</variant>

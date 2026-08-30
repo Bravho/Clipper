@@ -1,0 +1,18 @@
+<lint-module
+    format="1"
+    dir="D:\coding\clipper_agent\node_modules\@capacitor\camera\android"
+    name=":capacitor-camera"
+    type="LIBRARY"
+    maven="android:capacitor-camera:unspecified"
+    agpVersion="8.13.2"
+    buildFolder="D:\coding\clipper_agent\android\.release-build-v8\_capacitor-camera"
+    bootClassPath="C:\Users\Tho\AppData\Local\Android\Sdk\platforms\android-36\android.jar;C:\Users\Tho\AppData\Local\Android\Sdk\build-tools\36.1.0\core-lambda-stubs.jar"
+    javaSourceLevel="21"
+    compileTarget="android-36"
+    neverShrinking="true">
+  <lintOptions
+      absolutePaths="true"
+      checkReleaseBuilds="true"
+      explainIssues="true"/>
+  <variant name="release"/>
+</lint-module>
