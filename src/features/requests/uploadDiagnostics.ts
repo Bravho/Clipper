@@ -173,6 +173,14 @@ export async function envSnapshot(): Promise<string> {
 export interface MonitoredFile {
   id: string;
   file: File;
+  /**
+   * True once this file's bytes have been copied into origin-private storage.
+   * The OS reference may then die at any time — backgrounding the app reliably
+   * kills every one of them — without affecting the upload, which reads the
+   * copy. Recorded so the timeline distinguishes "a handle died and the upload
+   * is now doomed" from "a handle died and nothing depends on it any more".
+   */
+  snapshotted?: boolean;
 }
 
 /**
@@ -206,24 +214,30 @@ export function startHandleMonitor(
       if (files.length === 0) return;
 
       let alive = 0;
+      let deadButProtected = 0;
       const newlyDead: string[] = [];
-      for (const { id, file } of files) {
+      for (const { id, file, snapshotted } of files) {
         if (dead.has(id)) continue;
         try {
           await file.slice(0, Math.min(PROBE_BYTES, file.size)).arrayBuffer();
           alive += 1;
         } catch (err) {
           dead.add(id);
-          newlyDead.push(`${file.name} [${describeError(err)}]`);
+          if (snapshotted) deadButProtected += 1;
+          newlyDead.push(
+            `${file.name}${snapshotted ? " [snapshotted — upload unaffected]" : ""} [${describeError(err)}]`
+          );
         }
       }
 
       if (newlyDead.length > 0) {
         // The headline event. How MANY died at once is the discriminator:
         // several at once is a process-wide reclaim, one at a time is not.
+        // `protected` says how many of them no longer matter.
         diagLog(
           "HANDLES-DIED",
-          `${newlyDead.length} died · ${alive}/${files.length} still readable · ` +
+          `${newlyDead.length} died (${deadButProtected} protected by a snapshot) · ` +
+            `${alive}/${files.length} still readable · ` +
             `visibility=${document.visibilityState} · ${newlyDead.join(" | ")}`
         );
       } else {

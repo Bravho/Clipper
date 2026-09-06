@@ -56,6 +56,15 @@ import {
   startHandleMonitor,
   watchPageLifecycle,
 } from "@/features/requests/uploadDiagnostics";
+import {
+  createSnapshot,
+  deleteSnapshot,
+  readSnapshotRange,
+  snapshotFile,
+  snapshotsSupported,
+  sweepStaleSnapshots,
+  type FileSnapshot,
+} from "@/features/requests/fileSnapshot";
 
 const GoogleMapLocationPicker = dynamic(() =>
   import("@/features/requests/components/GoogleMapLocationPicker").then(
@@ -66,6 +75,14 @@ const GoogleMapLocationPicker = dynamic(() =>
 interface PendingFile {
   id: string;
   file: File;
+  /**
+   * Origin-owned copy of this file's bytes, taken at selection (see
+   * features/requests/fileSnapshot.ts). Present on every file once the copy
+   * finishes; `null` when OPFS is unavailable or the copy could not be made, in
+   * which case reads fall back to `file` and the old fragility returns for that
+   * one file only.
+   */
+  snapshot?: FileSnapshot | null;
   /** Blocking problem — the file is excluded from upload until the user acts. */
   error?: string;
   /**
@@ -117,6 +134,12 @@ interface NewRequestFormProps {
   uploadedAssets?: ResumeUploadedAsset[];
 }
 
+/** Shown when a file's bytes cannot be read at the moment it is picked — a
+ *  cloud/SD placeholder, or a reference that was already stale. Re-picking is
+ *  the only cure, and it costs nothing at this point. */
+const UNREADABLE_AT_SELECT_MESSAGE =
+  "อ่านไฟล์นี้ไม่สำเร็จ (ไฟล์อาจไม่ได้อยู่ในเครื่อง) กรุณาเปิดไฟล์ในแกลเลอรีให้ดาวน์โหลดลงเครื่องก่อน แล้วเลือกใหม่";
+
 const MAX_IMAGE_SIZE_MB = MAX_IMAGE_SIZE_BYTES / (1024 * 1024);
 const MAX_VIDEO_SIZE_MB = MAX_VIDEO_SIZE_BYTES / (1024 * 1024);
 const MAX_UPLOAD_SIZE_MB = Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024));
@@ -155,6 +178,24 @@ function queueFilePrep<T>(task: () => Promise<T>): Promise<T> {
   const run = videoProbeChain.then(task, task);
   // Never let one rejection poison the chain for every later probe.
   videoProbeChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+/**
+ * Serialise the byte copies, for the same reason `queueFilePrep` serialises
+ * decodes: seven concurrent 8 MB-chunked OPFS writers on a phone means seven
+ * live 8 MB buffers plus seven writable streams, and the WebView renderer is
+ * already the constrained process here. One at a time keeps peak heap at one
+ * chunk and finishes a batch no slower — the bottleneck is storage, not
+ * concurrency.
+ */
+let snapshotChain: Promise<unknown> = Promise.resolve();
+function queueSnapshot<T>(task: () => Promise<T>): Promise<T> {
+  const run = snapshotChain.then(task, task);
+  snapshotChain = run.then(
     () => undefined,
     () => undefined
   );
@@ -467,8 +508,38 @@ class FileUnreadableError extends Error {
   }
 }
 
-async function materializeRange(file: File, start: number, end: number): Promise<Blob> {
+/**
+ * Anything that can supply upload bytes: the OS reference the picker returned,
+ * plus (normally) the origin-owned copy taken at selection. `PendingFile`
+ * satisfies this structurally, so call sites pass the item itself.
+ */
+interface ByteSource {
+  file: File;
+  snapshot?: FileSnapshot | null;
+}
+
+async function materializeRange(source: ByteSource, start: number, end: number): Promise<Blob> {
+  const { file, snapshot } = source;
   try {
+    // PREFERRED PATH. OPFS bytes belong to this web origin: no SAF grant to
+    // lapse, no MediaProvider to re-stat or transcode them, no `(size,
+    // lastModified)` re-validation to fail. This read cannot die the way the
+    // one below can, which is the entire point of taking the snapshot.
+    if (snapshot) {
+      try {
+        const buf = await (await readSnapshotRange(snapshot, start, end)).arrayBuffer();
+        return new Blob([buf], { type: file.type });
+      } catch (snapshotErr) {
+        // The copy is gone — evicted under storage pressure, or swept by
+        // another tab. Fall through to the OS reference rather than failing:
+        // that is the pre-snapshot behaviour, which is worse but not nothing,
+        // and it may well still be alive.
+        diagLog(
+          "SNAPSHOT-READ-FAIL",
+          `${file.name} bytes=${start}-${end} ${describeError(snapshotErr)} — falling back to the OS reference`
+        );
+      }
+    }
     const buf = await file.slice(start, end).arrayBuffer();
     return new Blob([buf], { type: file.type });
   } catch (err) {
@@ -487,8 +558,8 @@ async function materializeRange(file: File, start: number, end: number): Promise
 
 /** Whole-file variant. Only ever used for files below MULTIPART_THRESHOLD_BYTES
  *  (5 MB), which upload in a single PUT — larger files go part by part. */
-async function materializeFile(file: File): Promise<Blob> {
-  return materializeRange(file, 0, file.size);
+async function materializeFile(source: ByteSource): Promise<Blob> {
+  return materializeRange(source, 0, source.file.size);
 }
 
 /** Bytes read at selection to prove a file is actually present on the device.
@@ -618,6 +689,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
   const router = useRouter();
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  /** In-flight byte copies, keyed by PendingFile id. The decode probe awaits its
+   *  own entry so it never races ahead of the copy it is meant to read. */
+  const snapshotTasksRef = useRef<Map<string, Promise<FileSnapshot | null>>>(new Map());
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isDraftSaving, setIsDraftSaving] = useState(false);
@@ -906,14 +980,52 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
               f.id === item.id
                 ? {
                     ...f,
-                    error:
-                      "อ่านไฟล์นี้ไม่สำเร็จ (ไฟล์อาจไม่ได้อยู่ในเครื่อง) กรุณาเปิดไฟล์ในแกลเลอรีให้ดาวน์โหลดลงเครื่องก่อน แล้วเลือกใหม่",
+                    error: UNREADABLE_AT_SELECT_MESSAGE,
                   }
                 : f
             )
           );
         }
       );
+    }
+
+    // THE FIX for "some clips can never be uploaded". Copy every accepted file
+    // into origin-private storage NOW, while the picker's reference is still
+    // young, and treat that copy as the file from here on — the probe below and
+    // every part PUT read it, and the OS reference is never touched again.
+    //
+    // This has to come before the decode probes, not after: the probes are one
+    // of the things that can kill a reference (a media pipeline that errors out
+    // takes the backing handle down with it), and a snapshot taken after that
+    // has nothing left to copy.
+    if (!snapshotsSupported()) {
+      diagLog("SNAPSHOT-UNSUPPORTED", "no OPFS in this WebView — uploading from the OS reference");
+    }
+    const snapshotByItem = new Map<string, Promise<FileSnapshot | null>>();
+    for (const item of newItems) {
+      if (item.error) continue;
+      const task = queueSnapshot(() => createSnapshot(item.id, item.file)).then(
+        (snapshot) => {
+          if (snapshot) {
+            setPendingFiles((prev) =>
+              prev.map((f) => (f.id === item.id ? { ...f, snapshot } : f))
+            );
+          }
+          return snapshot;
+        },
+        (err) => {
+          // createSnapshot only rejects when the SOURCE is already unreadable.
+          // Surface it here, at selection, where re-picking is free — rather
+          // than after the user has waited through the rest of the batch.
+          console.error(`[upload] snapshot of ${item.file.name} failed at selection:`, err);
+          setPendingFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, error: UNREADABLE_AT_SELECT_MESSAGE } : f))
+          );
+          return null;
+        }
+      );
+      snapshotByItem.set(item.id, task);
+      snapshotTasksRef.current.set(item.id, task);
     }
 
     // Images: an object URL is enough, and costs no decoder.
@@ -942,7 +1054,36 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
       const task = queueFilePrep(async () => {
         const at = Date.now();
-        const { durationSeconds, poster } = await probeVideo(item.file);
+
+        // Decode the COPY, not the original.
+        //
+        // Handing a `content://`-backed File to a media element is what killed
+        // the handles: Chromium opens the file through the Android media
+        // pipeline, and when that pipeline errors out — which it does instantly
+        // for HEVC, what OPPO/OnePlus cameras record by default — it drops the
+        // backing handle with it. Every later `slice().arrayBuffer()` on that
+        // File then throws NotReadableError, permanently, with nothing to retry
+        // against. Decoding the OPFS copy puts the original completely out of
+        // reach of the decoder, so a clip the WebView cannot decode costs a
+        // poster frame and nothing else.
+        const snapshot = await snapshotByItem.get(item.id);
+        if (!snapshot && snapshotsSupported()) {
+          // A copy was expected and there isn't one — the source was already
+          // unreadable, or storage refused the batch. Do NOT decode the
+          // original as a consolation: that is the exact move that killed these
+          // files, and it would be spent on the files least able to afford it.
+          //
+          // The length check falls to the server's ffprobe, which is
+          // authoritative anyway; the badge just makes an eventual rejection
+          // unsurprising rather than mysterious.
+          diagLog("PROBE-SKIP", `${item.file.name} (no snapshot to decode)`);
+          setPendingFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, durationUnverified: true } : f))
+          );
+          return;
+        }
+        const decodeSource = snapshot ? await snapshotFile(snapshot) : item.file;
+        const { durationSeconds, poster } = await probeVideo(decodeSource);
         diagLog(
           "PROBE",
           `${item.file.name} ` +
@@ -950,15 +1091,30 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             `poster=${poster ? "yes" : "no"} (${Date.now() - at}ms)`
         );
 
-        // Computed outside the updater: a state updater can be invoked more than
-        // once (StrictMode), and createObjectURL inside it would leak a URL on
-        // every extra call.
-        const preview = poster ?? URL.createObjectURL(item.file);
-        setPreviews((prev) => {
-          const previous = prev[item.id];
-          if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
-          return { ...prev, [item.id]: preview };
-        });
+        // A failed poster grab means NO PREVIEW — never an object URL of the
+        // clip itself.
+        //
+        // That fallback was the bug. `previews[id]` starting with "blob:" is
+        // what makes the grid render a live <video> instead of an <img>, so
+        // every clip whose poster failed got a real media element mounted for
+        // the lifetime of the form, loading metadata and seeking, on a file the
+        // decoder had ALREADY proven it could not handle. Those elements are
+        // unbounded and permanent, which defeats the whole point of the serial
+        // probe queue, and each failing pipeline takes its file's handle down
+        // with it. In the field this reproduced exactly: the four clips that
+        // logged `poster=no` at t=1.1s were the same four that logged
+        // HANDLES-DIED at t=10.5s, while the three with real posters uploaded
+        // fine.
+        //
+        // A clip with no poster now shows a static placeholder. Nothing decodes
+        // it again, and its bytes stay readable.
+        if (poster) {
+          setPreviews((prev) => {
+            const previous = prev[item.id];
+            if (previous?.startsWith("blob:")) URL.revokeObjectURL(previous);
+            return { ...prev, [item.id]: poster };
+          });
+        }
 
         const tooLong = validateClipDuration(durationSeconds);
         if (tooLong) {
@@ -1000,6 +1156,11 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
       return next;
     });
     prepTasksRef.current.delete(id);
+    snapshotTasksRef.current.delete(id);
+    // Reclaim the origin storage now rather than waiting for the stale sweep —
+    // a user swapping clips in and out of a 500 MB batch would otherwise pile
+    // up copies of files that are no longer in the request.
+    void deleteSnapshot(id);
     diagLog("REMOVE", id);
   };
 
@@ -1039,12 +1200,18 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   // The measurement this build exists for: poll every picked file for
   // readability, timestamping the moment each one dies, alongside the page
   // lifecycle events that are the candidate triggers. See uploadDiagnostics.
+  // Copies from a session that was force-killed mid-upload would otherwise sit
+  // in origin storage for ever. Age-based, so a form open elsewhere keeps its own.
+  useEffect(() => {
+    void sweepStaleSnapshots();
+  }, []);
+
   useEffect(() => {
     const stopLifecycle = watchPageLifecycle();
     const stopMonitor = startHandleMonitor(() =>
       pendingFilesRef.current
         .filter((f) => !f.error && !f.rejected)
-        .map((f) => ({ id: f.id, file: f.file }))
+        .map((f) => ({ id: f.id, file: f.file, snapshotted: Boolean(f.snapshot) }))
     );
     return () => {
       stopLifecycle();
@@ -1181,7 +1348,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     // Read the bytes into memory immediately before the PUT, detached from the
     // on-disk file. This path only ever handles files under
     // MULTIPART_THRESHOLD_BYTES (5 MB), so the whole file is safe to hold.
-    const body = await materializeFile(item.file);
+    const body = await materializeFile(item);
     console.info(`[upload] ${ctx} → ${hostOf(presignedUrl)} — ${connInfo()}`);
     await withNetworkRetry(
       () =>
@@ -1377,7 +1544,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
             // the bytes are detached from disk moments before the PUT so the
             // send-time ERR_UPLOAD_FILE_CHANGED re-validation has nothing to check.
             const chunk = await materializeRange(
-              item.file,
+              item,
               start,
               Math.min(start + partSize, item.file.size)
             );
@@ -1505,11 +1672,31 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     if (prepTasksRef.current.size > 0) {
       await Promise.allSettled([...prepTasksRef.current.values()]);
     }
+
+    // And let the byte copies finish. Submitting while a copy is still running
+    // would upload that file straight from the OS reference — the fragile path
+    // this whole mechanism exists to avoid — and a user who taps submit the
+    // moment the picker closes is the norm, not the exception.
+    const snapshotById = new Map<string, FileSnapshot>();
+    await Promise.all(
+      [...snapshotTasksRef.current.entries()].map(async ([id, task]) => {
+        const snapshot = await task.catch(() => null);
+        if (snapshot) snapshotById.set(id, snapshot);
+      })
+    );
+
     // `rejected` files are excluded alongside `error` ones: the server has
     // already refused these exact bytes on a business rule, so a retry would
     // re-upload the whole clip only to be refused again. Skipping them is what
     // lets the retry button finish the files that CAN succeed.
-    const uploadItems = pendingFiles.filter((f) => !f.error && !f.rejected);
+    //
+    // The snapshot is re-attached from the map rather than trusted to be on the
+    // item already: `setPendingFiles` is asynchronous, so a copy that finished
+    // microseconds ago may not have reached this closure's state yet. Reading it
+    // from the tasks themselves makes the upload independent of React timing.
+    const uploadItems = pendingFiles
+      .filter((f) => !f.error && !f.rejected)
+      .map((f) => (f.snapshot ? f : { ...f, snapshot: snapshotById.get(f.id) ?? null }));
     diagLog("SUBMIT", `${uploadItems.length} file(s) queued for upload`);
 
     // Reconcile with the server: skip any file whose name+size is already an
@@ -1814,6 +2001,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
     clearDraftPersistence(requestId);
     draftIdRef.current = null;
+    // The bytes are on the server now; the local copies have no further use.
+    for (const key of snapshotTasksRef.current.keys()) void deleteSnapshot(key);
+    snapshotTasksRef.current.clear();
     router.push(requestDetailPath(requestId));
   };
 
@@ -2462,32 +2652,47 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
                       : "border-slate-200 bg-white"
                 }`}
               >
+                {/*
+                  STATIC PREVIEWS ONLY — never a <video> element.
+
+                  This used to render a live <video> whenever the preview was a
+                  blob: URL, which was the case for exactly those clips whose
+                  poster grab had failed. So the files the decoder had already
+                  rejected were the ones handed straight back to it, in a
+                  mounted element that stayed alive for the whole form and kept
+                  loading and seeking. Chromium drops a file's backing handle
+                  when that pipeline fails, which is what made those clips
+                  permanently unreadable — no retry could ever help, because the
+                  bytes were gone before the first PUT.
+
+                  A video preview is now always a data: URL poster captured once
+                  by probeVideo, or nothing. Formats the WebView cannot decode
+                  (HEVC, the OPPO/OnePlus camera default) simply show the
+                  placeholder; they still upload, and the server measures their
+                  length authoritatively.
+                */}
                 <div className="flex aspect-square items-center justify-center bg-slate-50">
-                  {previews[item.id]?.startsWith("blob:") &&
-                  item.file.type.startsWith("video/") ? (
-                    <video
-                      src={previews[item.id]}
-                      className="h-full w-full object-cover"
-                      preload="metadata"
-                      muted
-                      playsInline
-                      onLoadedMetadata={(event) => {
-                        try {
-                          event.currentTarget.currentTime = Math.min(
-                            0.1,
-                            event.currentTarget.duration / 2
-                          );
-                        } catch {
-                          // The first frame remains a valid fallback.
-                        }
-                      }}
-                    />
-                  ) : previews[item.id] ? (
+                  {previews[item.id] ? (
                     <img
                       src={previews[item.id]}
                       alt={item.file.name}
                       className="h-full w-full object-cover"
                     />
+                  ) : item.file.type.startsWith("video/") ? (
+                    <svg
+                      className="h-10 w-10 text-slate-300"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.5}
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M3.75 4.5h16.5v15H3.75zM3.75 9h16.5M3.75 15h16.5M7.5 4.5v15M16.5 4.5v15"
+                      />
+                    </svg>
                   ) : (
                     <svg className="h-10 w-10 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M14.25 9.75L16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" />

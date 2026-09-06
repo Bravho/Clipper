@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "incremental": false, "skipLibCheck": true },
+  "include": ["src/features/requests/fileSnapshot.ts","src/features/requests/uploadDiagnostics.ts","src/features/requests/components/NewRequestForm.tsx"]
+}
