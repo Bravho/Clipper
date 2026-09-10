@@ -68,7 +68,7 @@ async function buildHarness(options?: { failMail?: boolean; now?: () => Date }) 
       name: "Test User",
       role: Role.Requester,
       emailVerified: opts?.emailVerified ?? true,
-      trialConsumed: false,
+      priorTrialRequestsUsed: 0,
     });
     await identities.create({
       userId: user.id,
@@ -85,7 +85,7 @@ async function buildHarness(options?: { failMail?: boolean; now?: () => Date }) 
       name: "Google User",
       role: Role.Requester,
       emailVerified: true,
-      trialConsumed: false,
+      priorTrialRequestsUsed: 0,
     });
     await identities.create({
       userId: user.id,

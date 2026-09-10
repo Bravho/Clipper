@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CREDITS_CONFIG } from "@/config/credits";
 import {
   buildPipelinePhaseDisplay,
   getPipelineStepPresentation,
@@ -358,26 +357,17 @@ export function ProductionPipeline({
         </div>
       )}
 
-      {/* One-time charge — all steps above are included in a single fee. */}
+      {/* No per-step and no per-request charge: one video from the account's
+          monthly allowance covers every step above. */}
       <div className="mt-1 border-t border-slate-100 pt-3">
         <div className="flex items-center justify-between">
           <span className="text-sm text-slate-500">
-            ค่าบริการครั้งเดียว · ครอบคลุมทุกขั้นตอน
+            ครอบคลุมทุกขั้นตอน · ไม่มีค่าใช้จ่ายรายขั้นตอน
           </span>
           <span className="text-sm font-bold text-blue-700">
-            {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
+            ใช้สิทธิ์ 1 คลิป
           </span>
         </div>
-        {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
-          <p className="mt-1 text-right text-xs text-slate-400">
-            <span className="line-through">
-              ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
-            </span>{" "}
-            <span className="font-medium text-green-600">
-              ฿{CREDITS_CONFIG.REQUEST_COST_CREDITS} ราคาเปิดตัว (ลด 50%)
-            </span>
-          </p>
-        )}
       </div>
     </div>
   );

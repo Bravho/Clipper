@@ -22,20 +22,11 @@ interface TopupResult {
 }
 
 interface Props {
-  currentBalance?: number;
-  unlockRequestId?: string;
   returnTo?: string;
-  unlockPrice?: number;
   minimumTopupCredits?: number;
 }
 
-export function PromptPayTopup({
-  currentBalance = 0,
-  unlockRequestId,
-  returnTo,
-  unlockPrice = 0,
-  minimumTopupCredits,
-}: Props) {
+export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -44,36 +35,16 @@ export function PromptPayTopup({
     minimumTopupCredits
       ? TOPUP_BUNDLES.find((b) => b.credits >= minimumTopupCredits) ??
           TOPUP_BUNDLES[TOPUP_BUNDLES.length - 1]
-      : unlockRequestId
-      ? TOPUP_BUNDLES.find(
-          (b) => b.credits >= Math.max(1, unlockPrice - currentBalance)
-        ) ?? TOPUP_BUNDLES[0]
       : TOPUP_BUNDLES.find((b) => "popular" in b && b.popular) ?? TOPUP_BUNDLES[0]
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [intent, setIntent] = useState<TopupResult | null>(null);
   const [paid, setPaid] = useState(false);
-  const [unlocking, setUnlocking] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const safeReturnTo =
-    returnTo?.startsWith("/dashboard/requests/") ? returnTo : undefined;
-
-  const completeUnlock = async () => {
-    if (!unlockRequestId) return;
-    setUnlocking(true);
-    const res = await fetch(`/api/requests/${unlockRequestId}/unlock-download`, {
-      method: "POST",
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setUnlocking(false);
-      throw new Error(body.error ?? "ไม่สามารถหักเครดิตและปลดล็อกวิดีโอได้");
-    }
-    router.push(safeReturnTo ?? `/dashboard/requests/${unlockRequestId}`);
-    router.refresh();
-  };
+    returnTo?.startsWith("/dashboard/") ? returnTo : undefined;
 
   const startPolling = (intentId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -88,14 +59,14 @@ export function PromptPayTopup({
           if (pollRef.current) clearInterval(pollRef.current);
           setPaid(true);
           router.refresh();
-          if (unlockRequestId) await completeUnlock();
+          if (safeReturnTo) router.push(safeReturnTo);
         } else if (status === "expired" || status === "failed") {
           if (pollRef.current) clearInterval(pollRef.current);
           setError("การชำระเงินหมดอายุหรือไม่สำเร็จ กรุณาลองใหม่");
           setIntent(null);
         }
-      } catch (err) {
-        if (err instanceof Error && unlockRequestId) setError(err.message);
+      } catch {
+        // A failed poll is transient; the next tick retries.
       }
     };
     void poll();
@@ -152,28 +123,9 @@ export function PromptPayTopup({
         เลือกวิธีชำระเงิน · 1 เครดิต = 1 บาท · เครดิตเข้าหลัง Stripe ยืนยันการชำระ
       </p>
 
-      {unlockRequestId && (
-        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
-          ต้องใช้ {unlockPrice} เครดิตเพื่อปลดล็อกวิดีโอทั้งหมดในคำขอนี้
-          ปัจจุบันมี {currentBalance} เครดิต
-          {currentBalance < unlockPrice
-            ? ` — กรุณาเติมอย่างน้อย ${unlockPrice - currentBalance} เครดิต`
-            : " — พร้อมหักเครดิตและปลดล็อกทันที"}
-        </div>
-      )}
-
-      {unlockRequestId && currentBalance >= unlockPrice && !paid ? (
-        <Button
-          className="mt-4 w-full"
-          loading={unlocking}
-          onClick={() => void completeUnlock().catch((err) => setError(err.message))}
-        >
-          ใช้ {unlockPrice} เครดิตและปลดล็อกวิดีโอ
-        </Button>
-      ) : paid ? (
+      {paid ? (
         <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">
           ชำระเงินสำเร็จ เครดิตถูกเพิ่มแล้ว
-          {unlockRequestId && " ระบบกำลังหักเครดิตและปลดล็อกวิดีโอให้คุณ…"}
         </div>
       ) : intent?.qrImageDataUrl ? (
         <div className="mt-5 flex flex-col items-center gap-3">

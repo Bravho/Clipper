@@ -5,6 +5,7 @@ import {
   publishingLinkRepository,
 } from "@/repositories";
 import { creditService } from "@/services/CreditService";
+import { videoQuotaService, type VideoQuota } from "@/services/VideoQuotaService";
 import {
   requestPresentationService,
   DueDateDisplay,
@@ -23,12 +24,11 @@ import {
 export interface DashboardSummary {
   creditBalance: number;
   /**
-   * True when the user has never submitted a request — their next submission is
-   * the free trial (generates free, pay-to-download). Mirrors
-   * ClipRequestService.isFirstRequest(); computed here from the already-fetched
-   * request list to avoid an extra round trip.
+   * What the user's NEXT request may draw on — a purchased month, or the free
+   * allowance of 3 per rolling 30 days. Drives every quota banner on the
+   * dashboard. See `src/services/VideoQuotaService`.
    */
-  trialAvailable: boolean;
+  quota: VideoQuota;
   activeRequestCount: number;
   draftCount: number;
   recentRequests: DashboardRequestRow[];
@@ -56,9 +56,12 @@ export interface DashboardDeliveredRow {
 
 export class RequesterDashboardService {
   async getDashboardSummary(userId: string): Promise<DashboardSummary> {
-    const [balance, allRequests] = await Promise.all([
+    const [balance, allRequests, quota] = await Promise.all([
       creditService.getBalance(userId),
       clipRequestRepository.findByUserId(userId),
+      // Deliberately not derived from `allRequests`: a live purchased window
+      // outranks the free count, and the request list cannot see it.
+      videoQuotaService.getQuota(userId),
     ]);
 
     const activeRequests = allRequests.filter((r) =>
@@ -98,7 +101,7 @@ export class RequesterDashboardService {
 
     return {
       creditBalance: balance,
-      trialAvailable: allRequests.every((r) => r.submittedAt === null),
+      quota,
       activeRequestCount: activeRequests.length,
       draftCount: draftRequests.length,
       recentRequests,

@@ -233,7 +233,7 @@ export function buildWatermarkedPreviewKey(
 
 /**
  * Key for a final clip the requester has PAID to distribute/download. On payment
- * (`ClipRequestService.unlockDownload`) the clean master is MOVED here out of
+ * (`ClipRequestService.approveDelivery` on a paid request) the master is MOVED here out of
  * `final_exports/`, which restarts the Spaces lifecycle clock on the longer
  * `paid_exports/` window (30 days + a safety day) — expiry counts from creation,
  * so a re-key is the only way to extend. A fresh uuid every call is deliberate.

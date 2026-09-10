@@ -253,8 +253,16 @@ export default async function AdminPaymentsPage({
                 <Count value={vg.downloads.unlocked} />
               </tr>
               <tr className="hover:bg-slate-50">
-                <td className="px-4 py-3 text-slate-700">Free trial requests</td>
-                <Count value={vg.downloads.trial} />
+                <td className="px-4 py-3 text-slate-700">
+                  From the free allowance
+                </td>
+                <Count value={vg.downloads.free} />
+              </tr>
+              <tr className="hover:bg-slate-50">
+                <td className="px-4 py-3 text-slate-700">
+                  From a purchased monthly allowance
+                </td>
+                <Count value={vg.downloads.paid} />
               </tr>
             </Table>
             <p className="mt-2 text-xs text-slate-400">

@@ -93,8 +93,12 @@ export const videoPublishRecordRepository = new MockVideoPublishRecordRepository
 // Flat FIFO render-task queue (Mac Mini worker). One row per enqueued heavy
 // step, mixed across all requesters. Requires migration 025.
 import { PostgresRenderTaskRepository } from "./postgres/PostgresRenderTaskRepository";
+// Purchased monthly video allowances (migration 033). The free allowance needs
+// no table — it is derived from submitted requests in the last 30 days.
+import { PostgresVideoAllowanceWindowRepository } from "./postgres/PostgresVideoAllowanceWindowRepository";
 
 export const renderTaskRepository = new PostgresRenderTaskRepository();
+export const videoAllowanceWindowRepository = new PostgresVideoAllowanceWindowRepository();
 
 // ── RClipper Management — PostgreSQL ─────────────────────────────────────────
 // Videos collected free (transferred from a generation project, or uploaded by

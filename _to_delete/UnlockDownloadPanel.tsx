@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
 
 export interface DownloadableClip {
   id: string;
@@ -12,10 +13,8 @@ export interface DownloadableClip {
 
 interface UnlockDownloadPanelProps {
   requestId: string;
-  /** True when the clean download is still locked (unpaid trial request). */
+  /** True when the clean download is still locked (unpaid preview request). */
   locked: boolean;
-  /** True when this was the user's free trial request. */
-  isTrial: boolean;
   /** Price in credits (= ฿) to unlock. */
   price: number;
   /** The clean final master clips available for download. */
@@ -25,6 +24,10 @@ interface UnlockDownloadPanelProps {
 /**
  * Pay-to-download paywall + gated download buttons.
  *
+ * Only `free_preview` requests are ever locked: the account's free first clip and
+ * every paid request are unlocked on delivery, so they land straight on the
+ * download list.
+ *
  * Locked  → shows the unlock CTA (charges `price` credits via /unlock-download).
  * Unlocked → shows per-clip download buttons backed by the authenticated,
  *            same-origin streaming endpoint.
@@ -32,10 +35,10 @@ interface UnlockDownloadPanelProps {
 export function UnlockDownloadPanel({
   requestId,
   locked,
-  isTrial,
   price,
   clips,
 }: UnlockDownloadPanelProps) {
+  const { t } = useI18n();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +62,7 @@ export function UnlockDownloadPanel({
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "ดาวน์โหลดไม่สำเร็จ");
+        throw new Error(body.error ?? t("unlock.failed"));
       }
       const { downloadUrl, fileName } = (await res.json()) as {
         downloadUrl: string;
@@ -73,7 +76,7 @@ export function UnlockDownloadPanel({
       a.click();
       a.remove();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+      setError(err instanceof Error ? err.message : t("unlock.error"));
     } finally {
       setDownloadingId(null);
     }
@@ -83,11 +86,10 @@ export function UnlockDownloadPanel({
     return (
       <Card className="mb-6 border-blue-200 bg-blue-50/40">
         <h2 className="mb-2 text-base font-semibold text-slate-900">
-          {isTrial ? "วิดีโอทดลองใช้ฟรี — ปลดล็อกเพื่อดาวน์โหลด" : "ปลดล็อกการดาวน์โหลด"}
+          {t("unlock.lockedTitle")}
         </h2>
         <p className="mb-4 text-sm text-slate-600">
-          ดูตัวอย่างวิดีโอได้ฟรี ชำระ ฿{price} เพื่อดาวน์โหลดไฟล์ต้นฉบับความละเอียดเต็ม
-          (ไม่มีลายน้ำ)
+          {t("unlock.lockedBody", { cost: price })}
         </p>
 
         {error && (
@@ -98,7 +100,7 @@ export function UnlockDownloadPanel({
 
         <div className="flex flex-wrap items-center gap-3">
           <Button onClick={unlock} loading={loading}>
-            ปลดล็อกด้วย {price} เครดิต (฿{price})
+            {t("unlock.cta", { cost: price })}
           </Button>
         </div>
       </Card>
@@ -108,7 +110,7 @@ export function UnlockDownloadPanel({
   return (
     <Card className="mb-6">
       <h2 className="mb-3 text-base font-semibold text-slate-900">
-        ดาวน์โหลดวิดีโอ
+        {t("unlock.downloadsTitle")}
       </h2>
       {error && (
         <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -116,7 +118,7 @@ export function UnlockDownloadPanel({
         </div>
       )}
       {clips.length === 0 ? (
-        <p className="text-sm text-slate-500">ไฟล์วิดีโอจะปรากฏที่นี่เมื่อผลิตเสร็จ</p>
+        <p className="text-sm text-slate-500">{t("unlock.pending")}</p>
       ) : (
         <div className="flex flex-col gap-2">
           {clips.map((c) => (
@@ -131,7 +133,7 @@ export function UnlockDownloadPanel({
                 loading={downloadingId === c.id}
                 onClick={() => download(c.id)}
               >
-                ดาวน์โหลด
+                {t("unlock.download")}
               </Button>
             </div>
           ))}

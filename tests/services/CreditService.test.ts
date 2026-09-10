@@ -96,9 +96,9 @@ describe("CreditService via MockCreditWalletRepository", () => {
     expect(CREDITS_CONFIG.SIGNUP_BONUS_CREDITS).toBe(0);
   });
 
-  it("request costs 50 credits (launch) and 1 credit = 1 baht", () => {
-    expect(CREDITS_CONFIG.REQUEST_COST_CREDITS).toBe(50);
-    expect(CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS).toBe(100);
+  it("1 credit = 1 baht on web", () => {
+    // Requests are no longer priced in credits at all — access is a monthly
+    // quota. Credits only buy packages, and this is their web exchange rate.
     expect(CREDITS_CONFIG.CREDIT_TO_BAHT_VALUE).toBe(1);
   });
 

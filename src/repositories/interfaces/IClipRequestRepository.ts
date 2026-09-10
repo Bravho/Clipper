@@ -20,8 +20,14 @@ export interface IClipRequestRepository {
   // ── Requester queries ───────────────────────────────────────────────────────
   findById(id: string): Promise<ClipRequest | null>;
   findByUserId(userId: string): Promise<ClipRequest[]>;
-  /** Whether the requester has ever submitted a request. */
-  hasSubmittedRequestByUserId(userId: string): Promise<boolean>;
+  /**
+   * How many requests the requester has submitted (`submittedAt` set), optionally
+   * only since `since`.
+   *
+   * With `since` it is the free allowance: "requests submitted in the last 30
+   * days". Drafts do not count, so an abandoned draft never burns a free slot.
+   */
+  countSubmittedRequestsByUserId(userId: string, since?: Date): Promise<number>;
   findByUserIdAndStatus(
     userId: string,
     statuses: RequestStatus[]
@@ -123,6 +129,9 @@ export interface IClipRequestRepository {
         | "revisionCount"
         | "downloadUnlocked"
         | "isTrialRequest"
+        | "pricingTier"
+        | "videoAllowanceWindowId"
+        | "allowanceRefundedAt"
       >
     >
   ): Promise<ClipRequest>;

@@ -4,7 +4,6 @@ import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES, requestDetailPath } from "@/config/routes";
-import { creditService } from "@/services/CreditService";
 import { clipRequestService } from "@/services/ClipRequestService";
 import { uploadedAssetRepository } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
@@ -34,10 +33,9 @@ export default async function NewRequestPage({
 
   const user = await timed("auth", () => requireRole(Role.Requester));
   const { edit: editId } = await searchParams;
-  const [balance, trialAvailable] = await Promise.all([
-    timed("creditBalance", () => creditService.getBalance(user.id)),
-    timed("trialAvailable", () => clipRequestService.isFirstRequest(user.id)),
-  ]);
+  // Nothing on this page is priced in credits any more — only the quota gates
+  // submission — so the balance is not fetched here.
+  const quota = await timed("quota", () => clipRequestService.getQuota(user.id));
 
   // Resume flow: when opened as ?edit=<draftId> from the dashboard, load the
   // owned Draft and its already-uploaded source files so the form can continue
@@ -129,8 +127,7 @@ export default async function NewRequestPage({
       </div>
 
       <PackageSelector
-        creditBalance={balance}
-        trialAvailable={trialAvailable}
+        quota={quota}
         resume={resume}
       />
     </div>

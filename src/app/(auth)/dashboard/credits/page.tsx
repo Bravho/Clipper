@@ -5,7 +5,11 @@ import { Role } from "@/domain/enums/Role";
 import { ROUTES, requestDetailPath } from "@/config/routes";
 import { creditService } from "@/services/CreditService";
 import { TransactionType } from "@/domain/enums/TransactionType";
-import { CREDITS_CONFIG } from "@/config/credits";
+import {
+  FREE_REQUESTS_PER_WINDOW,
+  FREE_WINDOW_DAYS,
+  REQUESTS_PER_PAID_MONTH,
+} from "@/config/videoPackages";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { CreditPurchaseOptions } from "@/features/credits/components/CreditPurchaseOptions";
@@ -43,7 +47,7 @@ const TRANSACTION_VARIANTS: Record<
 export default async function CreditsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ unlockRequest?: string; returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const user = await requireRole(Role.Requester);
   const query = await searchParams;
@@ -51,8 +55,6 @@ export default async function CreditsPage({
     creditService.getBalance(user.id),
     creditService.getTransactionHistory(user.id),
   ]);
-
-  const canAfford = balance >= CREDITS_CONFIG.REQUEST_COST_CREDITS;
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-2xl px-4 py-10">
@@ -78,37 +80,20 @@ export default async function CreditsPage({
               {balance} credit{balance !== 1 ? "s" : ""} available
             </p>
             <p className="text-sm text-slate-500">
-              Each clip request costs {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits
-              {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
-                <>
-                  {" "}
-                  <span className="text-slate-400 line-through">
-                    ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
-                  </span>{" "}
-                  <span className="font-medium text-green-700">
-                    ฿{CREDITS_CONFIG.REQUEST_COST_CREDITS} launch price (50% off)
-                  </span>
-                </>
-              )}
-              . 1 credit = ฿1.
+              Credits buy video packages and Channel Management packages. Making a
+              video costs no credits — it uses your monthly allowance. 1 credit =
+              ฿1 on web; store prices differ.
             </p>
-            {!canAfford && (
-              <p className="mt-1 text-sm font-medium text-yellow-700">
-                Insufficient credits — choose a payment option below to submit a request.
-              </p>
-            )}
           </div>
         </div>
 
-        {canAfford && (
-          <div className="mt-5 border-t border-slate-100 pt-5">
-            <Link href={ROUTES.REQUESTS_NEW}>
-              <button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
-                Submit a new request →
-              </button>
-            </Link>
-          </div>
-        )}
+        <div className="mt-5 border-t border-slate-100 pt-5">
+          <Link href={ROUTES.PRICING}>
+            <button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
+              See packages and pricing →
+            </button>
+          </Link>
+        </div>
       </Card>
 
       {/* Pricing info */}
@@ -122,24 +107,20 @@ export default async function CreditsPage({
           </li>
           <li className="flex items-start gap-2">
             <span className="text-red-500 font-bold mt-0.5">−</span>
-            Each clip request costs {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits
-            {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE
-              ? ` (launch price — 50% off ฿${CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}).`
-              : "."}
+            Credits are spent on packages, never on individual videos.
           </li>
           <li className="flex items-start gap-2">
             <span className="text-green-500 font-bold mt-0.5">+</span>
-            Your first video is free to preview — pay {CREDITS_CONFIG.REQUEST_COST_CREDITS} credits to download it.
+            Every account gets {FREE_REQUESTS_PER_WINDOW} free videos per{" "}
+            {FREE_WINDOW_DAYS} days. A monthly package raises that to{" "}
+            {REQUESTS_PER_PAID_MONTH} and moves you up the render queue.
           </li>
         </ul>
       </Card>
 
       <div className="mb-6">
         <CreditPurchaseOptions
-          currentBalance={balance}
-          unlockRequestId={query.unlockRequest}
           returnTo={query.returnTo}
-          unlockPrice={CREDITS_CONFIG.REQUEST_COST_CREDITS}
         />
       </div>
 

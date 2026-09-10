@@ -12,7 +12,7 @@ function rowToRecord(row: Record<string, unknown>): DeletedAccountRecord {
     emailHash: row.email_hash as string,
     provider: row.provider as AuthProvider,
     providerAccountHash: (row.provider_account_hash as string) ?? null,
-    trialConsumed: row.trial_consumed as boolean,
+    priorTrialRequestsUsed: (row.prior_trial_requests_used as number) ?? 0,
     bonusGranted: row.bonus_granted as boolean,
     deletedAt: new Date(row.deleted_at as string),
   };
@@ -28,14 +28,14 @@ export class PostgresDeletedAccountRegistryRepository
   ): Promise<DeletedAccountRecord> {
     const { rows } = await this.db.query(
       `INSERT INTO deleted_account_registry
-         (email_hash, provider, provider_account_hash, trial_consumed, bonus_granted)
+         (email_hash, provider, provider_account_hash, prior_trial_requests_used, bonus_granted)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
       [
         input.emailHash,
         input.provider,
         input.providerAccountHash ?? null,
-        input.trialConsumed,
+        input.priorTrialRequestsUsed,
         input.bonusGranted,
       ]
     );

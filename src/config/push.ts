@@ -55,6 +55,10 @@ export const PUSH_OPT_IN_STORAGE_KEY = "rclipper-native-push-opt-in";
  *     the job genuinely parks there waiting for the requester, so suppressing it
  *     would strand them on a silent spinner.
  *
+ * (An earlier revision took a third `paywallHeld` argument, for a gate the
+ * express lane held pending payment. Access is a quota decided at submission
+ * now, so no gate waits on money and the argument is gone.)
+ *
  * Deriving this from `isAutoApprovedGate` rather than a second hand-written list
  * is deliberate: the UI already re-labels exactly those gates as "processing",
  * and a gate added to one list but not the other would either notify about a

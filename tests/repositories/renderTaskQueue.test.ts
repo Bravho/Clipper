@@ -1,6 +1,7 @@
 import { MockRenderTaskRepository } from "@/repositories/mock/MockRenderTaskRepository";
 import { RenderTask } from "@/domain/models/RenderTask";
 import { RenderStep } from "@/domain/enums/RenderStep";
+import { RENDER_PRIORITY } from "@/config/renderQueue";
 
 /**
  * Flat FIFO render-task queue (Mac Mini worker). Validates the ordering,
@@ -171,5 +172,85 @@ describe("render-task FIFO queue", () => {
     const done = store.get(t.id)!;
     expect(done.state).toBe("done");
     expect(done.durationMs).toBeGreaterThanOrEqual(1500);
+  });
+});
+
+/**
+ * Priority ranking. One render is 2–3 hours on a single worker, so who goes
+ * first is the difference between a paying customer waiting minutes and waiting
+ * days behind free trial work.
+ */
+describe("render-task priority", () => {
+  const enqueue = (
+    repo: MockRenderTaskRepository,
+    jobId: string,
+    priority: number
+  ) =>
+    repo.enqueue({
+      jobId,
+      requestId: `req-${jobId}`,
+      requesterId: `user-${jobId}`,
+      step: RenderStep.AdditionalRatios,
+      priority,
+    });
+
+  it("claims paid work ahead of free work that was enqueued first", async () => {
+    const store = new Map<string, RenderTask>();
+    const repo = new MockRenderTaskRepository(store);
+
+    const free = await enqueue(repo, "free", RENDER_PRIORITY.free);
+    const paid = await enqueue(repo, "paid", RENDER_PRIORITY.paid);
+    // The free task is genuinely older — plain FIFO would claim it first.
+    backdateEnqueue(store, free.id, 60_000);
+
+    const claimed = await repo.claimNext("mac-1", 600);
+    expect(claimed!.id).toBe(paid.id);
+  });
+
+  it("defaults to the lowest priority when none is given", async () => {
+    const store = new Map<string, RenderTask>();
+    const repo = new MockRenderTaskRepository(store);
+    const t = await repo.enqueue({
+      jobId: "j",
+      requestId: "r",
+      step: RenderStep.MontageMerge,
+    });
+    expect(t.priority).toBe(0);
+  });
+
+  it("counts the tasks that would be CLAIMED first, not merely enqueued first", async () => {
+    const store = new Map<string, RenderTask>();
+    const repo = new MockRenderTaskRepository(store);
+
+    // A free task enqueued before three paid ones. Under plain FIFO it would be
+    // told "0 ahead of you"; in reality all three paid tasks render first, and
+    // telling the requester otherwise is a lie they will notice.
+    const free = await enqueue(repo, "free", RENDER_PRIORITY.free);
+    backdateEnqueue(store, free.id, 120_000);
+    for (const n of [1, 2, 3]) {
+      await enqueue(repo, `paid-${n}`, RENDER_PRIORITY.paid);
+    }
+
+    expect(await repo.countAhead(free.id)).toBe(3);
+  });
+
+  it("reports a position that agrees with the order claimNext actually uses", async () => {
+    const store = new Map<string, RenderTask>();
+    const repo = new MockRenderTaskRepository(store);
+
+    // Two free tasks (older first among themselves) behind one paid task.
+    const olderFree = await enqueue(repo, "free-old", RENDER_PRIORITY.free);
+    backdateEnqueue(store, olderFree.id, 120_000);
+    const newerFree = await enqueue(repo, "free-new", RENDER_PRIORITY.free);
+    backdateEnqueue(store, newerFree.id, 90_000);
+    const paid = await enqueue(repo, "paid", RENDER_PRIORITY.paid);
+
+    const aheadOfNewerFree = await repo.countAhead(newerFree.id);
+    const line = await repo.listActive();
+
+    expect(line.map((t) => t.id)).toEqual([paid.id, olderFree.id, newerFree.id]);
+    // The count and the line must agree, or the UI shows a position that never
+    // counts down the way the requester expects.
+    expect(aheadOfNewerFree).toBe(line.findIndex((t) => t.id === newerFree.id));
   });
 });

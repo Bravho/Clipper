@@ -45,10 +45,13 @@ interface Props {
   travyClipUrl?: string | null;
   /** Asset id of the Travy clip — for the gated download. */
   travyAssetId?: string | null;
-  /** True when the download is still locked (unpaid) — gates every download button. */
+  /**
+   * RETAINED CAPABILITY, CURRENTLY ALWAYS FALSE. The pay-to-download paywall was
+   * removed with the move to a monthly quota, so every produced video is
+   * downloadable. Kept as a prop so a future watermarked tier can re-gate these
+   * buttons without reintroducing the plumbing.
+   */
   downloadLocked?: boolean;
-  /** Price in credits (= ฿) to unlock all downloads for this request. */
-  unlockPrice?: number;
   /**
    * True once the 7-day availability window has passed and the generated videos
    * have been purged from storage.
@@ -155,7 +158,6 @@ export function DistributionReviewPanel({
   travyClipUrl = null,
   travyAssetId = null,
   downloadLocked = false,
-  unlockPrice = 0,
   mediaExpired = false,
   managementEnabled = false,
   transferredByAssetId = {},
@@ -359,20 +361,11 @@ export function DistributionReviewPanel({
   };
 
   // ── Gated download / paywall (unchanged behaviour) ─────────────────────────
-  const [unlocking, setUnlocking] = useState(false);
+
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [retryingTravy, setRetryingTravy] = useState(false);
   const [travyRetryError, setTravyRetryError] = useState<string | null>(null);
-
-  const handleUnlock = async () => {
-    setUnlocking(true);
-    setDownloadError(null);
-    const returnTo = `/dashboard/requests/${requestId}`;
-    router.push(
-      `/dashboard/credits?unlockRequest=${encodeURIComponent(requestId)}&returnTo=${encodeURIComponent(returnTo)}`
-    );
-  };
 
   const handleDownload = async (assetId: string, channelName?: string) => {
     setDownloadingId(assetId);
@@ -422,18 +415,6 @@ export function DistributionReviewPanel({
   }) => {
     if (!assetId) return null;
     const ratioTxt = ratio ? ` (${ratio})` : "";
-    if (downloadLocked) {
-      return (
-        <button
-          type="button"
-          onClick={handleUnlock}
-          disabled={unlocking}
-          className="inline-flex items-center gap-1 rounded-md border border-blue-600 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
-        >
-          {unlocking ? "กำลังปลดล็อก..." : `🔒 ปลดล็อกเพื่อดาวน์โหลด (฿${unlockPrice})`}
-        </button>
-      );
-    }
     return (
       <button
         type="button"

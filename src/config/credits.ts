@@ -1,33 +1,20 @@
 /**
- * Credit / pricing configuration.
+ * Credit configuration.
  *
- * Credit unit: **1 credit = 1 THB** (฿). Top-ups are 1:1.
+ * Credit unit: **1 credit = ฿1 ON WEB**. Anything priced in credits costs the
+ * SAME number of credits on every platform; what differs is the real-money price
+ * of a TOP-UP, because App Store and Play Store commission has to be absorbed
+ * somewhere. See src/config/mobilePurchases.ts for the per-platform tables.
  *
- * Launch pricing: the full list price of a request is 100 credits (฿100). During the
- * launch window a 50% "founding member" discount applies, so the effective charge
- * is 50 credits (฿50), matching the smallest top-up bundle. No free signup credits
- * are granted at launch.
- *
- * `REQUEST_COST_CREDITS` is the *effective* price charged at submission and is what
- * the rest of the app reads. Toggle `LAUNCH_DISCOUNT_ACTIVE` to end the promotion
- * and charge the full price.
+ * REQUESTS ARE NO LONGER CHARGED INDIVIDUALLY. Access to video generation is a
+ * monthly quota — 3 free per rolling 30 days, or 10 per month on a purchased
+ * package (src/config/videoPackages.ts). Credits remain the currency for buying
+ * those packages and Channel Management packages.
  */
 export const CREDITS_CONFIG = {
-  /** No free credits granted on signup at launch. */
+  /** No free credits on signup; the free allowance is quota, not credit. */
   SIGNUP_BONUS_CREDITS: 0,
-  /** Full (pre-discount) list price of one request, in credits (= ฿). */
-  REQUEST_FULL_PRICE_CREDITS: 100,
-  /** Discounted launch price of one request, in credits (= ฿). */
-  REQUEST_LAUNCH_PRICE_CREDITS: 50,
-  /** When true, requests are charged the launch price; otherwise the full price. */
-  LAUNCH_DISCOUNT_ACTIVE: true,
-  /** Effective price charged at submission. Derived from the flag above. */
-  get REQUEST_COST_CREDITS(): number {
-    return this.LAUNCH_DISCOUNT_ACTIVE
-      ? this.REQUEST_LAUNCH_PRICE_CREDITS
-      : this.REQUEST_FULL_PRICE_CREDITS;
-  },
-  /** 1 credit == 1 baht. */
+  /** 1 credit == ฿1 on web. */
   CREDIT_TO_BAHT_VALUE: 1,
 } as const;
 
@@ -36,20 +23,30 @@ export const CREDITS_CONFIG = {
  * `credits` is the wallet amount granted; `baht` is the amount charged.
  * Bundling amortises any per-transaction gateway minimum and reduces how often a
  * user has to scan a PromptPay QR.
+ *
+ * THE LADDER MUST REACH THE DEAREST PACKAGE IN ONE TOP-UP. It previously stopped
+ * at 1,000 while the annual bundle costs 3,500, so the highest-intent buyer in
+ * the product was the one forced through four separate payments. The two entry
+ * rungs are set to the exact price of the two entry packages (200 video, 350
+ * bundle) so the commonest purchase leaves no stranded remainder.
+ * `tests/config/storeCatalogue.test.ts` holds this invariant across all three
+ * payment rails.
  */
 export const TOPUP_BUNDLES = [
-  { credits: 50, baht: 50, label: "1 คลิป" },
-  { credits: 100, baht: 100, label: "2 คลิป" },
-  { credits: 200, baht: 200, label: "4 คลิป" },
-  { credits: 500, baht: 500, label: "10 คลิป", popular: true },
-  { credits: 1000, baht: 1000, label: "20 คลิป" },
+  { credits: 50, baht: 50, label: "50 เครดิต" },
+  { credits: 200, baht: 200, label: "200 เครดิต · แพ็กเกจวิดีโอ 1 เดือน", popular: true },
+  { credits: 350, baht: 350, label: "350 เครดิต · แพ็กรวม 1 เดือน" },
+  { credits: 1000, baht: 1000, label: "1,000 เครดิต" },
+  { credits: 2000, baht: 2000, label: "2,000 เครดิต" },
+  { credits: 4000, baht: 4000, label: "4,000 เครดิต · แพ็กรวม 1 ปี" },
 ] as const;
 
 /**
- * @deprecated Per-step / per-second pipeline pricing is retired. Requests are now
- * charged a single flat price (`CREDITS_CONFIG.REQUEST_COST_CREDITS`) at submission,
- * because no AI video generation runs in the current process. Kept only for
- * historical reference; nothing charges from this model. Do not use for new work.
+ * @deprecated Per-step / per-second pipeline pricing is retired, and so is the
+ * flat per-request price that replaced it. Access is now a monthly quota
+ * (src/config/videoPackages.ts) and nothing charges credits per request. Kept
+ * only because `ProductionPipeline` still renders the step breakdown as an
+ * explanation of what the pipeline does. Do not use for new work.
  */
 export const PIPELINE_STEP_COSTS = {
   CONTENT_ANALYSIS: 10,

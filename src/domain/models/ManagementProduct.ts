@@ -36,6 +36,12 @@ export interface ManagementProduct {
    * null for access passes.
    */
   accessWindowDays: number | null;
+  /**
+   * Bundles only: months of VIDEO GENERATION allowance granted alongside the
+   * publishing pass. null for a publishing-only product. Laid out by the same
+   * rule as the video packages, so a bundle month == a video-package month.
+   */
+  videoMonths: number | null;
   /** Effective charge, in credits (= ฿). */
   priceCredits: number;
   /** Undiscounted list price, for "was ฿X" display. */

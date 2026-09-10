@@ -4,9 +4,12 @@ import {
   RenderTaskState,
   EnqueueRenderTaskInput,
 } from "@/domain/models/RenderTask";
+import { compareRenderOrder } from "@/config/renderQueue";
 
 // TODO: PostgreSQL — this mock mirrors PostgresRenderTaskRepository's SQL
-// behaviour (FIFO claim, stale reclaim, position count) for unit tests.
+// behaviour (priority + ageing claim order, stale reclaim, position count) for
+// unit tests. Ordering goes through the shared `compareRenderOrder` so the mock
+// and the SQL expression cannot drift apart.
 
 declare global {
   // eslint-disable-next-line no-var
@@ -33,9 +36,7 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
   }
 
   private activeSorted(): RenderTask[] {
-    return [...this.store.values()]
-      .filter(isActive)
-      .sort((a, b) => a.enqueuedAt.getTime() - b.enqueuedAt.getTime());
+    return [...this.store.values()].filter(isActive).sort(compareRenderOrder);
   }
 
   async enqueue(input: EnqueueRenderTaskInput): Promise<RenderTask> {
@@ -54,6 +55,7 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
       payload: input.payload ?? null,
       state: "queued",
       attempts: 0,
+      priority: input.priority ?? 0,
       enqueuedAt: now,
       claimedBy: null,
       claimedAt: null,
@@ -83,8 +85,8 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
         }
         return false;
       })
-      // FIFO: oldest enqueued first.
-      .sort((a, b) => a.enqueuedAt.getTime() - b.enqueuedAt.getTime());
+      // Highest effective priority first, oldest first within a priority.
+      .sort(compareRenderOrder);
 
     const next = candidates[0];
     if (!next) return null;
@@ -161,11 +163,13 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
   async countAhead(taskId: string): Promise<number | null> {
     const target = this.store.get(taskId);
     if (!target || !isActive(target)) return null;
-    const at = target.enqueuedAt.getTime();
+    // Tasks that would be CLAIMED first — not merely enqueued earlier. With
+    // priorities those differ, and the enqueue-time count would understate the
+    // wait for a low-priority task sitting behind a stream of paid work.
     let ahead = 0;
     for (const t of this.store.values()) {
       if (t.id === taskId || !isActive(t)) continue;
-      if (t.enqueuedAt.getTime() < at) ahead += 1;
+      if (compareRenderOrder(t, target) < 0) ahead += 1;
     }
     return ahead;
   }

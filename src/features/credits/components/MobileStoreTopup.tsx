@@ -7,26 +7,17 @@ import {
   PURCHASE_TYPE,
   Product,
 } from "@capgo/native-purchases";
-import { MOBILE_STORE_PRODUCTS } from "@/config/mobilePurchases";
+import { storeProductsFor } from "@/config/mobilePurchases";
 import { getMobilePlatform } from "@/lib/mobile/platform";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 
 interface Props {
-  currentBalance?: number;
-  unlockRequestId?: string;
   returnTo?: string;
-  unlockPrice?: number;
   minimumTopupCredits?: number;
 }
 
-export function MobileStoreTopup({
-  currentBalance = 0,
-  unlockRequestId,
-  returnTo,
-  unlockPrice = 0,
-  minimumTopupCredits,
-}: Props) {
+export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -36,20 +27,7 @@ export function MobileStoreTopup({
   const [success, setSuccess] = useState<string | null>(null);
   const pendingKey = "rclipper-pending-store-purchase";
   const safeReturnTo =
-    returnTo?.startsWith("/dashboard/requests/") ? returnTo : undefined;
-
-  const completeUnlock = async () => {
-    if (!unlockRequestId) return;
-    const response = await fetch(`/api/requests/${unlockRequestId}/unlock-download`, {
-      method: "POST",
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(result.error || "ไม่สามารถปลดล็อกวิดีโอได้");
-    }
-    router.push(safeReturnTo ?? `/dashboard/requests/${unlockRequestId}`);
-    router.refresh();
-  };
+    returnTo?.startsWith("/dashboard/") ? returnTo : undefined;
 
   const verifyTransaction = async (purchase: {
     platform: "ios" | "android";
@@ -83,7 +61,7 @@ export function MobileStoreTopup({
 
   useEffect(() => {
     let active = true;
-    const requestedProductIds = MOBILE_STORE_PRODUCTS.map(
+    const requestedProductIds = storeProductsFor(getMobilePlatform() === "ios" ? "ios" : "android").map(
       (item) => item.productId
     );
     console.info("[Clipper][iap] requesting store products", {
@@ -122,17 +100,16 @@ export function MobileStoreTopup({
         }
         if (active) {
           setProducts(storeProducts);
-          const creditsNeeded =
-            minimumTopupCredits ?? Math.max(1, unlockPrice - currentBalance);
+          const creditsNeeded = minimumTopupCredits ?? 1;
           const preferred =
-            MOBILE_STORE_PRODUCTS.find(
+            storeProductsFor(getMobilePlatform() === "ios" ? "ios" : "android").find(
               (configured) =>
                 configured.credits >= creditsNeeded &&
                 storeProducts.some(
                   (product) => product.identifier === configured.productId
                 )
             ) ??
-            MOBILE_STORE_PRODUCTS.find((configured) =>
+            storeProductsFor(getMobilePlatform() === "ios" ? "ios" : "android").find((configured) =>
               storeProducts.some(
                 (product) => product.identifier === configured.productId
               )
@@ -153,7 +130,7 @@ export function MobileStoreTopup({
     return () => {
       active = false;
     };
-  }, [currentBalance, minimumTopupCredits, unlockPrice]);
+  }, [minimumTopupCredits]);
 
   useEffect(() => {
     if (getMobilePlatform() !== "ios") return;
@@ -245,12 +222,9 @@ export function MobileStoreTopup({
         transactionId: storeTransactionId,
       };
       window.localStorage.setItem(pendingKey, JSON.stringify(pending));
-      const { creditsGranted, alreadyProcessed } = await verifyTransaction(pending);
+      const { creditsGranted } = await verifyTransaction(pending);
       setSuccess(`เพิ่ม ${creditsGranted} เครดิตเรียบร้อยแล้ว`);
-      // Only a newly verified Store transaction may continue directly to unlock.
-      // A replayed/previous transaction can restore the credit balance, but must
-      // never silently remove a request's payment lock.
-      if (unlockRequestId && !alreadyProcessed) await completeUnlock();
+      if (safeReturnTo) router.push(safeReturnTo);
       else router.refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : "";
@@ -279,23 +253,12 @@ export function MobileStoreTopup({
           เมื่อเลือกแพ็กเกจ ระบบต้องแสดงหน้าต่างยืนยันการซื้อของ Apple ก่อนดำเนินการ
         </p>
       )}
-      {unlockRequestId && (
-        <p className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-          ต้องใช้ {unlockPrice} เครดิตเพื่อปลดล็อกวิดีโอนี้ · ปัจจุบันมี {currentBalance} เครดิต
-        </p>
-      )}
-      {unlockRequestId && currentBalance >= unlockPrice && (
-        <Button className="mt-4 w-full" onClick={() => void completeUnlock().catch((err) => setError(err.message))}>
-          ใช้ {unlockPrice} เครดิตและปลดล็อกวิดีโอ
-        </Button>
-      )}
-
       {loading ? (
         <p className="mt-4 text-sm text-slate-500">กำลังโหลดแพ็กเกจ…</p>
       ) : (
         <>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {MOBILE_STORE_PRODUCTS.map((configured) => {
+          {storeProductsFor(getMobilePlatform() === "ios" ? "ios" : "android").map((configured) => {
             const product = products.find(
               (item) => item.identifier === configured.productId
             );
@@ -315,8 +278,15 @@ export function MobileStoreTopup({
               <span className="block text-sm font-semibold text-slate-900">
                 {configured.credits} เครดิต
               </span>
+              {/* The STORE's own localized price string, or nothing.
+                  There used to be a `฿${configured.priceBaht}` fallback here,
+                  which showed a number this app invented as if Apple or Google
+                  were charging it — and it only ever appeared when the store had
+                  NOT returned the product, i.e. exactly when we knew least about
+                  the real price. A dash is honest; an invented baht figure on a
+                  payment screen is not. */}
               <span className="mt-1 block text-sm text-blue-700">
-                {product?.priceString ?? `฿${configured.priceBaht}`}
+                {product?.priceString ?? "—"}
               </span>
               {!product && (
                 <span className="mt-1 block text-[11px] text-amber-700">

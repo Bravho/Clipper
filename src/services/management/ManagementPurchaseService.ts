@@ -36,6 +36,10 @@ import {
 import { managementAuditService } from "@/services/management/ManagementAuditService";
 import { ManagementJobKind } from "@/domain/enums/ManagementStatus";
 import { computeAccessWindow } from "@/lib/management/calendarMath";
+import {
+  expandVideoMonths,
+  REQUESTS_PER_PAID_MONTH,
+} from "@/config/videoPackages";
 import { findManagementProduct } from "@/config/management";
 import type { ManagementProductCode } from "@/domain/enums/ManagementProductCode";
 import { isManagementProductCode } from "@/domain/enums/ManagementProductCode";
@@ -64,6 +68,13 @@ export interface PurchaseResult {
   /** The upload-token bundle granted by the entry product, when that is what
    * was bought. Null for an access-pass purchase. */
   uploadBundle: ManagementUploadBundle | null;
+  /**
+   * Bundles only: how many monthly video-generation windows this purchase
+   * granted alongside the pass, and when the last of them lapses. Both null for
+   * a publishing-only product.
+   */
+  videoMonthsGranted: number | null;
+  videoActiveUntil: Date | null;
   /** False when this call replayed an already-completed purchase. */
   charged: boolean;
   balanceCredits: number;
@@ -132,7 +143,10 @@ export class ManagementPurchaseService {
    * The debit and the entitlement activation happen in ONE database transaction,
    * so a crash can never leave a user charged without rights or granted rights
    * without a charge. There is consequently no "paid but unfulfilled" state to
-   * recover from.
+   * recover from. A BUNDLE grants two entitlements — a publishing pass and a run
+   * of video allowance windows — and both are written inside that same
+   * transaction, so a bundle buyer can never end up holding one half of what
+   * they paid for.
    *
    * Concurrency: the wallet row is locked FOR UPDATE at the start. Because a
    * user has exactly one wallet, that lock serialises all of that user's
@@ -196,10 +210,15 @@ export class ManagementPurchaseService {
         purchase,
         accessPass,
         uploadBundle,
+        videoMonthsGranted: product.videoMonths,
+        videoActiveUntil: null,
         charged: false,
         balanceCredits: balance,
       };
     }
+
+    // Populated inside the transaction when the product is a bundle.
+    let videoWindows: { startsAt: Date; expiresAt: Date }[] = [];
 
     const client: PoolClient = await this.db.connect();
     try {
@@ -295,6 +314,8 @@ export class ManagementPurchaseService {
             purchase,
             accessPass: null,
             uploadBundle: existingBundle,
+            videoMonthsGranted: null,
+            videoActiveUntil: null,
             charged: false,
             balanceCredits: balance,
           };
@@ -346,9 +367,55 @@ export class ManagementPurchaseService {
             purchase,
             accessPass: existingPass,
             uploadBundle: null,
+            videoMonthsGranted: null,
+            videoActiveUntil: null,
             charged: false,
             balanceCredits: balance,
           };
+        }
+      }
+
+      // ── Bundle: the video half ────────────────────────────────────────────
+      // A bundle grants monthly video allowance windows as well as the pass.
+      // Written HERE, inside the same transaction as the debit and the pass, so
+      // the two halves of the bundle are atomic together.
+      //
+      // The starting point is re-read under the wallet lock, exactly as the pass
+      // is: buying a bundle while video time is still running must EXTEND it,
+      // and two simultaneous purchases must stack rather than both starting now.
+      if (product.videoMonths && product.videoMonths > 0) {
+        const currentVideo = await client.query<{ expires_at: string }>(
+          `SELECT expires_at
+             FROM video_allowance_windows
+            WHERE user_id = $1 AND status = 'active' AND expires_at > $2
+            ORDER BY expires_at DESC
+            LIMIT 1`,
+          [params.userId, now]
+        );
+        const videoStartFrom = currentVideo.rows[0]
+          ? new Date(currentVideo.rows[0].expires_at)
+          : now;
+
+        videoWindows = expandVideoMonths(product.videoMonths, videoStartFrom);
+
+        for (const [sequence, w] of videoWindows.entries()) {
+          await client.query(
+            `INSERT INTO video_allowance_windows
+               (user_id, product_code, purchase_id, sequence, credit_transaction_id,
+                total_allowance, remaining, starts_at, expires_at, status)
+             VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,'active')
+             ON CONFLICT (purchase_id, sequence) DO NOTHING`,
+            [
+              params.userId,
+              product.code,
+              purchase.id,
+              sequence,
+              creditTransactionId,
+              REQUESTS_PER_PAID_MONTH,
+              w.startsAt,
+              w.expiresAt,
+            ]
+          );
         }
       }
 
@@ -433,10 +500,31 @@ export class ManagementPurchaseService {
         );
       }
 
+      if (videoWindows.length > 0) {
+        await this.audit.record("management.video_allowance.granted", {
+          userId: params.userId,
+          purchaseId: purchase.id,
+          metadata: {
+            productCode: product.code,
+            months: videoWindows.length,
+            requestsPerMonth: REQUESTS_PER_PAID_MONTH,
+            startsAt: videoWindows[0].startsAt.toISOString(),
+            expiresAt:
+              videoWindows[videoWindows.length - 1].expiresAt.toISOString(),
+            autoRenew: false,
+          },
+        });
+      }
+
       return {
         purchase: finalPurchase ?? purchase,
         accessPass,
         uploadBundle,
+        videoMonthsGranted: videoWindows.length > 0 ? videoWindows.length : null,
+        videoActiveUntil:
+          videoWindows.length > 0
+            ? videoWindows[videoWindows.length - 1].expiresAt
+            : null,
         charged: true,
         balanceCredits: newBalance,
       };

@@ -21,11 +21,20 @@ export interface User {
   role: Role;
   emailVerified: boolean;
   /**
-   * TRUE when this account's free-trial right was already used — either by
-   * this account, or by a previously deleted account with the same email /
-   * OAuth identity (detected via deleted_account_registry at signup).
+   * How much of the trial allowance a PREVIOUS life of this identity already
+   * consumed — carried over at signup from `deleted_account_registry` when the
+   * same email / OAuth identity had an account that was deleted. 0 for a genuinely
+   * new identity.
+   *
+   * This is a carry-over baseline only, never a running counter: the account's
+   * own usage is derived live from its submitted requests, so the effective total
+   * is `priorTrialRequestsUsed + countSubmittedRequestsByUserId(id)`. See
+   * `ClipRequestService.getEntitlement()`.
+   *
+   * Persisted as `prior_trial_requests_used INT NOT NULL DEFAULT 0` (migration
+   * 031), which supersedes the legacy boolean `trial_consumed` column.
    */
-  trialConsumed: boolean;
+  priorTrialRequestsUsed: number;
   /**
    * Tombstone marker. Deletion anonymizes PII in place (name, email) and sets
    * this timestamp; the row is retained so legally-required financial and

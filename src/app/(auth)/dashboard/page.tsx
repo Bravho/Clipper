@@ -11,7 +11,11 @@ import { RequestStatusBadge } from "@/features/requests/components/RequestStatus
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { CancelRequestButton } from "@/features/requests/components/CancelRequestButton";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
-import { CREDITS_CONFIG } from "@/config/credits";
+import {
+  quotaNotice,
+  quotaCopyVars,
+  QUOTA_TONE_STYLES,
+} from "@/features/requests/quotaCopy";
 import { getServerI18n } from "@/i18n/server";
 
 export const metadata: Metadata = { title: "แดชบอร์ด — RClipper" };
@@ -21,11 +25,13 @@ export default async function DashboardPage() {
   const user = await requireRole(Role.Requester);
   const summary = await requesterDashboardService.getDashboardSummary(user.id);
 
-  const canAfford = summary.creditBalance >= CREDITS_CONFIG.REQUEST_COST_CREDITS;
-  // Trial model: the first request generates for free (pay-to-download), so a
-  // 0-credit new user must NOT be blocked from submitting.
-  const trialAvailable = summary.trialAvailable;
-  const canSubmit = trialAvailable || canAfford;
+  // Access is a monthly quota, not a per-request charge: a 0-credit user with
+  // free allowance left can still submit, and a subscriber with a live package
+  // submits regardless of balance.
+  const quota = summary.quota;
+  const canSubmit = quota.canSubmit;
+  const notice = quotaNotice(t, quota, locale);
+  const tone = QUOTA_TONE_STYLES[notice.tone];
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
@@ -39,18 +45,18 @@ export default async function DashboardPage() {
             {t("dashboard.subtitle")}
           </p>
         </div>
+        {/* ONE call to action. There used to be a green "make a free video"
+            button beside this one, but both linked to the same route: under the
+            monthly quota model there is no separate free path to start — the
+            tier is resolved server-side at submission from the user's remaining
+            allowance. Two buttons doing the identical thing only made the user
+            wonder which one was correct. When the allowance is spent this button
+            disables and the quota banner below carries the link to pricing. */}
         <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
-          {trialAvailable && (
-            <Link href={ROUTES.REQUESTS_NEW} className="min-w-0 flex-1 sm:flex-none">
-              <Button fullWidth className="bg-green-600 hover:bg-green-700 sm:w-auto">
-                {t("dashboard.freeTrial")}
-              </Button>
-            </Link>
-          )}
           <Link href={ROUTES.REQUESTS_NEW} className="min-w-0 flex-1 sm:flex-none">
             <Button
               fullWidth
-              variant={trialAvailable ? "outline" : undefined}
+              variant={canSubmit ? "outline" : undefined}
               disabled={!canSubmit}
               className="sm:w-auto"
             >
@@ -104,35 +110,20 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Free trial banner — shown instead of the credit warning while the
-          user's free first request is still available */}
-      {trialAvailable && (
-        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4">
-          <p className="text-sm font-medium text-green-800">
-            {t("dashboard.trialTitle")}
-          </p>
-          <p className="mt-1 text-sm text-green-700">
-            {t("dashboard.trialBody", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
-          </p>
-        </div>
-      )}
-
-      {/* Insufficient credits warning (only after the free trial is used) */}
-      {!trialAvailable && !canAfford && (
-        <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 p-4">
-          <p className="text-sm font-medium text-yellow-800">
-            {t("dashboard.lowCredits", {
-              balance: summary.creditBalance,
-              cost: CREDITS_CONFIG.REQUEST_COST_CREDITS,
-            })}
-          </p>
-          <Link href={ROUTES.CREDITS}>
-            <p className="mt-1 text-sm text-yellow-700 hover:underline cursor-pointer">
-              {t("dashboard.topUp")}
+      {/* Quota banner — how many videos are left this period and what happens
+          when they run out. Shown in every state: once the allowance is spent it
+          becomes the upgrade prompt, which is the answer to "why can't I submit?". */}
+      <div className={`mb-6 rounded-xl border p-4 ${tone.container}`}>
+        <p className={`text-sm font-medium ${tone.title}`}>{notice.title}</p>
+        <p className={`mt-1 text-sm ${tone.body}`}>{notice.body}</p>
+        {!canSubmit && (
+          <Link href={ROUTES.PRICING}>
+            <p className={`mt-2 text-sm font-medium underline ${tone.title}`}>
+              {t("quota.viewPricing")}
             </p>
           </Link>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Active Requests */}
       <div className="mb-8">
@@ -150,7 +141,7 @@ export default async function DashboardPage() {
               {canSubmit ? (
                 <Link href={ROUTES.REQUESTS_NEW}>
                   <Button className="mt-4" variant="outline" size="sm">
-                    {trialAvailable ? t("dashboard.firstFree") : t("dashboard.firstRequest")}
+                    {t("dashboard.firstFree")}
                   </Button>
                 </Link>
               ) : null}
@@ -247,7 +238,7 @@ export default async function DashboardPage() {
           <CardHeader padding="none">
             <CardTitle className="text-sm">{t("dashboard.pricing")}</CardTitle>
             <CardDescription>
-              {t("dashboard.pricingBody", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
+              {t("dashboard.pricingBody", quotaCopyVars(quota, locale))}
             </CardDescription>
           </CardHeader>
           <Link href={ROUTES.CREDITS}>

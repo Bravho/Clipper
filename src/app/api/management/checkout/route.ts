@@ -119,7 +119,7 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     if (err instanceof InsufficientCreditsError) {
-      // 402 + needTopup mirrors the existing unlock-download contract, so the
+      // 402 + needTopup is the shared insufficient-credits contract, so the
       // client can reuse the same top-up prompt.
       return NextResponse.json(
         {

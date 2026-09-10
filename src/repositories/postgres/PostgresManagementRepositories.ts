@@ -66,6 +66,7 @@ function rowToProduct(row: Row): ManagementProduct {
     durationMonths: asNumOrNull(row.duration_months),
     uploadAllowance: asNumOrNull(row.upload_allowance),
     accessWindowDays: asNumOrNull(row.access_window_days),
+    videoMonths: asNumOrNull(row.video_months),
     priceCredits: Number(row.price_credits),
     fullPriceCredits: Number(row.full_price_credits),
     currency: row.currency as string,

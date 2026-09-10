@@ -6,10 +6,10 @@ import {
   UpdateStaffFieldsInput,
 } from "@/domain/models/ClipRequest";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
+import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 import { Platform } from "@/domain/enums/Platform";
 import { EditorType } from "@/domain/enums/EditorType";
 import { EffortClass } from "@/domain/enums/EffortClass";
-import { CREDITS_CONFIG } from "@/config/credits";
 import { pool } from "@/lib/db";
 
 const LEGACY_TRAVY_PLATFORM = `${["tv", "ent"].join("")}_app`;
@@ -61,6 +61,11 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     revisionCount: (row.revision_count as number) ?? 0,
     downloadUnlocked: (row.download_unlocked as boolean) ?? false,
     isTrialRequest: (row.is_trial_request as boolean) ?? false,
+    pricingTier: (row.pricing_tier as RequestPricingTier) ?? RequestPricingTier.Free,
+    videoAllowanceWindowId: (row.video_allowance_window_id as string) ?? null,
+    allowanceRefundedAt: row.allowance_refunded_at
+      ? new Date(row.allowance_refunded_at as string)
+      : null,
     submittedAt: row.submitted_at
       ? new Date(row.submitted_at as string)
       : null,
@@ -109,6 +114,9 @@ const STATUS_EXTRA_COLS: Record<string, string> = {
   revisionCount: "revision_count",
   downloadUnlocked: "download_unlocked",
   isTrialRequest: "is_trial_request",
+  pricingTier: "pricing_tier",
+  videoAllowanceWindowId: "video_allowance_window_id",
+  allowanceRefundedAt: "allowance_refunded_at",
 };
 
 export class PostgresClipRequestRepository
@@ -134,16 +142,19 @@ export class PostgresClipRequestRepository
     return rows.map(rowToClipRequest);
   }
 
-  async hasSubmittedRequestByUserId(userId: string): Promise<boolean> {
+  async countSubmittedRequestsByUserId(
+    userId: string,
+    since?: Date
+  ): Promise<number> {
     const { rows } = await this.db.query(
-      `SELECT EXISTS (
-         SELECT 1
+      `SELECT COUNT(*)::int AS count
          FROM clip_requests
-         WHERE user_id = $1 AND submitted_at IS NOT NULL
-       ) AS exists`,
-      [userId]
+        WHERE user_id = $1
+          AND submitted_at IS NOT NULL
+          AND ($2::timestamptz IS NULL OR submitted_at >= $2)`,
+      [userId, since ?? null]
     );
-    return rows[0]?.exists === true;
+    return (rows[0]?.count as number) ?? 0;
   }
 
   async findByUserIdAndStatus(
@@ -251,7 +262,9 @@ export class PostgresClipRequestRepository
         input.preferredStyle,
         input.preferredLanguage,
         input.durationSeconds,
-        CREDITS_CONFIG.REQUEST_COST_CREDITS,
+        // Legacy `credits_cost` column: requests are drawn from a monthly quota and
+        // cost no credits, so every modern row is 0.
+        0,
       ]
     );
     return rowToClipRequest(rows[0]);
@@ -351,6 +364,9 @@ export class PostgresClipRequestRepository
         | "revisionCount"
         | "downloadUnlocked"
         | "isTrialRequest"
+        | "pricingTier"
+        | "videoAllowanceWindowId"
+        | "allowanceRefundedAt"
       >
     >
   ): Promise<ClipRequest> {

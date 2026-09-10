@@ -69,6 +69,7 @@ function task(overrides: Partial<RenderTask> = {}): RenderTask {
     payload: null,
     state: "queued",
     attempts: 0,
+    priority: 0,
     enqueuedAt: new Date("2026-08-16T10:00:00Z"),
     claimedBy: null,
     claimedAt: null,

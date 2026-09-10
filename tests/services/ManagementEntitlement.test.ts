@@ -34,6 +34,7 @@ import {
   managementRetainedDays,
 } from "@/config/management";
 import { isManagementProductCode } from "@/domain/enums/ManagementProductCode";
+import { VIDEO_PACKAGES } from "@/config/videoPackages";
 
 // The feature flag is read from the environment on each call, so setting it here
 // is enough — no module re-import needed.
@@ -115,35 +116,75 @@ function serviceWith(stubs: Stubs) {
 }
 
 describe("product catalogue", () => {
-  it("defines exactly the four one-time products", () => {
-    expect(MANAGEMENT_PRODUCTS).toHaveLength(4);
+  it("defines exactly the nine one-time products", () => {
+    expect(MANAGEMENT_PRODUCTS).toHaveLength(9);
     expect(MANAGEMENT_PRODUCTS.map((p) => p.code)).toEqual([
       "management_single_video",
+      "management_access_1_month",
       "management_access_3_months",
       "management_access_6_months",
       "management_access_1_year",
+      "management_bundle_1_month",
+      "management_bundle_3_months",
+      "management_bundle_6_months",
+      "management_bundle_1_year",
     ]);
   });
 
   it("gives the single-video unlock no duration and each pass the right one", () => {
     expect(findManagementProduct("management_single_video")!.durationMonths).toBeNull();
+    expect(findManagementProduct("management_access_1_month")!.durationMonths).toBe(1);
     expect(findManagementProduct("management_access_3_months")!.durationMonths).toBe(3);
     expect(findManagementProduct("management_access_6_months")!.durationMonths).toBe(6);
     expect(findManagementProduct("management_access_1_year")!.durationMonths).toBe(12);
   });
 
-  it("charges the launch price, which is half the list price", () => {
+  it("charges the launch price, which never exceeds the list price", () => {
     for (const product of MANAGEMENT_PRODUCTS) {
       expect(managementPriceCredits(product)).toBe(product.launchPriceCredits);
-      expect(product.launchPriceCredits * 2).toBe(product.fullPriceCredits);
+      expect(product.launchPriceCredits).toBeLessThanOrEqual(product.fullPriceCredits);
     }
   });
 
-  it("prices the four packages as agreed", () => {
+  it("prices the publishing ladder as agreed", () => {
     expect(managementPriceCredits(findManagementProduct("management_single_video")!)).toBe(50);
-    expect(managementPriceCredits(findManagementProduct("management_access_3_months")!)).toBe(300);
-    expect(managementPriceCredits(findManagementProduct("management_access_6_months")!)).toBe(550);
-    expect(managementPriceCredits(findManagementProduct("management_access_1_year")!)).toBe(1000);
+    expect(managementPriceCredits(findManagementProduct("management_access_1_month")!)).toBe(180);
+    expect(managementPriceCredits(findManagementProduct("management_access_3_months")!)).toBe(500);
+    expect(managementPriceCredits(findManagementProduct("management_access_6_months")!)).toBe(1000);
+    expect(managementPriceCredits(findManagementProduct("management_access_1_year")!)).toBe(2000);
+  });
+
+  it("prices the bundles as agreed, and each undercuts buying the halves apart", () => {
+    const bundle = {
+      management_bundle_1_month: 350,
+      management_bundle_3_months: 1000,
+      management_bundle_6_months: 1900,
+      management_bundle_1_year: 3500,
+    } as const;
+
+    for (const [code, price] of Object.entries(bundle)) {
+      const product = findManagementProduct(code)!;
+      expect(managementPriceCredits(product)).toBe(price);
+
+      // A bundle grants the same months of BOTH halves.
+      expect(product.videoMonths).toBe(product.durationMonths);
+
+      // And it must actually be a saving, or the section calling it "best value"
+      // is lying. Compare against the pass + video package of the same term.
+      const pass = MANAGEMENT_PRODUCTS.find(
+        (p) => p.videoMonths == null && p.durationMonths === product.durationMonths
+      )!;
+      const videoPkg = VIDEO_PACKAGES.find((v) => v.months === product.durationMonths)!;
+      const apart = managementPriceCredits(pass) + videoPkg.priceCredits;
+      expect(price).toBeLessThan(apart);
+    }
+  });
+
+  it("marks only the bundles as granting video months", () => {
+    for (const product of MANAGEMENT_PRODUCTS) {
+      const isBundle = product.code.startsWith("management_bundle_");
+      expect(product.videoMonths != null).toBe(isBundle);
+    }
   });
 
   it("rejects an unknown or retired product code", () => {

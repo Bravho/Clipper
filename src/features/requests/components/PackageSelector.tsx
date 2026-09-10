@@ -2,7 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { CREDITS_CONFIG } from "@/config/credits";
+import type { VideoQuota } from "@/services/VideoQuotaService";
+import { quotaCopyVars } from "@/features/requests/quotaCopy";
 import { useI18n } from "@/i18n/client";
 import type { ResumeUploadedAsset } from "./NewRequestForm";
 import type { SubmitClipRequestValues } from "@/features/requests/validation/clipRequestSchema";
@@ -22,15 +23,18 @@ export interface ResumeData {
 }
 
 interface Props {
-  creditBalance: number;
-  /** True when the user's free trial (first) request is still available. */
-  trialAvailable?: boolean;
+  /** What the user's next request may draw on. */
+  quota: VideoQuota;
   /** When present, skip the track chooser and resume this draft directly. */
   resume?: ResumeData;
 }
 
-export function PackageSelector({ creditBalance, trialAvailable = false, resume }: Props) {
-  const { t } = useI18n();
+export function PackageSelector({
+  quota,
+  resume,
+}: Props) {
+  const { t, locale } = useI18n();
+  const quotaVars = quotaCopyVars(quota, locale);
   // Resuming a draft jumps straight into the AI track (the only live track).
   const [selected, setSelected] = useState<"ai" | "editor" | null>(resume ? "ai" : null);
   // Duration / channels are creative preferences only — they no longer affect
@@ -65,8 +69,7 @@ export function PackageSelector({ creditBalance, trialAvailable = false, resume 
         </div>
 
         <NewRequestForm
-          creditBalance={creditBalance}
-          trialAvailable={trialAvailable}
+          quota={quota}
           existingRequestId={resume?.requestId}
           initialValues={resume?.initialValues}
           uploadedAssets={resume?.uploadedAssets}
@@ -122,34 +125,25 @@ export function PackageSelector({ creditBalance, trialAvailable = false, resume 
           </ul>
           <div className="flex items-center justify-between">
             <div>
-              {trialAvailable ? (
+              {quota.canSubmit ? (
                 <>
-                  <span className="text-2xl font-bold text-green-600">{t("request.free")}</span>
+                  <span className="text-2xl font-bold text-green-600">
+                    {t("quota.remainingShort", quotaVars)}
+                  </span>
                   <span className="ml-2 text-xs text-slate-500">
-                    {t("request.firstClipPrice", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
+                    {t("request.allStepsIncluded")}
                   </span>
                 </>
               ) : (
                 <>
-              <span className="text-xs text-slate-500">{t("request.onePrice")}</span>
-              <span className="ml-1 text-2xl font-bold text-slate-900">
-                {CREDITS_CONFIG.REQUEST_COST_CREDITS}
-              </span>
-              <span className="ml-1 text-sm text-slate-400">{t("request.creditsUnit")}</span>
+                  <span className="text-sm font-semibold text-amber-700">
+                    {t("quota.exhaustedTitle", quotaVars)}
+                  </span>
                 </>
               )}
-              {!trialAvailable && CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE ? (
-                <p className="text-xs text-slate-400 mt-0.5">
-                  <span className="line-through">
-                    ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
-                  </span>{" "}
-                  <span className="font-medium text-green-600">
-                    {t("request.launchPrice", { cost: CREDITS_CONFIG.REQUEST_COST_CREDITS })}
-                  </span>
-                </p>
-              ) : (
-                <p className="text-xs text-slate-400 mt-0.5">{t("request.allStepsIncluded")}</p>
-              )}
+              <p className="text-xs text-slate-400 mt-0.5">
+                {t("quota.ladder", quotaVars)}
+              </p>
             </div>
             <span className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">
               {t("request.startAi")}

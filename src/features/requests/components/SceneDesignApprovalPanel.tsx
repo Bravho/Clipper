@@ -7,7 +7,7 @@ import type { MontageSceneAsset, ScenePlan } from "@/domain/models/VideoGenerati
 import type { UploadedAsset } from "@/domain/models/UploadedAsset";
 import type { OrderedSourceAsset } from "@/lib/sourceAssets";
 import { AssetType } from "@/domain/enums/AssetType";
-import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
+import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { MontageSceneAssetsEditor } from "@/features/requests/components/MontageSceneAssetsEditor";
 import {
   MAX_SUBTITLE_LANGS,
@@ -496,14 +496,12 @@ export function SceneDesignApprovalPanel({
                 ความยาวนี้ไม่มีค่าใช้จ่ายเพิ่มเติม
               </p>
               <p className="mt-0.5 text-xs text-green-700">
-                ความยาว {submitDurationSeconds} วินาที · ครอบคลุมด้วยค่าบริการครั้งเดียวแล้ว
+                ความยาว {submitDurationSeconds} วินาที · รวมอยู่ในสิทธิ์ 1 คลิปนี้แล้ว
               </p>
             </div>
             <div className="rounded-lg border border-green-200 bg-white px-3 py-2 text-right">
-              <p className="text-lg font-bold text-green-700 tabular-nums">
-                {CREDITS_CONFIG.REQUEST_COST_CREDITS}
-              </p>
-              <p className="text-xs text-slate-400">เครดิต (ครั้งเดียว)</p>
+              <p className="text-lg font-bold text-green-700 tabular-nums">1</p>
+              <p className="text-xs text-slate-400">คลิปจากสิทธิ์ของคุณ</p>
             </div>
           </div>
         </div>

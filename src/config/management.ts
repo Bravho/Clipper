@@ -25,11 +25,22 @@
  *
  * Credit unit: 1 credit = ฿1 (see src/config/credits.ts).
  *
- * PRICING: the four amounts below are the *launch* (50 % off) prices confirmed
- * for the first release. They follow the same shape as CREDITS_CONFIG — a full
- * list price, a discounted launch price, and a single flag that switches
- * between them — so the promotion can be ended by flipping one boolean rather
- * than editing prices in several places.
+ * PRICING (set 2026-09-09). Every product carries a full list price and a
+ * launch price with a single flag switching between them, so a promotion can be
+ * started or ended by flipping one boolean rather than editing prices in
+ * several places. The two are currently EQUAL on everything except the entry
+ * bundle: the ladder below is the real, intended price, not a discount off an
+ * invented higher number. Set a lower `launchPriceCredits` to run a promotion.
+ *
+ *   Publishing only   1mo 180 . 3mo 500 . 6mo 1000 . 12mo 2000
+ *   Bundle (+video)   1mo 350 . 3mo 1000 . 6mo 1900 . 12mo 3500
+ *
+ * A BUNDLE grants a publishing pass AND a video-generation allowance of the
+ * same length in one purchase and one debit (see ManagementProductCode and
+ * ManagementPurchaseService). Buying the two separately costs 180 + 200 = 380
+ * a month, so the bundle saves 30 a month at the entry tier and more further up
+ * the ladder - a discount funded entirely out of publishing's margin, which is
+ * near-total because publishing consumes no render capacity.
  */
 
 import type { ManagementProductCode } from "@/domain/enums/ManagementProductCode";
@@ -94,6 +105,15 @@ export interface ManagementProductDefinition {
    * the window to use the tokens. null for access passes.
    */
   accessWindowDays: number | null;
+  /**
+   * Bundles only: how many months of VIDEO GENERATION allowance this product
+   * grants alongside its publishing pass. null for a publishing-only product.
+   *
+   * The months are laid out by the same rule the video packages use - 30-day
+   * windows for the short terms, calendar months for the annual one - so a
+   * bundle month and a video-package month are the same thing.
+   */
+  videoMonths: number | null;
   /** Full list price, in credits (= ฿). */
   fullPriceCredits: number;
   /** Discounted launch price, in credits (= ฿). */
@@ -110,6 +130,18 @@ export interface ManagementProductDefinition {
  * price, a duration, or an entitlement type — the client sends a product CODE
  * and nothing else, and the backend resolves everything from here / the DB.
  */
+/**
+ * The trusted product catalogue.
+ *
+ * This is the SERVER-SIDE source of truth mirrored into the `management_products`
+ * table by migrations 019 (base) and 034 (the 2026-09-09 ladder + bundles).
+ * Nothing the client sends is ever used to determine a price, a duration, or an
+ * entitlement type - the client sends a product CODE and nothing else, and the
+ * backend resolves everything from here / the DB.
+ *
+ * The entry bundle stays a genuine 50 %-off trial (100 -> 50). Everything else
+ * lists at the price it is actually sold for.
+ */
 export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
   {
     code: "management_single_video",
@@ -117,13 +149,25 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     descriptionKey: "management.product.singleVideo.description",
     productType: "single_video",
     durationMonths: null,
-    // 50 credits → 4 uploads, usable within 30 days. One upload = one video to
-    // one channel; the same file to three channels spends three tokens.
     uploadAllowance: 4,
     accessWindowDays: 30,
+    videoMonths: null,
     fullPriceCredits: 100,
     launchPriceCredits: 50,
     sortOrder: 1,
+  },
+  {
+    code: "management_access_1_month",
+    nameKey: "management.product.access1Month.name",
+    descriptionKey: "management.product.access1Month.description",
+    productType: "access_pass",
+    durationMonths: 1,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: null,
+    fullPriceCredits: 180,
+    launchPriceCredits: 180,
+    sortOrder: 2,
   },
   {
     code: "management_access_3_months",
@@ -133,9 +177,10 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     durationMonths: 3,
     uploadAllowance: null,
     accessWindowDays: null,
-    fullPriceCredits: 600,
-    launchPriceCredits: 300,
-    sortOrder: 2,
+    videoMonths: null,
+    fullPriceCredits: 500,
+    launchPriceCredits: 500,
+    sortOrder: 3,
   },
   {
     code: "management_access_6_months",
@@ -145,9 +190,10 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     durationMonths: 6,
     uploadAllowance: null,
     accessWindowDays: null,
-    fullPriceCredits: 1100,
-    launchPriceCredits: 550,
-    sortOrder: 3,
+    videoMonths: null,
+    fullPriceCredits: 1000,
+    launchPriceCredits: 1000,
+    sortOrder: 4,
   },
   {
     code: "management_access_1_year",
@@ -157,11 +203,72 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     durationMonths: 12,
     uploadAllowance: null,
     accessWindowDays: null,
+    videoMonths: null,
     fullPriceCredits: 2000,
+    launchPriceCredits: 2000,
+    sortOrder: 5,
+  },
+  {
+    code: "management_bundle_1_month",
+    nameKey: "management.product.bundle1Month.name",
+    descriptionKey: "management.product.bundle1Month.description",
+    productType: "access_pass",
+    durationMonths: 1,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 1,
+    fullPriceCredits: 350,
+    launchPriceCredits: 350,
+    sortOrder: 6,
+  },
+  {
+    code: "management_bundle_3_months",
+    nameKey: "management.product.bundle3Months.name",
+    descriptionKey: "management.product.bundle3Months.description",
+    productType: "access_pass",
+    durationMonths: 3,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 3,
+    fullPriceCredits: 1000,
     launchPriceCredits: 1000,
-    sortOrder: 4,
+    sortOrder: 7,
+  },
+  {
+    code: "management_bundle_6_months",
+    nameKey: "management.product.bundle6Months.name",
+    descriptionKey: "management.product.bundle6Months.description",
+    productType: "access_pass",
+    durationMonths: 6,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 6,
+    fullPriceCredits: 1900,
+    launchPriceCredits: 1900,
+    sortOrder: 8,
+  },
+  {
+    code: "management_bundle_1_year",
+    nameKey: "management.product.bundle1Year.name",
+    descriptionKey: "management.product.bundle1Year.description",
+    productType: "access_pass",
+    durationMonths: 12,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 12,
+    fullPriceCredits: 3500,
+    launchPriceCredits: 3500,
+    sortOrder: 9,
   },
 ] as const;
+
+/** Products that grant a video allowance as well as a publishing pass. */
+export const MANAGEMENT_BUNDLE_PRODUCTS: readonly ManagementProductDefinition[] =
+  MANAGEMENT_PRODUCTS.filter((p) => p.videoMonths != null);
+
+/** Products that grant publishing rights only. */
+export const MANAGEMENT_PUBLISHING_PRODUCTS: readonly ManagementProductDefinition[] =
+  MANAGEMENT_PRODUCTS.filter((p) => p.videoMonths == null);
 
 /**
  * The bundle terms for a product, or null when it is an access pass.

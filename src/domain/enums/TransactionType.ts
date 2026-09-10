@@ -1,7 +1,13 @@
 /**
  * Types of credit wallet transactions.
  *
- * - SignupBonus:    30 free credits granted on new account creation
+ * - SignupBonus:   RETIRED. New accounts get NO free credits — the free tier is
+ *                  a quota (3 videos per rolling 30 days), not a credit grant,
+ *                  so CREDITS_CONFIG.SIGNUP_BONUS_CREDITS is 0 and
+ *                  CreditService.grantSignupBonus short-circuits without
+ *                  touching the balance or writing a ledger row. The member is
+ *                  kept because historical rows of this type exist and the
+ *                  admin ledger still has to render them.
  * - RequestCharge: Credits deducted when a clip request is submitted (future)
  * - AdminCredit:   Manual credit grant by admin (future)
  * - AdminDebit:    Manual credit removal by admin (future)

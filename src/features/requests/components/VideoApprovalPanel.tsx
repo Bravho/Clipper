@@ -64,6 +64,7 @@ interface Props {
   isGeneratingOverlay?: boolean;
   /** Phase 7: gate to generate the remaining channels' aspect ratios. */
   isAwaitingAdditionalRatios?: boolean;
+
   /**
    * The remaining channels' videos are rendering one-by-one (in generation
    * order). Shows the per-channel grid: each finished channel's video is

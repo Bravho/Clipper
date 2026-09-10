@@ -236,8 +236,10 @@ export default async function AdminFunnelPage({
         description="Bar width is scaled to stage 1. The smaller figure beside each count is events, not people."
         footnote={
           <>
-            Stage 5 is counted from <code>clip_requests.download_unlocked</code> on a
-            non-trial request.{" "}
+            Stage 5 counts requests drawn from a PURCHASED monthly allowance (
+            <code>pricing_tier = &lsquo;paid&rsquo;</code>). Requests are no longer
+            charged individually, so this measures subscribers using what they
+            bought rather than one-off payments.{" "}
             {chargeGap === 0 ? (
               <>
                 The independent count from{" "}

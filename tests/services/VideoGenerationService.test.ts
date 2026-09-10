@@ -725,15 +725,46 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingOverlayApproval);
     expect(updated?.captionedExport_9_16_assetId).toBeTruthy();
 
-    // Pay-to-download watermark: the delivered captioned master gets a
-    // pre-rendered tiled-watermark sibling, linked back via sourceAssetId, so a
-    // locked (unpaid) requester is only ever shown the watermarked variant.
+    // Watermarking is RETAINED BUT DORMANT. Access is a monthly quota now, so
+    // every request is created `downloadUnlocked: true` and the delivered master
+    // ships clean — no watermark encode, which is also two to three minutes of
+    // worker time saved per ratio.
+    expect(applyTiledWatermarkMock).not.toHaveBeenCalled();
+    const cleanId = updated?.captionedExport_9_16_assetId as string;
+    expect(await mockAssetRepo.findWatermarkedPreviewFor(cleanId)).toBeNull();
+  });
+
+  it("still renders a watermarked sibling when a request IS download-locked", async () => {
+    // The watermark machinery is kept working on purpose, so a future
+    // watermarked tier is a configuration change rather than a rebuild. Nothing
+    // in the product locks a request today, so without this test the capability
+    // would rot silently and the "retained" comments would become a lie.
+    const request = await createRequestWithPlatforms([Platform.TikTok]);
+    await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {
+      downloadUnlocked: false,
+    });
+    const master = await createMaster(request.id, "9:16");
+    getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
+    const job = await createOverlayJob(
+      request.id,
+      VideoGenerationStep.AwaitingFinalApproval,
+      { "9:16": master.id },
+      ["th"]
+    );
+
+    const service = new VideoGenerationService();
+    await service.approveFinalVideoByRequester(job.id, "user-001", ["th"]);
+    await flushBackground(
+      async () =>
+        (await mockJobRepo.findById(job.id))?.currentStep ===
+        VideoGenerationStep.AwaitingOverlayApproval
+    );
+
     expect(applyTiledWatermarkMock).toHaveBeenCalledTimes(1);
+    const updated = await mockJobRepo.findById(job.id);
     const cleanId = updated?.captionedExport_9_16_assetId as string;
     const watermarked = await mockAssetRepo.findWatermarkedPreviewFor(cleanId);
-    expect(watermarked).not.toBeNull();
     expect(watermarked?.assetType).toBe(AssetType.WatermarkedPreview);
-    expect(watermarked?.videoRatio).toBe("9:16");
     expect(watermarked?.sourceAssetId).toBe(cleanId);
   });
 

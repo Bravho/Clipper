@@ -12,8 +12,7 @@ import { RequestStatusBadge } from "@/features/requests/components/RequestStatus
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DraftRequestsBanner } from "@/features/requests/components/DraftRequestsBanner";
 import { CancelRequestButton } from "@/features/requests/components/CancelRequestButton";
-import { CREDITS_CONFIG } from "@/config/credits";
-import { creditService } from "@/services/CreditService";
+import { videoQuotaService } from "@/services/VideoQuotaService";
 
 export const metadata: Metadata = { title: "คำขอของฉัน — RClipper" };
 
@@ -57,12 +56,10 @@ export default async function RequestsPage({
   const params = await searchParams;
   const filter = (params.filter ?? "all") as FilterValue;
 
-  const [allRequests, balance] = await Promise.all([
+  const [allRequests, quota] = await Promise.all([
     clipRequestService.listForUser(user.id),
-    creditService.getBalance(user.id),
+    videoQuotaService.getQuota(user.id),
   ]);
-
-  const canAfford = balance >= CREDITS_CONFIG.REQUEST_COST_CREDITS;
 
   const filtered = allRequests.filter(
     (r) =>
@@ -84,7 +81,7 @@ export default async function RequestsPage({
           </p>
         </div>
         <Link href={ROUTES.REQUESTS_NEW} className="sm:flex-shrink-0">
-          <Button fullWidth disabled={!canAfford} className="sm:w-auto">
+          <Button fullWidth disabled={!quota.canSubmit} className="sm:w-auto">
             + คำขอใหม่
           </Button>
         </Link>
@@ -120,10 +117,10 @@ export default async function RequestsPage({
                   คุณยังไม่มีคำขอที่ส่งแล้ว
                 </p>
                 <p className="mt-2 text-sm text-slate-400">
-                  ส่งคำขอแรกเพื่อเริ่มต้น แต่ละคลิปใช้{" "}
-                  {CREDITS_CONFIG.REQUEST_COST_CREDITS} เครดิต
+                  ส่งคำขอแรกเพื่อเริ่มต้น — คุณมีสิทธิ์สร้างวิดีโอเหลือ{" "}
+                  {quota.remaining} จาก {quota.total} คลิปในรอบนี้
                 </p>
-                {canAfford && (
+                {quota.canSubmit && (
                   <Link href={ROUTES.REQUESTS_NEW}>
                     <Button className="mt-5" variant="primary">
                       ส่งคำขอ

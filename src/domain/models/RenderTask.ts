@@ -35,7 +35,17 @@ export interface RenderTask {
   state: RenderTaskState;
   /** How many times this step has been claimed (crash reclaims increment it). */
   attempts: number;
-  /** Stable FIFO ordering key — set once at enqueue, never bumped. */
+  /**
+   * Base ranking, from what the requester has paid (see `RENDER_PRIORITY` in
+   * src/config/renderQueue.ts). Higher is served sooner. The line is ordered by
+   * this PLUS an ageing bonus that grows with time waited, so a low priority
+   * delays a task rather than stranding it.
+   */
+  priority: number;
+  /**
+   * Tie-break ordering key within a priority, and the input to the ageing bonus
+   * — set once at enqueue, never bumped.
+   */
   enqueuedAt: Date;
   claimedBy: string | null;
   claimedAt: Date | null;
@@ -56,4 +66,9 @@ export interface EnqueueRenderTaskInput {
   requesterId?: string | null;
   step: RenderStep;
   payload?: Record<string, unknown> | null;
+  /**
+   * Base ranking. Omit for the lowest (0) — callers that know the request should
+   * pass `renderPriorityForRequest(request)` from src/config/renderQueue.ts.
+   */
+  priority?: number;
 }

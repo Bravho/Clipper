@@ -258,7 +258,9 @@ export interface AdminPaymentsSummary {
     downloads: {
       requests: number;
       unlocked: number;
-      trial: number;
+      /** Requests drawn from each allowance (see `src/config/videoPackages.ts`). */
+      free: number;
+      paid: number;
       unlockedPct: number;
     };
     mobileStore: MobileStoreRow[];
@@ -473,7 +475,8 @@ export class AdminPaymentsService {
         downloads: {
           requests,
           unlocked,
-          trial: int(downloadRow?.trial),
+          free: int(downloadRow?.free_tier),
+          paid: int(downloadRow?.paid_tier),
           unlockedPct: pct(unlocked, requests),
         },
         mobileStore,
@@ -649,9 +652,10 @@ export class AdminPaymentsService {
    */
   private async queryDownloadGate(bounds: unknown[]) {
     const { rows } = await this.db.query(
-      `SELECT COUNT(*)::int                                        AS requests,
-              COUNT(*) FILTER (WHERE download_unlocked)::int       AS unlocked,
-              COUNT(*) FILTER (WHERE is_trial_request)::int        AS trial
+      `SELECT COUNT(*)::int                                             AS requests,
+              COUNT(*) FILTER (WHERE download_unlocked)::int            AS unlocked,
+              COUNT(*) FILTER (WHERE pricing_tier = 'free')::int        AS free_tier,
+              COUNT(*) FILTER (WHERE pricing_tier = 'paid')::int        AS paid_tier
          FROM clip_requests
         WHERE created_at >= $1 AND created_at < $2`,
       bounds
@@ -663,9 +667,9 @@ export class AdminPaymentsService {
    * The per-request baht columns on `clip_requests`.
    *
    * `price_baht`, `discount_baht` and `amount_paid_baht` are NUMERIC(10,2) and
-   * predate the credit model — requests are now charged a flat credit price at
-   * submission (`CREDITS_CONFIG.REQUEST_COST_CREDITS`) and nothing writes these
-   * columns, so they read 0 for every modern row. They are reported anyway,
+   * predate the credit model — and requests are no longer charged individually
+   * at all (access is a monthly quota), so nothing writes these columns and they
+   * read 0 for every modern row. They are reported anyway,
    * with the priced-row count beside them: a non-zero count is the only signal
    * that some environment still populates them, and silently omitting the
    * columns would leave that money invisible.

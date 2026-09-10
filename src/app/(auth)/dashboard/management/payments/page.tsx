@@ -7,6 +7,8 @@ import { safeManagementReturnPath } from "@/config/routes";
 import { managementProductRepository } from "@/repositories";
 import { creditService } from "@/services/CreditService";
 import { PackagePicker } from "@/features/management/components/PackagePicker";
+import { managementPackageCopy } from "@/features/pricing/packageCopy";
+import { getServerI18n } from "@/i18n/server";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +24,7 @@ export default async function ManagementPaymentsPage({
 }: {
   searchParams: Promise<{ returnTo?: string | string[] }>;
 }) {
+  const { t } = getServerI18n();
   const session = await getServerSession(authOptions);
   if (!session?.user) notFound();
 
@@ -62,22 +65,17 @@ export default async function ManagementPaymentsPage({
         <PackagePicker
           balanceCredits={balanceCredits}
           returnTo={returnTo}
+          // Copy comes from the shared i18n helper, the same one the pricing
+          // page uses, so both screens name a package identically and both
+          // follow the header's language.
           products={products.map((p) => ({
             code: p.code,
-            name:
-              p.productType === "single_video"
-                ? `Starter Credit Pack (${p.uploadAllowance ?? 4} uploads)`
-                : p.durationMonths === 12
-                  ? "1-Year Publishing Access"
-                  : `${p.durationMonths}-Month Publishing Access`,
-            description:
-              p.productType === "single_video"
-                ? `Publishing one video to one channel consumes one upload. Use all ${p.uploadAllowance ?? 4} uploads within ${p.accessWindowDays ?? 30} days.`
-                : `Activate unlimited publishing for ${p.durationMonths} months using credits from your balance.`,
+            ...managementPackageCopy(t, p),
             productType: p.productType,
             durationMonths: p.durationMonths,
             uploadAllowance: p.uploadAllowance,
             accessWindowDays: p.accessWindowDays,
+            videoMonths: p.videoMonths,
             priceCredits: p.priceCredits,
             fullPriceCredits: p.fullPriceCredits,
           }))}

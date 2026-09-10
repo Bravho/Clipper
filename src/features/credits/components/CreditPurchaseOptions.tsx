@@ -6,10 +6,7 @@ import { PromptPayTopup } from "@/features/credits/components/PromptPayTopup";
 import { MobileStoreTopup } from "@/features/credits/components/MobileStoreTopup";
 
 interface Props {
-  currentBalance: number;
-  unlockRequestId?: string;
   returnTo?: string;
-  unlockPrice: number;
   minimumTopupCredits?: number;
 }
 

@@ -6,7 +6,11 @@ import { MockCreditTransactionRepository } from "@/repositories/mock/MockCreditT
 import { CreditService } from "@/services/CreditService";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { Platform } from "@/domain/enums/Platform";
-import { CREDITS_CONFIG } from "@/config/credits";
+import { findVideoPackage } from "@/config/videoPackages";
+
+/** The entry package price — the only thing credits are spent on now. */
+const PACKAGE_PRICE = findVideoPackage("video_1_month")!.priceCredits;
+import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -34,7 +38,6 @@ const VALID_FORM_DATA = {
   durationSeconds: 15,
 };
 
-const COST = CREDITS_CONFIG.REQUEST_COST_CREDITS;
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
@@ -48,7 +51,8 @@ describe("MockClipRequestRepository", () => {
 
     expect(req.id).toBeTruthy();
     expect(req.status).toBe(RequestStatus.Draft);
-    expect(req.creditsCost).toBe(COST);
+    // Legacy column: requests are drawn from a quota and cost no credits.
+    expect(req.creditsCost).toBe(0);
     expect(req.submittedAt).toBeNull();
     expect(req.dueDateConfirmed).toBe(false);
     expect(req.creditConfirmed).toBe(false);
@@ -157,13 +161,13 @@ describe("ClipRequestService — insufficient credits guard", () => {
 
     const wallet = await walletRepo.create({
       userId: "poor-user",
-      balance: 5, // less than the request cost
+      balance: 5, // less than the package price
       initialCreditsGranted: true,
     });
 
     // Simulate the check in ClipRequestService.submitRequest
     const balance = wallet.balance;
-    const canAfford = balance >= COST;
+    const canAfford = balance >= PACKAGE_PRICE;
     expect(canAfford).toBe(false);
   });
 
@@ -172,57 +176,54 @@ describe("ClipRequestService — insufficient credits guard", () => {
 
     const wallet = await walletRepo.create({
       userId: "rich-user",
-      balance: COST + 50, // comfortably above the request cost
+      balance: PACKAGE_PRICE + 50, // comfortably above the package price
       initialCreditsGranted: true,
     });
 
-    const canAfford = wallet.balance >= COST;
+    const canAfford = wallet.balance >= PACKAGE_PRICE;
     expect(canAfford).toBe(true);
   });
 });
 
-describe("ClipRequestService — credit deduction", () => {
-  it("deducts correct amount from wallet on submission", async () => {
+describe("Credit deduction — packages, not requests", () => {
+  it("deducts the package price from the wallet", async () => {
     const walletRepo = new MockCreditWalletRepository(new Map());
-    const txRepo = new MockCreditTransactionRepository(new Map());
 
     const wallet = await walletRepo.create({
       userId: "user-deduct",
-      balance: 30,
+      balance: PACKAGE_PRICE + 30,
       initialCreditsGranted: true,
     });
 
-    // Simulate credit deduction
-    const newBalance = wallet.balance - COST;
-    const updated = await walletRepo.updateBalance(wallet.id, newBalance);
-    expect(updated.balance).toBe(30 - COST);
+    const updated = await walletRepo.updateBalance(
+      wallet.id,
+      wallet.balance - PACKAGE_PRICE
+    );
+    expect(updated.balance).toBe(30);
   });
 
   it("cannot deduct below zero (service guard)", () => {
     const balance = 5;
-    const cost = COST;
-    // Service throws if balance < cost
     expect(() => {
-      if (balance < cost) throw new Error("Insufficient credits.");
+      if (balance < PACKAGE_PRICE) throw new Error("Insufficient credits.");
     }).toThrow("Insufficient credits.");
   });
 
-  it("records a RequestCharge transaction on submission", async () => {
+  it("records the package purchase on the ledger", async () => {
     const txRepo = new MockCreditTransactionRepository(new Map());
     const { TransactionType } = require("@/domain/enums/TransactionType");
 
     await txRepo.create({
       userId: "user-001",
-      amount: -COST,
+      amount: -PACKAGE_PRICE,
       type: TransactionType.RequestCharge,
-      description: "Clip request: Test Clip",
-      referenceId: "req-test-001",
+      description: "Video package: video_1_month",
+      referenceId: "purchase-test-001",
     });
 
     const txns = await txRepo.findByUserId("user-001");
     expect(txns).toHaveLength(1);
-    expect(txns[0].amount).toBe(-COST);
-    expect(txns[0].type).toBe(TransactionType.RequestCharge);
+    expect(txns[0].amount).toBe(-PACKAGE_PRICE);
   });
 });
 
@@ -246,58 +247,60 @@ describe("ClipRequestService — draft deletion", () => {
   });
 });
 
-describe("Trial / pay-to-download entitlement (repo-level)", () => {
-  it("new requests default to download-locked and non-trial", async () => {
+describe("Quota bookkeeping (repo-level)", () => {
+  // The quota rules live in tests/config/videoPackages.test.ts and their
+  // end-to-end behaviour in tests/services/VideoQuota.test.ts. These cover only
+  // what the repository must store for those to work.
+  it("new drafts default to the free tier and are not download-locked", async () => {
     const { requestRepo } = makeIsolatedDeps();
     const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
-    expect(req.downloadUnlocked ?? false).toBe(false);
-    expect(req.isTrialRequest ?? false).toBe(false);
+    // Nothing is watermark-locked any more; the flag is a retained capability.
+    expect(req.downloadUnlocked).toBe(true);
+    expect(req.pricingTier).toBe(RequestPricingTier.Free);
+    expect(req.videoAllowanceWindowId ?? null).toBeNull();
   });
 
-  it("a paid (non-trial) submission is created download-unlocked", async () => {
+  it("persists the tier and the window that paid for a submission", async () => {
     const { requestRepo } = makeIsolatedDeps();
     const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
     const submitted = await requestRepo.updateStatus(req.id, RequestStatus.Submitted, {
       submittedAt: new Date(),
-      isTrialRequest: false,
-      downloadUnlocked: true,
+      pricingTier: RequestPricingTier.Paid,
+      videoAllowanceWindowId: "window-1",
     });
-    expect(submitted.downloadUnlocked).toBe(true);
-    expect(submitted.isTrialRequest).toBe(false);
+    expect(submitted.pricingTier).toBe(RequestPricingTier.Paid);
+    // Without this the refund path cannot know which month to credit back.
+    expect(submitted.videoAllowanceWindowId).toBe("window-1");
   });
 
-  it("a trial submission stays locked until unlocked", async () => {
+  it("records the refund stamp that stops a retry refunding twice", async () => {
     const { requestRepo } = makeIsolatedDeps();
     const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
-
-    const trial = await requestRepo.updateStatus(req.id, RequestStatus.Submitted, {
-      submittedAt: new Date(),
-      isTrialRequest: true,
-      downloadUnlocked: false,
+    const at = new Date();
+    const refunded = await requestRepo.updateStatus(req.id, RequestStatus.Submitted, {
+      submittedAt: at,
+      videoAllowanceWindowId: "window-1",
+      allowanceRefundedAt: at,
     });
-    expect(trial.isTrialRequest).toBe(true);
-    expect(trial.downloadUnlocked).toBe(false);
-
-    // unlockDownload() effect: flip the flag
-    const unlocked = await requestRepo.updateStatus(req.id, trial.status, {
-      downloadUnlocked: true,
-    });
-    expect(unlocked.downloadUnlocked).toBe(true);
+    expect(refunded.allowanceRefundedAt).toEqual(at);
   });
 
-  it("isFirstRequest is true only until a request has been submitted", async () => {
+  it("countSubmittedRequestsByUserId counts submissions, not drafts", async () => {
     const { requestRepo } = makeIsolatedDeps();
-    // Mirrors ClipRequestService.isFirstRequest: every request has null submittedAt.
     await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
-    let all = await requestRepo.findByUserId("u-1");
-    expect(all.every((r) => r.submittedAt === null)).toBe(true);
+    await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-2" });
 
-    const [first] = all;
+    expect(await requestRepo.countSubmittedRequestsByUserId("u-1")).toBe(0);
+
+    const [first] = await requestRepo.findByUserId("u-1");
     await requestRepo.updateStatus(first.id, RequestStatus.Submitted, {
       submittedAt: new Date(),
     });
-    all = await requestRepo.findByUserId("u-1");
-    expect(all.every((r) => r.submittedAt === null)).toBe(false);
+
+    expect(await requestRepo.countSubmittedRequestsByUserId("u-1")).toBe(1);
+    // Another user's submissions never count against this one's allowance.
+    expect(await requestRepo.countSubmittedRequestsByUserId("u-2")).toBe(0);
   });
 });
 

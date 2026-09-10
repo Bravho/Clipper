@@ -29,6 +29,7 @@ export type ManagementAuditEvent =
   | "management.publish_unlock.revoked"
   /** A consumable upload-token bundle (the entry product) was granted. */
   | "management.upload_bundle.granted"
+  | "management.video_allowance.granted"
   /** Free, optional collection of content. */
   | "management.transfer.started"
   | "management.transfer.completed"

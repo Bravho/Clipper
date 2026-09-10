@@ -52,17 +52,24 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              3. Trial video and credits
+              3. Trial videos and credits
             </h2>
             <p>
-              If the interface identifies a request as an eligible free trial,
-              creating and previewing its watermarked video does not consume credits.
-              Downloading the unwatermarked version costs the number of credits shown
-              beside the request confirmation and download control (currently 50
-              credits). For a non-trial request, the applicable credit charge and
-              charging point are shown before submission. Credits are personal,
-              non-transferable, and have no cash value except where applicable law
-              requires otherwise.
+              Each eligible account receives a limited allowance of requests that are
+              not charged at submission. The first such request is created, previewed
+              and downloaded without consuming credits, and its delivered video does
+              not carry a watermark. The next three requests are likewise created and
+              previewed without consuming credits, but the video shown to you carries
+              a watermark; downloading the unwatermarked version costs the number of
+              credits shown beside the request confirmation and download control
+              (currently 50 credits). Once the allowance is used, each further request
+              is charged that amount before generation begins, and its delivered video
+              is unwatermarked. The interface states which of these applies to a
+              request before you submit it, and the allowance is granted per person
+              rather than per account: where we detect that an account was deleted and
+              re-created, the remaining allowance carries over rather than resetting.
+              Credits are personal, non-transferable, and have no cash value except
+              where applicable law requires otherwise.
             </p>
           </section>
 

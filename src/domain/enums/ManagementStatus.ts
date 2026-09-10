@@ -121,6 +121,7 @@ export enum SocialConnectionStatus {
 /** What authorised a publication. Snapshotted when the publication is created. */
 export enum ManagementEntitlementType {
   SingleVideo = "single_video",
+  OneMonth = "one_month",
   ThreeMonths = "three_months",
   SixMonths = "six_months",
   OneYear = "one_year",

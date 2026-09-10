@@ -2,15 +2,14 @@ import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { EditorType } from "@/domain/enums/EditorType";
 import { ClipRequest, CreateClipRequestInput } from "@/domain/models/ClipRequest";
 import { ClipRequestFormValues } from "@/features/requests/validation/clipRequestSchema";
-import { CREDITS_CONFIG } from "@/config/credits";
+import { videoQuotaService, VideoQuota } from "@/services/VideoQuotaService";
+import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 import {
   clipRequestRepository,
   requestStatusHistoryRepository,
-  userRepository,
 } from "@/repositories";
 import { creditService } from "@/services/CreditService";
 import { uploadService } from "@/services/UploadService";
-import { paidExportRetentionService } from "@/services/PaidExportRetentionService";
 import type { AppLocale } from "@/i18n/config";
 
 /**
@@ -18,8 +17,9 @@ import type { AppLocale } from "@/i18n/config";
  * from draft creation through submission.
  *
  * Business rules enforced here:
- * - A requester must have sufficient credits before submission.
- * - Credits are deducted atomically with status change to Submitted.
+ * - A requester must have quota left before submission — 3 free per rolling 30
+ *   days, or 10 per month on a purchased package (see `VideoQuotaService`).
+ * - No credits are deducted per request; a quota slot is consumed instead.
  * - Legal confirmations (credit + rights) are required at submission.
  * - A draft may be updated freely until submitted.
  * - Only Draft requests may be submitted.
@@ -122,39 +122,16 @@ export class ClipRequestService {
       throw new Error("AI processing permission is required to submit.");
     }
 
-    // Trial model: a user's FIRST request generates for free (preview only) —
-    // it is not charged at submission, and its clean download stays locked until
-    // the user pays via unlockDownload(). Every subsequent request is charged at
-    // submission and its download is unlocked immediately.
-    const isTrial = await this.isFirstRequest(userId);
-
-    // Idempotent charge: never bill the same request twice. This covers a resumed
-    // or retried submit, and the partial-failure case where a previous attempt
-    // deducted credits but crashed before flipping the status out of Draft — on
-    // the retry the status is still Draft, but the charge already exists.
-    const alreadyCharged = await creditService.hasChargeForRequest(userId, requestId);
-
-    if (!isTrial && !alreadyCharged) {
-      const canAfford = await creditService.hasEnoughCredits(
-        userId,
-        CREDITS_CONFIG.REQUEST_COST_CREDITS
-      );
-      if (!canAfford) {
-        throw new Error(
-          `Insufficient credits. You need ${CREDITS_CONFIG.REQUEST_COST_CREDITS} credits to submit a request.`
-        );
-      }
-
-      // Deduct credits
-      // TODO: PostgreSQL — wrap this and the status update in a DB transaction
-      //   to prevent partial state if either operation fails.
-      await creditService.deductCredits(
-        userId,
-        CREDITS_CONFIG.REQUEST_COST_CREDITS,
-        `Clip request: ${existing.title}`,
-        requestId
-      );
-    }
+    // Take a quota slot: a paid month's request if the account has a live
+    // package, otherwise one of the 3 free per rolling 30 days. Throws
+    // QuotaExhaustedError when neither is available, which the API turns into a
+    // 402 pointing at the pricing page.
+    //
+    // Consumed BEFORE the status flip so a submission can never exist without a
+    // slot behind it. If the flip then fails, the request stays a Draft holding
+    // one slot until the render fails or the user resubmits — the safe direction,
+    // since the alternative oversells the worker.
+    const consumed = await videoQuotaService.consume(userId);
 
     const now = new Date();
     const queuePos = await this.estimateQueuePosition();
@@ -172,10 +149,16 @@ export class ClipRequestService {
         aiProcessingConfirmed: true,
         aiConsentVersion: "1.0.0",
         aiConsentAcceptedAt: now,
-        isTrialRequest: isTrial,
-        // Paid-at-submit requests are immediately downloadable; the free trial
-        // request is not until unlockDownload() is paid.
-        downloadUnlocked: !isTrial,
+        pricingTier: consumed.tier,
+        // Which purchased month paid for this, so a failed render can give it
+        // back. Null on the free tier — that allowance simply ages out.
+        videoAllowanceWindowId: consumed.allowanceWindowId,
+        // Historical field from the per-request pricing era; nothing is charged
+        // at submission any more.
+        isTrialRequest: consumed.tier === RequestPricingTier.Free,
+        // No paywall: every request is downloadable once produced. The flag and
+        // the watermark machinery behind it are retained, not used.
+        downloadUnlocked: true,
       }
     );
 
@@ -331,6 +314,25 @@ export class ClipRequestService {
       changedAt: now,
     });
 
+    // Subscriber benefit: a paid request's masters move out of the short
+    // final_exports/ window into paid_exports/ (30 days), resetting the storage
+    // clock. Free-tier deliverables keep the standard window. Best-effort — a
+    // storage hiccup must never fail a delivery the user just approved; the
+    // master would simply expire on its original window instead.
+    if (existing.pricingTier === RequestPricingTier.Paid) {
+      try {
+        const { paidExportRetentionService } = await import(
+          "@/services/PaidExportRetentionService"
+        );
+        await paidExportRetentionService.promoteForRequest(userId, requestId);
+      } catch (err) {
+        console.error(
+          `[approveDelivery] paid-export promotion failed for ${requestId}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
     return delivered;
   }
 
@@ -404,76 +406,25 @@ export class ClipRequestService {
   }
 
   /**
-   * True when the user has never submitted a request before — i.e. the request
-   * they are submitting now is their free trial (first) request.
+   * What the user's NEXT request may draw on — the paid month if they have one,
+   * otherwise the free allowance. Read-only; nothing is consumed.
    *
-   * A request counts as "submitted" once it has a submittedAt timestamp, so
-   * draft-only requests do not consume the free trial.
+   * Delegates to {@link VideoQuotaService} so the dashboard, the request form and
+   * `submitRequest` all read one implementation of the rule.
    */
-  async isFirstRequest(userId: string): Promise<boolean> {
-    // Fraud prevention: trial_consumed is set at account creation when the
-    // deleted-account registry shows this email/OAuth identity already used
-    // its free trial on a previously deleted account.
-    const [user, hasSubmittedRequest] = await Promise.all([
-      userRepository.findById(userId),
-      clipRequestRepository.hasSubmittedRequestByUserId(userId),
-    ]);
-    if (user?.trialConsumed) return false;
-    return !hasSubmittedRequest;
+  async getQuota(userId: string): Promise<VideoQuota> {
+    return videoQuotaService.getQuota(userId);
   }
 
   /**
-   * Unlock the clean download for a request by paying the request price.
+   * NOTE — the pay-to-download paywall was removed here.
    *
-   * Used for the free trial (first) request, whose download is locked after a
-   * free generation. Idempotent: if already unlocked, it charges nothing.
-   *
-   * Throws "Insufficient credits" (checked before any deduction) so the caller
-   * can prompt a top-up.
+   * `unlockDownload()` and `_resumeAfterUnlock()` charged the request price to
+   * release a watermarked preview and then resumed the pipeline. Access is now a
+   * monthly quota (see VideoQuotaService), so there is nothing to unlock: every
+   * request is downloadable once produced. The watermark renderer and the
+   * `downloadUnlocked` flag are retained but dormant — see ClipRequest.
    */
-  async unlockDownload(requestId: string, userId: string): Promise<ClipRequest> {
-    const existing = await this.getOwnedRequest(requestId, userId);
-
-    if (existing.downloadUnlocked) {
-      return existing; // already paid / unlocked — no double charge
-    }
-
-    const price = CREDITS_CONFIG.REQUEST_COST_CREDITS;
-    const canAfford = await creditService.hasEnoughCredits(userId, price);
-    if (!canAfford) {
-      throw new Error(
-        `Insufficient credits. You need ${price} credits to unlock the download.`
-      );
-    }
-
-    await creditService.deductCredits(
-      userId,
-      price,
-      `Unlock download: ${existing.title}`,
-      requestId
-    );
-
-    const updated = await clipRequestRepository.updateStatus(
-      requestId,
-      existing.status,
-      { downloadUnlocked: true }
-    );
-
-    // Distribution paid: relocate the clean masters out of final_exports/ (short
-    // window) into paid_exports/ (30-day window), resetting the lifecycle clock.
-    // Best-effort — a storage hiccup must never fail an unlock the user paid for;
-    // the master would simply expire on its original short window instead.
-    try {
-      await paidExportRetentionService.promoteForRequest(userId, requestId);
-    } catch (err) {
-      console.error(
-        `[unlockDownload] paid-export promotion failed for ${requestId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
-
-    return updated;
-  }
 
   /**
    * Estimate a rough queue position for a newly submitted request.

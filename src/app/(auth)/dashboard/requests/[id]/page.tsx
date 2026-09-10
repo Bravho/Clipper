@@ -24,7 +24,6 @@ import { Card } from "@/components/ui/Card";
 import { RequestStatusBadge } from "@/features/requests/components/RequestStatusBadge";
 import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DeliveryLinks } from "@/features/requests/components/DeliveryLinks";
-import { CREDITS_CONFIG } from "@/config/credits";
 import { RequestTimeline } from "@/features/requests/components/RequestTimeline";
 import { RetentionNoteText } from "@/features/requests/components/RetentionNoteText";
 import {
@@ -242,6 +241,9 @@ export default async function RequestDetailPage({
   // watermarked variant when locked, and returns the clean URL once unlocked. If
   // a watermark is (rarely) missing while locked, it returns null so the clean
   // file is withheld rather than leaked.
+  // RETAINED, ALWAYS FALSE. Migration 033 unlocked every request and nothing
+  // locks new ones, so `previewUrlFor` below is a pass-through. Kept wired so a
+  // future watermarked tier is a configuration change rather than a rebuild.
   const downloadLocked = !request.downloadUnlocked;
   const watermarkedUrlBySource = new Map<string, string>();
   for (const a of assets) {
@@ -776,8 +778,7 @@ export default async function RequestDetailPage({
                 travyVideoError={pipelineJob.travyVideoError ?? null}
                 travyClipUrl={travyClipUrl}
                 travyAssetId={pipelineJob.finalExport_travy_assetId ?? null}
-                downloadLocked={!request.downloadUnlocked}
-                unlockPrice={CREDITS_CONFIG.REQUEST_COST_CREDITS}
+                downloadLocked={downloadLocked}
                 mediaExpired={finalClipAvailabilityNote(request)?.tone === "expired"}
                 managementEnabled={managementTransfer.enabled}
                 transferredByAssetId={managementTransfer.transferredByAssetId}

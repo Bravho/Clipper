@@ -118,7 +118,8 @@ export class AccountService {
     // 1b. Deleted-account registry check (fraud prevention).
     //     If this email or OAuth identity belonged to a previously deleted
     //     account, the new account inherits the entitlements already consumed:
-    //     trial used → no free trial; bonus received → no signup bonus.
+    //     the trial ladder resumes where the old account left it, and a signup
+    //     bonus already received is not granted again.
     const priorUsage = await this.lookupPriorUsage(
       input.email,
       input.providerAccountId ?? null
@@ -130,7 +131,7 @@ export class AccountService {
       name: input.name.trim(),
       role: Role.Requester, // Public signup always creates Requester
       emailVerified: false,
-      trialConsumed: priorUsage.trialConsumed,
+      priorTrialRequestsUsed: priorUsage.priorTrialRequestsUsed,
     });
 
     // 3. Create auth identity
@@ -172,14 +173,15 @@ export class AccountService {
 
   /**
    * Check the deleted-account registry for prior entitlement usage by this
-   * email and/or OAuth provider account id. ORs the flags across all matching
-   * rows — if the trial was consumed in ANY prior life of the identity, it
-   * stays consumed.
+   * email and/or OAuth provider account id. Combines every matching row by
+   * taking the STRICTEST value — the highest trial usage and an ORed bonus flag
+   * — so no prior life of the identity can be laundered away by re-registering
+   * through a different provider.
    */
   async lookupPriorUsage(
     email: string,
     providerAccountId: string | null
-  ): Promise<{ trialConsumed: boolean; bonusGranted: boolean }> {
+  ): Promise<{ priorTrialRequestsUsed: number; bonusGranted: boolean }> {
     const records = await deletedAccountRegistryRepository.findByEmailHash(
       hashEmail(email)
     );
@@ -193,7 +195,10 @@ export class AccountService {
     }
 
     return {
-      trialConsumed: records.some((r) => r.trialConsumed),
+      priorTrialRequestsUsed: records.reduce(
+        (max, r) => Math.max(max, r.priorTrialRequestsUsed ?? 0),
+        0
+      ),
       bonusGranted: records.some((r) => r.bonusGranted),
     };
   }
@@ -274,10 +279,16 @@ export class AccountService {
       }
     }
 
-    // 2. Compute consumed entitlements at deletion time
+    // 2. Compute consumed entitlements at deletion time.
+    //    RETAINED, NOT CURRENTLY ENFORCED. Under the monthly quota model the free
+    //    allowance is 3 per rolling 30 days and refills regardless, so deleting
+    //    and re-registering wins nothing and nothing reads this for entitlement.
+    //    It is still recorded because it is the only history of how much free
+    //    capacity an identity has consumed, which a future abuse rule would need.
     const requests = await clipRequestRepository.findByUserId(userId);
-    const trialConsumed =
-      user.trialConsumed || requests.some((r) => r.submittedAt !== null);
+    const submittedCount = requests.filter((r) => r.submittedAt !== null).length;
+    const priorTrialRequestsUsed =
+      (user.priorTrialRequestsUsed ?? 0) + submittedCount;
 
     const wallet = await creditService.getWallet(userId);
     const bonusGranted = wallet?.initialCreditsGranted ?? false;
@@ -293,7 +304,7 @@ export class AccountService {
             providerAccountHash: i.providerAccountId
               ? hashProviderAccountId(i.providerAccountId)
               : null,
-            trialConsumed,
+            priorTrialRequestsUsed,
             bonusGranted,
           }))
         : [
@@ -301,7 +312,7 @@ export class AccountService {
               emailHash,
               provider: AuthProvider.Credentials,
               providerAccountHash: null,
-              trialConsumed,
+              priorTrialRequestsUsed,
               bonusGranted,
             },
           ];

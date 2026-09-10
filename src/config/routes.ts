@@ -51,6 +51,9 @@ export const ROUTES = {
   REQUESTS_NEW: "/dashboard/requests/new",
   CREDITS: "/dashboard/credits",
   LEGAL: "/dashboard/legal",
+  // Packages and pricing — video packages and Channel Management packages on one
+  // page, so a user who hits their quota has a single place to go.
+  PRICING: "/dashboard/pricing",
 
   // RClipper Management — nested under /dashboard so it inherits the existing
   // Requester-only middleware gate with no middleware change.

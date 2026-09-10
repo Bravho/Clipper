@@ -5,7 +5,23 @@ import {
   EnqueueRenderTaskInput,
 } from "@/domain/models/RenderTask";
 import { RenderStep } from "@/domain/enums/RenderStep";
+import { RENDER_QUEUE } from "@/config/renderQueue";
 import { pool } from "@/lib/db";
+
+/**
+ * The effective-priority expression the whole line is ordered by: base priority
+ * plus a bonus for each whole hour waited, capped.
+ *
+ * It has to be computed in SQL because `claimNext` orders and locks in one
+ * statement. `effectiveRenderPriority()` in src/config/renderQueue.ts is the
+ * same formula in TypeScript for the mock repository — if you change one, change
+ * both, or the position shown to a requester stops matching what renders next.
+ *
+ * `$cap` and `$perHour` are bound as parameters so the knobs stay in config.
+ */
+function effectivePriorityExpr(alias: string, capParam: string, perHourParam: string): string {
+  return `(${alias}.priority + LEAST(${capParam}::numeric, FLOOR(EXTRACT(EPOCH FROM (NOW() - ${alias}.enqueued_at)) / 3600) * ${perHourParam}::numeric))`;
+}
 
 function parseJson<T>(value: unknown, fallback: T): T {
   if (value == null) return fallback;
@@ -31,6 +47,7 @@ function rowToTask(row: Record<string, unknown>): RenderTask {
     payload: parseJson<Record<string, unknown> | null>(row.payload, null),
     state: row.state as RenderTaskState,
     attempts: Number(row.attempts ?? 0),
+    priority: Number(row.priority ?? 0),
     enqueuedAt: new Date(row.enqueued_at as string),
     claimedBy: (row.claimed_by as string) ?? null,
     claimedAt: toDate(row.claimed_at),
@@ -56,14 +73,15 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     // race. Steps are serialised by approval gates, so this realistically only
     // fires when retrying the same step.
     const { rows } = await this.db.query(
-      `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload, priority)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (job_id) WHERE state IN ('queued', 'claimed')
        DO UPDATE SET
          request_id   = EXCLUDED.request_id,
          requester_id = EXCLUDED.requester_id,
          step         = EXCLUDED.step,
          payload      = EXCLUDED.payload,
+         priority     = EXCLUDED.priority,
          state        = 'queued',
          attempts     = 0,
          enqueued_at  = NOW(),
@@ -82,6 +100,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
         input.requesterId ?? null,
         input.step,
         input.payload == null ? null : JSON.stringify(input.payload),
+        input.priority ?? 0,
       ]
     );
     return rowToTask(rows[0]);
@@ -98,7 +117,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
              OR (state = 'claimed'
                  AND COALESCE(heartbeat_at, claimed_at)
                      < NOW() - ($2 || ' seconds')::interval)
-          ORDER BY enqueued_at
+          ORDER BY ${effectivePriorityExpr("render_tasks", "$3", "$4")} DESC,
+                   enqueued_at ASC
           FOR UPDATE SKIP LOCKED
           LIMIT 1
        )
@@ -113,7 +133,12 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
          FROM next
         WHERE t.id = next.id
        RETURNING t.*`,
-      [workerId, String(staleClaimSeconds)]
+      [
+        workerId,
+        String(staleClaimSeconds),
+        RENDER_QUEUE.agingCapPoints,
+        RENDER_QUEUE.agingPointsPerHour,
+      ]
     );
     return rows[0] ? rowToTask(rows[0]) : null;
   }
@@ -179,8 +204,11 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
 
   async countAhead(taskId: string): Promise<number | null> {
     const { rows } = await this.db.query(
+      // Counts tasks that would be CLAIMED first, not merely enqueued earlier:
+      // with priorities in play those are different sets, and showing the second
+      // one would tell a requester they are 3rd when they are really 11th.
       `WITH target AS (
-         SELECT enqueued_at FROM render_tasks
+         SELECT id, priority, enqueued_at FROM render_tasks
           WHERE id = $1 AND state IN ('queued', 'claimed')
        )
        SELECT
@@ -188,8 +216,17 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
          (SELECT COUNT(*)::int
             FROM render_tasks r, target t
            WHERE r.state IN ('queued', 'claimed')
-             AND r.enqueued_at < t.enqueued_at) AS ahead`,
-      [taskId]
+             AND r.id <> t.id
+             AND (
+               ${effectivePriorityExpr("r", "$2", "$3")}
+                 > ${effectivePriorityExpr("t", "$2", "$3")}
+               OR (
+                 ${effectivePriorityExpr("r", "$2", "$3")}
+                   = ${effectivePriorityExpr("t", "$2", "$3")}
+                 AND r.enqueued_at < t.enqueued_at
+               )
+             )) AS ahead`,
+      [taskId, RENDER_QUEUE.agingCapPoints, RENDER_QUEUE.agingPointsPerHour]
     );
     const row = rows[0];
     if (!row || !row.active) return null;
@@ -200,7 +237,9 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     const { rows } = await this.db.query(
       `SELECT * FROM render_tasks
         WHERE state IN ('queued', 'claimed')
-        ORDER BY enqueued_at`
+        ORDER BY ${effectivePriorityExpr("render_tasks", "$1", "$2")} DESC,
+                 enqueued_at ASC`,
+      [RENDER_QUEUE.agingCapPoints, RENDER_QUEUE.agingPointsPerHour]
     );
     return rows.map(rowToTask);
   }

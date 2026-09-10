@@ -6,7 +6,6 @@ import { CreditPurchaseOptions } from "@/features/credits/components/CreditPurch
 
 interface CreditTopupModalProps {
   open: boolean;
-  currentBalance: number;
   minimumTopupCredits?: number;
   packageName?: string;
   onClose: () => void;
@@ -14,7 +13,6 @@ interface CreditTopupModalProps {
 
 export function CreditTopupModal({
   open,
-  currentBalance,
   minimumTopupCredits,
   packageName,
   onClose,
@@ -90,8 +88,6 @@ export function CreditTopupModal({
           )}
 
           <CreditPurchaseOptions
-            currentBalance={currentBalance}
-            unlockPrice={0}
             minimumTopupCredits={minimumTopupCredits}
           />
         </div>

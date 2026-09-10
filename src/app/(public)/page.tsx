@@ -8,6 +8,12 @@ import { ROUTES } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { Button } from "@/components/ui/Button";
 import { getServerI18n } from "@/i18n/server";
+import {
+  FREE_REQUESTS_PER_WINDOW,
+  FREE_WINDOW_DAYS,
+  REQUESTS_PER_PAID_MONTH,
+  VIDEO_PACKAGES,
+} from "@/config/videoPackages";
 
 export default async function HomePage() {
   const session = await getServerSession(authOptions);
@@ -16,6 +22,16 @@ export default async function HomePage() {
   if (session?.user) {
     redirect(getRoleHomePath(session.user.role as Role));
   }
+
+  // The quota ladder is the acquisition pitch, so it is stated on the marketing
+  // page in the same words the dashboard uses after signup.
+  const entryPrice = Math.min(...VIDEO_PACKAGES.map((p) => p.priceCredits));
+  const ladderVars = {
+    freeTotal: FREE_REQUESTS_PER_WINDOW,
+    days: FREE_WINDOW_DAYS,
+    paidTotal: REQUESTS_PER_PAID_MONTH,
+    price: entryPrice,
+  };
 
   return (
     <div className="flex flex-col">
@@ -74,7 +90,7 @@ export default async function HomePage() {
             { value: t("home.statSpeedValue"), label: t("home.statSpeed") },
             { value: t("home.statLanguagesValue"), label: t("home.statLanguages") },
             { value: "Travy", label: t("home.statTravy") },
-            { value: "฿50", label: t("home.statPrice") },
+            { value: `฿${entryPrice}`, label: t("home.statPrice") },
           ].map((s) => (
             <div key={s.label} className="flex flex-col gap-0.5">
               <span className="text-xl font-bold text-white">{s.value}</span>
@@ -200,8 +216,8 @@ export default async function HomePage() {
             {[
               {
                 step: "1",
-                title: "สมัครฟรี",
-                desc: "สมัครด้วย Google หรืออีเมล เริ่มต้นที่ 0 เครดิต แล้วเลือกเติมเครดิตเมื่อต้องการ",
+                title: "สมัครฟรี — สร้างได้ทันที 3 คลิป",
+                desc: "สมัครด้วย Google หรืออีเมล ไม่ต้องเติมเครดิตเพื่อเริ่ม บัญชีฟรีสร้างวิดีโอได้ 3 คลิปต่อ 30 วัน ไฟล์สมบูรณ์ไม่มีลายน้ำ",
               },
               {
                 step: "2",
@@ -277,6 +293,11 @@ export default async function HomePage() {
           </h2>
           <p className="mb-2 text-slate-600">
             สมัครฟรี เริ่มต้นที่ 0 เครดิต — ไม่ต้องใส่บัตรเครดิต
+          </p>
+          {/* The full ladder, so the offer is unambiguous before signup: what is
+              free, what is watermarked, and where the paywall starts. */}
+          <p className="mb-2 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
+            {t("quota.ladder", ladderVars)}
           </p>
           <p className="mb-8 text-sm text-slate-400">
             เติมเครดิตผ่าน PromptPay หรือ Credit card เมื่อพร้อมเริ่มทำคลิป

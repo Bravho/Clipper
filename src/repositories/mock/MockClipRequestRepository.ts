@@ -6,7 +6,7 @@ import {
   UpdateStaffFieldsInput,
 } from "@/domain/models/ClipRequest";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
-import { CREDITS_CONFIG } from "@/config/credits";
+import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 import { SEED_CLIP_REQUESTS } from "@/seed/requestSeedData";
 import { ADMIN_SEED_CLIP_REQUESTS } from "@/seed/adminSeedData";
 
@@ -52,10 +52,16 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
-  async hasSubmittedRequestByUserId(userId: string): Promise<boolean> {
-    return [...this.store.values()].some(
-      (request) => request.userId === userId && request.submittedAt !== null
-    );
+  async countSubmittedRequestsByUserId(
+    userId: string,
+    since?: Date
+  ): Promise<number> {
+    return [...this.store.values()].filter(
+      (request) =>
+        request.userId === userId &&
+        request.submittedAt !== null &&
+        (!since || request.submittedAt.getTime() >= since.getTime())
+    ).length;
   }
 
   async findByUserIdAndStatus(
@@ -163,7 +169,9 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       aiProcessingConfirmed: false,
       aiConsentVersion: null,
       aiConsentAcceptedAt: null,
-      creditsCost: CREDITS_CONFIG.REQUEST_COST_CREDITS,
+      // Legacy column from the per-request pricing era. Requests are drawn from
+      // a monthly quota now and cost no credits, so this is always 0.
+      creditsCost: 0,
       // Marketplace fields
       assignedEditorId: null,
       editorType: null,
@@ -172,8 +180,13 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       discountBaht: 0,
       amountPaidBaht: 0,
       revisionCount: 0,
-      downloadUnlocked: false,
+      // Nothing is watermark-locked any more; the flag stays only so the
+      // capability can be switched back on (see ClipRequest.downloadUnlocked).
+      downloadUnlocked: true,
       isTrialRequest: false,
+      pricingTier: RequestPricingTier.Free,
+      videoAllowanceWindowId: null,
+      allowanceRefundedAt: null,
       submittedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -238,6 +251,9 @@ export class MockClipRequestRepository implements IClipRequestRepository {
         | "amountPaidBaht"
         | "downloadUnlocked"
         | "isTrialRequest"
+        | "pricingTier"
+        | "videoAllowanceWindowId"
+        | "allowanceRefundedAt"
       >
     >
   ): Promise<ClipRequest> {

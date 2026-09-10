@@ -81,9 +81,11 @@ export interface FunnelStageDefinition {
  * The stage list, with the counting rule attached to each one.
  *
  * The hint is part of the data, not decoration: "paid for video generation"
- * means `download_unlocked AND NOT is_trial_request`, and an admin comparing
- * this number against the payments page needs to know that before they file a
- * bug about the two disagreeing.
+ * means a request drawn from a PURCHASED monthly allowance
+ * (`pricing_tier = 'paid'`) rather than the free one. Requests are no longer
+ * charged individually, so this counts subscribers using what they bought, not
+ * one-off payments. An admin comparing this number against the payments page
+ * needs to know that before they file a bug about the two disagreeing.
  */
 export const FUNNEL_STAGES: FunnelStageDefinition[] = [
   {
@@ -109,7 +111,7 @@ export const FUNNEL_STAGES: FunnelStageDefinition[] = [
   {
     key: "paid_for_generation",
     label: "Paid for video generation",
-    hint: "download unlocked on a non-trial request",
+    hint: "request drawn from a purchased monthly allowance",
   },
   {
     key: "transferred_to_management",
@@ -332,8 +334,7 @@ const STAGE_SETS_SQL = `
   s5 AS (
     SELECT cr.user_id, COUNT(*)::int AS events
       FROM clip_requests cr
-     WHERE cr.download_unlocked = true
-       AND cr.is_trial_request = false
+     WHERE cr.pricing_tier = 'paid'
      GROUP BY cr.user_id
   ),
   s6 AS (

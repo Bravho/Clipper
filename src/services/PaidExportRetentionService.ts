@@ -5,7 +5,8 @@
  * WHY THIS EXISTS. `final_exports/` is the clean deliverable, kept only for the
  * short download window (bucket rule ~15 days) so unpaid/abandoned clips do not
  * accumulate. When a requester pays to distribute/download the video
- * (`ClipRequestService.unlockDownload`), the master should survive longer, so we
+ * (a paid-tier delivery, see `ClipRequestService.approveDelivery`), the master
+ * should survive longer, so we
  * relocate it into `paid_exports/` — a 30-day (bucket rule 31), clock-resettable
  * prefix, the same pattern the RClipper Management retention flows use.
  *

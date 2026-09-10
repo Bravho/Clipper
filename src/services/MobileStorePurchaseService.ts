@@ -174,7 +174,9 @@ export class MobileStorePurchaseService {
     productId: string;
     transactionId: string;
   }): Promise<{ creditsGranted: number; alreadyProcessed: boolean }> {
-    const expectedCredits = creditsForStoreProduct(input.productId);
+    // Platform comes from the verified receipt, never the client: it selects
+    // which price table is authoritative.
+    const expectedCredits = creditsForStoreProduct(input.productId, input.platform);
     if (!expectedCredits) throw new Error("Unknown mobile store product.");
 
     const previouslyProcessed = await pool.query<{

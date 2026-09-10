@@ -25,7 +25,13 @@ import {
   validateTotalUploadSize,
   validateClipDuration,
 } from "@/features/requests/validation/clipRequestSchema";
-import { CREDITS_CONFIG, PIPELINE_STEP_COSTS } from "@/config/credits";
+import { PIPELINE_STEP_COSTS } from "@/config/credits";
+import type { VideoQuota } from "@/services/VideoQuotaService";
+import {
+  quotaNotice,
+  quotaCopyVars,
+  QUOTA_TONE_STYLES,
+} from "@/features/requests/quotaCopy";
 import { ROUTES, requestDetailPath } from "@/config/routes";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
@@ -110,16 +116,14 @@ export interface ResumeUploadedAsset {
 }
 
 interface NewRequestFormProps {
-  creditBalance: number;
   /**
-   * True when this will be the user's free trial (first) request — submission
-   * is free (pay-to-download later), so the credit gate must not block it.
+   * What this request may draw on — a purchased month, or the free allowance.
+   * Submission never costs credits, so the only gate is whether the quota has
+   * anything left.
    */
-  trialAvailable?: boolean;
+  quota: VideoQuota;
   /** When true, only image uploads are accepted (no video files). */
   imageOnly?: boolean;
-  /** Override the credit cost shown and validated. Defaults to REQUEST_COST_CREDITS. */
-  creditCost?: number;
   /** Called whenever duration or platform count changes so parent can update the pipeline estimate. */
   onCreditParamsChange?: (durationSeconds: number, platformCount: number) => void;
   /**
@@ -682,9 +686,11 @@ interface UploadItemProgress {
 
 type SubmitPhase = "form" | "submitting";
 
-export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnly = false, creditCost, onCreditParamsChange, existingRequestId, initialValues, uploadedAssets }: NewRequestFormProps) {
-  const { t } = useI18n();
-  const COST = creditCost ?? CREDITS_CONFIG.REQUEST_COST_CREDITS;
+export function NewRequestForm({ quota, imageOnly = false, onCreditParamsChange, existingRequestId, initialValues, uploadedAssets }: NewRequestFormProps) {
+  const { t, locale } = useI18n();
+  const quotaVars = quotaCopyVars(quota, locale);
+  const notice = quotaNotice(t, quota, locale);
+  const tone = QUOTA_TONE_STYLES[notice.tone];
   const acceptedTypes = imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_MIME_TYPES;
 
   const router = useRouter();
@@ -2011,11 +2017,11 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     setSubmitError(null);
     setCanRetry(false);
 
-    // The free trial request submits without credits — skip the balance gate.
-    if (!trialAvailable && creditBalance < COST) {
-      setSubmitError(
-        `คุณต้องการ ${COST} เครดิตสำหรับค่าบริการครั้งเดียว แต่ปัจจุบันมีเพียง ${creditBalance} เครดิต`
-      );
+    // Nothing is charged at submission — the only gate is the monthly quota.
+    // The server re-checks and consumes atomically, so this is a courtesy check
+    // that saves an upload, not the enforcement point.
+    if (!quota.canSubmit) {
+      setSubmitError(t("quota.exhaustedBody", quotaVars));
       return;
     }
 
@@ -2220,8 +2226,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // The free trial request submits without credits — never block it on balance.
-  const insufficientCredits = !trialAvailable && creditBalance < COST;
+  // Credits buy packages, not individual requests, so a zero balance never
+  // blocks a submission — only an exhausted quota does.
+  const quotaExhausted = !quota.canSubmit;
 
   if (phase === "submitting") {
     const progressEntries = pendingFiles.filter((f) => uploadProgress[f.id]);
@@ -2311,29 +2318,20 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
   }
   return (
     <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-8">
-      {/* Free trial notice */}
-      {trialAvailable && (
-        <div className="rounded-xl border border-green-200 bg-green-50 p-4">
-          <p className="text-sm font-medium text-green-800">
-            คำขอนี้เป็นคลิปทดลองฟรีของคุณ — สร้างได้เลยโดยไม่ใช้เครดิต
-          </p>
-          <p className="mt-1 text-sm text-green-700">
-            ชำระ {COST} เครดิตภายหลัง เฉพาะเมื่อต้องการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำ
-          </p>
-        </div>
-      )}
-
-      {/* Insufficient credits warning */}
-      {insufficientCredits && (
-        <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4">
-          <p className="text-sm font-medium text-yellow-800">
-            คุณต้องการ {COST} เครดิตสำหรับค่าบริการครั้งเดียว ปัจจุบันมีเพียง {creditBalance} เครดิต
-          </p>
-          <p className="mt-1 text-sm text-yellow-700">
-            กรุณาเติมเครดิตด้วย PromptPay ที่หน้าเครดิต
-          </p>
-        </div>
-      )}
+      {/* Trial-ladder notice — what THIS request costs and whether the result
+          will carry a watermark. Only shown on the free rungs; in the paid tier
+          the charge box lower down already states the price. */}
+      <div className={`rounded-xl border p-4 ${tone.container}`}>
+        <p className={`text-sm font-medium ${tone.title}`}>{notice.title}</p>
+        <p className={`mt-1 text-sm ${tone.body}`}>{notice.body}</p>
+        {quotaExhausted && (
+          <Link href={ROUTES.PRICING}>
+            <p className={`mt-2 text-sm font-medium underline ${tone.title}`}>
+              {t("quota.viewPricing")}
+            </p>
+          </Link>
+        )}
+      </div>
 
       {/* An unfinished draft was found locally but NOT adopted. The user chooses.
           Until they pick "ทำต่อ", this form is a genuinely new request and will
@@ -2388,11 +2386,9 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           </p>
           {/* Single-charge reassurance — credits are only ever taken once per
               request, at the final submit; resuming never charges again. */}
-          {!trialAvailable && (
-            <p className="mt-2 rounded-md bg-white/70 px-2 py-1 text-xs font-medium text-amber-800">
-              💳 ค่าบริการ {COST} เครดิตจะถูกหักเพียงครั้งเดียวต่อคำขอ — การดำเนินการต่อจะไม่หักเครดิตซ้ำ
-            </p>
-          )}
+          <p className="mt-2 rounded-md bg-white/70 px-2 py-1 text-xs font-medium text-amber-800">
+            ✅ การดำเนินการต่อใช้สิทธิ์เพียง 1 คลิปเท่านั้น — ไม่นับซ้ำจากคำขอเดิม
+          </p>
           {/* Only offer "start over" for a locally-recovered draft — when the user
               deliberately opened a specific draft from the dashboard, clearing it
               would just orphan that request. */}
@@ -2751,55 +2747,21 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           {t("request.beforeSubmit")}
         </legend>
 
-        {/* One-time charge reminder — a request is a single flat fee, not per-step.
-            Trial requests generate for free; payment happens later at download. */}
-        {trialAvailable ? (
-          <div className="mb-5 rounded-lg border border-green-100 bg-green-50 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-green-800">
-                  คลิปทดลองฟรี · สร้างได้เลยโดยไม่ใช้เครดิต
-                </p>
-                <p className="mt-0.5 text-sm text-green-700">
-                  ชำระ {COST} เครดิตภายหลัง
-                  เฉพาะเมื่อต้องการดาวน์โหลดวิดีโอแบบไม่มีลายน้ำ
-                </p>
-              </div>
-              <div className="flex-shrink-0 rounded-lg border border-green-200 bg-white px-3 py-2 text-right">
-                <p className="text-xs text-slate-400">ค่าส่งคำขอ</p>
-                <p className="text-lg font-bold text-green-700">ฟรี</p>
-                <p className="text-xs text-slate-400">จ่ายตอนดาวน์โหลด</p>
-              </div>
+        {/* What this request spends: one video from the account's monthly
+            allowance. No credits are deducted, and there is no per-step cost. */}
+        <div className={`mb-5 rounded-lg border p-4 ${tone.container}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className={`text-sm font-medium ${tone.title}`}>{notice.title}</p>
+              <p className={`mt-0.5 text-sm ${tone.body}`}>{notice.body}</p>
+            </div>
+            <div className="flex-shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-right">
+              <p className="text-xs text-slate-400">{t("quota.chargeLabel")}</p>
+              <p className={`text-lg font-bold tabular-nums ${tone.title}`}>1</p>
+              <p className="text-xs text-slate-400">{t("quota.chargeUnit")}</p>
             </div>
           </div>
-        ) : (
-          <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-blue-800">
-                  ค่าบริการครั้งเดียว {COST} เครดิต · ครอบคลุมทุกขั้นตอน
-                </p>
-                <p className="mt-0.5 text-sm text-blue-700">
-                  เครดิตปัจจุบัน: {creditBalance} เครดิต · คงเหลือหลังชำระ:{" "}
-                  {creditBalance - COST} เครดิต
-                </p>
-                {CREDITS_CONFIG.LAUNCH_DISCOUNT_ACTIVE && (
-                  <p className="mt-0.5 text-xs text-blue-600">
-                    <span className="line-through">
-                      ฿{CREDITS_CONFIG.REQUEST_FULL_PRICE_CREDITS}
-                    </span>{" "}
-                    ฿{COST} ราคาเปิดตัว (ลด 50%) · ไม่มีค่าใช้จ่ายรายขั้นตอนเพิ่มเติม
-                  </p>
-                )}
-              </div>
-              <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-right">
-                <p className="text-xs text-slate-400">ชำระครั้งเดียว</p>
-                <p className="text-lg font-bold text-blue-700 tabular-nums">{COST}</p>
-                <p className="text-xs text-slate-400">เครดิต</p>
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
 
         {/* Keep the three auditable server fields, but present one combined
             acknowledgement. Agree in the disclosure sets all three together. */}
@@ -2904,7 +2866,7 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
           <Button
             type="submit"
             loading={isSubmitting}
-            disabled={insufficientCredits || isSubmitting}
+            disabled={quotaExhausted || isSubmitting}
           >
             {t("request.submit")}
           </Button>
@@ -2952,11 +2914,10 @@ export function NewRequestForm({ creditBalance, trialAvailable = false, imageOnl
 
               <section className="border-t border-slate-300 pt-4">
                 <h3 className="font-semibold text-slate-950">1. ค่าใช้บริการและการหักเครดิต</h3>
-                <p className="mt-2">
-                  {trialAvailable
-                    ? `คำขอนี้ได้รับสิทธิ์สร้างคลิปทดลองโดยไม่หักเครดิตในเวลาส่งคำขอ อย่างไรก็ตาม หากประสงค์ดาวน์โหลดวิดีโอฉบับไม่มีลายน้ำ คุณตกลงว่าระบบอาจเรียกเก็บ ${COST} เครดิตตามเงื่อนไขที่แสดงในหน้าบริการ ณ เวลาที่ปลดล็อกการดาวน์โหลด`
-                    : `เมื่อส่งคำขอนี้ คุณอนุญาตให้ RClipper หัก ${COST} เครดิตจากยอดคงเหลือของบัญชีเป็นค่าบริการแบบครั้งเดียวสำหรับกระบวนการผลิตที่ระบุในคำขอ การหักเครดิตจะบันทึกโดยอ้างอิงหมายเลขคำขอและจะไม่ถูกหักซ้ำสำหรับคำขอเดียวกัน`}
-                </p>
+                {/* Legally operative: nothing is charged at submission — this
+                    request draws one video from the account's monthly allowance,
+                    which is exactly what `submitRequest()` consumes. */}
+                <p className="mt-2">{t("quota.consentClause", quotaVars)}</p>
                 <p className="mt-2">
                   ราคา ระยะเวลาโดยประมาณ และผลลัพธ์ของบริการอาจขึ้นอยู่กับรายละเอียดไฟล์ ตัวเลือกการผลิต และข้อจำกัดทางเทคนิค การยอมรับไม่ได้รับประกันว่าผลลัพธ์จะตรงกับความชอบเชิงอัตวิสัยทุกประการ แต่ไม่ตัดสิทธิ์ที่คุณมีตามกฎหมายหรือเงื่อนไขการคืนเครดิตของ RClipper
                 </p>

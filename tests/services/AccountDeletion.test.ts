@@ -6,9 +6,10 @@
  *   while the row survives for legally-retained records.
  * - Auth identities are removed (login killed).
  * - The deleted-account registry stores only one-way hashes plus the
- *   consumed-entitlement flags.
- * - Re-registration with the same email/OAuth identity inherits consumed
- *   entitlements (trial/bonus not reusable); unused entitlements survive.
+ *   consumed-entitlement counters.
+ * - Re-registration with the same email/OAuth identity resumes the trial ladder
+ *   where the deleted account left it and does not re-grant the signup bonus;
+ *   unused allowance survives.
  * - Password change replaces only the credentials identity hash.
  */
 
@@ -29,14 +30,14 @@ function buildDeps() {
 
 async function createUser(
   userRepo: MockUserRepository,
-  overrides: Partial<{ email: string; trialConsumed: boolean }> = {}
+  overrides: Partial<{ email: string; priorTrialRequestsUsed: number }> = {}
 ) {
   return userRepo.create({
     email: overrides.email ?? "joe@example.com",
     name: "Joe Requester",
     role: Role.Requester,
     emailVerified: true,
-    trialConsumed: overrides.trialConsumed ?? false,
+    priorTrialRequestsUsed: overrides.priorTrialRequestsUsed ?? 0,
   });
 }
 
@@ -104,8 +105,8 @@ describe("Account deletion — PII erasure with retained row", () => {
   });
 });
 
-describe("Deleted-account registry — trial reuse prevention", () => {
-  it("stores hashed identifiers with entitlement flags", async () => {
+describe("Deleted-account registry — consumed-allowance history", () => {
+  it("stores hashed identifiers with the consumed allowance", async () => {
     const { registryRepo } = buildDeps();
     const emailHash = hashEmail("joe@example.com");
 
@@ -113,13 +114,13 @@ describe("Deleted-account registry — trial reuse prevention", () => {
       emailHash,
       provider: AuthProvider.Google,
       providerAccountHash: hashProviderAccountId("google-sub-123"),
-      trialConsumed: true,
+      priorTrialRequestsUsed: 4,
       bonusGranted: true,
     });
 
     const byEmail = await registryRepo.findByEmailHash(emailHash);
     expect(byEmail).toHaveLength(1);
-    expect(byEmail[0].trialConsumed).toBe(true);
+    expect(byEmail[0].priorTrialRequestsUsed).toBe(4);
 
     const byProvider = await registryRepo.findByProviderAccountHash(
       hashProviderAccountId("google-sub-123")
@@ -127,61 +128,70 @@ describe("Deleted-account registry — trial reuse prevention", () => {
     expect(byProvider).toHaveLength(1);
   });
 
-  it("ORs entitlement flags across multiple prior deletions (lookupPriorUsage rule)", async () => {
+  it("takes the HIGHEST usage across prior deletions (lookupPriorUsage rule)", async () => {
     const { registryRepo } = buildDeps();
     const emailHash = hashEmail("joe@example.com");
 
-    // First life: never used the trial
+    // First life: deleted before submitting anything.
     await registryRepo.create({
       emailHash,
       provider: AuthProvider.Credentials,
       providerAccountHash: null,
-      trialConsumed: false,
+      priorTrialRequestsUsed: 0,
       bonusGranted: true,
     });
-    // Second life: used the trial
+    // Second life: spent two free clips.
     await registryRepo.create({
       emailHash,
       provider: AuthProvider.Credentials,
       providerAccountHash: null,
-      trialConsumed: true,
+      priorTrialRequestsUsed: 2,
       bonusGranted: true,
     });
 
     const records = await registryRepo.findByEmailHash(emailHash);
-    const trialConsumed = records.some((r) => r.trialConsumed);
-    const bonusGranted = records.some((r) => r.bonusGranted);
-    expect(trialConsumed).toBe(true);
-    expect(bonusGranted).toBe(true);
+    // Max, not sum and not OR: the same two clips must not be counted twice, and
+    // a later empty life must not launder the earlier usage away.
+    const carried = records.reduce(
+      (max, r) => Math.max(max, r.priorTrialRequestsUsed),
+      0
+    );
+    expect(carried).toBe(2);
+    expect(records.some((r) => r.bonusGranted)).toBe(true);
   });
 
-  it("recreated account created with trialConsumed=true is denied the free trial (isFirstRequest rule)", async () => {
+  it("a recreated account resumes the ladder instead of restarting it", async () => {
     const { userRepo } = buildDeps();
-    // Simulates AccountService.createRequesterAccount after a registry hit
-    const recreated = await createUser(userRepo, { trialConsumed: true });
+    // Simulates AccountService.createRequesterAccount after a registry hit for an
+    // identity that had already used 2 of its 4 free clips.
+    const recreated = await createUser(userRepo, { priorTrialRequestsUsed: 2 });
     const fresh = await createUser(userRepo, {
       email: "new@example.com",
-      trialConsumed: false,
+      priorTrialRequestsUsed: 0,
     });
 
-    // isFirstRequest() returns false immediately when trialConsumed is set
-    expect((await userRepo.findById(recreated.id))!.trialConsumed).toBe(true);
-    expect((await userRepo.findById(fresh.id))!.trialConsumed).toBe(false);
+    // RECORDED, NOT CURRENTLY ENFORCED. Under the monthly quota model the free
+    // allowance is 3 per rolling 30 days and refills regardless, so re-registering
+    // wins nothing and no entitlement check reads this. It is still captured
+    // because it is the only history of how much free capacity an identity has
+    // consumed, which a future abuse rule would need.
+    expect((await userRepo.findById(recreated.id))!.priorTrialRequestsUsed).toBe(2);
+    expect((await userRepo.findById(fresh.id))!.priorTrialRequestsUsed).toBe(0);
   });
 
-  it("unused trial survives deletion — flags are captured, not assumed", async () => {
+  it("unused allowance survives deletion — usage is captured, not assumed", async () => {
     const { registryRepo } = buildDeps();
     const emailHash = hashEmail("neveruse@example.com");
     await registryRepo.create({
       emailHash,
       provider: AuthProvider.Credentials,
       providerAccountHash: null,
-      trialConsumed: false, // deleted before ever submitting a request
+      priorTrialRequestsUsed: 0, // deleted before ever submitting a request
       bonusGranted: true,
     });
 
     const records = await registryRepo.findByEmailHash(emailHash);
-    expect(records.some((r) => r.trialConsumed)).toBe(false);
+    expect(records.every((r) => r.priorTrialRequestsUsed === 0)).toBe(true);
     expect(records.some((r) => r.bonusGranted)).toBe(true);
   });
 });

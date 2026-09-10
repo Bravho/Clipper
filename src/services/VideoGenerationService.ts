@@ -55,7 +55,7 @@ import {
 } from "@/config/elevenLabsVoices";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
-import { RENDER_QUEUE } from "@/config/renderQueue";
+import { RENDER_QUEUE, renderPriorityForRequest } from "@/config/renderQueue";
 import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
 import { isAutoApprovedGate } from "@/config/pipelinePresentation";
@@ -771,6 +771,7 @@ export class VideoGenerationService {
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: RENDER_STEP_FAILED_AT[renderStep],
       });
+      await this._refundAllowance(job.requestId);
     };
 
     if (RENDER_QUEUE.enabled) {
@@ -780,17 +781,20 @@ export class VideoGenerationService {
             RENDER_QUEUE.workerFreshSeconds
           )
         ) {
-          // Enqueue this step onto the flat FIFO render-task line. requesterId is
+          // Enqueue this step onto the render-task line. requesterId is
           // denormalised so the worker log can name whose step it is; it is never
           // surfaced to other requesters (they only ever get a position count).
-          const requesterId =
-            (await clipRequestRepository.findById(job.requestId))?.userId ?? null;
+          // The same request row gives the priority, so ranking costs no extra
+          // query: paid work is claimed ahead of free, and an unpaid preview
+          // waits behind both (see RENDER_PRIORITY in config/renderQueue.ts).
+          const request = await clipRequestRepository.findById(job.requestId);
           await renderTaskRepository.enqueue({
             jobId: job.id,
             requestId: job.requestId,
-            requesterId,
+            requesterId: request?.userId ?? null,
             step: renderStep,
             payload: payload ?? null,
+            priority: renderPriorityForRequest(request ?? {}),
           });
           return;
         }
@@ -965,6 +969,8 @@ export class VideoGenerationService {
       currentStep: VideoGenerationStep.Failed,
       failedAtStep: step ? RENDER_STEP_FAILED_AT[step] : VideoGenerationStep.Failed,
     });
+
+    await this._refundAllowance(job.requestId);
   }
 
   /**
@@ -997,6 +1003,8 @@ export class VideoGenerationService {
     // Travy is soft-failing: a Travy render failure must never hard-fail the
     // whole pipeline (the other channels are already delivered).
     if (step === RenderStep.TravyGeneration) return job;
+
+    await this._refundAllowance(job.requestId);
 
     return videoGenerationJobRepository.update(job.id, {
       status: VideoGenerationJobStatus.Failed,
@@ -2496,11 +2504,12 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // never throws, so a poster failure cannot discard the finished render.
     await ensureAssetPoster(asset.id, `poster-${ratio.replace(":", "x")}`);
 
-    // Pre-render the tiled-watermark preview sibling for the paywall. Runs on the
-    // same (worker) claim as this render, so the extra encode stays off the web
-    // droplet. Non-throwing: a watermark failure must not discard the finished
-    // clean master — the serving layer treats "locked + no watermark" as
-    // "withhold the preview" so the clean file is never leaked.
+    // RETAINED CAPABILITY, CURRENTLY DORMANT. This pre-rendered the watermarked
+    // sibling that the pay-to-download paywall served. Every request is now
+    // created `downloadUnlocked: true`, so the guard inside returns immediately
+    // and no watermark is ever encoded. Kept wired up — not deleted — so
+    // watermarking can be switched back on by changing what sets that flag,
+    // rather than being rebuilt from scratch.
     await this._renderWatermarkedSibling(asset.id, userId, job.requestId, ratio);
 
     return asset.id;
@@ -2511,6 +2520,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    * persist it as a {@link AssetType.WatermarkedPreview} linked back via
    * `sourceAssetId`. Never throws — logs and returns on failure. The clean
    * master is left untouched.
+   *
+   * RETAINED CAPABILITY, CURRENTLY DORMANT. Skipped whenever the request's
+   * download is unlocked, which — since the pay-to-download paywall was removed —
+   * is every request. Nothing calls this into action today. It is deliberately
+   * kept working, together with `ffmpegService.applyTiledWatermark`,
+   * `AssetType.WatermarkedPreview` and the `preview_exports/` lifecycle rule, so
+   * a future watermarked tier is a configuration change rather than a rebuild.
+   * Do not remove as dead code.
    */
   private async _renderWatermarkedSibling(
     sourceAssetId: string,
@@ -2519,6 +2536,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     ratio: VideoRatio
   ): Promise<string | null> {
     try {
+      const request = await clipRequestRepository.findById(requestId);
+      if (request?.downloadUnlocked) {
+        console.log(
+          `[watermark] skipped for asset ${sourceAssetId} (ratio ${ratio}) — request ${requestId} ships unwatermarked`
+        );
+        return null;
+      }
+
       const source = await uploadedAssetRepository.findById(sourceAssetId);
       if (!source) throw new Error(`source asset not found: ${sourceAssetId}`);
 
@@ -2689,7 +2714,15 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     });
   }
 
-  /** Requester triggers generation of the remaining channels' aspect ratios. */
+  /**
+   * Requester triggers generation of the remaining channels' aspect ratios.
+   *
+   * This step composes and captions every non-primary channel format and renders
+   * the Travy clip — the bulk of the render cost. It used to sit behind a
+   * pay-to-unlock gate; access is now decided by the monthly quota at submission
+   * instead, so by the time a job reaches here the request has already been paid
+   * for (or drawn from the free allowance) and simply proceeds.
+   */
   async generateAdditionalRatiosByRequester(
     jobId: string,
     userId: string
@@ -4235,6 +4268,29 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const job = await videoGenerationJobRepository.findById(jobId);
     if (!job) throw new Error(`VideoGenerationJob not found: ${jobId}`);
     return job;
+  }
+
+  /**
+   * Give the requester their monthly slot back after a failed render.
+   *
+   * A job that dies two hours in must not also cost one of a subscriber's ten
+   * monthly videos — that is a support ticket every time. Free-tier requests need
+   * nothing: their allowance is derived from submissions and ages out on its own.
+   *
+   * Idempotent (guarded by `allowanceRefundedAt` on the request) and
+   * non-throwing, so it is safe to call from any failure path, and a retry that
+   * fails again cannot refund the same request twice.
+   */
+  private async _refundAllowance(requestId: string): Promise<void> {
+    try {
+      const { videoQuotaService } = await import("@/services/VideoQuotaService");
+      await videoQuotaService.refundRequest(requestId);
+    } catch (err) {
+      console.error(
+        `[quota] could not refund the allowance for request ${requestId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
   private async _getJobAtStep(

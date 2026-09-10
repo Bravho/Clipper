@@ -39,6 +39,11 @@ export function DashboardShell({
     { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
     { href: ROUTES.REQUESTS, label: t("sidebar.requests"), icon: "◫" },
     { href: ROUTES.CREDITS, label: t("sidebar.credits"), icon: "◈" },
+    // Pricing sits directly under Credits because they answer consecutive
+    // questions: "what do I have?" then "what does more cost?". Unlike the
+    // Management links it is NOT gated — every user can reach the packages,
+    // including the free-tier user who has just run out and needs to see them.
+    { href: ROUTES.PRICING, label: t("sidebar.pricing"), icon: "❖" },
     ...(showManagement
       ? [
           { href: ROUTES.MANAGEMENT, label: t("sidebar.management"), icon: "◉" },

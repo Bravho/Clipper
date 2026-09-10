@@ -271,9 +271,16 @@ export default async function ManagementOverviewPage() {
 
 const PACKAGE_NAMES: Record<ManagementProductCode, string> = {
   management_single_video: "Starter Credit Pack (4 uploads)",
+  management_access_1_month: "1-Month Publishing Access",
   management_access_3_months: "3-Month Publishing Access",
   management_access_6_months: "6-Month Publishing Access",
   management_access_1_year: "1-Year Publishing Access",
+  // Bundles grant the same publishing pass plus a video allowance, so they
+  // appear in this list too — a buyer must be able to see what they hold.
+  management_bundle_1_month: "Complete — 1 Month",
+  management_bundle_3_months: "Complete — 3 Months",
+  management_bundle_6_months: "Complete — 6 Months",
+  management_bundle_1_year: "Complete — 1 Year",
 };
 
 function uploadBundleDisplayStatus(

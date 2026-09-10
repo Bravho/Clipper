@@ -10,7 +10,7 @@ function rowToUser(row: Record<string, unknown>): User {
     name: row.full_name as string,
     role: row.role as Role,
     emailVerified: row.email_verified as boolean,
-    trialConsumed: (row.trial_consumed as boolean) ?? false,
+    priorTrialRequestsUsed: (row.prior_trial_requests_used as number) ?? 0,
     deletedAt: row.deleted_at ? new Date(row.deleted_at as string) : null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
@@ -38,10 +38,10 @@ export class PostgresUserRepository implements IUserRepository {
 
   async create(input: CreateUserInput): Promise<User> {
     const { rows } = await this.db.query(
-      `INSERT INTO users (email, full_name, role, trial_consumed)
+      `INSERT INTO users (email, full_name, role, prior_trial_requests_used)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [input.email, input.name, input.role, input.trialConsumed]
+      [input.email, input.name, input.role, input.priorTrialRequestsUsed]
     );
     return rowToUser(rows[0]);
   }
