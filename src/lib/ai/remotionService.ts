@@ -11,6 +11,8 @@ import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
 import type { Palette } from "@/lib/ai/paletteService";
 import { getRemotionBundle } from "@/lib/ai/remotionBundle";
+import { RENDER_TUNING } from "@/config/renderTuning";
+import { withLocalMediaUrl } from "@/lib/ai/localMediaServer";
 
 /**
  * Phase 4 — Remotion-based motion-graphics/caption overlay rendering.
@@ -134,6 +136,10 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
       // composite time (the "black video behind the captions" bug).
       codec: "vp9",
       pixelFormat: "yuva420p",
+      // Use the whole machine for frame capture (Remotion defaults to about
+      // half the cores). No x264/hardware options here: this output is VP9,
+      // and both of those are H.264-only.
+      concurrency: RENDER_TUNING.concurrency,
       // Transparent (alpha) output requires PNG frames — the default JPEG image
       // format cannot carry an alpha channel and Remotion rejects the combo.
       imageFormat: "png",
@@ -155,6 +161,13 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
 export interface RenderTemplatedVideoParams {
   /** Public URL of the merged (voice+music) master for this ratio. */
   masterUrl: string;
+  /**
+   * Optional path to the master ALREADY on this machine's disk. When set, the
+   * render reads it over loopback instead of pulling `masterUrl` from DO
+   * Spaces, which is otherwise a full download of the master per ratio.
+   * The caller owns the file and deletes it; this function only reads it.
+   */
+  masterFilePath?: string;
   ratio: VideoRatio;
   durationSeconds: number;
   templateId: string;
@@ -180,8 +193,25 @@ export interface RenderTemplatedVideoParams {
 export async function renderTemplatedVideo(
   params: RenderTemplatedVideoParams
 ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+  // When the caller already has the master on disk, serve it over loopback for
+  // the duration of the render rather than making Remotion fetch it from DO
+  // Spaces. `withLocalMediaUrl` always tears the server down, including when
+  // the render throws.
+  if (params.masterFilePath && RENDER_TUNING.localMasterEnabled) {
+    return withLocalMediaUrl(params.masterFilePath, "video/mp4", (localUrl) =>
+      renderTemplatedVideoFrom(params, localUrl)
+    );
+  }
+  return renderTemplatedVideoFrom(params, params.masterUrl);
+}
+
+/** The render itself, against whichever master URL the caller resolved. */
+async function renderTemplatedVideoFrom(
+  params: RenderTemplatedVideoParams,
+  masterUrl: string
+): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
   const inputProps = {
-    masterUrl: params.masterUrl,
+    masterUrl,
     ratio: params.ratio,
     durationSeconds: params.durationSeconds,
     templateId: params.templateId,
@@ -208,6 +238,11 @@ export async function renderTemplatedVideo(
       serveUrl,
       codec: "h264",
       pixelFormat: "yuv420p",
+      // Performance settings — see `@/config/renderTuning` for what each does
+      // and which environment variable reverts it.
+      concurrency: RENDER_TUNING.concurrency,
+      x264Preset: RENDER_TUNING.x264Preset,
+      hardwareAcceleration: RENDER_TUNING.hardwareAcceleration,
       outputLocation: outputPath,
       inputProps,
       timeoutInMilliseconds: RENDER_TIMEOUT_MS,

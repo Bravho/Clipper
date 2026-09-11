@@ -3,6 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import { spacesPublicUrl, spacesUpload } from "@/lib/spaces";
 import { getRemotionBundle } from "@/lib/ai/remotionBundle";
+import { RENDER_TUNING } from "@/config/renderTuning";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
 import {
   DEFAULT_MONTAGE_TRANSITION,
@@ -149,6 +150,12 @@ export async function renderScene(
       serveUrl,
       codec: "h264",
       pixelFormat: "yuv420p",
+      // Same performance settings as the styled per-ratio render — this is the
+      // other half of the render cost (`montage_all_segments`, and the montage
+      // re-render each extra ratio triggers). See `@/config/renderTuning`.
+      concurrency: RENDER_TUNING.concurrency,
+      x264Preset: RENDER_TUNING.x264Preset,
+      hardwareAcceleration: RENDER_TUNING.hardwareAcceleration,
       outputLocation: outputPath,
       inputProps: inputProps as unknown as Record<string, unknown>,
       timeoutInMilliseconds: RENDER_TIMEOUT_MS,

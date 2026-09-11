@@ -200,6 +200,52 @@ async function heartbeatTick(): Promise<void> {
 }
 
 /** Remove any stale per-job scratch dirs left by a previously killed process. */
+/**
+ * Remove render temp directories left behind by a worker that died without
+ * running its `finally` blocks (SIGKILL, power loss, OOM).
+ *
+ * Every render path deletes its own temp dir on the way out, including on
+ * failure — this only catches the case where the process never got to. Without
+ * it a crash mid-render strands a full-size master or montage segment in
+ * /tmp for the life of the machine, and on a worker that runs for weeks those
+ * accumulate.
+ *
+ * Only directories older than STALE_TEMP_AGE_MS are touched, so this can never
+ * delete a render that is currently in flight (its own, or a second worker
+ * process's).
+ */
+const STALE_TEMP_AGE_MS = 6 * 60 * 60 * 1000;
+
+async function sweepStaleRenderTemp(): Promise<void> {
+  const tmpRoot = os.tmpdir();
+  try {
+    const entries = await fs.readdir(tmpRoot).catch(() => [] as string[]);
+    // Every pipeline temp dir is `clipper-<something>`: clipper-media- (cached
+    // masters), clipper-templated-, clipper-montage-, clipper-remotion- and
+    // clipper-<requestId> from the FFmpeg compose. The worker's own scratch root
+    // is plain `clipper`, with no dash, so it is never matched here.
+    const candidates = entries.filter((e) => e.startsWith("clipper-"));
+    const cutoff = Date.now() - STALE_TEMP_AGE_MS;
+    let removed = 0;
+    await Promise.all(
+      candidates.map(async (e) => {
+        const full = path.join(tmpRoot, e);
+        try {
+          const st = await fs.stat(full);
+          if (!st.isDirectory() || st.mtimeMs >= cutoff) return;
+          await fs.rm(full, { recursive: true, force: true });
+          removed += 1;
+        } catch {
+          /* raced with another process, or not ours to remove */
+        }
+      })
+    );
+    if (removed > 0) log("swept stale render temp dirs", { removed });
+  } catch {
+    /* best-effort */
+  }
+}
+
 async function sweepScratch(): Promise<void> {
   try {
     await fs.mkdir(SCRATCH_ROOT, { recursive: true });
@@ -346,6 +392,7 @@ async function main(): Promise<void> {
   await heartbeatTick();
   const heartbeat = setInterval(heartbeatTick, RENDER_QUEUE.heartbeatIntervalMs);
   await sweepScratch();
+  await sweepStaleRenderTemp();
 
   let onShutdown: () => void = () => {};
   const shutdownRequested = new Promise<void>((resolve) => {

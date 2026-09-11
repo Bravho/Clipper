@@ -16,6 +16,7 @@ import type { VideoRatio } from "@/lib/ai/ffmpegService";
 // Phase 7: subtitle + motion-graphic overlay rendering (Remotion) composited on
 // top of the merged masters.
 import * as remotionService from "@/lib/ai/remotionService";
+import { discardTempDir } from "@/lib/ai/localMediaServer";
 import { derivePalette, type Palette } from "@/lib/ai/paletteService";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import { orderSourceAssets, type OrderedSourceAsset } from "@/lib/sourceAssets";
@@ -200,42 +201,72 @@ function normalizeScenePlanToDuration(scenePlan: ScenePlan[], durationSeconds: n
 }
 
 /**
- * Probe the real duration (seconds) of a stored audio asset using ffprobe.
- * Downloads the asset to a temp file, runs ffprobe, then cleans up.
+ * Download a stored object to a FRESH temp directory and return both paths.
+ * The caller owns the directory and must delete it (see `discardTempDir`).
  *
- * Used after voice generation (step 2) so video generation (step 3) can be
- * sized to the real voice duration instead of the scene-plan estimate.
+ * Split out of `probeAudioDurationSeconds` so a master can be fetched ONCE and
+ * then used for several things — the duration probe and the Remotion render —
+ * instead of being pulled from DO Spaces separately for each.
  */
-async function probeAudioDurationSeconds(storageKey: string): Promise<number> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-voice-"));
-  const tmpFile = path.join(tmpDir, "voice.mp3");
+async function downloadStoredObjectToTemp(
+  storageKey: string,
+  fileName: string
+): Promise<{ dir: string; file: string }> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-media-"));
   try {
+    const file = path.join(dir, fileName);
     const bucket = process.env.DO_SPACES_BUCKET!;
     const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: storageKey }));
     const chunks: Uint8Array[] = [];
     for await (const chunk of res.Body as AsyncIterable<Uint8Array>) {
       chunks.push(chunk);
     }
-    await fs.writeFile(tmpFile, Buffer.concat(chunks));
+    await fs.writeFile(file, Buffer.concat(chunks));
+    return { dir, file };
+  } catch (err) {
+    // Never leave the directory behind when the download itself failed — the
+    // caller has no handle to clean up with, because it never got one back.
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+}
 
-    const ffprobePath = (AI_CONFIG.ffmpeg.path ?? "ffmpeg").replace(/ffmpeg(\.exe)?$/i, (m) =>
-      m.toLowerCase().endsWith(".exe") ? "ffprobe.exe" : "ffprobe"
-    );
+/** ffprobe a file ALREADY on this machine for its duration in seconds. */
+async function probeLocalDurationSeconds(filePath: string): Promise<number> {
+  const ffprobePath = (AI_CONFIG.ffmpeg.path ?? "ffmpeg").replace(/ffmpeg(\.exe)?$/i, (m) =>
+    m.toLowerCase().endsWith(".exe") ? "ffprobe.exe" : "ffprobe"
+  );
 
-    const { stdout } = await execFileAsync(ffprobePath, [
-      "-v", "error",
-      "-show_entries", "format=duration",
-      "-of", "default=noprint_wrappers=1:nokey=1",
-      tmpFile,
-    ]);
+  const { stdout } = await execFileAsync(ffprobePath, [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ]);
 
-    const duration = parseFloat(stdout.trim());
-    if (!Number.isFinite(duration) || duration <= 0) {
-      throw new Error(`ffprobe returned invalid duration: "${stdout.trim()}"`);
-    }
-    return duration;
+  const duration = parseFloat(stdout.trim());
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error(`ffprobe returned invalid duration: "${stdout.trim()}"`);
+  }
+  return duration;
+}
+
+/**
+ * Probe the real duration (seconds) of a stored audio asset using ffprobe.
+ * Downloads the asset to a temp file, runs ffprobe, then cleans up.
+ *
+ * Used after voice generation (step 2) so video generation (step 3) can be
+ * sized to the real voice duration instead of the scene-plan estimate.
+ *
+ * Callers that ALREADY hold the file locally should call
+ * `probeLocalDurationSeconds` instead — this one pays for a full download.
+ */
+async function probeAudioDurationSeconds(storageKey: string): Promise<number> {
+  const { dir, file } = await downloadStoredObjectToTemp(storageKey, "voice.mp3");
+  try {
+    return await probeLocalDurationSeconds(file);
   } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -2420,6 +2451,80 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   }
 
   /**
+   * Render the styled MP4 for ONE ratio from that ratio's merged master.
+   *
+   * The master is downloaded ONCE here and used for BOTH the duration probe and
+   * the render. Before this, the caller probed by storage key (a full download
+   * of the master) and then handed Remotion the public Spaces URL, which
+   * Remotion downloaded again — two transfers of the whole master from sgp1 per
+   * ratio, inside the step that already dominates the pipeline.
+   *
+   * A download failure here is NOT fatal: the render falls back to the previous
+   * behaviour (probe by key, Remotion fetches the public URL), so a Spaces
+   * hiccup costs time rather than the job.
+   */
+  private async _renderStyledFromMaster(opts: {
+    masterStorageKey: string;
+    masterStorageUrl: string;
+    ratio: VideoRatio;
+    /** Floor for the render length — the subtitle timeline's own duration. */
+    minDurationSeconds: number;
+    templateId: string;
+    palette: Palette;
+    timeline: TimedSegment[];
+    languages: ("th" | "en" | "zh")[];
+    outputStorageKey: string;
+    onProgress?: (fraction: number) => void;
+  }): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+    let cached: { dir: string; file: string } | null = null;
+    try {
+      try {
+        cached = await downloadStoredObjectToTemp(
+          opts.masterStorageKey,
+          `master_${opts.ratio.replace(":", "-")}.mp4`
+        );
+      } catch (err) {
+        console.error(
+          `[overlay:${opts.ratio}] could not cache the master locally; using the Spaces URL:`,
+          err
+        );
+      }
+
+      // The captioned render must run for the FULL merged-master length, not
+      // just the voice window — otherwise the styled clip is shorter than the
+      // master the requester approved (the Remotion composition frame count is
+      // duration*FPS, so a short duration truncates the master playing inside
+      // it). Probe the master's real duration and render for at least that long.
+      let masterDuration = 0;
+      try {
+        masterDuration = cached
+          ? await probeLocalDurationSeconds(cached.file)
+          : await probeAudioDurationSeconds(opts.masterStorageKey);
+      } catch (err) {
+        console.error("[overlay] failed to probe master duration, using timeline length:", err);
+      }
+
+      return await remotionService.renderTemplatedVideo({
+        masterUrl: opts.masterStorageUrl,
+        masterFilePath: cached?.file,
+        ratio: opts.ratio,
+        durationSeconds: Math.max(opts.minDurationSeconds, masterDuration),
+        templateId: opts.templateId,
+        palette: opts.palette,
+        subtitleTimeline: opts.timeline,
+        subtitleLanguages: opts.languages,
+        outputStorageKey: opts.outputStorageKey,
+        onProgress: opts.onProgress,
+      });
+    } finally {
+      // Delete the cached master however we leave this block — success, render
+      // failure or cancellation — so a job cannot accumulate a multi-hundred-MB
+      // temp file per ratio on the worker's disk.
+      await discardTempDir(cached?.dir ?? null);
+    }
+  }
+
+  /**
    * Render the transparent overlay for ONE ratio and composite it onto that
    * ratio's clean master, returning the new captioned FinalClip asset id. Reused
    * for the requester's channels (their selected languages) and for the Travy
@@ -2449,31 +2554,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const master = await uploadedAssetRepository.findById(masterAssetId);
     if (!master) throw new Error(`Master asset not found: ${masterAssetId}`);
 
-    // The captioned render must run for the FULL merged-master length, not just
-    // the voice window — otherwise the styled clip is shorter than the master the
-    // requester approved (the Remotion composition frame count is duration*FPS,
-    // so a short duration truncates the master playing inside it). Probe the
-    // master's real duration and render for at least that long.
-    let masterDuration = 0;
-    try {
-      masterDuration = await probeAudioDurationSeconds(master.storageKey);
-    } catch (err) {
-      console.error("[overlay] failed to probe master duration, using timeline length:", err);
-    }
-    const renderDuration = Math.max(inputs.durationSeconds, masterDuration);
-
     // Single-pass styled render: the master plays inside the Remotion template
     // (audio carried through), template frame/decor + subtitles on top, output
     // as one opaque MP4 — no alpha compositing.
     const outputKey = buildFinalClipKey(userId, job.requestId, ratio);
-    const result = await remotionService.renderTemplatedVideo({
-      masterUrl: master.storageUrl,
+    const result = await this._renderStyledFromMaster({
+      masterStorageKey: master.storageKey,
+      masterStorageUrl: master.storageUrl,
       ratio,
-      durationSeconds: renderDuration,
+      minDurationSeconds: inputs.durationSeconds,
       templateId: job.selectedMotionTemplate ?? "none",
       palette: inputs.palette,
-      subtitleTimeline: inputs.timeline,
-      subtitleLanguages: languages.length > 0 ? languages : ["en", "zh"],
+      timeline: inputs.timeline,
+      languages: languages.length > 0 ? languages : ["en", "zh"],
       outputStorageKey: outputKey,
       onProgress,
     });
