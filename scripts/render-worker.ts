@@ -34,6 +34,7 @@ import {
 import { pool } from "@/lib/db";
 import { VideoGenerationService } from "@/services/VideoGenerationService";
 import { RENDER_QUEUE } from "@/config/renderQueue";
+import { prepareSharedBrowser } from "@/lib/ai/remotionBrowser";
 import { AI_CONFIG } from "@/config/aiTools";
 import type { RenderTask } from "@/domain/models/RenderTask";
 
@@ -393,6 +394,11 @@ async function main(): Promise<void> {
   const heartbeat = setInterval(heartbeatTick, RENDER_QUEUE.heartbeatIntervalMs);
   await sweepScratch();
   await sweepStaleRenderTemp();
+  // Confirm (downloading once if needed) that a Chromium is present, which is
+  // what lets the montage steps share ONE browser instead of cold-starting two
+  // per scene per ratio. Never throws; failing just leaves that optimisation off.
+  const sharedBrowser = await prepareSharedBrowser();
+  log("shared render browser", { enabled: sharedBrowser });
 
   let onShutdown: () => void = () => {};
   const shutdownRequested = new Promise<void>((resolve) => {

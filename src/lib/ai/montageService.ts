@@ -4,6 +4,7 @@ import * as os from "os";
 import { spacesPublicUrl, spacesUpload } from "@/lib/spaces";
 import { getRemotionBundle } from "@/lib/ai/remotionBundle";
 import { RENDER_TUNING } from "@/config/renderTuning";
+import type { HeadlessBrowser } from "@remotion/renderer";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
 import {
   DEFAULT_MONTAGE_TRANSITION,
@@ -68,7 +69,21 @@ export interface RenderSceneParams {
    * fire-and-forget).
    */
   onProgress?: (fraction: number) => void;
+  /**
+   * Optional shared Chromium (see `@/lib/ai/remotionBrowser`). When omitted,
+   * Remotion launches and tears down its own for this one render — which is
+   * what made the per-scene, per-ratio montage loop pay for dozens of cold
+   * starts.
+   */
+  browser?: HeadlessBrowser;
 }
+
+/**
+ * Everything needed to render a scene EXCEPT where to store it — the shape
+ * `renderSceneToFile` takes, since it writes to a caller-supplied path instead
+ * of uploading. `RenderSceneParams` is assignable to it.
+ */
+export type RenderSceneSpec = Omit<RenderSceneParams, "outputStorageKey">;
 
 function clamp01(value: number | undefined): number | undefined {
   if (value == null || !Number.isFinite(value)) return undefined;
@@ -80,7 +95,7 @@ function clamp01(value: number | undefined): number | undefined {
  * Defaults motion/transition, drops invalid focus/trim values, and guarantees
  * a positive scene duration. Unit-tested without touching Remotion or Spaces.
  */
-export function buildSceneInputProps(params: RenderSceneParams): MontageSceneProps {
+export function buildSceneInputProps(params: RenderSceneSpec): MontageSceneProps {
   const durationSeconds =
     Number.isFinite(params.durationSeconds) && params.durationSeconds > 0
       ? params.durationSeconds
@@ -130,37 +145,10 @@ export function buildSceneInputProps(params: RenderSceneParams): MontageScenePro
 export async function renderScene(
   params: RenderSceneParams
 ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
-  const inputProps = buildSceneInputProps(params);
-
-  const { selectComposition, renderMedia } = await import("@remotion/renderer");
-  const serveUrl = await getRemotionBundle();
-
-  const composition = await selectComposition({
-    serveUrl,
-    id: "MontageScene",
-    inputProps: inputProps as unknown as Record<string, unknown>,
-  });
-
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-montage-"));
   const outputPath = path.join(tmpDir, "scene.mp4");
-
   try {
-    await renderMedia({
-      composition,
-      serveUrl,
-      codec: "h264",
-      pixelFormat: "yuv420p",
-      // Same performance settings as the styled per-ratio render — this is the
-      // other half of the render cost (`montage_all_segments`, and the montage
-      // re-render each extra ratio triggers). See `@/config/renderTuning`.
-      concurrency: RENDER_TUNING.concurrency,
-      x264Preset: RENDER_TUNING.x264Preset,
-      hardwareAcceleration: RENDER_TUNING.hardwareAcceleration,
-      outputLocation: outputPath,
-      inputProps: inputProps as unknown as Record<string, unknown>,
-      timeoutInMilliseconds: RENDER_TIMEOUT_MS,
-      onProgress: ({ progress }) => params.onProgress?.(progress),
-    });
+    await renderSceneToFile(params, outputPath);
 
     const data = await fs.readFile(outputPath);
     // Multipart: the montage base video is large; a single PutObject times out
@@ -175,4 +163,55 @@ export async function renderScene(
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Render a single montage scene segment straight to a local path, with NO
+ * upload. The caller owns `destPath`.
+ *
+ * Used for the non-primary aspect ratios, whose segments are pure
+ * intermediates: `_renderMontageBaseAtRatio` creates no `UploadedAsset` for
+ * them and nothing ever surfaces them, yet every one used to be uploaded to
+ * Spaces and then downloaded straight back by the crossfade concat. The
+ * primary ratio still goes through `renderScene` — those segments ARE stored,
+ * because the requester reviews them scene by scene.
+ */
+export async function renderSceneToFile(
+  params: RenderSceneSpec,
+  destPath: string
+): Promise<{ path: string; fileSizeBytes: number }> {
+  const inputProps = buildSceneInputProps(params);
+
+  const { selectComposition, renderMedia } = await import("@remotion/renderer");
+  const serveUrl = await getRemotionBundle();
+
+  const composition = await selectComposition({
+    serveUrl,
+    id: "MontageScene",
+    inputProps: inputProps as unknown as Record<string, unknown>,
+    puppeteerInstance: params.browser,
+  });
+
+  await fs.mkdir(path.dirname(destPath), { recursive: true });
+
+  await renderMedia({
+    composition,
+    serveUrl,
+    codec: "h264",
+    pixelFormat: "yuv420p",
+    // Same performance settings as the styled per-ratio render — this is the
+    // other half of the render cost (`montage_all_segments`, and the montage
+    // re-render each extra ratio triggers). See `@/config/renderTuning`.
+    concurrency: RENDER_TUNING.concurrency,
+    x264Preset: RENDER_TUNING.x264Preset,
+    hardwareAcceleration: RENDER_TUNING.hardwareAcceleration,
+    puppeteerInstance: params.browser,
+    outputLocation: destPath,
+    inputProps: inputProps as unknown as Record<string, unknown>,
+    timeoutInMilliseconds: RENDER_TIMEOUT_MS,
+    onProgress: ({ progress }) => params.onProgress?.(progress),
+  });
+
+  const { size } = await fs.stat(destPath);
+  return { path: destPath, fileSizeBytes: size };
 }

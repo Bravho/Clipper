@@ -13,6 +13,7 @@ import type { Palette } from "@/lib/ai/paletteService";
 import { getRemotionBundle } from "@/lib/ai/remotionBundle";
 import { RENDER_TUNING } from "@/config/renderTuning";
 import { withLocalMediaUrl } from "@/lib/ai/localMediaServer";
+import type { HeadlessBrowser } from "@remotion/renderer";
 
 /**
  * Phase 4 — Remotion-based motion-graphics/caption overlay rendering.
@@ -181,6 +182,8 @@ export interface RenderTemplatedVideoParams {
    * `renderMedia` overall progress. Used for the requester-facing % bar.
    */
   onProgress?: (fraction: number) => void;
+  /** Optional shared Chromium (see `@/lib/ai/remotionBrowser`). */
+  browser?: HeadlessBrowser;
 }
 
 /**
@@ -227,6 +230,7 @@ async function renderTemplatedVideoFrom(
     serveUrl,
     id: "TemplatedVideo",
     inputProps,
+    puppeteerInstance: params.browser,
   });
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-templated-"));
@@ -243,6 +247,7 @@ async function renderTemplatedVideoFrom(
       concurrency: RENDER_TUNING.concurrency,
       x264Preset: RENDER_TUNING.x264Preset,
       hardwareAcceleration: RENDER_TUNING.hardwareAcceleration,
+      puppeteerInstance: params.browser,
       outputLocation: outputPath,
       inputProps,
       timeoutInMilliseconds: RENDER_TIMEOUT_MS,

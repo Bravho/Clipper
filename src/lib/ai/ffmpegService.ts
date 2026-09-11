@@ -828,6 +828,103 @@ export async function applyTiledWatermark(params: {
  * Falls back to a hard-cut concat (`concatVideos`) if probing or the xfade
  * filtergraph fails, so the pipeline always produces a base video.
  */
+/**
+ * The crossfade filtergraph itself, over segments ALREADY on disk.
+ *
+ * Extracted so the stored-key path and the local-segment path share one
+ * implementation — the pairwise xfade offsets and the tpad length correction
+ * are subtle enough that a second copy would drift.
+ */
+async function crossfadeConcatLocal(
+  inputPaths: string[],
+  outPath: string,
+  fadeSeconds: number
+): Promise<void> {
+  const ffmpeg = AI_CONFIG.ffmpeg.path;
+
+  const durations = await Promise.all(inputPaths.map((p) => probeDurationSeconds(p)));
+  if (durations.some((d) => d <= 0)) {
+    throw new Error("xfade concat: could not probe one or more segment durations");
+  }
+
+  // Never dissolve longer than half of the shortest segment.
+  const fade = Math.max(0.05, Math.min(fadeSeconds, ...durations.map((d) => d / 2)));
+
+  const inputArgs: string[] = [];
+  inputPaths.forEach((p) => inputArgs.push("-i", p));
+
+  // Chain xfade pairwise. offset for join k = (running accumulated duration) - fade.
+  const filters: string[] = [];
+  let prevLabel = "0:v";
+  let accDuration = durations[0];
+  for (let i = 1; i < inputPaths.length; i++) {
+    const offset = Math.max(0, accDuration - fade);
+    const outLabel = i === inputPaths.length - 1 ? "vxf" : `vx${i}`;
+    filters.push(
+      `[${prevLabel}][${i}:v]xfade=transition=fade:duration=${fade.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`
+    );
+    prevLabel = outLabel;
+    accDuration = accDuration + durations[i] - fade;
+  }
+  // Restore only the length the xfade overlaps removed (`fade*(n-1)`) plus a
+  // tiny safety margin — NOT a full extra second. Over-padding here froze the
+  // last scene's final frame for ~1s+; keeping the base at its true montage
+  // length lets the compose step cover any voice-vs-picture shortfall with a
+  // black tail (audio continues) instead of a long frozen frame.
+  const padSeconds = fade * (inputPaths.length - 1) + 0.2;
+  filters.push(
+    `[${prevLabel}]tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(3)},format=yuv420p,fps=30[vout]`
+  );
+
+  await execFileAsync(ffmpeg, [
+    "-y",
+    ...inputArgs,
+    "-filter_complex", filters.join(";"),
+    "-map", "[vout]",
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    "-r", "30",
+    "-an",
+    outPath,
+  ]);
+}
+
+/**
+ * Hard-cut concat over segments already on disk: stream copy, re-encoding only
+ * if the copy fails on mismatched codecs/params. The local mirror of
+ * {@link concatVideos}' ffmpeg half.
+ */
+async function hardCutConcatLocal(
+  inputPaths: string[],
+  outPath: string,
+  workDir: string
+): Promise<void> {
+  const ffmpeg = AI_CONFIG.ffmpeg.path;
+  const listFile = path.join(workDir, "concat-local.txt");
+  const listContent = inputPaths
+    .map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`)
+    .join("\n");
+  await fs.writeFile(listFile, listContent, "utf-8");
+
+  try {
+    await execFileAsync(ffmpeg, [
+      "-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outPath,
+    ]);
+  } catch (err) {
+    console.error("[ffmpeg] local concat -c copy failed, falling back to re-encode:", describeExecError(err));
+    try {
+      await execFileAsync(ffmpeg, [
+        "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+        "-c:v", "libx264", "-c:a", "aac", outPath,
+      ]);
+    } catch (err2) {
+      const detail = describeExecError(err2);
+      console.error("[ffmpeg] local concat re-encode failed:", detail);
+      throw new Error(`ffmpeg local concat re-encode failed: ${detail}`);
+    }
+  }
+}
+
 export async function concatVideosWithCrossfade(
   inputStorageKeys: string[],
   outputStorageKey: string,
@@ -839,7 +936,6 @@ export async function concatVideosWithCrossfade(
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-xfade-"));
   try {
-    const ffmpeg = AI_CONFIG.ffmpeg.path;
     const inputPaths: string[] = [];
     for (let i = 0; i < inputStorageKeys.length; i++) {
       const dest = path.join(tmpDir, `in-${i}.mp4`);
@@ -847,52 +943,8 @@ export async function concatVideosWithCrossfade(
       inputPaths.push(dest);
     }
 
-    const durations = await Promise.all(inputPaths.map((p) => probeDurationSeconds(p)));
-    if (durations.some((d) => d <= 0)) {
-      throw new Error("xfade concat: could not probe one or more segment durations");
-    }
-
-    // Never dissolve longer than half of the shortest segment.
-    const fade = Math.max(0.05, Math.min(fadeSeconds, ...durations.map((d) => d / 2)));
-
-    const inputArgs: string[] = [];
-    inputPaths.forEach((p) => inputArgs.push("-i", p));
-
-    // Chain xfade pairwise. offset for join k = (running accumulated duration) - fade.
-    const filters: string[] = [];
-    let prevLabel = "0:v";
-    let accDuration = durations[0];
-    for (let i = 1; i < inputPaths.length; i++) {
-      const offset = Math.max(0, accDuration - fade);
-      const outLabel = i === inputPaths.length - 1 ? "vxf" : `vx${i}`;
-      filters.push(
-        `[${prevLabel}][${i}:v]xfade=transition=fade:duration=${fade.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`
-      );
-      prevLabel = outLabel;
-      accDuration = accDuration + durations[i] - fade;
-    }
-    // Restore only the length the xfade overlaps removed (`fade*(n-1)`) plus a
-    // tiny safety margin — NOT a full extra second. Over-padding here froze the
-    // last scene's final frame for ~1s+; keeping the base at its true montage
-    // length lets the compose step cover any voice-vs-picture shortfall with a
-    // black tail (audio continues) instead of a long frozen frame.
-    const padSeconds = fade * (inputPaths.length - 1) + 0.2;
-    filters.push(
-      `[${prevLabel}]tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(3)},format=yuv420p,fps=30[vout]`
-    );
-
     const outPath = path.join(tmpDir, "xfade-out.mp4");
-    await execFileAsync(ffmpeg, [
-      "-y",
-      ...inputArgs,
-      "-filter_complex", filters.join(";"),
-      "-map", "[vout]",
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-r", "30",
-      "-an",
-      outPath,
-    ]);
+    await crossfadeConcatLocal(inputPaths, outPath, fadeSeconds);
 
     await uploadToSpaces(outPath, outputStorageKey);
     const { size } = await fs.stat(outPath);
@@ -904,6 +956,59 @@ export async function concatVideosWithCrossfade(
   } catch (err) {
     console.error("[ffmpeg] crossfade concat failed, falling back to hard-cut concat:", describeExecError(err));
     return concatVideos(inputStorageKeys, outputStorageKey);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Crossfade-concat segments that are ALREADY on this machine and upload only
+ * the finished video.
+ *
+ * The non-primary aspect ratios render their scene segments purely as
+ * intermediates. Routing them through {@link concatVideosWithCrossfade} meant
+ * uploading every segment to Spaces and downloading all of them straight back —
+ * two full transfers of the whole video, per ratio, for files nobody ever sees.
+ * The caller owns `inputPaths` and deletes them.
+ */
+export async function concatLocalVideosWithCrossfade(
+  inputPaths: string[],
+  outputStorageKey: string,
+  fadeSeconds = 0.2
+): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+  if (inputPaths.length === 0) {
+    throw new Error("concatLocalVideosWithCrossfade: at least one input path is required");
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-xfade-local-"));
+  try {
+    const outPath = path.join(tmpDir, "xfade-out.mp4");
+
+    if (inputPaths.length === 1) {
+      // One scene needs no join — but it still has to be uploaded under the
+      // output key, so copy rather than special-casing the caller.
+      await fs.copyFile(inputPaths[0], outPath);
+    } else {
+      try {
+        await crossfadeConcatLocal(inputPaths, outPath, fadeSeconds);
+      } catch (err) {
+        // Same degradation as the stored-key path: a failed dissolve must not
+        // lose the render, so fall back to a hard cut.
+        console.error(
+          "[ffmpeg] local crossfade concat failed, falling back to hard-cut concat:",
+          describeExecError(err)
+        );
+        await hardCutConcatLocal(inputPaths, outPath, tmpDir);
+      }
+    }
+
+    await uploadToSpaces(outPath, outputStorageKey);
+    const { size } = await fs.stat(outPath);
+    return {
+      storageKey: outputStorageKey,
+      storageUrl: spacesPublicUrl(outputStorageKey),
+      fileSizeBytes: size,
+    };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }

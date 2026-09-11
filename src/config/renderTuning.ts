@@ -86,4 +86,33 @@ export const RENDER_TUNING = {
    * internet once per ratio.
    */
   localMasterEnabled: process.env.RENDER_LOCAL_MASTER !== "false",
+
+  /**
+   * Share ONE headless Chromium across the renders in a montage step instead of
+   * letting `selectComposition` and `renderMedia` each launch their own, per
+   * scene, per ratio (see `@/lib/ai/remotionBrowser`).
+   *
+   * Set REMOTION_SHARED_BROWSER=false to go back to a browser per render.
+   */
+  sharedBrowserEnabled: process.env.REMOTION_SHARED_BROWSER !== "false",
+
+  /**
+   * Keep a non-primary ratio's montage segments on local disk and concatenate
+   * them there, uploading only the finished base. Previously each segment was
+   * uploaded to Spaces and then downloaded straight back by the concat, for
+   * intermediates no one ever sees.
+   *
+   * Set RENDER_LOCAL_SEGMENTS=false to upload each segment as before.
+   */
+  localSegmentsEnabled: process.env.RENDER_LOCAL_SEGMENTS !== "false",
+
+  /**
+   * Download each distinct source photo/clip ONCE per montage step and serve it
+   * to Remotion over loopback, instead of Remotion re-fetching it from Spaces
+   * for every scene render and every ratio (each render has its own download
+   * cache).
+   *
+   * Set RENDER_ASSET_CACHE=false to let every render fetch its own copies.
+   */
+  assetCacheEnabled: process.env.RENDER_ASSET_CACHE !== "false",
 } as const;

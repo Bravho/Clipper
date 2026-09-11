@@ -16,7 +16,9 @@ import type { VideoRatio } from "@/lib/ai/ffmpegService";
 // Phase 7: subtitle + motion-graphic overlay rendering (Remotion) composited on
 // top of the merged masters.
 import * as remotionService from "@/lib/ai/remotionService";
-import { discardTempDir } from "@/lib/ai/localMediaServer";
+import { discardTempDir, withLocalAssetCache, type LocalAssetCache } from "@/lib/ai/localMediaServer";
+import { withSharedBrowser } from "@/lib/ai/remotionBrowser";
+import type { HeadlessBrowser } from "@remotion/renderer";
 import { derivePalette, type Palette } from "@/lib/ai/paletteService";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import { orderSourceAssets, type OrderedSourceAsset } from "@/lib/sourceAssets";
@@ -33,6 +35,7 @@ import {
   isMontageTransition,
   minMontageTotalSeconds,
   sceneMontageSeconds,
+  type MontageTransition,
 } from "@/config/montage";
 import { buildAiVideoKey, buildFinalClipKey, buildWatermarkedPreviewKey } from "@/lib/spacesKeys";
 import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerationJobInput, ChannelPublishingDraft, RenderProgressDetail, CaptionedExportField, FinalExportField } from "@/domain/models/VideoGenerationJob";
@@ -57,6 +60,7 @@ import {
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE, renderPriorityForRequest } from "@/config/renderQueue";
+import { RENDER_TUNING } from "@/config/renderTuning";
 import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
 import { isAutoApprovedGate } from "@/config/pipelinePresentation";
@@ -268,6 +272,24 @@ async function probeAudioDurationSeconds(storageKey: string): Promise<number> {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Resources shared across every render in ONE heavy step.
+ *
+ * Both members are optimisations that must be optional: every method taking a
+ * `RenderContext` behaves exactly as before when it is absent, which is what
+ * the web-server fallback path and the existing callers rely on.
+ *
+ * Scoped to a step rather than the process because a browser held open for days
+ * accumulates memory on a 16 GB machine, and a cache held that long would serve
+ * stale media after a requester replaces a photo.
+ */
+interface RenderContext {
+  /** One headless Chromium for all of the step's renders. */
+  browser?: HeadlessBrowser;
+  /** Source photos/clips held on disk and served over loopback. */
+  assets?: LocalAssetCache;
 }
 
 export class VideoGenerationService {
@@ -602,12 +624,13 @@ export class VideoGenerationService {
    * SAME approved assets, durations, motion and subject-focus points — only the
    * canvas ratio differs, so there is no cropping and no AI/scene regeneration.
    */
-  private async _renderSceneClipAtRatio(
+  private async _buildSceneRenderSpec(
     job: VideoGenerationJob,
     sceneIndex: number,
     ratio: VideoRatio,
-    onProgress?: (fraction: number) => void
-  ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+    onProgress?: (fraction: number) => void,
+    ctx?: RenderContext
+  ): Promise<{ spec: montageService.RenderSceneSpec; userId: string }> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(job.requestId);
     if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
@@ -672,16 +695,73 @@ export class VideoGenerationService {
     const transition = isMontageTransition(scene.transitionIn)
       ? scene.transitionIn
       : DEFAULT_MONTAGE_TRANSITION;
-    const outputStorageKey = buildAiVideoKey(req.userId, job.requestId);
+    return {
+      spec: {
+        ...(await this._sceneRenderSpec(renderAssets, ratio, totalDuration, transition, ctx)),
+        onProgress,
+      },
+      userId: req.userId,
+    };
+  }
 
+  /** Render one scene at a ratio and STORE the segment in Spaces. */
+  private async _renderSceneClipAtRatio(
+    job: VideoGenerationJob,
+    sceneIndex: number,
+    ratio: VideoRatio,
+    onProgress?: (fraction: number) => void,
+    ctx?: RenderContext
+  ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
+    const { spec, userId } = await this._buildSceneRenderSpec(job, sceneIndex, ratio, onProgress, ctx);
     return montageService.renderScene({
-      ratio,
-      durationSeconds: totalDuration,
-      assets: renderAssets,
-      transition,
-      outputStorageKey,
-      onProgress,
+      ...spec,
+      outputStorageKey: buildAiVideoKey(userId, job.requestId),
     });
+  }
+
+  /**
+   * Render one scene at a ratio straight to `destPath` — NO upload.
+   *
+   * For the non-primary ratios only, whose segments are intermediates the
+   * crossfade concat consumes locally. The primary ratio keeps
+   * `_renderSceneClipAtRatio`, because those segments become `UploadedAsset`
+   * rows the requester reviews scene by scene.
+   */
+  private async _renderSceneFileAtRatio(
+    job: VideoGenerationJob,
+    sceneIndex: number,
+    ratio: VideoRatio,
+    destPath: string,
+    onProgress?: (fraction: number) => void,
+    ctx?: RenderContext
+  ): Promise<string> {
+    const { spec } = await this._buildSceneRenderSpec(job, sceneIndex, ratio, onProgress, ctx);
+    const { path: written } = await montageService.renderSceneToFile(spec, destPath);
+    return written;
+  }
+
+  /**
+   * Shared tail of the two scene-render paths: swap each asset's Spaces URL for
+   * a loopback one where the step's cache already holds it (or can fetch it),
+   * and attach the step's shared browser.
+   *
+   * Asset caching only pays off ACROSS ratios — the scenes within one ratio use
+   * different photos — so this relies on the cache living at step scope, not
+   * per ratio.
+   */
+  private async _sceneRenderSpec(
+    renderAssets: Awaited<ReturnType<typeof toRenderAssetSpecs>>,
+    ratio: VideoRatio,
+    durationSeconds: number,
+    transition: MontageTransition,
+    ctx?: RenderContext
+  ) {
+    const assets = ctx?.assets
+      ? await Promise.all(
+          renderAssets.map(async (a) => ({ ...a, url: await ctx.assets!.ensure(a.url) }))
+        )
+      : renderAssets;
+    return { ratio, durationSeconds, assets, transition, browser: ctx?.browser };
   }
 
   /**
@@ -695,14 +775,15 @@ export class VideoGenerationService {
   private async _renderSceneInto(
     job: VideoGenerationJob,
     sceneIndex: number,
-    onProgress?: (fraction: number) => void
+    onProgress?: (fraction: number) => void,
+    ctx?: RenderContext
   ): Promise<string> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(job.requestId);
     if (!req) throw new Error(`ClipRequest not found: ${job.requestId}`);
 
     const ratio = this._montageCanvasRatio(req.targetPlatforms[0] ?? Platform.TravyApp);
-    const stored = await this._renderSceneClipAtRatio(job, sceneIndex, ratio, onProgress);
+    const stored = await this._renderSceneClipAtRatio(job, sceneIndex, ratio, onProgress, ctx);
 
     const scheduledDeletionAt = new Date();
     scheduledDeletionAt.setFullYear(scheduledDeletionAt.getFullYear() + 8);
@@ -1071,15 +1152,22 @@ export class VideoGenerationService {
     // window [i/N, (i+1)/N), with Remotion's per-scene fraction filling it.
     const writeProgress = this._progressWriter(job.id);
     const sceneCount = Math.max(1, scenePlan.length);
-    for (let i = 0; i < scenePlan.length; i++) {
-      await this._renderSceneInto(job, i, (f) =>
-        writeProgress(((i + f) / sceneCount) * 100, {
-          unit: `scene ${i + 1}`,
-          unitsDone: i,
-          unitsTotal: sceneCount,
-        })
-      );
-    }
+    // One Chromium for the whole batch instead of two cold starts per scene.
+    await withSharedBrowser("montage:all-segments", async (browser) => {
+      for (let i = 0; i < scenePlan.length; i++) {
+        await this._renderSceneInto(
+          job,
+          i,
+          (f) =>
+            writeProgress(((i + f) / sceneCount) * 100, {
+              unit: `scene ${i + 1}`,
+              unitsDone: i,
+              unitsTotal: sceneCount,
+            }),
+          { browser }
+        );
+      }
+    });
 
     const latest = await videoGenerationJobRepository.findById(job.id);
     const firstSegment =
@@ -1154,7 +1242,8 @@ export class VideoGenerationService {
    */
   private async _renderMontageBaseAtRatio(
     job: VideoGenerationJob,
-    ratio: VideoRatio
+    ratio: VideoRatio,
+    ctx?: RenderContext
   ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(job.requestId);
@@ -1167,15 +1256,46 @@ export class VideoGenerationService {
       throw new Error(`No approved scene plan to render base at ratio ${ratio}`);
     }
 
+    const outputKey = buildAiVideoKey(req.userId, job.requestId);
+
+    // These segments are pure intermediates — no `UploadedAsset` is created for
+    // them and nothing ever surfaces them. Keeping them on disk skips a
+    // round-trip to Singapore and back for each one; only the finished base is
+    // uploaded. RENDER_LOCAL_SEGMENTS=false restores the stored-segment path.
+    if (RENDER_TUNING.localSegmentsEnabled) {
+      const segDir = await fs.mkdtemp(path.join(os.tmpdir(), "clipper-segments-"));
+      try {
+        const segmentPaths: string[] = [];
+        for (let i = 0; i < scenePlan.length; i++) {
+          segmentPaths.push(
+            await this._renderSceneFileAtRatio(
+              job,
+              i,
+              ratio,
+              path.join(segDir, `seg-${i}.mp4`),
+              undefined,
+              ctx
+            )
+          );
+        }
+        // Cross-dissolve at scene joins (falls back to hard-cut on failure) —
+        // the same filtergraph the stored-key path uses.
+        return await ffmpegService.concatLocalVideosWithCrossfade(segmentPaths, outputKey);
+      } finally {
+        // Delete the segments however we leave this block. At up to four ratios
+        // per job these are the largest temp files the pipeline makes.
+        await discardTempDir(segDir);
+      }
+    }
+
     const segments: { storageKey: string; storageUrl: string; fileSizeBytes: number }[] = [];
     for (let i = 0; i < scenePlan.length; i++) {
-      segments.push(await this._renderSceneClipAtRatio(job, i, ratio));
+      segments.push(await this._renderSceneClipAtRatio(job, i, ratio, undefined, ctx));
     }
 
     // A single scene needs no concat.
     if (segments.length === 1) return segments[0];
 
-    const outputKey = buildAiVideoKey(req.userId, job.requestId);
     // Cross-dissolve at scene joins (falls back to hard-cut concat on failure) —
     // identical to the primary base's `_concatMontageBaseVideo`.
     return ffmpegService.concatVideosWithCrossfade(
@@ -2475,6 +2595,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     languages: ("th" | "en" | "zh")[];
     outputStorageKey: string;
     onProgress?: (fraction: number) => void;
+    browser?: HeadlessBrowser;
   }): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
     let cached: { dir: string; file: string } | null = null;
     try {
@@ -2515,6 +2636,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         subtitleLanguages: opts.languages,
         outputStorageKey: opts.outputStorageKey,
         onProgress: opts.onProgress,
+        browser: opts.browser,
       });
     } finally {
       // Delete the cached master however we leave this block — success, render
@@ -2536,7 +2658,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     ratio: VideoRatio,
     languages: ("th" | "en" | "zh")[],
     inputs: Awaited<ReturnType<VideoGenerationService["_buildOverlayInputs"]>>,
-    onProgress?: (fraction: number) => void
+    onProgress?: (fraction: number) => void,
+    ctx?: RenderContext
   ): Promise<string> {
     let masterAssetId = this._masterAssetIdForRatio(job, ratio);
     if (!masterAssetId) {
@@ -2546,7 +2669,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       // step then needs that master and would hard-fail here. Compose it
       // on-demand instead, persist it, and carry on.
       console.log(`[overlay:${ratio}] no merged master — composing it on-demand`);
-      masterAssetId = await this._composeMasterForRatio(job, ratio);
+      masterAssetId = await this._composeMasterForRatio(job, ratio, ctx);
       await videoGenerationJobRepository.update(job.id, {
         [this._finalExportFieldForRatio(ratio)]: masterAssetId,
       } as UpdateVideoGenerationJobInput);
@@ -2569,6 +2692,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       languages: languages.length > 0 ? languages : ["en", "zh"],
       outputStorageKey: outputKey,
       onProgress,
+      browser: ctx?.browser,
     });
 
     const scheduledDeletionAt = new Date();
@@ -2866,40 +2990,50 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const writeProgress = this._progressWriter(job.id);
     const unitsTotal = Math.max(1, remaining.length);
     let unitsDone = 0;
-    for (const ratio of remaining) {
-      if (this._captionedAssetIdForRatio(latest, ratio)) {
-        console.log(`[overlay:${ratio}] skipped (already captioned)`);
-        unitsDone++;
-        continue;
-      }
-      writeProgress((unitsDone / unitsTotal) * 100, {
-        unit: ratio,
-        unitsDone,
-        unitsTotal,
-      });
-      const id = await this._renderCaptionedRatio(
-        job,
-        request.userId,
-        ratio,
-        languages,
-        inputs,
-        (f) =>
-          writeProgress(((unitsDone + f * 0.95) / unitsTotal) * 100, {
+    // Both shared resources are scoped to the WHOLE loop, not to one ratio.
+    // The browser saves a cold start per scene per ratio; the asset cache only
+    // pays off across ratios, since the scenes within a ratio use different
+    // photos and it is the SECOND and later ratios that stop re-fetching them.
+    await withSharedBrowser("overlay:additional-ratios", (browser) =>
+      withLocalAssetCache(async (assets) => {
+        const ctx: RenderContext = { browser, assets };
+        for (const ratio of remaining) {
+          if (this._captionedAssetIdForRatio(latest, ratio)) {
+            console.log(`[overlay:${ratio}] skipped (already captioned)`);
+            unitsDone++;
+            continue;
+          }
+          writeProgress((unitsDone / unitsTotal) * 100, {
             unit: ratio,
             unitsDone,
             unitsTotal,
-          })
-      );
-      const u: UpdateVideoGenerationJobInput = {};
-      u[this._captionedFieldForRatio(ratio)] = id;
-      await videoGenerationJobRepository.update(job.id, u);
-      unitsDone++;
-      writeProgress((unitsDone / unitsTotal) * 100, {
-        unit: ratio,
-        unitsDone,
-        unitsTotal,
-      });
-    }
+          });
+          const id = await this._renderCaptionedRatio(
+            job,
+            request.userId,
+            ratio,
+            languages,
+            inputs,
+            (f) =>
+              writeProgress(((unitsDone + f * 0.95) / unitsTotal) * 100, {
+                unit: ratio,
+                unitsDone,
+                unitsTotal,
+              }),
+            ctx
+          );
+          const u: UpdateVideoGenerationJobInput = {};
+          u[this._captionedFieldForRatio(ratio)] = id;
+          await videoGenerationJobRepository.update(job.id, u);
+          unitsDone++;
+          writeProgress((unitsDone / unitsTotal) * 100, {
+            unit: ratio,
+            unitsDone,
+            unitsTotal,
+          });
+        }
+      })
+    );
 
     const refreshed = await this._getJob(job.id);
     // We're inside the additional-ratios worker claim, so render Travy inline and
@@ -3809,7 +3943,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    */
   private async _composeMasterForRatio(
     job: VideoGenerationJob,
-    ratio: VideoRatio
+    ratio: VideoRatio,
+    ctx?: RenderContext
   ): Promise<string> {
     const audioAsset = job.processedVoiceAssetId
       ? await uploadedAssetRepository.findById(job.processedVoiceAssetId)
@@ -3832,7 +3967,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       if (!primaryBase) throw new Error("Primary base video asset missing for composition");
       baseStorageKey = primaryBase.storageKey;
     } else {
-      baseStorageKey = (await this._renderMontageBaseAtRatio(job, ratio)).storageKey;
+      baseStorageKey = (await this._renderMontageBaseAtRatio(job, ratio, ctx)).storageKey;
     }
 
     const result = await ffmpegService.composeAndExport({

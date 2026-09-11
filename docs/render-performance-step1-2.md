@@ -134,3 +134,94 @@ failing, all reproduced on a pristine tree: `UploadService` (sharp native module
 three `RequestPresentationService` date/queue display tests, and one
 `VideoGenerationService` render-queue enqueue test. Identical counts before and
 after these changes.
+
+---
+
+# Round 2 — the montage path
+
+The three changes above left the biggest block untouched: the montage re-render
+inside `additional_ratios`. These three attack the *waste around* it. None of
+them changes a single output pixel. The irreducible part — actually rendering
+every scene at every canvas — is still there, and still only removable by
+cropping (see the top of this doc).
+
+## Change 3 — one Chromium per step, not two per scene
+
+`selectComposition` and `renderMedia` each launch their own headless browser
+when no `puppeteerInstance` is passed, and `_renderMontageBaseAtRatio` calls
+both **once per scene** — then the whole thing repeats per ratio. Six scenes
+across four ratios was roughly 48 cold starts doing no rendering work.
+
+`withSharedBrowser` (`src/lib/ai/remotionBrowser.ts`) opens one browser and
+passes it to every render in the step. Scoped to a step, not the process: a
+browser held for days accumulates memory on 16 GB, and a crashed one would
+poison every later render.
+
+**The gate you need to know about.** `openBrowser` on a machine with no Chromium
+tries to download one, and when that download fails Remotion emits a *transient
+unhandled rejection* before the error reaches our `catch` — which Node kills the
+process for by default. `onBrowserDownload` does not prevent it (verified: the
+download runs regardless). So nothing is opened until `prepareSharedBrowser()`
+has confirmed at worker startup that a browser is present. The web server and
+the test suite never call it, so both keep the old browser-per-render behaviour
+exactly. The worker logs `shared render browser {enabled: true|false}` at
+startup — check that line first if this change seems to do nothing.
+
+## Change 4 — montage segments stay on disk
+
+For a non-primary ratio, `renderScene` uploaded every scene segment to Spaces
+and `concatVideosWithCrossfade` downloaded all of them straight back. Those
+segments are pure intermediates — `_renderMontageBaseAtRatio` creates no
+`UploadedAsset` for them and nothing ever surfaces them. Two full transfers of
+the whole video, per ratio, for files nobody sees. (They weren't leaked
+forever — `ai_videos/` has a 7-day lifecycle rule — but you paid the bandwidth
+and the wait.)
+
+`renderSceneToFile` + `concatLocalVideosWithCrossfade` keep them local and
+upload only the finished base. The crossfade filtergraph is now shared between
+the local and stored-key paths rather than duplicated, since the xfade offsets
+and the `tpad` length correction are subtle enough that a second copy would
+drift. The local path degrades the same way on failure: crossfade → hard cut.
+
+**The primary ratio is deliberately unchanged.** Its segments become
+`UploadedAsset` rows the requester reviews scene by scene, so they must be
+stored.
+
+## Change 5 — source assets cached across ratios
+
+Each `renderMedia` keeps its own download cache, so the requester's photos and
+clips came down from Spaces again for every scene render and every ratio.
+
+`withLocalAssetCache` holds them on disk and serves them over the same loopback
+mechanism as the master. Note this is scoped to the **whole additional-ratios
+loop**, not to one ratio — the scenes within a ratio use different photos, so
+all of the saving comes from the second and later ratios reusing what the first
+already fetched. Scoping it per ratio would have made it pointless.
+
+Per-asset fallback: an asset that fails to download keeps its Spaces URL and
+Remotion fetches it as before, so one unreachable photo cannot fail a render.
+
+## Extra env switches
+
+| Env var | Default | Effect |
+|---|---|---|
+| `REMOTION_SHARED_BROWSER` | on | `false` → a browser per render, as before. |
+| `RENDER_LOCAL_SEGMENTS` | on | `false` → upload each montage segment and download it back. |
+| `RENDER_ASSET_CACHE` | on | `false` → every render fetches its own copies of the source media. |
+
+Each is independent, so you can bisect a regression to one change without a
+deploy: set the variable on the worker and restart it.
+
+## Still unverified
+
+Same as round 1 — no request was run and no video was watched from here. Beyond
+the checklist above, this round specifically needs:
+
+- the startup log line showing whether the shared browser engaged
+- scene joins still cross-dissolving (change 4 touches the concat path; a hard
+  cut at every join means the crossfade fell back — check the logs for
+  `local crossfade concat failed`)
+- the **primary** ratio's per-scene review thumbnails still appearing, since
+  that path deliberately still uploads segments
+- `ls "${TMPDIR:-/tmp}" | grep clipper-` clean after a job, now also covering
+  `clipper-segments-` and `clipper-assets-`
