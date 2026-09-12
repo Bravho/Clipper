@@ -60,3 +60,5 @@ coverage/
 # local env backups (never commit)
 .env*.bak*
 .env.local.*
+
+/artifacts/google-play/*.aab
