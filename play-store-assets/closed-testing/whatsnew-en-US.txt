@@ -1,5 +1,5 @@
-RClipper update 1.0.7
+RClipper update 1.0.8
 
-- Improved upload reliability and fixed file-count validation.
-- Improved consent controls and agreement confirmation.
-- Clarified how AI providers process submitted content.
+- Improved video processing performance and reliability.
+- Refined free and paid plan behavior.
+- Fixed upload handling issues.
