@@ -27,15 +27,21 @@ import { useI18n } from "@/i18n/client";
 export function DashboardShell({
   children,
   showManagement = false,
+  showStudio = false,
+  studioOnly = false,
 }: {
   children: React.ReactNode;
   /** Server-evaluated: is RClipper Management enabled for this user? */
   showManagement?: boolean;
+  /** Server-evaluated: is the private Studio Lab enabled for this user? */
+  showStudio?: boolean;
+  /** Local lab identities have no production DB row; keep them inside Studio. */
+  studioOnly?: boolean;
 }) {
   const { t } = useI18n();
   const pathname = usePathname();
 
-  const navLinks = [
+  const portalLinks = [
     { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
     { href: ROUTES.REQUESTS, label: t("sidebar.requests"), icon: "◫" },
     { href: ROUTES.CREDITS, label: t("sidebar.credits"), icon: "◈" },
@@ -44,6 +50,9 @@ export function DashboardShell({
     // Management links it is NOT gated — every user can reach the packages,
     // including the free-tier user who has just run out and needs to see them.
     { href: ROUTES.PRICING, label: t("sidebar.pricing"), icon: "❖" },
+    ...(showStudio
+      ? [{ href: ROUTES.STUDIO, label: "Studio Lab", icon: "✦" }]
+      : []),
     ...(showManagement
       ? [
           { href: ROUTES.MANAGEMENT, label: t("sidebar.management"), icon: "◉" },
@@ -52,6 +61,9 @@ export function DashboardShell({
         ]
       : []),
   ];
+  const navLinks = studioOnly
+    ? [{ href: ROUTES.STUDIO, label: "Studio Lab", icon: "✦" }]
+    : portalLinks;
 
   // Mirror these links into the navbar hamburger for small screens.
   useRegisterPortalNav({ id: "requester-portal", title: "RClipper Portal", links: navLinks });

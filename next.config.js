@@ -1,5 +1,13 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+const { PHASE_DEVELOPMENT_SERVER } = require("next/constants");
+
+/** @type {(phase: string) => import('next').NextConfig} */
+module.exports = (phase) => ({
+  // `next dev` and `next build` must not write into the same directory. When
+  // they overlap, the dev runtime can retain a webpack manifest that points at
+  // chunks the production build has replaced, causing intermittent errors such
+  // as "Cannot find module './9380.js'" or missing vendor chunks.
+  distDir: phase === PHASE_DEVELOPMENT_SERVER ? ".next-dev" : ".next",
+
   // Permit access to the remote development server through the public domain.
   allowedDevOrigins: ["rclipper.com"],
 
@@ -78,6 +86,4 @@ const nextConfig = {
     }
     return config;
   },
-};
-
-module.exports = nextConfig;
+});

@@ -1,15 +1,39 @@
-import { TextareaHTMLAttributes, forwardRef } from "react";
+"use client";
+
+import {
+  TextareaHTMLAttributes,
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { clsx } from "clsx";
 
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   error?: string;
   hint?: string;
+  /** Grow vertically to fit all content and hide the internal scrollbar. */
+  autoGrow?: boolean;
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ label, error, hint, className, id, ...props }, ref) => {
+  ({ label, error, hint, autoGrow = false, className, id, onInput, ...props }, ref) => {
     const inputId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement);
+
+    const resizeToContent = useCallback((element: HTMLTextAreaElement) => {
+      if (!autoGrow) return;
+      element.style.height = "auto";
+      element.style.height = `${element.scrollHeight}px`;
+    }, [autoGrow]);
+
+    useLayoutEffect(() => {
+      if (textareaRef.current) resizeToContent(textareaRef.current);
+    }, [props.value, resizeToContent]);
 
     return (
       <div className="flex flex-col gap-1">
@@ -19,11 +43,12 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           </label>
         )}
         <textarea
-          ref={ref}
+          ref={textareaRef}
           id={inputId}
           className={clsx(
             "w-full rounded-md border px-3 py-2 text-sm text-slate-900",
-            "placeholder:text-slate-400 resize-y min-h-[100px]",
+            "placeholder:text-slate-400 min-h-[100px]",
+            autoGrow ? "resize-none overflow-hidden" : "resize-y",
             "focus:outline-none focus:ring-2 focus:ring-offset-1",
             "disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60",
             error
@@ -35,6 +60,10 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           aria-describedby={
             error ? `${inputId}-error` : hint ? `${inputId}-hint` : undefined
           }
+          onInput={(event) => {
+            resizeToContent(event.currentTarget);
+            onInput?.(event);
+          }}
           {...props}
         />
         {error && (

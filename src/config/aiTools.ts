@@ -15,7 +15,23 @@ export function requireGeminiApiKey(): string {
   return key;
 }
 
+/** Server-only OpenAI key used by the private Studio script writer. */
+export function requireOpenAiApiKey(): string {
+  const key = AI_CONFIG.openai.apiKey;
+  if (!key) {
+    throw new Error(
+      "OPENAI_API_KEY is not set. Add it to .env.local and restart the development server."
+    );
+  }
+  return key;
+}
+
 export const AI_CONFIG = {
+  openai: {
+    apiKey: (process.env.OPENAI_API_KEY ?? "").trim(),
+    /** Cost-effective text model for grounded, structured Studio scripts. */
+    scriptModel: (process.env.OPENAI_SCRIPT_MODEL ?? "gpt-5.6-luna").trim(),
+  },
   gemini: {
     apiKey: process.env.GEMINI_API_KEY ?? "",
     /** Vision model - used for image analysis + scene/script generation */

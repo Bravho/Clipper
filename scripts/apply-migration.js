@@ -5,6 +5,7 @@
  *   node scripts/apply-migration.js migrations/004_add_iapptts_and_animation_columns.sql
  */
 const { Client } = require("pg");
+const dotenv = require("dotenv");
 const fs = require("fs");
 const path = require("path");
 
@@ -14,16 +15,23 @@ if (!migrationFile) {
   process.exit(1);
 }
 
-const env = fs.readFileSync(path.join(__dirname, "..", ".env.local"), "utf8");
-const get = (k) => (env.match(new RegExp("^" + k + "\\s*=\\s*(.+)$", "m")) || [])[1]?.trim();
+const env = dotenv.parse(fs.readFileSync(path.join(__dirname, "..", ".env.local")));
+const get = (key) => env[key]?.trim();
+const databaseUrl = get("DATABASE_URL");
 
 const client = new Client({
-  host: get("PGHOST"),
-  port: +(get("PGPORT") || 5432),
-  database: get("PGDATABASE"),
-  user: get("PG_USER"),
-  password: get("PG_PASSWORD"),
-  ssl: { rejectUnauthorized: false },
+  ...(databaseUrl
+    ? { connectionString: databaseUrl }
+    : {
+        host: get("PGHOST"),
+        port: +(get("PGPORT") || 5432),
+        database: get("PGDATABASE"),
+        user: get("PG_USER"),
+        password: get("PG_PASSWORD"),
+      }),
+  ssl: (get("PGSSLMODE") || "require").toLowerCase() === "disable"
+    ? false
+    : { rejectUnauthorized: false },
 });
 
 (async () => {
@@ -31,16 +39,6 @@ const client = new Client({
   const sql = fs.readFileSync(migrationFile, "utf8");
   await client.query(sql);
   console.log(`Applied: ${migrationFile}`);
-
-  const { rows } = await client.query(
-    `SELECT column_name FROM information_schema.columns
-     WHERE table_name = 'video_generation_jobs'
-       AND column_name IN ('storyboard','approved_storyboard','video_engine','ai_broll_enabled')`
-  );
-  console.log(
-    "Montage columns now present:",
-    rows.map((r) => r.column_name).join(", ") || "(none!)"
-  );
   await client.end();
 })().catch((e) => {
   console.error("FAILED:", e.message);

@@ -5,6 +5,10 @@ import { redirect } from "next/navigation";
 import { getRoleHomePath, ROUTES } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { LoginForm } from "@/features/auth/components/LoginForm";
+import {
+  isStudioLocalAuthEnabled,
+  isStudioLocalUserId,
+} from "@/lib/auth/studioLocalCredentials";
 
 export const metadata: Metadata = {
   title: "เข้าสู่ระบบ",
@@ -27,10 +31,16 @@ export default async function LoginPage({
 }) {
   const session = await getServerSession(authOptions);
   if (session?.user) {
-    redirect(getRoleHomePath(session.user.role as Role));
+    redirect(
+      isStudioLocalUserId(session.user.id)
+        ? ROUTES.STUDIO
+        : getRoleHomePath(session.user.role as Role)
+    );
   }
 
-  const authError = searchParams?.error
+  const studioMode = isStudioLocalAuthEnabled();
+
+  const authError = !studioMode && searchParams?.error
     ? AUTH_ERROR_MESSAGES[searchParams.error] ??
       "เกิดข้อผิดพลาดในการเข้าสู่ระบบ กรุณาลองอีกครั้ง"
     : null;
@@ -60,7 +70,7 @@ export default async function LoginPage({
           </div>
         )}
 
-        <LoginForm />
+        <LoginForm studioMode={studioMode} />
 
         <div className="mt-6 border-t border-slate-200 pt-4">
           <p className="text-center text-xs text-slate-400">

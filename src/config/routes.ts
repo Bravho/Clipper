@@ -63,6 +63,14 @@ export const ROUTES = {
   MANAGEMENT_POSTS: "/dashboard/management/posts",
   MANAGEMENT_CALENDAR: "/dashboard/management/calendar",
   MANAGEMENT_PAYMENTS: "/dashboard/management/payments",
+
+  // Private owner-only web lab. Server-side allowlisting is enforced by its
+  // nested layout; keeping it under /dashboard also reuses Requester auth.
+  STUDIO: "/dashboard/studio",
+  STUDIO_BRANDS: "/dashboard/studio/brands",
+  STUDIO_CREATE: "/dashboard/studio/create",
+  STUDIO_PUBLISHING: "/dashboard/studio/publishing",
+  STUDIO_ANALYZE: "/dashboard/studio/analyze",
 } as const;
 
 /** Build a request detail URL. */

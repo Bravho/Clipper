@@ -6,6 +6,7 @@
 
 # next.js
 /.next/
+/.next-dev/
 /out/
 
 # remotion generated bundle (rebuilt at runtime by src/lib/ai/remotionBundle.ts)
@@ -22,6 +23,7 @@
 .env*.local
 
 # logs
+/logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

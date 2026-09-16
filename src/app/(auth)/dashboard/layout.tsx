@@ -1,7 +1,9 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { isManagementEnabledFor } from "@/config/management";
+import { isStudioEnabledFor } from "@/config/studio";
 import { DashboardShell } from "@/components/layout/DashboardShell";
+import { isStudioLocalUserId } from "@/lib/auth/studioLocalCredentials";
 
 /**
  * Requester dashboard layout.
@@ -30,5 +32,23 @@ export default async function DashboardLayout({
       })
     : false;
 
-  return <DashboardShell showManagement={showManagement}>{children}</DashboardShell>;
+  const showStudio = session?.user
+    ? isStudioEnabledFor({
+        id: session.user.id,
+        email: session.user.email,
+      })
+    : false;
+  const studioOnly = session?.user
+    ? isStudioLocalUserId(session.user.id)
+    : false;
+
+  return (
+    <DashboardShell
+      showManagement={showManagement}
+      showStudio={showStudio}
+      studioOnly={studioOnly}
+    >
+      {children}
+    </DashboardShell>
+  );
 }

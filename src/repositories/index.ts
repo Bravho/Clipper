@@ -33,6 +33,27 @@ export const emailVerificationTokenRepository = new PostgresEmailVerificationTok
 // "ลืมรหัสผ่าน" reset links. Requires migration 029.
 export const passwordResetTokenRepository = new PostgresPasswordResetTokenRepository();
 
+// ── Private Studio Lab — durable persistence ────────────────────────────────
+// Use the configured PostgreSQL database (migration 035) when all credentials
+// exist. Otherwise use an embedded SQLite database for zero-configuration local
+// development. Both keep the full workspace durable across server restarts.
+import { LocalStudioWorkspaceRepository } from "./local/LocalStudioWorkspaceRepository";
+import { HybridStudioWorkspaceRepository } from "./HybridStudioWorkspaceRepository";
+
+const studioHasPostgres = Boolean(
+  process.env.DATABASE_URL?.trim()
+  || (
+    process.env.PGHOST
+    && process.env.PGDATABASE
+    && process.env.PG_USER
+    && process.env.PG_PASSWORD
+  )
+);
+
+export const studioWorkspaceRepository = studioHasPostgres
+  ? new HybridStudioWorkspaceRepository()
+  : new LocalStudioWorkspaceRepository();
+
 // ── New Repositories — PostgreSQL ────────────────────────────────────────────
 import { PostgresDeletedAccountRegistryRepository } from "./postgres/PostgresDeletedAccountRegistryRepository";
 import { PostgresBusinessProfileRepository } from "./postgres/PostgresBusinessProfileRepository";

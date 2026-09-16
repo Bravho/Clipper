@@ -10,6 +10,12 @@ import { logAuthEvent } from "@/lib/auth/diagnostics";
 import { verifyGoogleIdToken } from "@/lib/auth/googleIdToken";
 import { verifyAppleIdToken } from "@/lib/auth/appleIdToken";
 import { loginEventService } from "@/services/analytics/LoginEventService";
+import {
+  isStudioLocalAuthEnabled,
+  isStudioLocalUserId,
+  STUDIO_LOCAL_AUTH_PROVIDER,
+  verifyStudioLocalCredentials,
+} from "@/lib/auth/studioLocalCredentials";
 
 /**
  * Provider ids used by the native in-app sign-in flows (Android Credential
@@ -232,6 +238,28 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
+        // The private worktree can authenticate one explicit local owner
+        // without PostgreSQL. It is impossible to enable in production.
+        if (isStudioLocalAuthEnabled()) {
+          const localUser = verifyStudioLocalCredentials(
+            credentials.email,
+            credentials.password
+          );
+          if (!localUser) {
+            logAuthEvent("credentials_rejected", {
+              reason: "invalid_local_studio_credentials",
+            });
+            return null;
+          }
+          return {
+            id: localUser.id,
+            email: localUser.email,
+            name: localUser.name,
+            role: localUser.role,
+            provider: STUDIO_LOCAL_AUTH_PROVIDER,
+          };
+        }
+
         let verifiedUser: Awaited<
           ReturnType<typeof authService.verifyCredentials>
         >;
@@ -323,6 +351,10 @@ export const authOptions: NextAuthOptions = {
         userId: user.id,
         provider: providerId,
       });
+
+      // The isolated Studio identity intentionally has no production database
+      // row, so do not attempt to append a foreign-keyed login analytics row.
+      if (isStudioLocalUserId(user.id)) return true;
 
       // The native providers run findOrCreateOAuthUser in authorize() and carry
       // the account's age back on `user.createdAt` (see authorizeNativeIdToken),
