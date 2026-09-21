@@ -28,6 +28,14 @@ export interface IRenderTaskRepository {
     staleClaimSeconds: number
   ): Promise<RenderTask | null>;
 
+  /** Claim a queued step for its owning requester's device. A worker claim wins any race. */
+  claimForDevice(taskId: string, requesterId: string, deviceClaimId: string): Promise<RenderTask | null>;
+
+  /** Keep alive or finish only while this exact device still owns the claim. */
+  touchClaim(taskId: string, deviceClaimId: string): Promise<boolean>;
+  completeClaim(taskId: string, deviceClaimId: string): Promise<boolean>;
+  releaseClaim(taskId: string, deviceClaimId: string): Promise<boolean>;
+
   /** Worker keep-alive: bump `heartbeat_at` on an in-flight claim. */
   touch(taskId: string): Promise<void>;
 

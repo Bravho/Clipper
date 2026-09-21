@@ -106,6 +106,42 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
     return { ...claimed };
   }
 
+  async claimForDevice(taskId: string, requesterId: string, deviceClaimId: string): Promise<RenderTask | null> {
+    const task = this.store.get(taskId);
+    if (!task || task.state !== "queued" || task.requesterId !== requesterId || task.step !== "overlay_composition") {
+      return null;
+    }
+    const now = new Date();
+    const claimed: RenderTask = {
+      ...task, state: "claimed", claimedBy: deviceClaimId,
+      claimedAt: now, heartbeatAt: now, startedAt: task.startedAt ?? now,
+      attempts: task.attempts + 1, updatedAt: now,
+    };
+    this.store.set(taskId, claimed);
+    return { ...claimed };
+  }
+
+  async touchClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
+    const task = this.store.get(taskId);
+    if (!task || task.state !== "claimed" || task.claimedBy !== deviceClaimId) return false;
+    this.store.set(taskId, { ...task, heartbeatAt: new Date(), updatedAt: new Date() });
+    return true;
+  }
+
+  async completeClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
+    const task = this.store.get(taskId);
+    if (!task || task.state !== "claimed" || task.claimedBy !== deviceClaimId) return false;
+    await this.complete(taskId, "done");
+    return true;
+  }
+
+  async releaseClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
+    const task = this.store.get(taskId);
+    if (!task || task.state !== "claimed" || task.claimedBy !== deviceClaimId) return false;
+    await this.release(taskId);
+    return true;
+  }
+
   async touch(taskId: string): Promise<void> {
     const t = this.store.get(taskId);
     if (t && t.state === "claimed") {

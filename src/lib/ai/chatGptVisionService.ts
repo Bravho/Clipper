@@ -9,6 +9,7 @@ import { sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { sanitizeStoryboard } from "@/lib/ai/storyboard";
 import { extractVideoFrames } from "@/lib/ai/videoFrames";
 import type { AppLocale } from "@/i18n/config";
+import type { LocalAnalysisFrame } from "@/lib/mobile/localMediaContract";
 
 export interface ChatGptContentOutput {
   scenePlan: ScenePlan[];
@@ -43,6 +44,8 @@ export interface SceneDesignOutput {
 
 export interface GenerateContentParams {
   imageUrls: string[];
+  /** Transient phone-generated frames. Never persisted by the server. */
+  inlineFrames?: LocalAnalysisFrame[];
   /** Exact requester-entered place/business name. Never rewrite or split it. */
   placeName?: string;
   /** UI-selected content language captured when the request was created. */
@@ -321,7 +324,26 @@ async function generateWithImages<T>(params: GenerateContentParams, prompt: stri
   // sampled frames (i.e. more image parts than assets).
   const contents: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [];
 
-  for (let index = 0; index < params.imageUrls.length; index++) {
+  if (params.inlineFrames?.length) {
+    const byIndex = new Map<number, LocalAnalysisFrame[]>();
+    for (const frame of params.inlineFrames) {
+      const frames = byIndex.get(frame.assetIndex) ?? [];
+      frames.push(frame);
+      byIndex.set(frame.assetIndex, frames);
+    }
+    for (let index = 0; index < params.imageUrls.length; index++) {
+      const frames = byIndex.get(index) ?? [];
+      if (frames.length === 0) continue;
+      contents.push({
+        text: `Device-local asset index ${index} (${frames.length} derived analysis frame(s); original remains on the phone):`,
+      });
+      for (const frame of frames) {
+        contents.push({
+          inlineData: { data: frame.dataBase64, mimeType: frame.mimeType },
+        });
+      }
+    }
+  } else for (let index = 0; index < params.imageUrls.length; index++) {
     const url = params.imageUrls[index];
     const { buffer, mimeType } = await downloadObjectBuffer(url);
 

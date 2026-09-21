@@ -11,6 +11,10 @@ if (releaseSigningReady) {
 android {
     namespace "com.rclipper.app"
     compileSdk rootProject.ext.compileSdkVersion
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
     defaultConfig {
         applicationId "com.rclipper.app"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -78,6 +82,9 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    implementation "androidx.media3:media3-transformer:1.11.1"
+    implementation "androidx.media3:media3-effect:1.11.1"
+    implementation "androidx.media3:media3-common:1.11.1"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

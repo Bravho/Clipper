@@ -143,6 +143,52 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     return rows[0] ? rowToTask(rows[0]) : null;
   }
 
+  async claimForDevice(taskId: string, requesterId: string, deviceClaimId: string): Promise<RenderTask | null> {
+    const { rows } = await this.db.query(
+      `UPDATE render_tasks
+          SET state = 'claimed', claimed_by = $3, claimed_at = NOW(),
+              heartbeat_at = NOW(), started_at = COALESCE(started_at, NOW()),
+              attempts = attempts + 1, updated_at = NOW()
+        WHERE id = $1 AND requester_id = $2 AND state = 'queued'
+          AND step = 'overlay_composition'
+       RETURNING *`,
+      [taskId, requesterId, deviceClaimId]
+    );
+    return rows[0] ? rowToTask(rows[0]) : null;
+  }
+
+  async touchClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE render_tasks SET heartbeat_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND claimed_by = $2 AND state = 'claimed'`,
+      [taskId, deviceClaimId]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async completeClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE render_tasks
+          SET state = 'done', finished_at = NOW(),
+              duration_ms = (EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000)::bigint,
+              updated_at = NOW()
+        WHERE id = $1 AND claimed_by = $2 AND state = 'claimed'`,
+      [taskId, deviceClaimId]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async releaseClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE render_tasks
+          SET state = 'queued', claimed_by = NULL, claimed_at = NULL,
+              heartbeat_at = NULL, updated_at = NOW()
+        WHERE id = $1 AND claimed_by = $2 AND state = 'claimed'`,
+      [taskId, deviceClaimId]
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
   async touch(taskId: string): Promise<void> {
     await this.db.query(
       `UPDATE render_tasks

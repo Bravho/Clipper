@@ -8,11 +8,19 @@ import { uploadedAssetRepository } from "@/repositories/index";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { z } from "zod";
+import {
+  localMediaSubmissionSchema,
+  MAX_LOCAL_ANALYSIS_BYTES,
+  totalAnalysisBytes,
+} from "@/lib/mobile/localMediaContract";
+import { LOCAL_FIRST_MEDIA_ENABLED } from "@/config/localMedia";
+import { storeLocalMediaDerivatives } from "@/services/LocalMediaDerivativeService";
 
 const submitBodySchema = z.object({
   creditConfirmed: z.literal(true),
   rightsConfirmed: z.literal(true),
   aiProcessingConfirmed: z.literal(true),
+  localMedia: localMediaSubmissionSchema.optional(),
 });
 
 /**
@@ -53,12 +61,35 @@ export async function POST(
       { status: 422 }
     );
   }
+  if (parsed.data.localMedia && !LOCAL_FIRST_MEDIA_ENABLED) {
+    return NextResponse.json(
+      { error: "Local media processing is not enabled for this deployment." },
+      { status: 409 }
+    );
+  }
+
+  if (
+    parsed.data.localMedia &&
+    totalAnalysisBytes(parsed.data.localMedia.analysisFrames) > MAX_LOCAL_ANALYSIS_BYTES
+  ) {
+    return NextResponse.json(
+      { error: "Analysis previews exceed the 8 MB request limit." },
+      { status: 413 }
+    );
+  }
 
   try {
     const beforeSubmit = await clipRequestService.getOwnedRequest(id, session.user.id);
     let submitted = beforeSubmit;
+    const localMedia = parsed.data.localMedia;
+    let localDerivativeUrls: string[] | null = null;
 
     if (beforeSubmit.status === RequestStatus.Draft) {
+      // Prepare only bounded JPEG derivatives before consuming a quota slot.
+      // A storage failure leaves the request retryable as a Draft.
+      if (localMedia) {
+        localDerivativeUrls = await storeLocalMediaDerivatives(id, session.user.id, localMedia);
+      }
       submitted = await clipRequestService.submitRequest(
         id,
         session.user.id,
@@ -89,6 +120,9 @@ export async function POST(
           resumed: true,
         });
       }
+      if (localMedia) {
+        localDerivativeUrls = await storeLocalMediaDerivatives(id, session.user.id, localMedia);
+      }
       // Submitted with no job is the precise partial state produced when the
       // first call committed the request but pipeline initialization failed.
       // Continue below and create only the missing job; submitRequest is not
@@ -114,7 +148,11 @@ export async function POST(
     }
 
     const job = await videoGenerationService.initializePipeline(id, session.user.id, {
-      imageUrls,
+      // One derived JPEG per local original preserves storyboard indexes and
+      // gives the existing montage worker a readable visual proxy.
+      imageUrls: localMedia ? (localDerivativeUrls ?? imageUrls) : imageUrls,
+      inlineFrames: localMedia?.analysisFrames,
+      localMedia: localMedia?.materials,
       title: submitted.title,
       description: submitted.description,
       targetAudience: submitted.targetAudience,

@@ -7,9 +7,8 @@
  *   • per-file multipart session ids, so a partly-uploaded video resumes via
  *     ListParts instead of restarting.
  *
- * The file's BYTES can never be persisted, so a file that did not finish must be
- * re-selected by the user; these ids are what let the re-selected file pick up
- * where it left off.
+ * The legacy upload flow retains multipart ids here. The optional native
+ * local-first flow stores originals in OPFS through localMediaStore instead.
  *
  * This lives in its own module because the delete buttons need to clear it too.
  * They previously could not — the helpers were private to NewRequestForm — so

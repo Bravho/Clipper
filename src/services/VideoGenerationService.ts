@@ -43,6 +43,7 @@ import type { JobUpdateActor } from "@/repositories/interfaces/IVideoGenerationJ
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import { DEFAULT_LOCALE, type AppLocale } from "@/i18n/config";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
+import type { LocalAnalysisFrame, LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeSceneDescription, sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -313,6 +314,8 @@ export class VideoGenerationService {
     staffId: string,
     params: {
       imageUrls: string[];
+      inlineFrames?: LocalAnalysisFrame[];
+      localMedia?: LocalMediaDescriptor[];
       title?: string;
       description: string;
       targetAudience: string;
@@ -379,6 +382,17 @@ export class VideoGenerationService {
       voiceApprovedBy: null,
       finalApprovedBy: null,
     });
+
+    if (params.localMedia?.length) {
+      // The server keeps only opaque descriptors. localId is meaningful solely
+      // inside the requester's app storage and cannot be dereferenced here.
+      await videoGenerationJobRepository.update(job.id, {
+        renderPayload: {
+          mediaMode: "local-first",
+          localMedia: params.localMedia,
+        },
+      });
+    }
 
     // Run Gemini analysis and update job when complete
     this._runChatGptAnalysis(job.id, requestId, params).catch(async (err) => {
