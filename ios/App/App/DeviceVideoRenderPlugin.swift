@@ -15,6 +15,7 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "abortLocalSource", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "releaseLocalSource", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "renderMaster", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "renderLocalTimeline", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "releaseOutput", returnType: CAPPluginReturnPromise)
     ]
@@ -31,7 +32,7 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let values = try? cache.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
         call.resolve([
-            "nativePluginVersion": 2,
+            "nativePluginVersion": 3,
             "freeBytes": values?.volumeAvailableCapacityForImportantUsage ?? 0,
             "supportsH264Encode": true,
             "supportsAacEncode": true
@@ -99,6 +100,117 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
             }
         }
         downloadTask?.resume()
+    }
+
+    /// Join real staged video tracks on the phone. Material clip audio is
+    /// deliberately omitted; the approved voice and music are mixed later.
+    @objc public func renderLocalTimeline(_ call: CAPPluginCall) {
+        guard exportSession == nil && downloadTask == nil && activeCall == nil else {
+            call.reject("Another device render is already active")
+            return
+        }
+        guard let clips = call.getArray("clips") as? [JSObject], !clips.isEmpty, clips.count <= 10,
+              let width = call.getInt("width"), let height = call.getInt("height"),
+              width > 0, height > 0, width <= 1920, height <= 1920 else {
+            call.reject("Invalid local timeline")
+            return
+        }
+
+        let composition = AVMutableComposition()
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = CGSize(width: width, height: height)
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        var instructions: [AVMutableVideoCompositionInstruction] = []
+        var cursor = CMTime.zero
+
+        do {
+            for clip in clips {
+                guard let raw = clip["sourceUrl"] as? String,
+                      let url = URL(string: raw), url.isFileURL, validStagedSource(url),
+                      let startSeconds = clip["startSeconds"] as? Double,
+                      let durationSeconds = clip["durationSeconds"] as? Double,
+                      startSeconds >= 0, durationSeconds > 0,
+                      startSeconds.isFinite, durationSeconds.isFinite else {
+                    throw NSError(domain: "RClipper", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "Invalid staged clip or trim"])
+                }
+                let asset = AVURLAsset(url: url)
+                guard let sourceVideo = asset.tracks(withMediaType: .video).first else {
+                    throw NSError(domain: "RClipper", code: 3,
+                                  userInfo: [NSLocalizedDescriptionKey: "A source has no video track"])
+                }
+                let start = CMTime(seconds: startSeconds, preferredTimescale: 600)
+                let duration = CMTime(seconds: durationSeconds, preferredTimescale: 600)
+                guard CMTimeCompare(CMTimeAdd(start, duration), asset.duration) <= 0 else {
+                    throw NSError(domain: "RClipper", code: 4,
+                                  userInfo: [NSLocalizedDescriptionKey: "Clip trim exceeds its duration"])
+                }
+                let range = CMTimeRange(start: start, duration: duration)
+                guard let videoTrack = composition.addMutableTrack(withMediaType: .video,
+                                                                    preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                    throw NSError(domain: "RClipper", code: 5)
+                }
+                try videoTrack.insertTimeRange(range, of: sourceVideo, at: cursor)
+                // preferredTransform carries the camera's portrait rotation.
+                // Fill the target canvas without flattening any moving frames.
+                let oriented = CGRect(origin: .zero, size: sourceVideo.naturalSize)
+                    .applying(sourceVideo.preferredTransform).standardized
+                guard oriented.width > 0, oriented.height > 0 else {
+                    throw NSError(domain: "RClipper", code: 6)
+                }
+                let scale = max(CGFloat(width) / oriented.width, CGFloat(height) / oriented.height)
+                let transform = sourceVideo.preferredTransform
+                    .concatenating(CGAffineTransform(translationX: -oriented.minX, y: -oriented.minY))
+                    .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                    .concatenating(CGAffineTransform(
+                        translationX: (CGFloat(width) - oriented.width * scale) / 2,
+                        y: (CGFloat(height) - oriented.height * scale) / 2
+                    ))
+                let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+                layer.setTransform(transform, at: cursor)
+                let instruction = AVMutableVideoCompositionInstruction()
+                instruction.timeRange = CMTimeRange(start: cursor, duration: duration)
+                instruction.layerInstructions = [layer]
+                instructions.append(instruction)
+                cursor = CMTimeAdd(cursor, duration)
+            }
+
+            videoComposition.instructions = instructions
+            let output = try renderDirectory().appendingPathComponent("\(UUID().uuidString)-output.mp4")
+            outputURL = output
+            activeCall = call
+            guard let session = AVAssetExportSession(asset: composition,
+                                                      presetName: AVAssetExportPresetHighestQuality) else {
+                throw NSError(domain: "RClipper", code: 7,
+                              userInfo: [NSLocalizedDescriptionKey: "Timeline export is unavailable"])
+            }
+            session.videoComposition = videoComposition
+            session.outputURL = output
+            session.outputFileType = .mp4
+            session.shouldOptimizeForNetworkUse = true
+            exportSession = session
+            progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                guard let self = self, self.exportSession === session else { return }
+                self.notifyListeners("renderProgress", data: ["percent": Int(session.progress * 100)])
+            }
+            session.exportAsynchronously { [weak self] in
+                DispatchQueue.main.async {
+                    guard let self = self, self.activeCall === call else { return }
+                    self.exportSession = nil
+                    self.stopProgressTimer()
+                    if session.status == .completed {
+                        let attributes = try? FileManager.default.attributesOfItem(atPath: output.path)
+                        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+                        self.activeCall = nil
+                        call.resolve(["path": output.path, "fileSizeBytes": size])
+                    } else {
+                        self.fail(call, "Local timeline export failed", session.error)
+                    }
+                }
+            }
+        } catch {
+            fail(call, "Could not compose the local clips", error)
+        }
     }
 
     private func renderDirectory() throws -> URL {

@@ -75,4 +75,21 @@ describe("local media derivative storage", () => {
     expect(sharp).not.toHaveBeenCalled();
     expect(spacesClient.send).not.toHaveBeenCalled();
   });
+
+  it("never persists a still proxy for a local video", async () => {
+    await expect(storeLocalMediaDerivatives("request", "user", {
+      ...submission,
+      materials: [{
+        localId: "request--video",
+        fileName: "original.mp4",
+        mimeType: "video/mp4" as const,
+        fileSizeBytes: 3_000_000,
+        durationSeconds: 12,
+      }],
+      analysisFrames: [{ ...submission.analysisFrames[0], localId: "request--video" }],
+    })).rejects.toThrow("still image cannot replace it");
+
+    expect(sharp).not.toHaveBeenCalled();
+    expect(spacesClient.send).not.toHaveBeenCalled();
+  });
 });

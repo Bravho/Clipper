@@ -1,37 +1,70 @@
 # On-device rendering implementation
 
+The Mac Mini build and physical-iPhone smoke-test steps are in
+`docs/mobile-rendering-mac-mini.md`.
+
 ## Local-first source media
 
 Native iOS and Android submissions with DeviceVideoRender plugin version 2 or
-newer keep original photos and clips in the
+newer keep original photos in the
 WebView origin private file system. The server receives an opaque `localId`,
 file metadata, and compact JPEG derivatives for Gemini and the legacy worker. Original
 bytes are not uploaded to object storage. The server persists one resized JPEG
-proxy per original under the request so the existing montage worker has an
-input. For a local video, that proxy is a still poster; source video motion is
-not yet used. Web submissions and resumed legacy
+derivative per local photo under the request. Local video submission is rejected
+before credit deduction while the native timeline is connected to the job
+completion path; no video poster is accepted as a substitute for moving frames.
+Web submissions and resumed legacy
 drafts and older installed apps continue through the existing upload flow.
 `NEXT_PUBLIC_LOCAL_FIRST_MEDIA=false` is an emergency rollback; the default is
 on when the native capability and private storage checks pass.
 
-The native render bridge is version 2. It stages an OPFS file into native app
+The native render bridge is version 3 on iOS and Android. It stages an OPFS file into native app
 cache in 2 MB chunks and validates the final byte count before Media3 or
 AVFoundation opens it. Staged inputs and rendered outputs have separate release
 methods and path validation confines deletion to the plugin cache directory.
 
-Status: contract, admission policy, conditional device claims, local-first intake, a JPEG proxy bridge for the existing worker, and a native **single-master transcode primitive** are implemented. Android Java compilation passed; iOS awaits a Mac/Xcode build. Production rendering remains on the existing Mac worker. Local-first jobs can use the proxy images, but will not preserve source video motion or full original resolution. The full phone montage, captions, templates, verified output upload, and completion protocol remain to be implemented.
+Status: both native plugins now expose `renderLocalTimeline`, which hard-joins staged real video tracks with trims and aspect fill into a silent **intermediate montage** MP4. Like the original Remotion montage, it discards material clip audio. The **finished MP4 must not be silent**: it must contain the approved speaking voice and the selected background music, mixed with the original lead-in and ducking rules. That final audio stage is not implemented on the phone yet. The JavaScript bridge stages original local clips and calls the intermediate method. Android Java compilation and a debug APK build passed; iOS awaits a Mac/Xcode build and a real iPhone export. Local-first photo requests can still use JPEG derivatives, while local-first video requests fail explicitly until the moving output can be safely used by the pipeline. The full phone montage, captions, templates, verified output upload, and completion protocol remain to be implemented.
+
+## Original behavior to preserve
+
+| Operation | Existing implementation | Phone implementation status |
+| --- | --- | --- |
+| Source photos | Remotion animates stills with `ken_burns_in`, `ken_burns_out`, `pan_left`, `pan_right`, or `static`, with subject focus | Not implemented in native renderers |
+| Source clips | Remotion trims, orders, optionally slows short footage, and **mutes source audio** | Both native engines can trim and hard-join local video tracks silently; slow-down remains missing |
+| Scene transitions and merge | Remotion cut/fade/slide/zoom within a scene, FFmpeg crossfade between scenes | Not implemented on phone |
+| Voice | ElevenLabs generates the approved voice remotely | Phone must download the generated voice; it must not use source-clip sound |
+| Sound composition | FFmpeg adds a 0.6 s music lead-in, normalizes voice, loops music, ducks music under speech, and mixes the two | Not implemented on phone |
+| Graphic motion and captions | Remotion renders the selected template and timed multilingual captions over the voiced master | Not implemented on phone |
+| Ratios, Travy, cover | Separate ratio exports, EN+ZH Travy captions, JPEG poster from finished MP4 | Not implemented on phone |
+
+An end-to-end phone render therefore needs: a manifest built from the approved
+scene plan and cloud audio; native still-image frame generation and camera motion;
+video trimming and ordering; transitions; voice/music mixing; template/caption
+rendering; independent ratio exports; native streaming upload of **rendered**
+outputs; server validation and idempotent job completion; and a cover extracted
+from each verified finished video. Only original source media remains private.
+The server must continue to own approvals, credits, AI calls, and publishing.
 
 ## Existing boundaries
 
 - `VideoGenerationService._dispatchHeavy()` queues heavy work in `render_tasks` when a worker heartbeat is fresh.
 - `RenderStep.OverlayComposition` starts with a completed, uncaptioned master. Its output is one `captionedExport_*` asset. This is the first integration target.
 - `RenderStep.MontageAllSegments`, `MontageMerge`, `FfmpegComposition`, `AdditionalRatios`, and `TravyGeneration` remain worker tasks until their corresponding phone operation passes device validation.
-- `DeviceVideoRenderPlugin` on both platforms accepts one completed master URL or one staged local video and writes a local H.264/AAC MP4. It does not draw captions, apply templates, mix separate tracks, upload an output, or finish a pipeline task. Its methods are intentionally not wired to the approval UI.
+- `DeviceVideoRenderPlugin` on both platforms accepts one completed master URL or one staged local video and writes a local MP4. Both also join multiple staged real video clips silently. They do not yet animate stills, draw captions, apply templates, mix separate voice/music tracks, upload an output, or finish a pipeline task. The timeline method is not yet wired to the approval UI.
 - AI calls, approval gates, credits, publishing, and the job record remain server-owned.
 
 ## Contract
 
-`src/lib/mobile/deviceRenderContract.ts` defines the versioned render manifest. The server must construct it from approved job and asset records only. URLs in the manifest should be short lived and scoped to the exact source objects. Neither provider keys nor Spaces credentials belong in it.
+`src/lib/mobile/deviceRenderContract.ts` defines a version 3 render manifest shaped
+like the approved scene plan: ordered assets per scene, the original Ken Burns
+motion names, clip trims and focus, scene transitions, and an explicit
+`sourceClipAudio: false` rule. It distinguishes a silent montage intermediate
+from a final export that requires the approved voice, AAC audio, and any selected
+music. It is validated but not yet emitted by a server
+endpoint or consumed by either native engine. The server must construct it from
+approved job and asset records only. URLs in the manifest should be short lived
+and scoped to the exact source objects. Neither provider keys nor Spaces
+credentials belong in it.
 
 The server should hold a render-task lease for one device attempt. Completion must match its job ID, step, ratio, manifest version, and attempt ID. It must verify the uploaded object with a storage HEAD request and inspect its codec, dimensions, duration, and size before creating the `FinalClip` asset and completing the task. A second completion for the same attempt should return the first result. An expired attempt must not overwrite a later worker result.
 

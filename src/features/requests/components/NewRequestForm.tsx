@@ -1730,6 +1730,11 @@ export function NewRequestForm({ quota, imageOnly = false, onCreditParamsChange,
       if (uploadItems.length === 0) {
         throw new Error("กรุณาเลือกภาพหรือวิดีโออย่างน้อยหนึ่งไฟล์");
       }
+      if (uploadItems.some((item) => item.file.type.startsWith("video/"))) {
+        throw new Error(
+          "การตัดต่อวิดีโอต้นฉบับบน iPhone ยังไม่เชื่อมกับงานนี้ จึงยังส่งคลิปโดยไม่อัปโหลดต้นฉบับไม่ได้ ไฟล์ของคุณยังอยู่บนโทรศัพท์"
+        );
+      }
       if (uploadItems.some((item) => !item.snapshot)) {
         throw new Error(
           "ไม่สามารถเก็บไฟล์ต้นฉบับไว้ในพื้นที่ส่วนตัวของแอปได้ กรุณาตรวจสอบพื้นที่ว่างแล้วเลือกไฟล์ใหม่"

@@ -97,7 +97,7 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
     expect(storeDerivativesMock).not.toHaveBeenCalled();
   });
 
-  it("passes only descriptors and transient frames for a local-first request", async () => {
+  it("passes only descriptors and transient frames for a local-first photo request", async () => {
     getOwnedRequestMock.mockResolvedValue(submittedRequest);
     getCurrentJobMock.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
     findAssetsMock.mockResolvedValue([]);
@@ -108,10 +108,10 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
       mode: "local-first",
       materials: [{
         localId: "req-1--media-1",
-        fileName: "source.mp4",
-        mimeType: "video/mp4",
-        fileSizeBytes: 25_000_000,
-        durationSeconds: 12,
+        fileName: "source.jpg",
+        mimeType: "image/jpeg",
+        fileSizeBytes: 25_000,
+        durationSeconds: null,
       }],
       analysisFrames: [{
         localId: "req-1--media-1",
@@ -136,6 +136,32 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
       })
     );
     expect(storeDerivativesMock).toHaveBeenCalledWith("req-1", "user-1", localMedia);
+  });
+
+  it("does not charge or submit a phone-local video through the still proxy", async () => {
+    const response = await POST(request({
+      localMedia: {
+        mode: "local-first",
+        materials: [{
+          localId: "req-1--clip",
+          fileName: "source.mp4",
+          mimeType: "video/mp4",
+          fileSizeBytes: 25_000_000,
+          durationSeconds: 12,
+        }],
+        analysisFrames: [{
+          localId: "req-1--clip",
+          assetIndex: 0,
+          mimeType: "image/jpeg",
+          dataBase64: "YWJj",
+        }],
+      },
+    }), { params: Promise.resolve({ id: "req-1" }) });
+
+    expect(response.status).toBe(409);
+    expect(submitRequestMock).not.toHaveBeenCalled();
+    expect(storeDerivativesMock).not.toHaveBeenCalled();
+    expect(initializePipelineMock).not.toHaveBeenCalled();
   });
 
   it("rejects an analysis frame that is not tied to a local material", async () => {

@@ -20,6 +20,11 @@ interface DeviceVideoRenderPlugin {
   releaseLocalSource(input: { sourceUrl: string }): Promise<void>;
   /** First native primitive: encode one already-composed master to a local MP4. */
   renderMaster(input: { sourceUrl: string }): Promise<{ path: string; fileSizeBytes: number }>;
+  renderLocalTimeline(input: {
+    clips: { sourceUrl: string; startSeconds: number; durationSeconds: number }[];
+    width: number;
+    height: number;
+  }): Promise<{ path: string; fileSizeBytes: number }>;
   cancel(): Promise<void>;
   releaseOutput(input: { path: string }): Promise<void>;
   addListener(eventName: "renderProgress", listener: (event: { percent: number }) => void): Promise<PluginListenerHandle>;
@@ -106,6 +111,58 @@ export async function renderLocalClipOnDevice(descriptor: LocalMediaDescriptor):
     return await renderMasterOnDevice(staged.sourceUrl);
   } finally {
     await releaseStagedLocalSource(staged.sourceUrl).catch(() => undefined);
+  }
+}
+
+/** Join actual local video tracks on iOS or Android, preserving their moving frames. */
+export async function renderLocalVideoTimelineOnDevice(
+  clips: { descriptor: LocalMediaDescriptor; startSeconds: number; durationSeconds: number }[],
+  width: number,
+  height: number
+): Promise<{ path: string; fileSizeBytes: number }> {
+  const files = await Promise.all(clips.map(async (clip) => ({
+    file: await readLocalMaterial(clip.descriptor),
+    startSeconds: clip.startSeconds,
+    durationSeconds: clip.durationSeconds,
+  })));
+  return renderVideoFilesOnDevice(files, width, height);
+}
+
+/** Used by local storage and by the development-only device render screen. */
+export async function renderVideoFilesOnDevice(
+  clips: { file: File; startSeconds: number; durationSeconds: number }[],
+  width: number,
+  height: number
+): Promise<{ path: string; fileSizeBytes: number }> {
+  const capabilities = await getNativeRenderCapabilities();
+  if (!Capacitor.isNativePlatform() || !capabilities || capabilities.nativePluginVersion < 3) {
+    throw new Error("This app build cannot compose local video clips");
+  }
+  if (clips.length < 1 || clips.length > 10 ||
+      !Number.isInteger(width) || !Number.isInteger(height) ||
+      width < 1 || height < 1 || width > 1920 || height > 1920) {
+    throw new Error("Invalid local video timeline");
+  }
+  const staged: string[] = [];
+  try {
+    const nativeClips = [];
+    for (const clip of clips) {
+      if (!clip.file.type.startsWith("video/") ||
+          !Number.isFinite(clip.startSeconds) || clip.startSeconds < 0 ||
+          !Number.isFinite(clip.durationSeconds) || clip.durationSeconds <= 0) {
+        throw new Error("The local timeline requires real video clips and valid trims");
+      }
+      const source = await stageLocalSourceForNative(clip.file);
+      staged.push(source.sourceUrl);
+      nativeClips.push({
+        sourceUrl: source.sourceUrl,
+        startSeconds: clip.startSeconds,
+        durationSeconds: clip.durationSeconds,
+      });
+    }
+    return await NativeRenderer.renderLocalTimeline({ clips: nativeClips, width, height });
+  } finally {
+    await Promise.allSettled(staged.map((sourceUrl) => releaseStagedLocalSource(sourceUrl)));
   }
 }
 

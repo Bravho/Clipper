@@ -7,9 +7,8 @@ import { spacesClient, SPACES_BUCKET, spacesPublicUrl } from "@/lib/spaces";
 import { buildRequestMatKey } from "@/lib/spacesKeys";
 
 /**
- * Persist one small derivative per phone-local original. The original never
- * reaches the server; legacy montage can read these JPEG proxies while the
- * native composer is completed. The deterministic name makes retries safe.
+ * Persist compact photo derivatives for the existing image analysis/render
+ * path. A video frame must never stand in for its moving source in a montage.
  */
 export async function storeLocalMediaDerivatives(
   requestId: string,
@@ -18,6 +17,10 @@ export async function storeLocalMediaDerivatives(
 ): Promise<string[]> {
   const existing = await uploadedAssetRepository.findByRequestId(requestId);
   const urls: string[] = [];
+
+  if (submission.materials.some((material) => material.mimeType.startsWith("video/"))) {
+    throw new Error("Local video requires a verified device render; a still image cannot replace it");
+  }
 
   for (const [index, material] of submission.materials.entries()) {
     const fileName = `local-preview-${index}-${material.localId}.jpg`;

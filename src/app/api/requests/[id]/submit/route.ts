@@ -68,6 +68,16 @@ export async function POST(
     );
   }
 
+  // A phone-local movie cannot be represented by its Gemini analysis frame in
+  // the render pipeline. Reject before credit deduction until the native
+  // timeline output has a verified job completion path.
+  if (parsed.data.localMedia?.materials.some((material) => material.mimeType.startsWith("video/"))) {
+    return NextResponse.json(
+      { error: "Phone video rendering is not connected to this request pipeline yet. Your original clip has not been uploaded or submitted." },
+      { status: 409 }
+    );
+  }
+
   if (
     parsed.data.localMedia &&
     totalAnalysisBytes(parsed.data.localMedia.analysisFrames) > MAX_LOCAL_ANALYSIS_BYTES

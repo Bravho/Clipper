@@ -12,7 +12,11 @@ import androidx.annotation.OptIn;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.effect.Presentation;
 import androidx.media3.transformer.Composition;
+import androidx.media3.transformer.EditedMediaItem;
+import androidx.media3.transformer.EditedMediaItemSequence;
+import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
@@ -30,6 +34,11 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Collections;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -50,7 +59,7 @@ public class DeviceVideoRenderPlugin extends Plugin {
     public void capabilities(PluginCall call) {
         StatFs stats = new StatFs(getContext().getCacheDir().getAbsolutePath());
         JSObject result = new JSObject();
-        result.put("nativePluginVersion", 2);
+        result.put("nativePluginVersion", 3);
         result.put("freeBytes", stats.getAvailableBytes());
         result.put("supportsH264Encode", hasEncoder(MimeTypes.VIDEO_H264));
         result.put("supportsAacEncode", hasEncoder(MimeTypes.AUDIO_AAC));
@@ -76,7 +85,7 @@ public class DeviceVideoRenderPlugin extends Plugin {
             return;
         }
         synchronized (this) {
-            if (activeInput != null) {
+            if (activeCall != null) {
                 call.reject("Another device render is already active");
                 return;
             }
@@ -109,6 +118,66 @@ public class DeviceVideoRenderPlugin extends Plugin {
                 });
             }
         });
+    }
+
+    /** Hard-join real moving clips without their camera audio. */
+    @PluginMethod
+    public void renderLocalTimeline(PluginCall call) {
+        JSONArray clips = call.getArray("clips");
+        Integer width = call.getInt("width");
+        Integer height = call.getInt("height");
+        if (clips == null || clips.length() < 1 || clips.length() > 10 ||
+                width == null || height == null || width < 1 || height < 1 ||
+                width > 1920 || height > 1920) {
+            call.reject("Invalid local timeline");
+            return;
+        }
+        synchronized (this) {
+            if (activeCall != null) { call.reject("Another device render is already active"); return; }
+            try {
+                activeOutput = new File(renderDirectory(), UUID.randomUUID() + "-output.mp4");
+                activeCall = call;
+            } catch (Exception error) { call.reject("Cannot create render directory", error); return; }
+        }
+        try {
+            List<EditedMediaItem> items = new ArrayList<>();
+            for (int i = 0; i < clips.length(); i++) {
+                JSONObject clip = clips.getJSONObject(i);
+                String raw = clip.getString("sourceUrl");
+                if (!raw.startsWith("file://")) throw new Exception("Only staged local clips are allowed");
+                File source = new File(Uri.parse(raw).getPath()).getCanonicalFile();
+                if (!renderDirectory().equals(source.getParentFile()) ||
+                        !source.getName().endsWith("-source.bin") || !source.isFile()) {
+                    throw new Exception("Invalid staged source path");
+                }
+                double start = clip.getDouble("startSeconds");
+                double duration = clip.getDouble("durationSeconds");
+                if (!Double.isFinite(start) || !Double.isFinite(duration) || start < 0 || duration <= 0) {
+                    throw new Exception("Invalid clip trim");
+                }
+                MediaItem item = new MediaItem.Builder()
+                    .setUri(Uri.fromFile(source))
+                    .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(Math.round(start * 1000))
+                        .setEndPositionMs(Math.round((start + duration) * 1000))
+                        .build())
+                    .build();
+                items.add(new EditedMediaItem.Builder(item).setRemoveAudio(true).build());
+            }
+            Composition composition = new Composition.Builder(
+                EditedMediaItemSequence.withVideoFrom(items)
+            ).setEffects(new Effects(
+                Collections.emptyList(),
+                Collections.singletonList(Presentation.createForWidthAndHeight(
+                    width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                ))
+            )).build();
+            getActivity().runOnUiThread(() -> startExport(call, composition));
+        } catch (Exception error) {
+            cleanupAll();
+            activeCall = null;
+            call.reject("Could not compose the local clips", error);
+        }
     }
 
     private File renderDirectory() throws Exception {
@@ -203,6 +272,10 @@ public class DeviceVideoRenderPlugin extends Plugin {
     }
 
     private void startExport(PluginCall call) {
+        startExport(call, null);
+    }
+
+    private void startExport(PluginCall call, Composition timeline) {
         try {
             activeTransformer = new Transformer.Builder(getContext())
                 .setVideoMimeType(MimeTypes.VIDEO_H264)
@@ -229,7 +302,11 @@ public class DeviceVideoRenderPlugin extends Plugin {
                         call.reject("Device video export failed", error);
                     }
                 }).build();
-            activeTransformer.start(MediaItem.fromUri(Uri.fromFile(activeInput)), activeOutput.getAbsolutePath());
+            if (timeline == null) {
+                activeTransformer.start(MediaItem.fromUri(Uri.fromFile(activeInput)), activeOutput.getAbsolutePath());
+            } else {
+                activeTransformer.start(timeline, activeOutput.getAbsolutePath());
+            }
             progressPoll = new Runnable() {
                 @Override public void run() {
                     if (activeCall != call || activeTransformer == null) return;
