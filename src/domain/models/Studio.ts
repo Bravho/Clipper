@@ -45,8 +45,34 @@ export interface StudioScriptDraft {
   updatedAt: string;
 }
 
+/**
+ * A social account connected through the Channel Management OAuth flow and
+ * attached to one Studio brand.
+ *
+ * SECURITY: display metadata and the connection id only. Tokens are dropped at
+ * the provider boundary and never reach the Studio workspace payload.
+ */
+export interface StudioSocialAccount {
+  /** `social_connections.id` from the Channel Management connection. */
+  id: string;
+  brandId: string;
+  /** Studio channel the account publishes to. */
+  channel: StudioChannel;
+  /** Provider platform key, e.g. "tiktok_business", kept for display. */
+  platform: string;
+  platformLabel: string;
+  accountName: string;
+  accountUsername: string;
+  avatarUrl: string;
+  /** Connection health reported by the provider at link time. */
+  status: "pending" | "connected" | "disconnected";
+  linkedAt: string;
+}
+
 export interface StudioChannelPublishingSettings {
   publish: boolean;
+  /** Ids of the StudioSocialAccount rows this channel publishes to. */
+  accountIds: string[];
   advertisingEnabled: boolean;
   budgetType: "daily" | "total";
   budget: number;
@@ -56,6 +82,8 @@ export interface StudioChannelPublishingSettings {
 export interface StudioPublishingPlan {
   id: string;
   draftId: string;
+  /** Brand the plan belongs to. Absent on plans saved before brand filtering. */
+  brandId?: string;
   videoStorageKey: string;
   videoName: string;
   videoSize: number;
@@ -87,5 +115,6 @@ export interface StudioStore {
   drafts: StudioScriptDraft[];
   results: StudioAdResult[];
   publishingPlans: StudioPublishingPlan[];
+  socialAccounts: StudioSocialAccount[];
   selectedBrandId: string;
 }

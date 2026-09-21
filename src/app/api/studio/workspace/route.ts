@@ -8,6 +8,8 @@ import { isTransientPostgresConnectionError } from "@/lib/postgresErrors";
 const channelSchema = z.enum(["tiktok", "instagram", "facebook", "youtube"]);
 const channelSettingsSchema = z.object({
   publish: z.boolean(),
+  // Defaulted so workspaces saved before account selection still parse.
+  accountIds: z.array(z.string()).default([]),
   advertisingEnabled: z.boolean(),
   budgetType: z.enum(["daily", "total"]),
   budget: z.number(),
@@ -34,7 +36,8 @@ const workspaceSchema = z.object({
     completedViews: z.number(), clicks: z.number(), conversions: z.number(), createdAt: z.string(),
   })),
   publishingPlans: z.array(z.object({
-    id: z.string(), draftId: z.string(), videoStorageKey: z.string(), videoName: z.string(),
+    id: z.string(), draftId: z.string(), brandId: z.string().optional(),
+    videoStorageKey: z.string(), videoName: z.string(),
     videoSize: z.number(), videoType: z.string(), caption: z.string(),
     channelSettings: z.object({
       tiktok: channelSettingsSchema,
@@ -44,6 +47,12 @@ const workspaceSchema = z.object({
     }),
     status: z.literal("ready"), updatedAt: z.string(),
   })),
+  socialAccounts: z.array(z.object({
+    id: z.string(), brandId: z.string(), channel: channelSchema, platform: z.string(),
+    platformLabel: z.string(), accountName: z.string(), accountUsername: z.string(),
+    avatarUrl: z.string(), status: z.enum(["pending", "connected", "disconnected"]),
+    linkedAt: z.string(),
+  })).default([]),
   selectedBrandId: z.string(),
 });
 

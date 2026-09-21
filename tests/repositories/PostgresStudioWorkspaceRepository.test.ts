@@ -6,7 +6,7 @@ describe("PostgresStudioWorkspaceRepository connection recovery", () => {
     const transientError = new Error("Connection terminated due to connection timeout");
     const query = jest.fn()
       .mockRejectedValueOnce(transientError)
-      .mockResolvedValueOnce({ rows: [{ data: { brands: [], drafts: [], results: [], publishingPlans: [], selectedBrandId: "" } }] });
+      .mockResolvedValueOnce({ rows: [{ data: { brands: [], drafts: [], results: [], publishingPlans: [], socialAccounts: [], selectedBrandId: "" } }] });
     const repository = new PostgresStudioWorkspaceRepository({ query } as unknown as Pool);
 
     await expect(repository.findByOwnerId("owner-1")).resolves.toMatchObject({

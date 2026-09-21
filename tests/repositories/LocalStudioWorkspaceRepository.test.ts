@@ -25,7 +25,7 @@ describe("LocalStudioWorkspaceRepository", () => {
         id: "brand-1", name: "RClipper", product: "AI video", audience: "SMEs",
         promise: "Save time", tone: "Professional", createdAt: "2026-09-13T00:00:00.000Z",
       }],
-      drafts: [], results: [], publishingPlans: [], selectedBrandId: "brand-1",
+      drafts: [], results: [], publishingPlans: [], socialAccounts: [], selectedBrandId: "brand-1",
     };
 
     const writer = repository();

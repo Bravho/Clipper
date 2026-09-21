@@ -7,7 +7,7 @@ import type { PostgresStudioWorkspaceRepository } from "@/repositories/postgres/
 import type { StudioStore } from "@/domain/models/Studio";
 
 const store: StudioStore = {
-  brands: [], drafts: [], results: [], publishingPlans: [], selectedBrandId: "",
+  brands: [], drafts: [], results: [], publishingPlans: [], socialAccounts: [], selectedBrandId: "",
 };
 
 describe("HybridStudioWorkspaceRepository", () => {

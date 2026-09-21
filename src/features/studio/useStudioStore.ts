@@ -17,8 +17,17 @@ export const EMPTY_STUDIO_STORE: StudioStore = {
   drafts: [],
   results: [],
   publishingPlans: [],
+  socialAccounts: [],
   selectedBrandId: "",
 };
+
+/**
+ * A workspace saved before a slice existed comes back without it. Spreading the
+ * empty store keeps every list defined so components can map over them safely.
+ */
+function normalizeStore(store: StudioStore | null): StudioStore | null {
+  return store ? { ...EMPTY_STUDIO_STORE, ...store } : store;
+}
 
 let initialWorkspaceRequest: Promise<WorkspaceApiPayload> | null = null;
 
@@ -65,12 +74,14 @@ export function useStudioStore() {
     async function load() {
       try {
         const payload = await loadInitialWorkspace();
-        let resolved = payload.store;
+        let resolved = normalizeStore(payload.store);
         let resolvedPersistence: StudioClientPersistence = payload.persistence === "postgresql" ? "database" : "local";
 
         // One-time migration: if the database is empty, preserve any workspace
         // still present in this browser by uploading it before using the DB.
+        let migratedFromBrowser = false;
         if (!resolved && browserStore) {
+          migratedFromBrowser = true;
           const migrated = await fetch("/api/studio/workspace", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -78,7 +89,7 @@ export function useStudioStore() {
           });
           if (!migrated.ok) throw new Error("Database migration failed");
           const migratedPayload = await migrated.json() as WorkspaceApiPayload;
-          resolved = migratedPayload.store;
+          resolved = normalizeStore(migratedPayload.store);
           resolvedPersistence = migratedPayload.persistence === "postgresql" ? "database" : "local";
         }
 
@@ -88,7 +99,7 @@ export function useStudioStore() {
           setStore(next);
           setPersistence(resolvedPersistence);
           setSyncPending(resolvedPersistence === "local" && (
-            resolved === payload.store ? payload.pendingSync : true
+            migratedFromBrowser ? true : payload.pendingSync
           ));
         }
       } catch {
