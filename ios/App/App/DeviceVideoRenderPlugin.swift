@@ -140,15 +140,20 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
                                   userInfo: [NSLocalizedDescriptionKey: "A source has no video track"])
                 }
                 let start = CMTime(seconds: startSeconds, preferredTimescale: 600)
-                let duration = CMTime(seconds: durationSeconds, preferredTimescale: 600)
-                guard CMTimeCompare(CMTimeAdd(start, duration), asset.duration) <= 0 else {
+                let requested = CMTime(seconds: durationSeconds, preferredTimescale: 600)
+                // Browser-reported durations and CMTime rounding can overshoot
+                // the real track by a frame; clamp rather than fail the render.
+                let available = CMTimeSubtract(sourceVideo.timeRange.end, start)
+                let duration = CMTimeMinimum(requested, available)
+                guard CMTimeCompare(duration, CMTime(value: 1, timescale: 30)) >= 0 else {
                     throw NSError(domain: "RClipper", code: 4,
-                                  userInfo: [NSLocalizedDescriptionKey: "Clip trim exceeds its duration"])
+                                  userInfo: [NSLocalizedDescriptionKey: "Clip trim starts past the end of its video"])
                 }
                 let range = CMTimeRange(start: start, duration: duration)
                 guard let videoTrack = composition.addMutableTrack(withMediaType: .video,
                                                                     preferredTrackID: kCMPersistentTrackID_Invalid) else {
-                    throw NSError(domain: "RClipper", code: 5)
+                    throw NSError(domain: "RClipper", code: 5,
+                                  userInfo: [NSLocalizedDescriptionKey: "Could not add a timeline track"])
                 }
                 try videoTrack.insertTimeRange(range, of: sourceVideo, at: cursor)
                 // preferredTransform carries the camera's portrait rotation.
@@ -156,7 +161,8 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
                 let oriented = CGRect(origin: .zero, size: sourceVideo.naturalSize)
                     .applying(sourceVideo.preferredTransform).standardized
                 guard oriented.width > 0, oriented.height > 0 else {
-                    throw NSError(domain: "RClipper", code: 6)
+                    throw NSError(domain: "RClipper", code: 6,
+                                  userInfo: [NSLocalizedDescriptionKey: "A source has an empty video frame"])
                 }
                 let scale = max(CGFloat(width) / oriented.width, CGFloat(height) / oriented.height)
                 let transform = sourceVideo.preferredTransform
@@ -204,12 +210,13 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
                         self.activeCall = nil
                         call.resolve(["path": output.path, "fileSizeBytes": size])
                     } else {
-                        self.fail(call, "Local timeline export failed", session.error)
+                        let reason = session.error?.localizedDescription ?? "status \(session.status.rawValue)"
+                        self.fail(call, "Local timeline export failed: \(reason)", session.error)
                     }
                 }
             }
         } catch {
-            fail(call, "Could not compose the local clips", error)
+            fail(call, "Could not compose the local clips: \(error.localizedDescription)", error)
         }
     }
 
@@ -221,8 +228,27 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func validStagedSource(_ url: URL) -> Bool {
         guard let directory = try? renderDirectory() else { return false }
+        let name = url.lastPathComponent
         return url.standardizedFileURL.deletingLastPathComponent() == directory.standardizedFileURL &&
-            url.lastPathComponent.hasSuffix("-source.bin")
+            DeviceVideoRenderPlugin.stagedSourceSuffixes.contains { name.hasSuffix($0) }
+    }
+
+    /// AVURLAsset picks its container parser from the file extension; a
+    /// `.bin` file opens with zero tracks. Staged sources are renamed to a
+    /// real media extension once their bytes are complete.
+    private static let stagedSourceSuffixes = ["-source.bin", "-source.mp4", "-source.mov"]
+
+    private func mediaExtension(for url: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "mov" }
+        defer { try? handle.close() }
+        let header = handle.readData(ofLength: 12)
+        guard header.count == 12,
+              String(data: header.subdata(in: 4..<8), encoding: .ascii) == "ftyp" else {
+            // Legacy QuickTime files may start with moov/mdat/wide atoms.
+            return "mov"
+        }
+        let brand = String(data: header.subdata(in: 8..<12), encoding: .ascii)
+        return brand == "qt  " ? "mov" : "mp4"
     }
 
     @objc public func beginLocalSource(_ call: CAPPluginCall) {
@@ -254,9 +280,17 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc public func finishLocalSource(_ call: CAPPluginCall) {
         guard let url = stagedSourceURL else { call.reject("No active local source"); return }
         stagedSourceURL = nil
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let typed = url.deletingPathExtension().appendingPathExtension(mediaExtension(for: url))
+        do {
+            try FileManager.default.moveItem(at: url, to: typed)
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            call.reject("Could not finish local source", nil, error)
+            return
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: typed.path)
         let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-        call.resolve(["sourceUrl": url.absoluteString, "fileSizeBytes": size])
+        call.resolve(["sourceUrl": typed.absoluteString, "fileSizeBytes": size])
     }
 
     @objc public func abortLocalSource(_ call: CAPPluginCall) {
