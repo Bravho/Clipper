@@ -13,7 +13,7 @@ export interface NativeRenderCapabilities {
 
 interface DeviceVideoRenderPlugin {
   capabilities(): Promise<NativeRenderCapabilities>;
-  beginLocalSource(): Promise<void>;
+  beginLocalSource(input: { extension: string }): Promise<void>;
   appendLocalSource(input: { dataBase64: string }): Promise<void>;
   finishLocalSource(): Promise<{ sourceUrl: string; fileSizeBytes: number }>;
   abortLocalSource(): Promise<void>;
@@ -25,6 +25,13 @@ interface DeviceVideoRenderPlugin {
     width: number;
     height: number;
   }): Promise<{ path: string; fileSizeBytes: number }>;
+  renderAudioDraft(input: {
+    masterPath: string;
+    voiceUrl: string;
+    musicUrl?: string;
+  }): Promise<{ path: string; fileSizeBytes: number }>;
+  /** v6: a light 720p H.264 copy of a staged clip, for in-app preview only. */
+  makePreviewProxy(input: { sourceUrl: string }): Promise<{ path: string; fileSizeBytes: number }>;
   cancel(): Promise<void>;
   releaseOutput(input: { path: string }): Promise<void>;
   addListener(eventName: "renderProgress", listener: (event: { percent: number }) => void): Promise<PluginListenerHandle>;
@@ -76,7 +83,11 @@ export async function stageLocalSourceForNative(file: File): Promise<{
   if (!capabilities || capabilities.nativePluginVersion < 2) {
     throw new Error("This app build cannot stage local media for rendering");
   }
-  await NativeRenderer.beginLocalSource();
+  const extension = file.type === "audio/mpeg" ? "mp3"
+    : file.type === "audio/wav" || file.type === "audio/x-wav" ? "wav"
+    : file.type === "audio/mp4" || file.type === "audio/x-m4a" ? "m4a"
+    : file.type === "video/mp4" ? "mp4" : "bin";
+  await NativeRenderer.beginLocalSource({ extension });
   let result: { sourceUrl: string; fileSizeBytes: number };
   try {
     for (let offset = 0; offset < file.size; offset += NATIVE_SOURCE_CHUNK_BYTES) {
@@ -174,4 +185,67 @@ export async function observeDeviceRenderProgress(
 
 export async function releaseDeviceRenderOutput(path: string): Promise<void> {
   await NativeRenderer.releaseOutput({ path });
+}
+
+/** Local audible draft; approved voice/music job wiring is a separate server step. */
+export async function renderAudioDraftOnDevice(
+  masterPath: string,
+  voiceFile: File,
+  musicFile?: File
+): Promise<{ path: string; fileSizeBytes: number }> {
+  const capabilities = await getNativeRenderCapabilities();
+  if (!capabilities || capabilities.nativePluginVersion < 4 || !capabilities.supportsAacEncode) {
+    throw new Error("This app build cannot mix local voice and music");
+  }
+  if (!voiceFile.type.startsWith("audio/") ||
+      (musicFile && !musicFile.type.startsWith("audio/"))) {
+    throw new Error("Choose audio files for the speaking voice and music");
+  }
+  const staged: string[] = [];
+  try {
+    const voice = await stageLocalSourceForNative(voiceFile);
+    staged.push(voice.sourceUrl);
+    const music = musicFile ? await stageLocalSourceForNative(musicFile) : null;
+    if (music) staged.push(music.sourceUrl);
+    return await NativeRenderer.renderAudioDraft({
+      masterPath,
+      voiceUrl: voice.sourceUrl,
+      ...(music ? { musicUrl: music.sourceUrl } : {}),
+    });
+  } finally {
+    await Promise.allSettled(staged.map((sourceUrl) => releaseStagedLocalSource(sourceUrl)));
+  }
+}
+
+/** The plugin version that can make a preview copy (`makePreviewProxy`). */
+const PREVIEW_PROXY_PLUGIN_VERSION = 6;
+
+/**
+ * Make a light, WebView-playable copy of a clip the in-app browser cannot
+ * decode (HEVC, 10-bit HDR, 4K60 …) using the phone's own video engine.
+ *
+ * For the PREVIEW only: the returned file feeds the storyboard and trimmer,
+ * and is never submitted or rendered — the original is. Returns null on an
+ * app build that cannot do this, so the caller can explain instead.
+ */
+export async function makePreviewProxyOnDevice(file: File): Promise<File | null> {
+  const capabilities = await getNativeRenderCapabilities();
+  if (!capabilities || capabilities.nativePluginVersion < PREVIEW_PROXY_PLUGIN_VERSION) {
+    return null;
+  }
+  const staged = await stageLocalSourceForNative(file);
+  try {
+    const result = await NativeRenderer.makePreviewProxy({ sourceUrl: staged.sourceUrl });
+    try {
+      const response = await fetch(Capacitor.convertFileSrc(result.path));
+      if (!response.ok) throw new Error("The preview copy could not be read back");
+      const blob = await response.blob();
+      const base = file.name.replace(/\.[^.]+$/, "");
+      return new File([blob], `${base}-preview.mp4`, { type: "video/mp4" });
+    } finally {
+      await NativeRenderer.releaseOutput({ path: result.path }).catch(() => undefined);
+    }
+  } finally {
+    await releaseStagedLocalSource(staged.sourceUrl).catch(() => undefined);
+  }
 }

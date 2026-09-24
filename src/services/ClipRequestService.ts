@@ -97,6 +97,29 @@ export class ClipRequestService {
    * - Records status history entry
    * - Sets submittedAt timestamp
    */
+  /**
+   * Record that this request's heavy render steps can only run on the device
+   * that holds its footage.
+   *
+   * Called straight after a submission that kept clips locally. It is a
+   * separate step rather than a parameter on `submitRequest` because the two
+   * answer different questions — one is "may this request start", the other is
+   * "where can its frames be assembled" — and because the submission path has
+   * to be able to record it on the idempotent-recovery branch too, where the
+   * request was already submitted by a call whose response was lost.
+   *
+   * One-way. A request whose originals are on one phone cannot become a server
+   * render later without exactly the upload it was created to avoid.
+   */
+  async markRenderedOnDevice(requestId: string, userId: string): Promise<ClipRequest> {
+    const request = await this.getOwnedRequest(requestId, userId);
+    if (request.renderLocation === "device") return request;
+
+    return clipRequestRepository.updateStatus(requestId, request.status, {
+      renderLocation: "device",
+    });
+  }
+
   async submitRequest(
     requestId: string,
     userId: string,

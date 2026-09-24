@@ -250,6 +250,7 @@ export class MockClipRequestRepository implements IClipRequestRepository {
         | "discountBaht"
         | "amountPaidBaht"
         | "downloadUnlocked"
+        | "renderLocation"
         | "isTrialRequest"
         | "pricingTier"
         | "videoAllowanceWindowId"

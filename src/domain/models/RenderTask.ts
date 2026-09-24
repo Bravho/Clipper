@@ -43,6 +43,19 @@ export interface RenderTask {
    */
   priority: number;
   /**
+   * This step's source media lives only on the requester's device.
+   *
+   * The Mac Mini worker's claim scan excludes these rows. That is not an
+   * optimisation — the worker has no copy of the footage, so claiming one could
+   * only end in a failed step and a refunded allowance. Keeping the exclusion
+   * in the CLAIM rather than in a check inside the step means the failure is
+   * impossible rather than merely handled.
+   *
+   * False for every row that existed before migration 036 and for every
+   * server-path request, so the existing queue behaves exactly as it did.
+   */
+  deviceOnly: boolean;
+  /**
    * Tie-break ordering key within a priority, and the input to the ageing bonus
    * — set once at enqueue, never bumped.
    */
@@ -71,4 +84,9 @@ export interface EnqueueRenderTaskInput {
    * pass `renderPriorityForRequest(request)` from src/config/renderQueue.ts.
    */
   priority?: number;
+  /**
+   * Set true when the request's originals are device-held, so only the phone
+   * that has them can run this step. Omit for the normal server path.
+   */
+  deviceOnly?: boolean;
 }

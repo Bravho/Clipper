@@ -77,6 +77,10 @@ import {
 } from "@/features/requests/localMediaStore";
 import type { LocalAnalysisFrame, LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
 import { canUseLocalMediaOnThisDevice } from "@/lib/mobile/localMediaPolicy";
+import {
+  describeDeviceRenderCapability,
+  supportsManifestRender,
+} from "@/lib/mobile/deviceRenderBridge";
 
 const GoogleMapLocationPicker = dynamic(() =>
   import("@/features/requests/components/GoogleMapLocationPicker").then(
@@ -1730,9 +1734,14 @@ export function NewRequestForm({ quota, imageOnly = false, onCreditParamsChange,
       if (uploadItems.length === 0) {
         throw new Error("กรุณาเลือกภาพหรือวิดีโออย่างน้อยหนึ่งไฟล์");
       }
-      if (uploadItems.some((item) => item.file.type.startsWith("video/"))) {
+      // A clip can stay on this phone only if this phone can render it: its
+      // moving frames exist nowhere else, and the small frame the server keeps
+      // is a still. An older app build falls through to the upload path and
+      // renders on the Mac Mini exactly as it always has.
+      const keepsClips = uploadItems.some((item) => item.file.type.startsWith("video/"));
+      if (keepsClips && !(await supportsManifestRender())) {
         throw new Error(
-          "การตัดต่อวิดีโอต้นฉบับบน iPhone ยังไม่เชื่อมกับงานนี้ จึงยังส่งคลิปโดยไม่อัปโหลดต้นฉบับไม่ได้ ไฟล์ของคุณยังอยู่บนโทรศัพท์"
+          "แอปเวอร์ชันนี้ยังตัดต่อวิดีโอบนโทรศัพท์ไม่ได้ จึงเก็บคลิปต้นฉบับไว้ในเครื่องไม่ได้ กรุณาอัปเดตแอป หรือเลือกเฉพาะรูปภาพ ไฟล์ของคุณยังอยู่บนโทรศัพท์"
         );
       }
       if (uploadItems.some((item) => !item.snapshot)) {
@@ -1779,6 +1788,10 @@ export function NewRequestForm({ quota, imageOnly = false, onCreditParamsChange,
             mode: "local-first",
             materials,
             analysisFrames,
+            // Declared so the server can refuse a clip from a build that could
+            // not render it, instead of accepting a request no renderer on
+            // earth could finish.
+            deviceRender: await describeDeviceRenderCapability(),
           },
         }),
       });

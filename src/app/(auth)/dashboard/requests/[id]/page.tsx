@@ -59,6 +59,15 @@ const PipelineFailurePanel = dynamicImport(() =>
     (module) => module.PipelineFailurePanel
   )
 );
+// No `ssr: false` here: this page is a Server Component, where that option is
+// rejected. The component is safe to render on the server anyway — it decides
+// nothing until an effect has asked the native layer what this device can do,
+// and renders nothing at all until that answer arrives.
+const DeviceRenderRunner = dynamicImport(() =>
+  import("@/features/requests/components/DeviceRenderRunner").then(
+    (module) => module.DeviceRenderRunner
+  )
+);
 const PipelineSection = dynamicImport(() =>
   import("@/features/requests/components/PipelineSection").then(
     (module) => module.PipelineSection
@@ -480,6 +489,19 @@ export default async function RequestDetailPage({
           </div>
         )}
       </Card>
+
+      {/*
+        This request's originals never left the requester's phone, so its render
+        steps are device_only and no worker will ever claim them. The renderer
+        below is what makes them happen; it is inert on any other device, and
+        absent entirely for the server-rendered requests that are still the
+        default.
+      */}
+      {request.renderLocation === "device" &&
+        pipelineJob &&
+        pipelineJob.currentStep !== VideoGenerationStep.Complete && (
+          <DeviceRenderRunner requestId={id} />
+        )}
 
       {/* Re-analyze prompt — shown when request is submitted but no pipeline job exists yet */}
       {request.status === RequestStatus.Submitted && !pipelineJob && (

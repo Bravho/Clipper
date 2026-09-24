@@ -40,10 +40,21 @@ export async function POST(
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
+  // Optional, and honoured only for a phone-rendered request: the channel
+  // shapes the requester chose to render (the studio's Channels step). Absent
+  // means every remaining shape — the server path's only behaviour.
+  const RATIOS = ["9:16", "16:9", "1:1", "4:5"] as const;
+  const ratios = Array.isArray(body?.ratios)
+    ? (body.ratios as unknown[]).filter((value): value is (typeof RATIOS)[number] =>
+        (RATIOS as readonly unknown[]).includes(value)
+      )
+    : undefined;
+
   try {
     const updated = await videoGenerationService.generateAdditionalRatiosByRequester(
       jobId,
-      session.user.id
+      session.user.id,
+      ratios
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

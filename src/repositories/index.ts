@@ -100,6 +100,13 @@ import { PostgresVideoAllowanceWindowRepository } from "./postgres/PostgresVideo
 export const renderTaskRepository = new PostgresRenderTaskRepository();
 export const videoAllowanceWindowRepository = new PostgresVideoAllowanceWindowRepository();
 
+// One row per attempt by a phone to render a queued step. The receipt that
+// makes device completion idempotent and stops a lapsed lease from overwriting
+// the Mac worker's result. Requires migration 035.
+import { PostgresDeviceRenderAttemptRepository } from "./postgres/PostgresDeviceRenderAttemptRepository";
+
+export const deviceRenderAttemptRepository = new PostgresDeviceRenderAttemptRepository();
+
 // ── RClipper Management — PostgreSQL ─────────────────────────────────────────
 // Videos collected free (transferred from a generation project, or uploaded by
 // the user) and published to the user's own social channels. Payment gates

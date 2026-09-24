@@ -13,6 +13,7 @@ import { AppleReturnRecovery } from "@/components/mobile/AppleReturnRecovery";
 import { NativePushRegistration } from "@/components/mobile/NativePushRegistration";
 import { initEditorSeedData } from "@/seed/editorSeedData";
 import { getServerLocale } from "@/i18n/server";
+import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
 import "./globals.css";
 
 // Seed editor profiles into the in-memory mock store on first server render
@@ -57,6 +58,7 @@ export default async function RootLayout({
 }) {
   const session = await getServerSession(authOptions);
   const locale = getServerLocale();
+  const showDeviceRenderLab = canAccessDeviceRenderLab(session?.user?.email);
 
   return (
     <html lang={locale}>
@@ -76,7 +78,7 @@ export default async function RootLayout({
                 Apple sign-in that would have created one was interrupted. */}
             <AppleReturnRecovery />
             <NativePushRegistration />
-            <Navbar />
+            <Navbar showDeviceRenderLab={showDeviceRenderLab} />
             {/* min-w-0 lets flex children shrink below their content width,
                 which is what stops wide cards/tables forcing a page-level
                 horizontal scroll on phones. */}

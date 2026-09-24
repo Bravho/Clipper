@@ -66,6 +66,12 @@ import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
 import { isAutoApprovedGate } from "@/config/pipelinePresentation";
 import {
+  firstDeviceRatioLink,
+  nextDeviceRatioLink,
+  readDeviceRatioLink,
+  type DeviceRatioLink,
+} from "@/lib/mobile/deviceRatioChain";
+import {
   extractInlineHashtags,
   normalizeHashtags,
   shapeChannelCopy,
@@ -81,6 +87,16 @@ const execFileAsync = promisify(execFile);
  * "the pipeline moved itself along" from "the lane approved on your behalf".
  */
 const SYSTEM_ACTOR: JobUpdateActor = { source: "system" };
+
+/**
+ * The "inline fallback" for a step only a phone can run. `_dispatchHeavy`
+ * always queues a phone-rendered request's step for the phone and never calls
+ * this; it exists so a wiring mistake fails loudly instead of rendering
+ * something from media this process does not have.
+ */
+async function deviceOnlyStep(): Promise<void> {
+  throw new Error("This step renders on the requester's phone; there is no server fallback.");
+}
 
 /**
  * The creative choices the requester makes on the scene-plan approval screen
@@ -921,6 +937,12 @@ export class VideoGenerationService {
             step: renderStep,
             payload: payload ?? null,
             priority: renderPriorityForRequest(request ?? {}),
+            // A request whose originals stayed on the requester's phone has no
+            // footage on this machine or on the Mac Mini, so the task is marked
+            // device-only and the worker's claim scan skips it. Without this the
+            // worker would claim it, fail for want of media, and burn the
+            // requester's allowance on a render that was never possible.
+            deviceOnly: request?.renderLocation === "device",
           });
           return;
         }
@@ -929,6 +951,27 @@ export class VideoGenerationService {
         // fall through and run the step inline.
         console.error(`[render:${renderStep}] enqueue failed, running inline:`, err);
       }
+    }
+
+    // A device-rendered request has no inline fallback: this process has no
+    // copy of the footage either. Queue it unconditionally and let the phone
+    // claim it — the requester's own device is the worker for this job.
+    const requestForFallback = await clipRequestRepository
+      .findById(job.requestId)
+      .catch(() => null);
+    if (requestForFallback?.renderLocation === "device") {
+      await renderTaskRepository
+        .enqueue({
+          jobId: job.id,
+          requestId: job.requestId,
+          requesterId: requestForFallback.userId,
+          step: renderStep,
+          payload: payload ?? null,
+          priority: renderPriorityForRequest(requestForFallback),
+          deviceOnly: true,
+        })
+        .catch(onFail);
+      return;
     }
 
     // Inline path: the step owns no queue row, so the express lane can advance
@@ -951,6 +994,163 @@ export class VideoGenerationService {
    */
   async afterRenderStepCompleted(jobId: string): Promise<void> {
     await this._autoAdvanceIfEnabled(jobId);
+  }
+
+  /**
+   * Record a render a DEVICE produced, as if the worker had produced it.
+   *
+   * `DeviceRenderService` has already verified the uploaded object and created
+   * the asset; what is left is the job bookkeeping each heavy step does at its
+   * end — write the asset into the right field and move to that step's review
+   * gate. That bookkeeping lives here, next to the inline implementations it
+   * mirrors, so the two cannot drift: a change to where
+   * `_runOverlayComposition` parks the job is a change a reader makes with this
+   * method on screen.
+   *
+   * Deliberately does NOT call `afterRenderStepCompleted` — the caller does
+   * that after closing the render-task claim, because a job may hold only one
+   * active task and advancing while the current one is still claimed would
+   * replace the claimed row in place.
+   *
+   * Idempotent: writing the same asset id into the same field twice is a no-op,
+   * and the step transition is a set, not an increment.
+   */
+  async applyDeviceRenderResult(input: {
+    jobId: string;
+    step: string;
+    ratio: VideoRatio;
+    assetId: string;
+    /** The parity stage the device rendered (`montage` / `master` / `final`). */
+    stage?: string;
+    /** The claimed task's payload — carries the extra-shape chain link, if any. */
+    payload?: Record<string, unknown> | null;
+  }): Promise<{ nextStep: string | null; chain?: DeviceRatioLink | "finalize" }> {
+    const job = await this._getJob(input.jobId);
+    const updates: UpdateVideoGenerationJobInput = {
+      renderProgress: null,
+      renderProgressDetail: null,
+    };
+    let nextStep: VideoGenerationStep | null = null;
+    let chain: DeviceRatioLink | "finalize" | undefined;
+
+    switch (input.step) {
+      case RenderStep.OverlayComposition: {
+        // Mirrors the tail of `_runOverlayComposition`.
+        updates[this._captionedFieldForRatio(input.ratio)] = input.assetId;
+        nextStep = VideoGenerationStep.AwaitingOverlayApproval;
+        // A phone-rendered request stops HERE, express lane or not: the studio
+        // shows the finished video and asks which other channel shapes to make,
+        // since each one is a full render on the requester's phone. Turning the
+        // lane off (rather than special-casing the gate) also hands the request
+        // page its approval buttons back and lets the "ready to review" notice
+        // fire. Server-path requests are untouched.
+        if (job.autoApproveRemaining && (await this._isDeviceRendered(job.requestId))) {
+          updates.autoApproveRemaining = false;
+        }
+        break;
+      }
+      case RenderStep.AdditionalRatios: {
+        const queued = readDeviceRatioLink(input.payload);
+        // The stage the phone was actually handed. A build that composes from
+        // the originals is given a shape's MASTER for its montage link (the
+        // silent intermediate would only be thrown away), so the attempt's
+        // stage — not the queued link's — says what came back.
+        const link =
+          queued &&
+          (input.stage === "montage" || input.stage === "master" || input.stage === "final")
+            ? { ...queued, stage: input.stage as DeviceRatioLink["stage"] }
+            : queued;
+        if (link) {
+          // A phone-rendered request's extra shape, one stage at a time (see
+          // `deviceRatioChain`). The montage is only an input to this shape's
+          // master, so it is carried in the next link rather than written to
+          // the job; the master becomes this shape's finalExport, exactly as
+          // `_runFFmpegComposition` would have written it; the final becomes
+          // its captioned export.
+          if (link.stage === "master") {
+            updates[this._finalExportFieldForRatio(input.ratio)] = input.assetId;
+          } else if (link.stage === "final") {
+            updates[this._captionedFieldForRatio(input.ratio)] = input.assetId;
+          }
+          chain = nextDeviceRatioLink(link, input.assetId);
+          break;
+        }
+        // One ratio of the batch. The step only advances once every required
+        // ratio has landed, so the gate is left to the batch's own completion.
+        updates[this._captionedFieldForRatio(input.ratio)] = input.assetId;
+        break;
+      }
+      case RenderStep.FfmpegComposition: {
+        // Mirrors the tail of `_runFFmpegComposition` for one ratio.
+        updates[this._finalExportFieldForRatio(input.ratio)] = input.assetId;
+        nextStep = VideoGenerationStep.AwaitingFinalApproval;
+        break;
+      }
+      case RenderStep.MontageAllSegments:
+      case RenderStep.MontageSceneSegment:
+      case RenderStep.MontageMerge: {
+        // A phone renders the WHOLE montage in one pass — every scene, with its
+        // dissolves — from the approved plan (`DeviceRenderService._planFor`
+        // does not split by scene). So whichever montage step it was handed,
+        // what comes back is already the merged base video. There are no
+        // per-scene segments to keep; the review gate shows the whole thing.
+        updates.baseVideoAssetId = input.assetId;
+        updates.sceneVideoAssetIds = null;
+        nextStep = VideoGenerationStep.AwaitingVideoApproval;
+        break;
+      }
+      default:
+        // A step a device should never have been allowed to claim. Leave the
+        // job untouched rather than guessing which field this asset belongs in.
+        console.error(
+          `[device-render] job ${job.id}: no result handler for step ${input.step}; asset ${input.assetId} left unattached`
+        );
+        return { nextStep: null };
+    }
+
+    if (nextStep) updates.currentStep = nextStep;
+    await videoGenerationJobRepository.update(job.id, updates, SYSTEM_ACTOR);
+
+    console.log(
+      `[device-render] job ${job.id}: ${input.step} ${input.ratio} → asset ${input.assetId}` +
+        (nextStep ? ` → ${nextStep}` : "") +
+        (chain ? ` → chain ${chain === "finalize" ? "finalize" : `${chain.ratio}/${chain.stage}`}` : "")
+    );
+    return { nextStep, ...(chain ? { chain } : {}) };
+  }
+
+  /**
+   * Continue a phone-rendered request's extra-shape chain: queue the next link
+   * for the phone, or — after the last shape's final — finish the job exactly
+   * as `_runAdditionalRatiosOverlay` does.
+   *
+   * Must be called AFTER the finished link's task is closed: a job may hold one
+   * active render task, and enqueuing while the old one is still claimed would
+   * replace the claimed row in place.
+   */
+  async advanceDeviceRatioChain(
+    jobId: string,
+    next: DeviceRatioLink | "finalize"
+  ): Promise<void> {
+    const job = await this._getJob(jobId);
+    if (job.currentStep !== VideoGenerationStep.GeneratingAdditionalRatios) {
+      console.warn(
+        `[device-render] job ${jobId}: chain link finished on ${job.currentStep}, not continuing`
+      );
+      return;
+    }
+    if (next === "finalize") {
+      await this._finalizeAndStartTravy(job, job.finalApprovedBy ?? "", { actor: SYSTEM_ACTOR });
+      return;
+    }
+    await this._dispatchHeavy(job, RenderStep.AdditionalRatios, deviceOnlyStep, { ...next });
+  }
+
+  /** True when the request's originals live only on the requester's phone. */
+  private async _isDeviceRendered(requestId: string): Promise<boolean> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(requestId).catch(() => null);
+    return request?.renderLocation === "device";
   }
 
   /** `jobId:step` gates this process is currently auto-approving. See `_autoAdvanceIfEnabled`. */
@@ -2113,6 +2313,30 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
     }
 
+    // A phone-rendered request's montage arrives ALREADY MERGED (see
+    // `applyDeviceRenderResult`). Dispatching a merge here would clear that
+    // video and queue the phone to render the same montage again, which lands
+    // back on this gate — on the express lane, forever. So the merge is skipped
+    // and the job goes where a finished merge goes. Every other request takes
+    // the worker path below, unchanged.
+    {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const request = await clipRequestRepository.findById(job.requestId);
+      if (request?.renderLocation === "device" && job.baseVideoAssetId) {
+        const merged = await videoGenerationJobRepository.update(
+          jobId,
+          {
+            currentStep: VideoGenerationStep.GeneratingAnimations,
+            videoApprovedBy: userId,
+          },
+          this._actorFor(jobId, userId)
+        );
+        await this._runAnimationGeneration(merged);
+        await this._autoAdvanceIfEnabled(jobId);
+        return this._getJob(jobId);
+      }
+    }
+
     // Merging every approved scene segment into the single base video is a heavy
     // FFmpeg concat/crossfade. It used to run inline+awaited here — the ONE heavy
     // step still executed on the web server — which is why the merge failed on the
@@ -2561,6 +2785,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     return { timeline, durationSeconds: voiceDur + leadIn, palette };
   }
 
+  /**
+   * The styled render's palette for a job — what a phone draws a template's
+   * accents in, so they match the colours the Mac would have used.
+   */
+  async deriveOverlayPaletteForJob(job: VideoGenerationJob): Promise<Palette> {
+    return this._deriveOverlayPalette(job);
+  }
+
   /** Derive the decorative palette from the business profile + approved script. */
   private async _deriveOverlayPalette(job: VideoGenerationJob): Promise<Palette> {
     try {
@@ -2956,9 +3188,47 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    */
   async generateAdditionalRatiosByRequester(
     jobId: string,
-    userId: string
+    userId: string,
+    /**
+     * Phone-rendered requests only: which of the remaining shapes to make.
+     * Omitted means all of them, which is what the server path always does.
+     */
+    ratios?: VideoRatio[]
   ): Promise<VideoGenerationJob> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAdditionalRatios);
+    const gated = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAdditionalRatios);
+
+    // A phone-rendered request builds each extra shape from its own originals
+    // on the phone — montage, master, final — one link at a time (see
+    // `deviceRatioChain`). The server path below is unchanged.
+    {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const request = await clipRequestRepository.findById(gated.requestId);
+      if (request?.renderLocation === "device") {
+        const platforms = request.targetPlatforms ?? [];
+        const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TravyApp);
+        const remaining = this._userRatios(platforms).filter((r) => r !== primaryRatio);
+        const chosen = ratios ? remaining.filter((r) => ratios.includes(r)) : remaining;
+        const first = firstDeviceRatioLink(chosen);
+        if (!first) {
+          // Nothing more to render: the primary video is the delivery.
+          return this._finalizeAndStartTravy(gated, userId, {
+            actor: this._actorFor(jobId, userId),
+          });
+        }
+        const started = await videoGenerationJobRepository.update(
+          jobId,
+          {
+            currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
+            ...(userId ? { finalApprovedBy: userId } : {}),
+          },
+          this._actorFor(jobId, userId)
+        );
+        await this._dispatchHeavy(started, RenderStep.AdditionalRatios, deviceOnlyStep, {
+          ...first,
+        });
+        return started;
+      }
+    }
 
     const updated = await videoGenerationJobRepository.update(
       jobId,
@@ -3083,7 +3353,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
     const platforms = request?.targetPlatforms ?? [];
-    const needsTravy = platforms.includes(Platform.TravyApp);
+    // A phone-rendered request has no Travy export: the Travy clip is rendered
+    // from server-held masters, and this request has none. (The studio does
+    // not offer Travy; this covers a request that listed it anyway.)
+    const needsTravy =
+      platforms.includes(Platform.TravyApp) && request?.renderLocation !== "device";
     // Travy always renders at its own fixed ratio (16:9 — uploaded to YouTube
     // for the Travy web app), independent of the primary channel's ratio.
     const travyRatio = this._montageCanvasRatio(Platform.TravyApp);

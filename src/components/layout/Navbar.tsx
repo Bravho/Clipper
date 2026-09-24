@@ -19,7 +19,7 @@ const roleBadgeVariant: Record<Role, "blue" | "green" | "red"> = {
   [Role.Admin]: "red",
 };
 
-export function Navbar() {
+export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: boolean }) {
   const { t } = useI18n();
   const { data: session, status } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -56,6 +56,11 @@ export function Navbar() {
           {/* Desktop nav — only from lg up, because the tablet width still needs
               the drawer to reach the section links. */}
           <div className="hidden items-center gap-4 lg:flex">
+            {showDeviceRenderLab && (
+              <Link href="/device-render-lab" className="text-sm text-blue-300 hover:text-white">
+                {t("nav.renderTest")}
+              </Link>
+            )}
             {isLoading ? null : user ? (
               <>
                 <Link href={dashboardHref} className="text-sm text-slate-300 hover:text-white">
@@ -114,6 +119,15 @@ export function Navbar() {
       </div>
 
       <MobileNavDrawer open={mobileOpen} onClose={closeDrawer} sections={portalSections}>
+        {showDeviceRenderLab && (
+          <Link
+            href="/device-render-lab"
+            className="rounded-md px-3 py-2.5 text-sm text-blue-300 hover:bg-slate-800 hover:text-white"
+            onClick={closeDrawer}
+          >
+            {t("nav.renderTest")}
+          </Link>
+        )}
         {user ? (
           <>
             <div className="flex items-center gap-2 px-3 pb-2">

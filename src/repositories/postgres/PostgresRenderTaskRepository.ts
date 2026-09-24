@@ -48,6 +48,7 @@ function rowToTask(row: Record<string, unknown>): RenderTask {
     state: row.state as RenderTaskState,
     attempts: Number(row.attempts ?? 0),
     priority: Number(row.priority ?? 0),
+    deviceOnly: Boolean(row.device_only),
     enqueuedAt: new Date(row.enqueued_at as string),
     claimedBy: (row.claimed_by as string) ?? null,
     claimedAt: toDate(row.claimed_at),
@@ -73,8 +74,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     // race. Steps are serialised by approval gates, so this realistically only
     // fires when retrying the same step.
     const { rows } = await this.db.query(
-      `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload, priority)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload, priority, device_only)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (job_id) WHERE state IN ('queued', 'claimed')
        DO UPDATE SET
          request_id   = EXCLUDED.request_id,
@@ -82,6 +83,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
          step         = EXCLUDED.step,
          payload      = EXCLUDED.payload,
          priority     = EXCLUDED.priority,
+         device_only  = EXCLUDED.device_only,
          state        = 'queued',
          attempts     = 0,
          enqueued_at  = NOW(),
@@ -101,6 +103,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
         input.step,
         input.payload == null ? null : JSON.stringify(input.payload),
         input.priority ?? 0,
+        input.deviceOnly ?? false,
       ]
     );
     return rowToTask(rows[0]);
@@ -113,10 +116,11 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     const { rows } = await this.db.query(
       `WITH next AS (
          SELECT id FROM render_tasks
-          WHERE state = 'queued'
+          WHERE device_only = FALSE
+            AND (state = 'queued'
              OR (state = 'claimed'
                  AND COALESCE(heartbeat_at, claimed_at)
-                     < NOW() - ($2 || ' seconds')::interval)
+                     < NOW() - ($2 || ' seconds')::interval))
           ORDER BY ${effectivePriorityExpr("render_tasks", "$3", "$4")} DESC,
                    enqueued_at ASC
           FOR UPDATE SKIP LOCKED
@@ -143,16 +147,29 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     return rows[0] ? rowToTask(rows[0]) : null;
   }
 
-  async claimForDevice(taskId: string, requesterId: string, deviceClaimId: string): Promise<RenderTask | null> {
+  async claimForDevice(
+    taskId: string,
+    requesterId: string,
+    deviceClaimId: string,
+    allowedSteps: RenderStep[]
+  ): Promise<RenderTask | null> {
+    if (allowedSteps.length === 0) return null;
+    // `state = 'queued'` is the whole race guarantee: a task the worker has
+    // already claimed is never handed to a phone, and the UPDATE is atomic, so
+    // two devices cannot both believe they won.
     const { rows } = await this.db.query(
       `UPDATE render_tasks
           SET state = 'claimed', claimed_by = $3, claimed_at = NOW(),
               heartbeat_at = NOW(), started_at = COALESCE(started_at, NOW()),
               attempts = attempts + 1, updated_at = NOW()
         WHERE id = $1 AND requester_id = $2 AND state = 'queued'
-          AND step = 'overlay_composition'
+          -- A device-only task exists BECAUSE its footage is on this
+          -- requester's phone and nowhere else, so the eligible-step list
+          -- (which exists to limit what a phone may opportunistically take
+          -- from the worker) does not apply to it.
+          AND (device_only = TRUE OR step = ANY($4::text[]))
        RETURNING *`,
-      [taskId, requesterId, deviceClaimId]
+      [taskId, requesterId, deviceClaimId, allowedSteps]
     );
     return rows[0] ? rowToTask(rows[0]) : null;
   }

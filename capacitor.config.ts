@@ -21,7 +21,40 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * `webDir` is a minimal offline shell shown before the remote site loads (or when
  * fully offline with no cached page).
  */
-const serverUrl = process.env.CAP_SERVER_URL ?? "https://app.rclipper.com";
+/**
+ * THE DEFAULT IS THE DROPLET, AND THAT IS THE POINT.
+ *
+ * The app talks to the deployed site — auth, the AI pipeline, the render queue,
+ * storage — so a build with no CAP_SERVER_URL is a build that works anywhere
+ * the phone has a network, with no developer machine involved. Pointing it at a
+ * PC on the LAN is a debugging convenience that only works while that PC is on
+ * the same Wi-Fi and running `npm run dev`.
+ */
+export const PRODUCTION_SERVER_URL = "https://app.rclipper.com";
+
+const serverUrl = (process.env.CAP_SERVER_URL ?? PRODUCTION_SERVER_URL).trim();
+const parsedServerUrl = new URL(serverUrl);
+if (!(["http:", "https:"].includes(parsedServerUrl.protocol))) {
+  throw new Error("CAP_SERVER_URL must use http:// or https://");
+}
+
+/**
+ * A plain-http target has to be asked for twice.
+ *
+ * Setting CAP_SERVER_URL is easy to do once and forget, and a shell that keeps
+ * it exported turns every later build into a LAN build — an APK that shows a
+ * blank page the moment the phone leaves the office, with nothing on screen to
+ * explain why. Requiring CAP_ALLOW_LAN=1 as well makes the LAN build a
+ * deliberate act, and makes the accident loud instead of silent.
+ */
+if (parsedServerUrl.protocol === "http:" && process.env.CAP_ALLOW_LAN !== "1") {
+  throw new Error(
+    `Refusing to build against ${serverUrl}: a plain-http target is a LAN debug ` +
+      `build that only works next to that machine. Set CAP_ALLOW_LAN=1 as well if ` +
+      `you really mean it, or unset CAP_SERVER_URL to build against ` +
+      `${PRODUCTION_SERVER_URL}.`
+  );
+}
 
 /**
  * Pointing the shell at a LAN dev server means plain http, which Android blocks
@@ -33,22 +66,19 @@ const serverUrl = process.env.CAP_SERVER_URL ?? "https://app.rclipper.com";
  * production. Deriving them makes an https URL — every real deployment — always
  * produce the locked-down configuration.
  */
-const isCleartext = serverUrl.startsWith("http://");
+const isCleartext = parsedServerUrl.protocol === "http:";
 
 /** Host[:port] of the dev server, so the WebView is allowed to navigate to it. */
-const devHost = (() => {
-  try {
-    return new URL(serverUrl).host;
-  } catch {
-    return null;
-  }
-})();
+const devHost = parsedServerUrl.host;
 
 if (isCleartext) {
   console.warn(
-    `[capacitor] DEV BUILD: cleartext http allowed for ${devHost}. ` +
-      `Do NOT ship this build — unset CAP_SERVER_URL and re-run cap sync.`
+    `[capacitor] LAN DEBUG BUILD: cleartext http allowed for ${devHost}. ` +
+      `This app will only work while that machine is running the dev server on ` +
+      `the same network. Do NOT ship it — unset CAP_SERVER_URL and re-run cap sync.`
   );
+} else {
+  console.log(`[capacitor] Building against ${serverUrl}`);
 }
 
 const config: CapacitorConfig = {

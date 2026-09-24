@@ -42,12 +42,17 @@ export function LoginForm() {
         return;
       }
 
-      if (result?.error) {
+      if (result?.error === "CredentialsSignin") {
         setServerError("อีเมลหรือรหัสผ่านไม่ถูกต้อง กรุณาลองอีกครั้ง");
         return;
       }
 
-      if (result?.ok) {
+      if (result?.error || !result?.ok) {
+        setServerError("ระบบเข้าสู่ระบบไม่พร้อมใช้งานชั่วคราว กรุณาลองอีกครั้งภายหลัง");
+        return;
+      }
+
+      if (result.ok) {
         // Fetch session to get role for redirect
         const session = await getSession();
         const role = session?.user?.role as Role | undefined;

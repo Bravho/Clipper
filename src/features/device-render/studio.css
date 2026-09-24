@@ -1,0 +1,1345 @@
+/**
+ * Studio — the design system for the phone editor.
+ *
+ * WHY A STYLESHEET AND NOT MORE TAILWIND. The rest of the product is a
+ * document-shaped web app: white cards on grey, read top to bottom, fine at a
+ * desk. An editor is not that. It is a dark, dense, touch-first tool where the
+ * footage is the brightest thing on screen and every control has to be reachable
+ * with a thumb while the other hand holds the phone. That is a different visual
+ * system, not a different set of utility classes, and giving it real tokens
+ * keeps it coherent instead of accumulating one-off overrides.
+ *
+ * The rules that shape everything below:
+ *
+ *   DARK, BECAUSE OF THE FOOTAGE. Video is judged against its surround. A white
+ *   page makes every clip look muddy and every exposure decision wrong.
+ *
+ *   44px MINIMUM TOUCH TARGET. Apple's number, and the reason the old lab's
+ *   number inputs were painful: a 28px stepper is a coin toss on a moving bus.
+ *
+ *   SAFE AREAS ARE NOT OPTIONAL. The app is a WebView in a full-bleed shell. A
+ *   render button under the home indicator is a button that cannot be pressed.
+ *
+ *   ONE ACCENT. Amber means "this is the live action". Everything else is
+ *   neutral so the accent keeps meaning something.
+ */
+
+.studio {
+  /* ── Surfaces: four steps, dark to light, so depth needs no shadows ───── */
+  --s-bg: #0b0d12;
+  --s-surface: #141821;
+  --s-surface-raised: #1c222e;
+  --s-surface-hover: #242b3a;
+  --s-border: #2a3240;
+  --s-border-strong: #3a4455;
+
+  /* ── Text: three weights of attention ─────────────────────────────────── */
+  --s-text: #eef1f6;
+  --s-text-muted: #9aa5b8;
+  --s-text-faint: #6b7789;
+
+  /* ── Accent: amber reads as "recording / live" and survives on video ──── */
+  --s-accent: #f5a524;
+  --s-accent-strong: #ffb948;
+  --s-accent-ink: #1a1205;
+
+  --s-positive: #34d399;
+  --s-warning: #fbbf24;
+  --s-danger: #f87171;
+
+  /* ── Rhythm ───────────────────────────────────────────────────────────── */
+  --s-radius: 14px;
+  --s-radius-lg: 20px;
+  --s-tap: 44px;
+
+  /* The shell is full-bleed, so every edge has to respect the hardware. */
+  --s-safe-top: env(safe-area-inset-top, 0px);
+  --s-safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  background: var(--s-bg);
+  color: var(--s-text);
+  min-height: 100dvh;
+  /* A system stack: the app's captions are drawn by the renderer, not by CSS,
+     so there is nothing to gain from a webfont and a render to wait for. */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans Thai", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A dark page inside a light shell needs its own scrollbar and selection. */
+.studio ::selection {
+  background: var(--s-accent);
+  color: var(--s-accent-ink);
+}
+
+/* ── Chrome ──────────────────────────────────────────────────────────────── */
+
+.studio-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: calc(var(--s-safe-top) + 12px) 16px 12px;
+  background: color-mix(in srgb, var(--s-bg) 88%, transparent);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--s-border);
+}
+
+.studio-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--s-text-faint);
+}
+
+.studio-title {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.studio-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--s-text-muted);
+}
+
+/*
+ * The step rail. Horizontal because five steps do not fit vertically on a
+ * phone, and scrollable because a Thai label can be twice the width of its
+ * English equivalent — a rail that assumes they fit breaks in one language.
+ */
+.studio-steps {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 12px 16px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+
+.studio-steps::-webkit-scrollbar {
+  display: none;
+}
+
+.studio-step {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--s-tap);
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface);
+  color: var(--s-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.studio-step[aria-current="step"] {
+  background: var(--s-accent);
+  border-color: var(--s-accent);
+  color: var(--s-accent-ink);
+}
+
+.studio-step-index {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* A step whose requirements are met gets a tick instead of a number. */
+.studio-step-done .studio-step-index {
+  background: var(--s-positive);
+  color: var(--s-accent-ink);
+}
+
+/* ── Content ─────────────────────────────────────────────────────────────── */
+
+.studio-body {
+  /* Room for the action bar, which floats over the bottom of the scroll. */
+  padding: 4px 16px calc(var(--s-safe-bottom) + 108px);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.studio-panel {
+  background: var(--s-surface);
+  border: 1px solid var(--s-border);
+  border-radius: var(--s-radius-lg);
+  padding: 16px;
+}
+
+.studio-panel-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.studio-panel-hint {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--s-text-muted);
+}
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+
+.studio-field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.studio-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--s-text-muted);
+}
+
+.studio-input,
+.studio-select {
+  width: 100%;
+  min-height: var(--s-tap);
+  padding: 10px 12px;
+  border-radius: var(--s-radius);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text);
+  /* 16px exactly: iOS Safari zooms the whole page on focus below this, which
+     on a WebView shell looks like the app has broken. */
+  font-size: 16px;
+}
+
+.studio-input:focus-visible,
+.studio-select:focus-visible,
+.studio-button:focus-visible,
+.studio-step:focus-visible,
+.studio-chip:focus-visible {
+  outline: 2px solid var(--s-accent-strong);
+  outline-offset: 2px;
+}
+
+.studio-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: var(--s-radius);
+  background: var(--s-surface-raised);
+  color: var(--s-text);
+  font-size: 16px;
+  font-weight: 650;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+
+/* Touch feedback the WebView does not give for free. */
+.studio-button:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.studio-button:disabled {
+  opacity: 0.4;
+}
+
+.studio-button-primary {
+  background: var(--s-accent);
+  color: var(--s-accent-ink);
+}
+
+.studio-button-ghost {
+  background: transparent;
+  border-color: var(--s-border-strong);
+  color: var(--s-text);
+}
+
+.studio-button-danger {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--s-danger) 50%, transparent);
+  color: var(--s-danger);
+}
+
+/* Small square control — reorder arrows, delete. Still 44px. */
+.studio-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: var(--s-tap);
+  height: var(--s-tap);
+  border-radius: 12px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.studio-icon-button:disabled {
+  opacity: 0.3;
+}
+
+.studio-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.studio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--s-tap);
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.studio-chip[aria-pressed="true"] {
+  border-color: var(--s-accent);
+  background: color-mix(in srgb, var(--s-accent) 16%, var(--s-surface-raised));
+  color: var(--s-text);
+}
+
+/* ── Media ───────────────────────────────────────────────────────────────── */
+
+.studio-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.studio-media-tile {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--s-radius);
+  overflow: hidden;
+  background: var(--s-surface-raised);
+  border: 1px solid var(--s-border);
+}
+
+.studio-media-tile img,
+.studio-media-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.studio-media-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.studio-media-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 17px;
+  line-height: 1;
+}
+
+/* An empty state that invites the next action instead of scolding. */
+.studio-empty {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 32px 16px;
+  border: 1px dashed var(--s-border-strong);
+  border-radius: var(--s-radius-lg);
+  color: var(--s-text-faint);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ── Timeline ────────────────────────────────────────────────────────────── */
+
+.studio-scene {
+  border: 1px solid var(--s-border);
+  border-radius: var(--s-radius-lg);
+  background: var(--s-surface-raised);
+  overflow: hidden;
+}
+
+.studio-scene-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--s-surface-hover);
+  border-bottom: 1px solid var(--s-border);
+}
+
+.studio-scene-name {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.studio-shot {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--s-border);
+}
+
+.studio-shot:last-of-type {
+  border-bottom: none;
+}
+
+.studio-shot-thumb {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--s-bg);
+}
+
+.studio-shot-thumb img,
+.studio-shot-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.studio-shot-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.studio-shot-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-shot-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--s-text-faint);
+}
+
+.studio-shot-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/*
+ * The duration bar: a shot's share of the finished video, drawn to scale.
+ * A list of numbers does not tell you that one photo is holding the screen for
+ * a third of the clip. A bar does, at a glance, which is the whole reason it is
+ * here.
+ */
+.studio-duration-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--s-surface-raised);
+  margin-top: 10px;
+}
+
+.studio-duration-seg {
+  height: 100%;
+  border-right: 1px solid var(--s-bg);
+}
+
+.studio-duration-seg:last-child {
+  border-right: none;
+}
+
+/* ── Status ──────────────────────────────────────────────────────────────── */
+
+.studio-note {
+  border-radius: var(--s-radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface);
+  color: var(--s-text-muted);
+}
+
+.studio-note-accent {
+  border-color: color-mix(in srgb, var(--s-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--s-accent) 12%, var(--s-surface));
+  color: var(--s-text);
+}
+
+.studio-note-warning {
+  border-color: color-mix(in srgb, var(--s-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--s-warning) 10%, var(--s-surface));
+  color: var(--s-text);
+}
+
+.studio-note-danger {
+  border-color: color-mix(in srgb, var(--s-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--s-danger) 10%, var(--s-surface));
+  color: var(--s-text);
+}
+
+.studio-note-positive {
+  border-color: color-mix(in srgb, var(--s-positive) 45%, transparent);
+  background: color-mix(in srgb, var(--s-positive) 10%, var(--s-surface));
+  color: var(--s-text);
+}
+
+/* A live dot, so "this is happening now" is visible without reading. */
+.studio-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--s-accent);
+  animation: studio-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes studio-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-live-dot { animation: none; }
+  .studio-button:active:not(:disabled) { transform: none; }
+  .studio-progress-fill { transition: none; }
+}
+
+.studio-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--s-surface-raised);
+  overflow: hidden;
+}
+
+.studio-progress-fill {
+  height: 100%;
+  background: var(--s-accent);
+  transition: width 0.3s ease;
+}
+
+/* ── Stats ───────────────────────────────────────────────────────────────── */
+
+.studio-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.studio-stat {
+  padding: 12px;
+  border-radius: var(--s-radius);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+}
+
+.studio-stat dt {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--s-text-faint);
+}
+
+.studio-stat dd {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  /* Tabular figures so a ticking duration does not jitter its own width. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Action bar ──────────────────────────────────────────────────────────── */
+
+/*
+ * Floating rather than in flow: the primary action has to be reachable without
+ * scrolling to the end of a long timeline, and a thumb reaches the bottom of a
+ * phone far more easily than the top.
+ */
+.studio-actions {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  padding: 12px 16px calc(var(--s-safe-bottom) + 12px);
+  background: color-mix(in srgb, var(--s-bg) 92%, transparent);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--s-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.studio-actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+.studio-player {
+  width: 100%;
+  border-radius: var(--s-radius);
+  background: #000;
+  display: block;
+}
+
+/* ── Wider screens ───────────────────────────────────────────────────────── */
+
+/*
+ * A tablet or a desktop browser is not the target, but the editor must not look
+ * broken there — a tester will open it on a laptop first.
+ */
+@media (min-width: 720px) {
+  .studio-header,
+  .studio-steps,
+  .studio-body {
+    max-width: 680px;
+    margin-inline: auto;
+  }
+
+  .studio-actions > * {
+    max-width: 680px;
+    margin-inline: auto;
+    width: 100%;
+  }
+}
+
+/* ── Brief ───────────────────────────────────────────────────────────────── */
+
+/* Same skin as an input: a description field that looked like a different
+   control would read as a different kind of answer. */
+.studio-textarea {
+  width: 100%;
+  min-height: 108px;
+  padding: 10px 12px;
+  border-radius: var(--s-radius);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.studio-textarea:focus-visible {
+  outline: 2px solid var(--s-accent-strong);
+  outline-offset: 2px;
+}
+
+.studio-counter {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--s-text-faint);
+  text-align: right;
+}
+
+/* ── Thumbnails ──────────────────────────────────────────────────────────── */
+
+/* Shown when a poster frame could not be captured. It says the file's name
+   rather than drawing a generic icon, because the one thing a thumbnail is for
+   is telling two items apart. */
+.studio-media-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 8px;
+  background: var(--s-surface-raised);
+  color: var(--s-text-faint);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: center;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* ── Storyboard ──────────────────────────────────────────────────────────── */
+
+.studio-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.studio-pick {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid var(--s-border);
+  border-radius: var(--s-radius);
+  background: var(--s-surface-raised);
+  overflow: hidden;
+}
+
+.studio-pick img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.studio-pick[aria-pressed="true"] {
+  border-color: var(--s-accent-strong);
+}
+
+/* The tick is drawn over the corner rather than beside the tile: at this size
+   there is no room for a label, and a border alone is easy to miss on a
+   photo that happens to be bright at the edges. */
+.studio-pick-tick {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--s-accent-strong);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.studio-pick-kind {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.72);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.studio-script {
+  margin: 10px 0 0;
+  padding: 12px;
+  border-radius: var(--s-radius);
+  background: var(--s-surface-raised);
+  border: 1px solid var(--s-border);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* ── Storyboard preview ──────────────────────────────────────────────────── */
+
+.studio-preview {
+  margin: 4px 0 16px;
+}
+
+.studio-preview-frame {
+  position: relative;
+  width: 100%;
+  max-height: 62vh;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--s-radius);
+  background: #000;
+}
+
+/* A portrait frame at full width would be taller than the phone; cap it and
+   let the aspect ratio set the width instead. */
+.studio-preview-frame[style*="9 / 16"],
+.studio-preview-frame[style*="4 / 5"] {
+  width: auto;
+  height: 62vh;
+}
+
+.studio-preview-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.studio-preview-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 22px;
+}
+
+.studio-preview-play span {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.studio-preview-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  pointer-events: none;
+}
+
+.studio-preview-track {
+  display: flex;
+  gap: 3px;
+  margin-top: 10px;
+}
+
+.studio-preview-seg {
+  position: relative;
+  flex-basis: 0;
+  min-width: 10px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--s-border);
+  border-radius: 5px;
+  background: var(--s-surface-raised);
+  overflow: hidden;
+}
+
+.studio-preview-seg[aria-current="true"] {
+  border-color: var(--s-accent);
+}
+
+.studio-preview-seg-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--s-accent);
+  opacity: 0.55;
+}
+
+/* ── Shot rows, restacked ────────────────────────────────────────────────── */
+
+/* The old row put the shot's name, its meta and three 44px buttons on one line,
+   which on a phone left the name column one word wide. The buttons now sit on
+   their own row under the name. */
+.studio-shot {
+  flex-direction: column;
+}
+
+.studio-shot-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.studio-shot-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.studio-shot-tools .studio-button {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+  width: auto;
+}
+
+/* The trim bar was built for the light request page; lift its muted text so it
+   reads on the studio's dark surface. */
+.studio-trim .text-slate-500,
+.studio-trim .text-slate-600,
+.studio-trim .text-slate-700 {
+  color: var(--s-text-muted);
+}
+
+.studio-trim .bg-white {
+  background: var(--s-surface-raised);
+}
+
+.studio-trim .border-slate-200 {
+  border-color: var(--s-border);
+}
+
+.studio-range {
+  width: 100%;
+  accent-color: var(--s-accent);
+}
+
+.studio-fit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-radius: var(--s-radius);
+  background: var(--s-surface-raised);
+  border: 1px solid var(--s-border);
+  font-size: 13px;
+  color: var(--s-text-muted);
+}
+
+.studio-fit strong {
+  color: var(--s-text);
+}
+
+.studio-fit .studio-button {
+  width: auto;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.studio-approve {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--s-border);
+  display: grid;
+  gap: 8px;
+}
+
+/* ── Sound: background tracks you can listen to before choosing ────────── */
+
+.studio-track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.studio-track-row {
+  display: flex;
+  gap: 6px;
+}
+
+.studio-track {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--s-tap);
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.studio-track[aria-checked="true"] {
+  border-color: var(--s-accent);
+  background: color-mix(in srgb, var(--s-accent) 14%, var(--s-surface-raised));
+}
+
+.studio-track:disabled {
+  opacity: 0.5;
+}
+
+.studio-track-label {
+  flex: 1;
+}
+
+.studio-track-check {
+  color: var(--s-accent);
+  font-weight: 800;
+}
+
+.studio-track-play {
+  display: inline-grid;
+  place-items: center;
+  width: var(--s-tap);
+  min-width: var(--s-tap);
+  color: var(--s-text-faint);
+}
+
+.studio-track-play-button {
+  height: var(--s-tap);
+  border-radius: 12px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text);
+  font-size: 13px;
+}
+
+.studio-track-play-button[aria-pressed="true"] {
+  border-color: var(--s-accent);
+  color: var(--s-accent);
+}
+
+/* ── Graphic: each Look with an example frame ──────────────────────────── */
+
+.studio-look-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.studio-look {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  justify-items: center;
+  padding: 10px;
+  border-radius: var(--s-radius);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text);
+  text-align: left;
+}
+
+.studio-look[aria-checked="true"] {
+  border-color: var(--s-accent);
+  background: color-mix(in srgb, var(--s-accent) 14%, var(--s-surface-raised));
+}
+
+.studio-look-frame {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: #000;
+}
+
+.studio-look-frame-empty {
+  max-width: 100%;
+  background: var(--s-surface-hover);
+}
+
+.studio-look-name {
+  justify-self: stretch;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.studio-look-description {
+  justify-self: stretch;
+  font-size: 12px;
+  color: var(--s-text-muted);
+}
+
+/* ── Render: what has to be done before the main video ─────────────────── */
+
+.studio-checklist {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--s-text-muted);
+}
+
+.studio-checklist li {
+  display: flex;
+  gap: 8px;
+}
+
+.studio-checklist li[data-done="true"] {
+  color: var(--s-text);
+}
+
+.studio-checklist li[data-done="true"] span {
+  color: var(--s-positive);
+}
+
+/* ── Channels: one row per shape ───────────────────────────────────────── */
+
+.studio-channel-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.studio-channel {
+  padding: 10px;
+  border-radius: var(--s-radius);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+}
+
+.studio-channel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.studio-channel-label {
+  font-size: 14px;
+  color: var(--s-text-muted);
+}
+
+.studio-channel-label strong {
+  color: var(--s-text);
+  margin-right: 6px;
+}
+
+/* ── Storyboard: tap the photo on its main subject ─────────────────────── */
+
+.studio-subject {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 280px;
+  padding: 0;
+  border: 1px solid var(--s-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  cursor: crosshair;
+}
+
+.studio-subject img {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+}
+
+.studio-subject:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.studio-subject-marker {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  border: 3px solid var(--s-accent);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), inset 0 0 0 2px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+/* ── Render: the three parts of the video, with live progress ─────────── */
+
+.studio-render-status {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--s-text-muted);
+}
+
+.studio-render-status strong {
+  font-size: 22px;
+  color: var(--s-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-render-steps {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.studio-render-steps li {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-raised);
+  color: var(--s-text-faint);
+}
+
+.studio-render-steps li[data-state="active"] {
+  border-color: var(--s-accent);
+  color: var(--s-text);
+}
+
+.studio-render-steps li[data-state="done"] {
+  color: var(--s-text-muted);
+}
+
+.studio-render-step-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--s-border-strong);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.studio-render-steps li[data-state="active"] .studio-render-step-mark {
+  border-color: var(--s-accent);
+  color: var(--s-accent);
+}
+
+.studio-render-steps li[data-state="done"] .studio-render-step-mark {
+  border-color: var(--s-positive);
+  color: var(--s-positive);
+}
+
+.studio-render-step-text {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.studio-render-step-text strong {
+  font-size: 14px;
+  color: inherit;
+}
+
+.studio-render-step-bar {
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--s-border);
+  overflow: hidden;
+}
+
+.studio-render-step-bar span {
+  display: block;
+  height: 100%;
+  background: var(--s-accent);
+  transition: width 0.4s ease;
+}
+
+.studio-render-step-now {
+  display: block;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--s-surface-raised);
+  font-size: 12px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: var(--s-text);
+}
+
+.studio-render-step-state {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── framing: how much of a shot is in the video ─────────────────────────── */
+.studio-framing {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.studio-framing-frame {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  max-height: 280px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--s-border);
+  background: #000;
+}
+
+.studio-framing-frame[style*="9 / 16"],
+.studio-framing-frame[style*="4 / 5"] {
+  width: auto;
+  height: 280px;
+}
+
+.studio-framing-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.studio-framing-zoom {
+  display: grid;
+  gap: 4px;
+  max-width: 320px;
+}
+
+.studio-framing-ends {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--s-text-muted);
+}

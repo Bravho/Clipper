@@ -9,10 +9,12 @@ import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { z } from "zod";
 import {
+  hasDeviceHeldClips,
   localMediaSubmissionSchema,
   MAX_LOCAL_ANALYSIS_BYTES,
   totalAnalysisBytes,
 } from "@/lib/mobile/localMediaContract";
+import { MANIFEST_RENDER_PLUGIN_VERSION } from "@/lib/mobile/deviceRenderPluginVersion";
 import { LOCAL_FIRST_MEDIA_ENABLED } from "@/config/localMedia";
 import { storeLocalMediaDerivatives } from "@/services/LocalMediaDerivativeService";
 
@@ -68,12 +70,37 @@ export async function POST(
     );
   }
 
-  // A phone-local movie cannot be represented by its Gemini analysis frame in
-  // the render pipeline. Reject before credit deduction until the native
-  // timeline output has a verified job completion path.
-  if (parsed.data.localMedia?.materials.some((material) => material.mimeType.startsWith("video/"))) {
+  // A phone-held CLIP can only be rendered by the phone that holds it: its
+  // moving frames exist nowhere else, and the analysis frame the server keeps
+  // is a still. So keeping one locally is allowed exactly when the app build
+  // can render a whole manifest end to end.
+  //
+  // An older build says nothing here (the field did not exist) and so gets the
+  // old answer — refused, originals untouched, and the user is told to upload
+  // instead. That is what keeps every installed app working: it simply takes
+  // the upload path and renders on the Mac Mini as it always did.
+  const keepsClipsLocally = parsed.data.localMedia
+    ? hasDeviceHeldClips(parsed.data.localMedia)
+    : false;
+  const deviceCanRender =
+    Boolean(parsed.data.localMedia?.deviceRender?.canRenderManifest) &&
+    (parsed.data.localMedia?.deviceRender?.nativePluginVersion ?? 0) >=
+      MANIFEST_RENDER_PLUGIN_VERSION;
+
+  // Device rendering is required for clips and REQUESTED for anything the
+  // phone studio submits. A photo-only studio request from a build that cannot
+  // render simply stays on the server path, where its derivatives suffice.
+  const rendersOnDevice =
+    keepsClipsLocally ||
+    (parsed.data.localMedia?.renderOnDevice === true && deviceCanRender);
+
+  if (keepsClipsLocally && !deviceCanRender) {
     return NextResponse.json(
-      { error: "Phone video rendering is not connected to this request pipeline yet. Your original clip has not been uploaded or submitted." },
+      {
+        error:
+          "This app version cannot edit video on the phone yet, so a clip cannot be kept here. Update the app, or add photos only. Your clip has not been uploaded or submitted.",
+        code: "device_render_unavailable",
+      },
       { status: 409 }
     );
   }
@@ -107,6 +134,13 @@ export async function POST(
         parsed.data.rightsConfirmed,
         parsed.data.aiProcessingConfirmed
       );
+      if (rendersOnDevice) {
+        // Pin the render location now, while we still know the originals were
+        // retained on the device. Nothing later can infer it: the asset rows
+        // look ordinary apart from their handle, and a request that lost this
+        // flag would have its work offered to a worker with no footage.
+        submitted = await clipRequestService.markRenderedOnDevice(id, session.user.id);
+      }
     } else {
       // Idempotent recovery for a lost/failed response after the request was
       // already committed as Submitted. Previously the first call could update

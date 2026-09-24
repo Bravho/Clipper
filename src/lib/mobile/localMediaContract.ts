@@ -25,10 +25,46 @@ export const localAnalysisFrameSchema = z.object({
   dataBase64: z.string().min(1).max(1_500_000).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
 });
 
+/**
+ * What the submitting device says it can do, so the server can decide whether
+ * keeping a CLIP on the phone is safe.
+ *
+ * A photo can stay local whatever the app build is: the server holds a faithful
+ * derivative and can render from it. A clip cannot — the only copy of its
+ * moving frames is on the phone, so the phone had better be able to render.
+ * Accepting a clip from a build that cannot would strand the request with no
+ * renderer at all: the Mac Mini has no footage, and the device has no code.
+ *
+ * Declared rather than inferred because the server cannot see the installed
+ * binary; it is re-checked against the real plugin version on the device before
+ * any render is claimed, so a client that lies about this fails at its own
+ * claim rather than corrupting a job.
+ */
+export const deviceRenderCapabilitySchema = z.object({
+  /** The native plugin version actually installed. */
+  nativePluginVersion: z.number().int().nonnegative(),
+  /** True only when that build can render a whole manifest end to end. */
+  canRenderManifest: z.boolean(),
+  platform: z.enum(["ios", "android"]),
+});
+
 export const localMediaSubmissionSchema = z.object({
   mode: z.literal("local-first"),
   materials: z.array(localMediaDescriptorSchema).min(1).max(MAX_UPLOAD_COUNT),
   analysisFrames: z.array(localAnalysisFrameSchema).min(1).max(30),
+  /** Absent on an older app, which is exactly the build that may not keep clips. */
+  deviceRender: deviceRenderCapabilitySchema.optional(),
+  /**
+   * Render this request on the phone even if it holds only photos.
+   *
+   * Clips force device rendering by themselves — nothing else has their frames.
+   * Photos do not: the server keeps a derivative it can render from, so without
+   * this flag a photo-only request goes to the Mac Mini as it always has. The
+   * phone studio sets it, because rendering on the phone is the studio's whole
+   * point; the request form never does, so its behaviour is unchanged. Honoured
+   * only when `deviceRender` says this build can render a manifest.
+   */
+  renderOnDevice: z.boolean().optional(),
 }).superRefine((value, ctx) => {
   const ids = new Set(value.materials.map((material) => material.localId));
   if (ids.size !== value.materials.length) {
@@ -73,7 +109,15 @@ export const localMediaSubmissionSchema = z.object({
   }
 });
 
+export type DeviceRenderCapability = z.infer<typeof deviceRenderCapabilitySchema>;
 export type LocalMediaDescriptor = z.infer<typeof localMediaDescriptorSchema>;
+
+/** Does this submission keep any MOVING footage on the device? */
+export function hasDeviceHeldClips(submission: {
+  materials: { mimeType: string }[];
+}): boolean {
+  return submission.materials.some((material) => material.mimeType.startsWith("video/"));
+}
 export type LocalAnalysisFrame = z.infer<typeof localAnalysisFrameSchema>;
 export type LocalMediaSubmission = z.infer<typeof localMediaSubmissionSchema>;
 

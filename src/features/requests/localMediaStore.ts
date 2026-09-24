@@ -19,6 +19,104 @@ function safeLocalId(requestId: string, itemId: string): string {
 }
 
 /**
+ * The index that makes a retained original findable again later.
+ *
+ * WHY IT EXISTS. A device render is claimed from the request page, which the
+ * requester may open days after picking their media and in a fresh WebView with
+ * no React state left. The render manifest names each device-held source by
+ * `localId` alone, so without a persisted descriptor the phone would hold the
+ * bytes and still not know which file to open. OPFS gives us durable storage
+ * but no metadata, so we keep our own small sidecar next to the originals.
+ *
+ * It is a cache, not a source of truth: a missing or corrupt index costs a
+ * fallback (`descriptorForLocalId` reconstructs what it can from the stored
+ * file), never a lost render.
+ */
+const INDEX_FILE = "index.json";
+
+/**
+ * Index writes are serialised through this chain. `retainLocalMaterial` is
+ * called once per picked file and the picker hands us all of them at once, so
+ * concurrent read-modify-write of one JSON file is the normal case, not the
+ * exotic one — without the chain the last writer would erase its siblings.
+ */
+let indexWrites: Promise<unknown> = Promise.resolve();
+
+async function readIndexRecord(): Promise<Record<string, LocalMediaDescriptor>> {
+  try {
+    const dir = await materialDir();
+    const handle = await dir.getFileHandle(INDEX_FILE);
+    const parsed: unknown = JSON.parse(await (await handle.getFile()).text());
+    if (!parsed || typeof parsed !== "object") return {};
+    const entries: Record<string, LocalMediaDescriptor> = {};
+    for (const [localId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const descriptor = localMediaDescriptorSchema.safeParse(value);
+      if (descriptor.success) entries[localId] = descriptor.data;
+    }
+    return entries;
+  } catch {
+    return {};
+  }
+}
+
+function mutateIndex(
+  change: (entries: Record<string, LocalMediaDescriptor>) => void
+): Promise<void> {
+  const next = indexWrites.then(async () => {
+    const entries = await readIndexRecord();
+    change(entries);
+    const dir = await materialDir();
+    const handle = await dir.getFileHandle(INDEX_FILE, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify(entries));
+    await writable.close();
+  });
+  // Keep the chain alive after a failure, and never surface an index error as a
+  // failed retain: the bytes are already safely stored by the time we get here.
+  indexWrites = next.catch(() => undefined);
+  return indexWrites as Promise<void>;
+}
+
+/**
+ * Every original this device is still holding, by `localId`.
+ *
+ * This is what a render needs: the manifest names sources by `localId`, and
+ * `stageManifestSources` resolves each one through this map.
+ */
+export async function loadLocalMediaIndex(): Promise<Map<string, LocalMediaDescriptor>> {
+  if (!snapshotsSupported()) return new Map();
+  return new Map(Object.entries(await readIndexRecord()));
+}
+
+/**
+ * One descriptor, with a reconstruction fallback.
+ *
+ * If the index lost an entry but the file is still there, we can still render:
+ * the renderer only needs the bytes and a container hint, and both survive in
+ * OPFS. Returning null means the original is genuinely gone.
+ */
+export async function descriptorForLocalId(
+  localId: string
+): Promise<LocalMediaDescriptor | null> {
+  if (!snapshotsSupported()) return null;
+  const indexed = (await readIndexRecord())[localId];
+  if (indexed) return indexed;
+  try {
+    const dir = await materialDir();
+    const file = await (await dir.getFileHandle(localId)).getFile();
+    return localMediaDescriptorSchema.parse({
+      localId,
+      fileName: localId,
+      mimeType: file.type || "application/octet-stream",
+      fileSizeBytes: file.size,
+      durationSeconds: null,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Promote a short-lived picker snapshot into durable, device-private storage.
  * The returned descriptor is safe to persist on the server; it contains no URI
  * or media bytes and only this app origin can resolve localId.
@@ -32,10 +130,47 @@ export async function retainLocalMaterial(
   if (!snapshotsSupported()) {
     throw new Error("Device-private media storage is unavailable.");
   }
+  return writeRetained(requestId, itemId, await snapshotFile(snapshot), {
+    fileName: snapshot.name,
+    mimeType: snapshot.type,
+    durationSeconds,
+  });
+}
+
+/**
+ * Retain a picked `File` directly, for callers that never made a snapshot.
+ *
+ * The phone studio holds its picked files in memory while the person edits, so
+ * by the time they submit there is no picker snapshot to promote — only the
+ * `File` itself. The bytes, the `localId` scheme and the index entry are
+ * exactly those `retainLocalMaterial` produces, so a render claimed later from
+ * either path finds its originals the same way.
+ */
+export async function retainLocalFile(
+  requestId: string,
+  itemId: string,
+  file: File,
+  durationSeconds: number | null = null
+): Promise<LocalMediaDescriptor> {
+  if (!snapshotsSupported()) {
+    throw new Error("Device-private media storage is unavailable.");
+  }
+  return writeRetained(requestId, itemId, file, {
+    fileName: file.name,
+    mimeType: file.type,
+    durationSeconds,
+  });
+}
+
+async function writeRetained(
+  requestId: string,
+  itemId: string,
+  source: File,
+  meta: { fileName: string; mimeType: string; durationSeconds: number | null }
+): Promise<LocalMediaDescriptor> {
   // Ask the WebView to exempt these user-owned originals from routine storage
   // pressure eviction. The request is advisory on both platforms.
   await navigator.storage.persist?.().catch(() => false);
-  const source = await snapshotFile(snapshot);
   const localId = safeLocalId(requestId, itemId);
   const dir = await materialDir();
   const handle = await dir.getFileHandle(localId, { create: true });
@@ -50,13 +185,18 @@ export async function retainLocalMaterial(
     await dir.removeEntry(localId).catch(() => undefined);
     throw error;
   }
-  return localMediaDescriptorSchema.parse({
+  const descriptor = localMediaDescriptorSchema.parse({
     localId,
-    fileName: snapshot.name,
-    mimeType: snapshot.type,
-    fileSizeBytes: snapshot.size,
-    durationSeconds,
+    fileName: meta.fileName,
+    mimeType: meta.mimeType,
+    fileSizeBytes: source.size,
+    durationSeconds: meta.durationSeconds,
   });
+  // Recorded so a later visit to the request page can still find this file.
+  await mutateIndex((entries) => {
+    entries[localId] = descriptor;
+  });
+  return descriptor;
 }
 
 export async function readLocalMaterial(
@@ -108,4 +248,7 @@ export async function deleteLocalMaterial(localId: string): Promise<void> {
   if (!snapshotsSupported()) return;
   const dir = await materialDir();
   await dir.removeEntry(localId).catch(() => undefined);
+  await mutateIndex((entries) => {
+    delete entries[localId];
+  });
 }

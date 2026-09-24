@@ -3,6 +3,7 @@ import {
   RenderTaskState,
   EnqueueRenderTaskInput,
 } from "@/domain/models/RenderTask";
+import { RenderStep } from "@/domain/enums/RenderStep";
 
 /**
  * Data access for the flat FIFO render-task queue processed by the Mac Mini
@@ -28,8 +29,24 @@ export interface IRenderTaskRepository {
     staleClaimSeconds: number
   ): Promise<RenderTask | null>;
 
-  /** Claim a queued step for its owning requester's device. A worker claim wins any race. */
-  claimForDevice(taskId: string, requesterId: string, deviceClaimId: string): Promise<RenderTask | null>;
+  /**
+   * Claim a queued step for its owning requester's device.
+   *
+   * Only transitions a row that is still `queued`, so a worker claim always
+   * wins the race — the phone is an opportunistic second renderer, never a
+   * competitor that can take work out from under the Mac.
+   *
+   * `allowedSteps` is passed in rather than hardcoded because which steps a
+   * phone may take is a release decision (`DEVICE_RENDER.eligibleSteps`), and
+   * widening it as each native operation passes device validation should be a
+   * config change, not a repository change in two implementations.
+   */
+  claimForDevice(
+    taskId: string,
+    requesterId: string,
+    deviceClaimId: string,
+    allowedSteps: RenderStep[]
+  ): Promise<RenderTask | null>;
 
   /** Keep alive or finish only while this exact device still owns the claim. */
   touchClaim(taskId: string, deviceClaimId: string): Promise<boolean>;

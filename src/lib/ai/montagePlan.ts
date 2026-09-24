@@ -251,6 +251,7 @@ export function buildSceneMontageAssets(
     }
     if (Number.isFinite(existing?.focusX)) asset.focusX = existing!.focusX;
     if (Number.isFinite(existing?.focusY)) asset.focusY = existing!.focusY;
+    if (Number.isFinite(existing?.frameZoom)) asset.frameZoom = existing!.frameZoom;
 
     return asset;
   });

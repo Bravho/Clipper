@@ -4,6 +4,7 @@ import {
   RenderTaskState,
   EnqueueRenderTaskInput,
 } from "@/domain/models/RenderTask";
+import { RenderStep } from "@/domain/enums/RenderStep";
 import { compareRenderOrder } from "@/config/renderQueue";
 
 // TODO: PostgreSQL — this mock mirrors PostgresRenderTaskRepository's SQL
@@ -56,6 +57,7 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
       state: "queued",
       attempts: 0,
       priority: input.priority ?? 0,
+      deviceOnly: input.deviceOnly ?? false,
       enqueuedAt: now,
       claimedBy: null,
       claimedAt: null,
@@ -78,6 +80,10 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
     const staleBefore = Date.now() - staleClaimSeconds * 1000;
     const candidates = [...this.store.values()]
       .filter((t) => {
+        // The worker has no copy of a device-held request's footage, so a
+        // claim here could only ever end in a failed step. Excluding it from
+        // the CLAIM makes that impossible rather than merely handled.
+        if (t.deviceOnly) return false;
         if (t.state === "queued") return true;
         if (t.state === "claimed") {
           const keepAlive = (t.heartbeatAt ?? t.claimedAt)?.getTime() ?? 0;
@@ -106,9 +112,22 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
     return { ...claimed };
   }
 
-  async claimForDevice(taskId: string, requesterId: string, deviceClaimId: string): Promise<RenderTask | null> {
+  async claimForDevice(
+    taskId: string,
+    requesterId: string,
+    deviceClaimId: string,
+    allowedSteps: RenderStep[]
+  ): Promise<RenderTask | null> {
     const task = this.store.get(taskId);
-    if (!task || task.state !== "queued" || task.requesterId !== requesterId || task.step !== "overlay_composition") {
+    if (
+      !task ||
+      task.state !== "queued" ||
+      task.requesterId !== requesterId ||
+      // A device-only task exists BECAUSE its footage is on this requester's
+      // phone and nowhere else, so the eligible-step list — which limits what a
+      // phone may opportunistically take from the worker — does not apply.
+      !(task.deviceOnly || allowedSteps.includes(task.step))
+    ) {
       return null;
     }
     const now = new Date();

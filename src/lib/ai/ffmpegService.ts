@@ -587,6 +587,78 @@ export async function probeMediaDurationSeconds(input: string): Promise<number> 
   return probeDurationSeconds(input);
 }
 
+/**
+ * What a rendered file actually IS, as ffprobe sees it.
+ *
+ * The device render path needs this: an export that a phone uploads has to be
+ * checked before it becomes a `FinalClip`, and the checks that matter are
+ * exactly the ones a human would make by opening the file — is there a picture,
+ * is there sound, is it the right shape, is it about the right length. The
+ * single most valuable field is `hasAudio`: a silent export is the specific
+ * failure the draft phone renderer kept producing, and it is invisible in a
+ * thumbnail.
+ *
+ * Accepts a local path or a remote URL (ffprobe reads the header only). Never
+ * throws — a probe that fails returns zeros/nulls so the caller decides what an
+ * unreadable file means, rather than a 500 escaping from an inspection.
+ */
+export interface MediaSummary {
+  durationSeconds: number;
+  hasVideo: boolean;
+  hasAudio: boolean;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+export async function probeMediaSummary(input: string): Promise<MediaSummary> {
+  const empty: MediaSummary = {
+    durationSeconds: 0,
+    hasVideo: false,
+    hasAudio: false,
+    videoCodec: null,
+    audioCodec: null,
+    width: null,
+    height: null,
+  };
+
+  const ffmpeg = AI_CONFIG.ffmpeg.path ?? "ffmpeg";
+  const ffprobe = ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) =>
+    m.toLowerCase().endsWith(".exe") ? "ffprobe.exe" : "ffprobe"
+  );
+
+  try {
+    const { stdout } = await execFileAsync(ffprobe, [
+      "-v", "error",
+      "-show_entries", "format=duration:stream=codec_type,codec_name,width,height",
+      "-of", "json",
+      input,
+    ]);
+    const parsed = JSON.parse(stdout) as {
+      format?: { duration?: string };
+      streams?: { codec_type?: string; codec_name?: string; width?: number; height?: number }[];
+    };
+
+    const duration = parseFloat(parsed.format?.duration ?? "");
+    const video = (parsed.streams ?? []).find((s) => s.codec_type === "video");
+    const audio = (parsed.streams ?? []).find((s) => s.codec_type === "audio");
+
+    return {
+      durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : 0,
+      hasVideo: Boolean(video),
+      hasAudio: Boolean(audio),
+      videoCodec: video?.codec_name ?? null,
+      audioCodec: audio?.codec_name ?? null,
+      width: video?.width ?? null,
+      height: video?.height ?? null,
+    };
+  } catch (err) {
+    console.error("[probe] could not inspect media:", describeExecError(err));
+    return empty;
+  }
+}
+
 /** Probe a local media file's duration (seconds) via ffprobe. 0 on failure. */
 async function probeDurationSeconds(filePath: string): Promise<number> {
   const ffmpeg = AI_CONFIG.ffmpeg.path ?? "ffmpeg";
