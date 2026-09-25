@@ -199,6 +199,8 @@ function StudioEditor({
   // The allowance as the page read it, updated when Submit is refused for it.
   const [quota, setQuota] = useState<StudioQuota | null>(initialQuota);
   const [quotaDialog, setQuotaDialog] = useState(false);
+  const quotaRef = useRef<StudioQuota | null>(initialQuota);
+  quotaRef.current = quota;
   // A fresh server render (router.refresh) brings a newer quota prop; take it.
   useEffect(() => {
     setQuota(initialQuota);
@@ -228,7 +230,14 @@ function StudioEditor({
     window.addEventListener("focus", onShow);
     window.addEventListener("pageshow", onShow);
     window.document.addEventListener("visibilitychange", onVisible);
+    // While the "none left" notice is up, keep checking: WKWebView does not
+    // always fire focus/pageshow when the app comes back from Pricing.
+    const poll = window.setInterval(() => {
+      const blocked = quotaRef.current !== null && !quotaRef.current.canSubmit;
+      if (blocked && window.document.visibilityState === "visible") void reloadQuota();
+    }, 15_000);
     return () => {
+      window.clearInterval(poll);
       window.removeEventListener("focus", onShow);
       window.removeEventListener("pageshow", onShow);
       window.document.removeEventListener("visibilitychange", onVisible);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import {
@@ -51,8 +51,21 @@ function newToken(): string {
  * error replays onto the same purchase while a deliberate second purchase (to
  * stack another month) correctly gets a new one.
  */
+/**
+ * Only same-site paths the app actually sends here are honoured, so the
+ * parameter cannot bounce a buyer to another site.
+ */
+function safeReturnPath(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
+  if (!value.startsWith("/device-render-lab") && !value.startsWith("/dashboard/")) return null;
+  return value;
+}
+
 export function VideoPackagePicker({ balanceCredits, activeUntil }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = safeReturnPath(searchParams?.get("returnTo") ?? null);
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +115,12 @@ export function VideoPackagePicker({ balanceCredits, activeUntil }: Props) {
       // Refresh so the balance, the entitlement summary and the purchase
       // history below all reflect the purchase that just completed.
       router.refresh();
+      // Came here from somewhere that needs the package (the phone studio's
+      // "none left" notice): go back once the toast has been seen. That page
+      // re-reads the quota when it mounts, so its warning is gone on arrival.
+      if (returnTo) {
+        window.setTimeout(() => router.push(returnTo), 1200);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("pricing.buyFailed"));
       setPending(null);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/helpers";
 import { getStudioQuota } from "@/services/studioQuota";
+import { videoAllowanceWindowRepository } from "@/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -20,8 +21,28 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
   }
   try {
-    const quota = await getStudioQuota(user.id);
-    return NextResponse.json(quota, { headers: { "Cache-Control": "no-store" } });
+    const [quota, windows] = await Promise.all([
+      getStudioQuota(user.id),
+      videoAllowanceWindowRepository.findByUserId(user.id),
+    ]);
+    // `packages` is for diagnosis: open this URL signed in and it shows every
+    // month the account has bought, so "I bought a package but it still says
+    // none left" can be answered without reading the database.
+    return NextResponse.json(
+      {
+        ...quota,
+        checkedAt: new Date().toISOString(),
+        packages: windows.map((w) => ({
+          productCode: w.productCode,
+          startsAt: w.startsAt.toISOString(),
+          expiresAt: w.expiresAt.toISOString(),
+          remaining: w.remaining,
+          total: w.totalAllowance,
+          status: w.status,
+        })),
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (err) {
     console.error("[GET /api/video-packages/quota]", err);
     return NextResponse.json({ error: "Could not read the quota." }, { status: 500 });

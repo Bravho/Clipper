@@ -392,9 +392,19 @@ export class ManagementPurchaseService {
             LIMIT 1`,
           [params.userId, now]
         );
-        const videoStartFrom = currentVideo.rows[0]
-          ? new Date(currentVideo.rows[0].expires_at)
-          : now;
+        // Same rule as VideoPackagePurchaseService: extend only while paid time
+        // is usable today; otherwise the bundle's video months start now.
+        const usableNow = await client.query(
+          `SELECT 1 FROM video_allowance_windows
+            WHERE user_id = $1 AND status = 'active' AND remaining > 0
+              AND starts_at <= $2 AND expires_at > $2
+            LIMIT 1`,
+          [params.userId, now]
+        );
+        const videoStartFrom =
+          usableNow.rows.length > 0 && currentVideo.rows[0]
+            ? new Date(currentVideo.rows[0].expires_at)
+            : now;
 
         videoWindows = expandVideoMonths(product.videoMonths, videoStartFrom);
 

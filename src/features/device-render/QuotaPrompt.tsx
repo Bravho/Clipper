@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ROUTES } from "@/config/routes";
 import { REQUESTS_PER_PAID_MONTH, VIDEO_PACKAGES } from "@/config/videoPackages";
@@ -48,19 +48,43 @@ function exhaustedBody(t: StudioT, renewsAt: string | null): string {
     : t("studio.quota.bodyNoDate", values);
 }
 
-/** The two ways out: buy a package, or top up credits to buy one. */
+/**
+ * Where to come back to after buying: this studio page, with its `?request=`.
+ * Read after mount (the server render has no window), so the first paint links
+ * to plain Pricing and the returnTo is added a moment later.
+ */
+function useReturnHere(): string | null {
+  const [here, setHere] = useState<string | null>(null);
+  useEffect(() => {
+    setHere(window.location.pathname + window.location.search);
+  }, []);
+  return here;
+}
+
+/**
+ * The two ways out: buy a package, or top up credits to buy one. Both carry a
+ * returnTo, so a successful purchase lands the user back in the studio, which
+ * re-reads the quota on mount and clears the warning.
+ */
 function QuotaActions({ onLeave }: { onLeave?: () => void }) {
   const t = useStudioT();
+  const here = useReturnHere();
+  const pricingHref = here
+    ? `${ROUTES.PRICING}?returnTo=${encodeURIComponent(here)}`
+    : ROUTES.PRICING;
+  // Credits only returns to /dashboard/ paths, so it goes back to Pricing
+  // (carrying the studio as Pricing's own returnTo).
+  const creditsHref = `${ROUTES.CREDITS}?returnTo=${encodeURIComponent(pricingHref)}`;
   return (
     <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
       <Link
-        href={ROUTES.PRICING}
+        href={pricingHref}
         className="studio-button studio-button-primary"
         onClick={onLeave}
       >
         {t("studio.quota.packages")}
       </Link>
-      <Link href={ROUTES.CREDITS} className="studio-button studio-button-ghost" onClick={onLeave}>
+      <Link href={creditsHref} className="studio-button studio-button-ghost" onClick={onLeave}>
         {t("studio.quota.topup")}
       </Link>
     </div>

@@ -100,8 +100,16 @@ export class VideoPackagePurchaseService {
 
     // Start where the user's paid time currently ends, so buying a second
     // package extends rather than overwrites.
-    const startFrom =
-      (await videoAllowanceWindowRepository.latestExpiry(userId, now)) ?? now;
+    //
+    // BUT only while the paid time is actually usable today. If nothing can be
+    // spent right now (the live month is used up, or every bought month starts
+    // in the future), the new package starts NOW. Stacking behind a month with
+    // 0 requests left parked every new purchase weeks in the future, so the
+    // account stayed on "free — 0 of 3 left" however many packages were bought.
+    const usableNow = await videoAllowanceWindowRepository.findSpendable(userId, now);
+    const startFrom = usableNow
+      ? ((await videoAllowanceWindowRepository.latestExpiry(userId, now)) ?? now)
+      : now;
 
     const wallet = await creditService.deductCredits(
       userId,
