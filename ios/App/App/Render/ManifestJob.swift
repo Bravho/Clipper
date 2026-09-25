@@ -400,11 +400,13 @@ final class ManifestJob {
         session.outputURL = output
         session.outputFileType = .mp4
         session.shouldOptimizeForNetworkUse = true
+        // The overlay layers go on the MUTABLE composition before it is handed
+        // over: the session's own `videoComposition` is an immutable copy.
+        if let tool = built.animationTool, let composition = built.videoComposition {
+            composition.animationTool = tool
+        }
         session.videoComposition = built.videoComposition
         session.audioMix = built.audioMix
-        if let tool = built.animationTool {
-            session.videoComposition?.animationTool = tool
-        }
 
         cancelLock.lock(); exportSession = session; cancelLock.unlock()
 

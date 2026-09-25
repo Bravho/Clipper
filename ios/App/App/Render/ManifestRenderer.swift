@@ -47,7 +47,7 @@ struct ManifestRenderer {
     /// the canvas, stills animated, clips trimmed and muted, dissolves applied.
     func buildMontage(
         resolve: SourceResolver,
-        isCancelled: () -> Bool,
+        isCancelled: @escaping () -> Bool,
         onSegmentProgress: (Double) -> Void
     ) throws -> Built {
         let shots = manifest.flattenedShots

@@ -34,7 +34,8 @@ enum StillSegmentWriter {
         entranceTransition: RenderManifest.Transition,
         dissolveSeconds: Double,
         output: URL,
-        isCancelled: () -> Bool
+        // Escaping: it is checked from the writer's media-data callback.
+        isCancelled: @escaping () -> Bool
     ) throws {
         try? FileManager.default.removeItem(at: output)
 
