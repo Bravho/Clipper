@@ -199,6 +199,41 @@ function StudioEditor({
   // The allowance as the page read it, updated when Submit is refused for it.
   const [quota, setQuota] = useState<StudioQuota | null>(initialQuota);
   const [quotaDialog, setQuotaDialog] = useState(false);
+  // A fresh server render (router.refresh) brings a newer quota prop; take it.
+  useEffect(() => {
+    setQuota(initialQuota);
+  }, [initialQuota]);
+  // Re-read the allowance from the server. The page's quota is read once, and
+  // coming back from Pricing after buying a package (back button, a Link, or
+  // the app returning to the foreground) can show that cached page — which
+  // still said "none left". Returns the fresh value, or null if unknown.
+  const reloadQuota = useCallback(async (): Promise<StudioQuota | null> => {
+    try {
+      const res = await fetch("/api/video-packages/quota", { cache: "no-store" });
+      if (!res.ok) return null;
+      const fresh = (await res.json()) as StudioQuota;
+      setQuota(fresh);
+      if (fresh.canSubmit) setQuotaDialog(false);
+      return fresh;
+    } catch {
+      return null;
+    }
+  }, []);
+  useEffect(() => {
+    void reloadQuota();
+    const onVisible = () => {
+      if (window.document.visibilityState === "visible") void reloadQuota();
+    };
+    const onShow = () => void reloadQuota();
+    window.addEventListener("focus", onShow);
+    window.addEventListener("pageshow", onShow);
+    window.document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onShow);
+      window.removeEventListener("pageshow", onShow);
+      window.document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [reloadQuota]);
   const locale = useStudioLocale();
   const [step, setStep] = useState<Step>("brief");
   const [document, setDocument] = useState<EditorDocument>(() => {
@@ -806,8 +841,12 @@ function StudioEditor({
     // Nothing left this period: say so, with the way to buy more, before any
     // original is copied or anything is sent.
     if (quota && !quota.canSubmit) {
-      setQuotaDialog(true);
-      return;
+      // Check again first: a package may have been bought since this was read.
+      const fresh = await reloadQuota();
+      if (!fresh || !fresh.canSubmit) {
+        setQuotaDialog(true);
+        return;
+      }
     }
     setSubmitting(true);
     setSubmitError(null);
@@ -838,7 +877,7 @@ function StudioEditor({
       setSubmitting(false);
       setSubmitProgress(null);
     }
-  }, [document.sources, quota, refreshContent, requestId, t]);
+  }, [document.sources, quota, refreshContent, reloadQuota, requestId, t]);
 
   const approveScript = useCallback(async () => {
     if (!requestId || !script) return;

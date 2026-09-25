@@ -122,10 +122,27 @@ export class VideoPackagePurchaseService {
       expiresAt: w.expiresAt,
     }));
 
-    const granted = await videoAllowanceWindowRepository.createOrGetByPurchase({
-      purchaseId,
-      windows: specs,
-    });
+    let granted: { windows: VideoAllowanceWindow[]; created: boolean };
+    try {
+      granted = await videoAllowanceWindowRepository.createOrGetByPurchase({
+        purchaseId,
+        windows: specs,
+      });
+    } catch (err) {
+      // The debit has already happened. If the months could not be written,
+      // give the credits back rather than leave the user charged for nothing.
+      await creditService
+        .refundCredits(
+          userId,
+          pkg.priceCredits,
+          `Refund: video package ${pkg.code} could not be granted`,
+          UUID_RE.test(purchaseId) ? purchaseId : undefined
+        )
+        .catch((refundErr) =>
+          console.error("[VideoPackagePurchase] refund after failed grant failed", refundErr)
+        );
+      throw err;
+    }
 
     return {
       charged: granted.created,
