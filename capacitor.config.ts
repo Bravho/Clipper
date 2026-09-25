@@ -132,9 +132,15 @@ const config: CapacitorConfig = {
         twitter: false,
       },
     },
+    // The app bar is white: dark status-bar text from the first frame
+    // (NativeStatusBar repeats this from the page for older installs).
+    StatusBar: {
+      style: "LIGHT",
+      backgroundColor: "#ffffff",
+    },
     SplashScreen: {
       launchShowDuration: 1500,
-      backgroundColor: "#0f172aff",
+      backgroundColor: "#ffffffff",
       showSpinner: false,
     },
   },

@@ -225,6 +225,25 @@ export async function POST(
     return NextResponse.json({ request: submitted, jobId: job.id });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error.";
+    // The phone studio has no quota check of its own before Submit (the web
+    // form shows the quota up front), so an exhausted allowance reached it as
+    // the bare 500 below. Say what it is, and when the next free slot opens.
+    // Matched by name so this route does not pull in the quota service.
+    if (
+      parsed.data.localMedia?.renderOnDevice === true &&
+      err instanceof Error &&
+      err.name === "QuotaExhaustedError"
+    ) {
+      const next = (err as Error & { nextFreeSlotAt?: Date | null }).nextFreeSlotAt ?? null;
+      return NextResponse.json(
+        {
+          error: message,
+          code: "quota_exhausted",
+          nextFreeSlotAt: next ? next.toISOString() : null,
+        },
+        { status: 402 }
+      );
+    }
     if (message === "Request not found." || message === "Access denied.") {
       return NextResponse.json({ error: message }, { status: 404 });
     }

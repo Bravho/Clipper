@@ -14,6 +14,7 @@ import { isUnreadableFileError } from "@/features/requests/uploadDiagnostics";
 import { supportsManifestRender } from "@/lib/mobile/deviceRenderBridge";
 import { prepareClip } from "./clipPreview";
 import { studioEnglish, type StudioT } from "./studioText";
+import { FREE_REQUESTS_PER_WINDOW, FREE_WINDOW_DAYS } from "@/config/videoPackages";
 import {
   readImagePoster,
   type EditorSource,
@@ -199,8 +200,47 @@ export async function submitStudioRequest(input: {
     }),
   });
   if (!response.ok) {
+    if (response.status === 402) {
+      const body = (await response.json().catch(() => null)) as
+        | { code?: string; nextFreeSlotAt?: string | null; error?: string }
+        | null;
+      if (body?.code === "quota_exhausted") {
+        throw new StudioQuotaError(
+          quotaMessage(t, body.nextFreeSlotAt ?? null),
+          body.nextFreeSlotAt ?? null
+        );
+      }
+      throw new Error(body?.error ?? t("studio.pipe.submitFailed"));
+    }
     throw new Error(await readError(response, t("studio.pipe.submitFailed")));
   }
+}
+
+/** Submit was refused because the account has no videos left this period. */
+export class StudioQuotaError extends Error {
+  constructor(
+    message: string,
+    /** ISO date the next free video opens, when the server knows it. */
+    readonly nextFreeSlotAt: string | null
+  ) {
+    super(message);
+    this.name = "StudioQuotaError";
+  }
+}
+
+/**
+ * "You have used your free videos" in the studio's language, with the date
+ * the next free one opens (in the phone's own date format) when the server
+ * knows it.
+ */
+export function quotaMessage(t: StudioT, nextFreeSlotAt: string | null): string {
+  const values = { count: FREE_REQUESTS_PER_WINDOW, days: FREE_WINDOW_DAYS };
+  const when = nextFreeSlotAt ? new Date(nextFreeSlotAt) : null;
+  if (!when || Number.isNaN(when.getTime())) return t("studio.pipe.quotaNoDate", values);
+  return t("studio.pipe.quota", {
+    ...values,
+    date: when.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }),
+  });
 }
 
 /**

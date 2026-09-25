@@ -7,6 +7,8 @@ import type { EditorBrief } from "@/features/device-render/editorState";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { Platform } from "@/domain/enums/Platform";
 import { clipRequestService } from "@/services/ClipRequestService";
+import { videoQuotaService } from "@/services/VideoQuotaService";
+import type { StudioQuota } from "@/features/device-render/QuotaPrompt";
 import { ROUTES } from "@/config/routes";
 
 /**
@@ -58,6 +60,24 @@ export default async function Page({
     }
   }
 
+  // The allowance, so the studio can say "none left — buy a package" before
+  // media is picked, instead of failing at Submit. Unknown on error.
+  let quota: StudioQuota | null = null;
+  if (user) {
+    try {
+      const current = await videoQuotaService.getQuota(user.id);
+      quota = {
+        tier: current.tier === "paid" ? "paid" : "free",
+        remaining: current.remaining,
+        total: current.total,
+        renewsAt: current.renewsAt ? current.renewsAt.toISOString() : null,
+        canSubmit: current.canSubmit,
+      };
+    } catch {
+      quota = null;
+    }
+  }
+
   return (
     <>
       {/*
@@ -74,6 +94,7 @@ export default async function Page({
         requestId={request ?? null}
         requestLabel={requestLabel}
         initialBrief={initialBrief}
+        quota={quota}
       />
     </>
   );

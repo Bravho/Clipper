@@ -68,7 +68,7 @@ export function MobileNavDrawer({
         aria-hidden={!open}
         onClick={onClose}
         className={clsx(
-          "fixed inset-0 z-40 bg-slate-900/60 transition-opacity duration-200 lg:hidden",
+          "fixed inset-0 z-40 bg-slate-900/40 transition-opacity duration-200 lg:hidden",
           open ? "opacity-100" : "pointer-events-none opacity-0"
         )}
       />
@@ -80,7 +80,7 @@ export function MobileNavDrawer({
         aria-hidden={!open}
         className={clsx(
           "fixed right-0 top-0 z-50 flex h-[100dvh] w-[min(20rem,85vw)] flex-col",
-          "border-l border-slate-700 bg-slate-900 shadow-2xl",
+          "border-l border-slate-200 bg-white shadow-2xl",
           "transition-transform duration-200 ease-out lg:hidden",
           open ? "translate-x-0" : "translate-x-full"
         )}
@@ -89,13 +89,13 @@ export function MobileNavDrawer({
           paddingBottom: "env(safe-area-inset-bottom)",
         }}
       >
-        <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-slate-700 px-4">
-          <span className="text-sm font-semibold text-white">RClipper</span>
+        <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-slate-200 px-4">
+          <span className="text-sm font-semibold text-slate-900">RClipper</span>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close menu"
-            className="-mr-2 rounded p-2 text-slate-300 hover:bg-slate-800 hover:text-white"
+            className="-mr-2 rounded p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -127,8 +127,8 @@ export function MobileNavDrawer({
                       className={clsx(
                         "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors",
                         active
-                          ? "bg-slate-800 font-medium text-white"
-                          : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                          ? "bg-blue-50 font-medium text-blue-800"
+                          : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
                       )}
                     >
                       {link.icon && (

@@ -11,6 +11,7 @@ import { WebPushRegistration } from "@/components/pwa/WebPushRegistration";
 import { NativeDeepLinkHandler } from "@/components/mobile/NativeDeepLinkHandler";
 import { AppleReturnRecovery } from "@/components/mobile/AppleReturnRecovery";
 import { NativePushRegistration } from "@/components/mobile/NativePushRegistration";
+import { NativeStatusBar } from "@/components/mobile/NativeStatusBar";
 import { initEditorSeedData } from "@/seed/editorSeedData";
 import { getServerLocale } from "@/i18n/server";
 import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
@@ -31,7 +32,8 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "RClipper",
-    statusBarStyle: "black-translucent",
+    // Light app bar: dark status-bar text on a light background.
+    statusBarStyle: "default",
   },
   icons: {
     icon: [
@@ -45,7 +47,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0f172a",
+  themeColor: "#ffffff",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -78,6 +80,7 @@ export default async function RootLayout({
                 Apple sign-in that would have created one was interrupted. */}
             <AppleReturnRecovery />
             <NativePushRegistration />
+            <NativeStatusBar />
             <Navbar showDeviceRenderLab={showDeviceRenderLab} />
             {/* min-w-0 lets flex children shrink below their content width,
                 which is what stops wide cards/tables forcing a page-level

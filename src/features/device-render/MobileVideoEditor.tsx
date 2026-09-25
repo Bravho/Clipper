@@ -60,6 +60,7 @@ import {
   takePrivateCopy,
 } from "./pickedFile";
 import { CapabilityNotice, ServerBadge, useStudioCapability } from "./StudioChrome";
+import { QuotaDialog, QuotaStatus, type StudioQuota } from "./QuotaPrompt";
 import { BriefPanel } from "./BriefPanel";
 import { SourcePicker } from "./SourcePicker";
 import { prepareClip } from "./clipPreview";
@@ -89,6 +90,7 @@ import {
   reopenStudioProduction,
   restoreStudioSources,
   submitStudioRequest,
+  StudioQuotaError,
   type StudioContent,
   type StudioScript,
 } from "./studioPipeline";
@@ -120,6 +122,8 @@ export interface MobileVideoEditorProps {
    * form that would overwrite it on the next save.
    */
   initialBrief?: EditorBrief | null;
+  /** The account's video allowance, read by the page; null when unknown. */
+  quota?: StudioQuota | null;
 }
 
 type Step = "brief" | "source" | "scenes" | "audio" | "style" | "render" | "channels";
@@ -189,8 +193,12 @@ function StudioEditor({
   requestId: initialRequestId,
   requestLabel,
   initialBrief,
+  quota: initialQuota = null,
 }: MobileVideoEditorProps) {
   const t = useStudioT();
+  // The allowance as the page read it, updated when Submit is refused for it.
+  const [quota, setQuota] = useState<StudioQuota | null>(initialQuota);
+  const [quotaDialog, setQuotaDialog] = useState(false);
   const locale = useStudioLocale();
   const [step, setStep] = useState<Step>("brief");
   const [document, setDocument] = useState<EditorDocument>(() => {
@@ -795,6 +803,12 @@ function StudioEditor({
 
   const submitMedia = useCallback(async () => {
     if (!requestId) return;
+    // Nothing left this period: say so, with the way to buy more, before any
+    // original is copied or anything is sent.
+    if (quota && !quota.canSubmit) {
+      setQuotaDialog(true);
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     setSubmitProgress(null);
@@ -810,11 +824,21 @@ function StudioEditor({
       setMessage(t("studio.msg.submitted"));
     } catch (failure) {
       setSubmitError(failure instanceof Error ? failure.message : String(failure));
+      if (failure instanceof StudioQuotaError) {
+        setQuota((current) => ({
+          tier: current?.tier ?? "free",
+          total: current?.total ?? 0,
+          remaining: 0,
+          canSubmit: false,
+          renewsAt: failure.nextFreeSlotAt ?? current?.renewsAt ?? null,
+        }));
+        setQuotaDialog(true);
+      }
     } finally {
       setSubmitting(false);
       setSubmitProgress(null);
     }
-  }, [document.sources, refreshContent, requestId, t]);
+  }, [document.sources, quota, refreshContent, requestId, t]);
 
   const approveScript = useCallback(async () => {
     if (!requestId || !script) return;
@@ -1493,6 +1517,9 @@ function StudioEditor({
 
       <div className="studio-body">
         <CapabilityNotice capability={capability} />
+        {step === "brief" && !submitted && quota && !quota.canSubmit && (
+          <QuotaStatus quota={quota} />
+        )}
 
         {step === "brief" && (
           <BriefPanel
@@ -1526,6 +1553,7 @@ function StudioEditor({
                   onConfirm={setConfirmed}
                   onSubmit={() => void submitMedia()}
                   onGoToBrief={() => setStep("brief")}
+                  quota={submitted ? null : quota}
                   disabled={busy}
                 />
               ) : null
@@ -1688,6 +1716,12 @@ function StudioEditor({
           {error && <p className="studio-note studio-note-danger">{error}</p>}
         </div>
       </div>
+
+      <QuotaDialog
+        open={quotaDialog}
+        renewsAt={quota?.renewsAt ?? null}
+        onClose={() => setQuotaDialog(false)}
+      />
 
       {showActions && (
         <div className="studio-actions">

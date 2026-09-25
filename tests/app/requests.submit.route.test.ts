@@ -216,4 +216,58 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
     expect(initializePipelineMock).not.toHaveBeenCalled();
     errorLog.mockRestore();
   });
+  describe("an exhausted free allowance", () => {
+    const quotaError = () =>
+      Object.assign(new Error("Monthly limit reached: 3 free videos per 30 days."), {
+        name: "QuotaExhaustedError",
+        nextFreeSlotAt: new Date("2026-10-14T00:00:00.000Z"),
+      });
+    const studioBody = (renderOnDevice?: boolean) => ({
+      localMedia: {
+        mode: "local-first",
+        materials: [{
+          localId: "req-1--photo",
+          fileName: "photo.jpg",
+          mimeType: "image/jpeg",
+          fileSizeBytes: 100,
+          durationSeconds: null,
+        }],
+        analysisFrames: [{
+          localId: "req-1--photo",
+          assetIndex: 0,
+          mimeType: "image/jpeg",
+          dataBase64: "YWJj",
+        }],
+        ...(renderOnDevice === undefined ? {} : { renderOnDevice }),
+      },
+    });
+
+    beforeEach(() => {
+      getOwnedRequestMock.mockResolvedValue({ ...submittedRequest, status: RequestStatus.Draft });
+      findAssetsMock.mockResolvedValue([]);
+      storeDerivativesMock.mockResolvedValue(["https://cdn/p.jpg"]);
+      submitRequestMock.mockRejectedValue(quotaError());
+    });
+
+    it("tells the phone studio it is the quota, with the next free date", async () => {
+      const response = await POST(request(studioBody(true)), {
+        params: Promise.resolve({ id: "req-1" }),
+      });
+      expect(response.status).toBe(402);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "quota_exhausted",
+        nextFreeSlotAt: "2026-10-14T00:00:00.000Z",
+      });
+      expect(initializePipelineMock).not.toHaveBeenCalled();
+    });
+
+    it("leaves every other submission's answer as it was", async () => {
+      const errorLog = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      const response = await POST(request(studioBody()), {
+        params: Promise.resolve({ id: "req-1" }),
+      });
+      expect(response.status).toBe(500);
+      errorLog.mockRestore();
+    });
+  });
 });

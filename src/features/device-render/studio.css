@@ -88,13 +88,7 @@
   top: 0;
   z-index: 20;
   padding: calc(var(--s-safe-top) + 12px) 16px 12px;
-  /* The strip under the status bar stays the app bar's dark slate: the native
-     status-bar icons are drawn light for the dark app bar above the studio, and
-     would vanish on the light header once it sticks to the top. */
-  background-color: color-mix(in srgb, var(--s-bg) 88%, transparent);
-  background-image: linear-gradient(#0f172a, #0f172a);
-  background-size: 100% var(--s-safe-top);
-  background-repeat: no-repeat;
+  background: color-mix(in srgb, var(--s-bg) 88%, transparent);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--s-border);
 }
@@ -1452,4 +1446,42 @@
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ── Popup ───────────────────────────────────────────────────────────────── */
+
+/* A link that looks like a button (the quota prompt's Pricing / Credits). */
+a.studio-button {
+  text-decoration: none;
+  text-align: center;
+}
+
+/* Rendered inside `.studio`, so it keeps the studio's tokens. */
+.studio-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px 16px calc(var(--s-safe-bottom) + 16px);
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.studio-dialog {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100dvh - var(--s-safe-top) - 32px);
+  overflow-y: auto;
+  padding: 20px;
+  border-radius: var(--s-radius-lg);
+  background: var(--s-surface);
+  border: 1px solid var(--s-border);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+}
+
+@media (min-width: 640px) {
+  .studio-dialog-backdrop {
+    align-items: center;
+  }
 }

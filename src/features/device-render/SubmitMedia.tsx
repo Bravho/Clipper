@@ -1,6 +1,7 @@
 "use client";
 
 import { useStudioT } from "./studioI18n";
+import { QuotaStatus, type StudioQuota } from "./QuotaPrompt";
 
 /**
  * The submit step, under the media grid.
@@ -27,6 +28,7 @@ export function SubmitMedia({
   onSubmit,
   onGoToBrief,
   disabled,
+  quota = null,
 }: {
   /** The brief has been saved as a request. */
   hasRequest: boolean;
@@ -40,6 +42,8 @@ export function SubmitMedia({
   onSubmit: () => void;
   onGoToBrief: () => void;
   disabled: boolean;
+  /** The account's allowance: a line under Submit, or the buy prompt when none is left. */
+  quota?: StudioQuota | null;
 }) {
   const t = useStudioT();
   if (submitted) return null;
@@ -96,6 +100,7 @@ export function SubmitMedia({
           <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
             {t("studio.submit.note")}
           </p>
+          <QuotaStatus quota={quota} />
         </>
       )}
 

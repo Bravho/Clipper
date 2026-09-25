@@ -36,7 +36,7 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
   const dashboardHref = user?.role === Role.Admin ? ROUTES.ADMIN : ROUTES.DASHBOARD;
 
   return (
-    <nav className="app-safe-top sticky top-0 z-30 border-b border-slate-700 bg-slate-900">
+    <nav className="app-safe-top sticky top-0 z-30 border-b border-slate-200 bg-white">
       <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-14 items-center justify-between gap-3 sm:h-16">
           {/* Logo — allowed to shrink so it never pushes the hamburger off-screen */}
@@ -48,7 +48,7 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
               height={36}
               className="h-8 w-8 flex-shrink-0 rounded sm:h-9 sm:w-9"
             />
-            <span className="truncate text-lg font-bold tracking-tight text-white sm:text-xl">
+            <span className="truncate text-lg font-bold tracking-tight text-slate-900 sm:text-xl">
               RClipper
             </span>
           </Link>
@@ -57,28 +57,28 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
               the drawer to reach the section links. */}
           <div className="hidden items-center gap-4 lg:flex">
             {showDeviceRenderLab && (
-              <Link href="/device-render-lab" className="text-sm text-blue-300 hover:text-white">
+              <Link href="/device-render-lab" className="text-sm font-medium text-blue-700 hover:text-blue-900">
                 {t("nav.renderTest")}
               </Link>
             )}
             {isLoading ? null : user ? (
               <>
-                <Link href={dashboardHref} className="text-sm text-slate-300 hover:text-white">
+                <Link href={dashboardHref} className="text-sm text-slate-600 hover:text-slate-900">
                   {t("nav.dashboard")}
                 </Link>
-                <Link href={ROUTES.ACCOUNT} className="text-sm text-slate-300 hover:text-white">
+                <Link href={ROUTES.ACCOUNT} className="text-sm text-slate-600 hover:text-slate-900">
                   {t("nav.account")}
                 </Link>
-                <div className="flex items-center gap-3 border-l border-slate-700 pl-4">
+                <div className="flex items-center gap-3 border-l border-slate-200 pl-4">
                   <Badge variant={roleBadgeVariant[user.role]}>{user.role}</Badge>
-                  <span className="max-w-[160px] truncate text-sm text-slate-400">
+                  <span className="max-w-[160px] truncate text-sm text-slate-500">
                     {user.name}
                   </span>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => void signOutEverywhere(ROUTES.HOME)}
-                    className="border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
+                    className="border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900"
                   >
                     {t("nav.signOut")}
                   </Button>
@@ -87,7 +87,7 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
               </>
             ) : (
               <>
-                <Link href={ROUTES.LOGIN} className="text-sm text-slate-300 hover:text-white">
+                <Link href={ROUTES.LOGIN} className="text-sm text-slate-600 hover:text-slate-900">
                   {t("nav.signIn")}
                 </Link>
                 <Link href={ROUTES.SIGNUP}>
@@ -101,7 +101,7 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
           {/* Mobile / tablet menu button — 44px hit target per iOS HIG */}
           <button
             type="button"
-            className="-mr-2 flex-shrink-0 rounded p-2.5 text-slate-300 hover:bg-slate-800 hover:text-white lg:hidden"
+            className="-mr-2 flex-shrink-0 rounded p-2.5 text-slate-700 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
             onClick={() => setMobileOpen((v) => !v)}
             aria-label="Toggle menu"
             aria-expanded={mobileOpen}
@@ -122,7 +122,7 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
         {showDeviceRenderLab && (
           <Link
             href="/device-render-lab"
-            className="rounded-md px-3 py-2.5 text-sm text-blue-300 hover:bg-slate-800 hover:text-white"
+            className="rounded-md px-3 py-2.5 text-sm font-medium text-blue-700 hover:bg-slate-100 hover:text-blue-900"
             onClick={closeDrawer}
           >
             {t("nav.renderTest")}
@@ -132,18 +132,18 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
           <>
             <div className="flex items-center gap-2 px-3 pb-2">
               <Badge variant={roleBadgeVariant[user.role]}>{user.role}</Badge>
-              <span className="min-w-0 truncate text-sm text-slate-400">{user.name}</span>
+              <span className="min-w-0 truncate text-sm text-slate-500">{user.name}</span>
             </div>
             <Link
               href={dashboardHref}
-              className="rounded-md px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
+              className="rounded-md px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900"
               onClick={closeDrawer}
             >
               {t("nav.dashboard")}
             </Link>
             <Link
               href={ROUTES.ACCOUNT}
-              className="rounded-md px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
+              className="rounded-md px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900"
               onClick={closeDrawer}
             >
               {t("nav.account")}
@@ -154,7 +154,7 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
                 closeDrawer();
                 void signOutEverywhere(ROUTES.HOME);
               }}
-              className="rounded-md px-3 py-2.5 text-left text-sm text-red-400 hover:bg-slate-800 hover:text-red-300"
+              className="rounded-md px-3 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 hover:text-red-700"
             >
               {t("nav.signOut")}
             </button>
@@ -166,14 +166,14 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
           <>
             <Link
               href={ROUTES.LOGIN}
-              className="rounded-md px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-800 hover:text-white"
+              className="rounded-md px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900"
               onClick={closeDrawer}
             >
               {t("nav.signIn")}
             </Link>
             <Link
               href={ROUTES.SIGNUP}
-              className="rounded-md px-3 py-2.5 text-sm text-blue-400 hover:bg-slate-800"
+              className="rounded-md px-3 py-2.5 text-sm font-medium text-blue-700 hover:bg-slate-100"
               onClick={closeDrawer}
             >
               {t("nav.getStarted")}

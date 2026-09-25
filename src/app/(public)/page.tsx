@@ -36,32 +36,32 @@ export default async function HomePage() {
   return (
     <div className="flex flex-col">
       {/* Hero */}
-      <section className="relative overflow-hidden bg-slate-900 py-24 px-4 text-center text-white">
+      <section className="relative overflow-hidden bg-gradient-to-b from-blue-50 to-white py-24 px-4 text-center text-slate-900">
         <div
           className="absolute inset-0 opacity-[0.04]"
           style={{
             backgroundImage:
-              "radial-gradient(circle at 1px 1px, white 1px, transparent 0)",
+              "radial-gradient(circle at 1px 1px, #1d4ed8 1px, transparent 0)",
             backgroundSize: "32px 32px",
           }}
         />
         <div className="relative mx-auto max-w-4xl">
           <div className="mb-6 flex items-center justify-center gap-3">
             <Image src="/logo.png" alt="RClipper logo" width={56} height={56} className="rounded-xl" />
-            <span className="text-3xl font-bold tracking-tight text-white">RClipper</span>
+            <span className="text-3xl font-bold tracking-tight text-slate-900">RClipper</span>
           </div>
-          <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-blue-700/20 px-4 py-1.5 text-sm font-medium text-blue-400 ring-1 ring-blue-700/40">
-            <span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-blue-100 px-4 py-1.5 text-sm font-medium text-blue-800 ring-1 ring-blue-200">
+            <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
             {t("home.audience")}
           </div>
           <h1 className="mb-6 text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
             {t("home.headline")}<br />
-            <span className="text-blue-400">{t("home.headlineAccent")}</span>
+            <span className="text-blue-600">{t("home.headlineAccent")}</span>
           </h1>
-          <p className="mx-auto mb-3 max-w-2xl text-lg text-slate-300">
-            <span className="font-semibold text-white">{t("home.aiPromise")}</span>
+          <p className="mx-auto mb-3 max-w-2xl text-lg text-slate-700">
+            <span className="font-semibold text-slate-900">{t("home.aiPromise")}</span>
           </p>
-          <p className="mx-auto mb-10 max-w-xl text-base text-slate-400">
+          <p className="mx-auto mb-10 max-w-xl text-base text-slate-600">
             {t("home.export")}
           </p>
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
@@ -74,7 +74,7 @@ export default async function HomePage() {
               <Button
                 variant="outline"
                 size="lg"
-                className="min-w-[140px] border-slate-600 text-slate-300 hover:bg-slate-800"
+                className="min-w-[140px] border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
               >
                 {t("nav.signIn")}
               </Button>
@@ -84,7 +84,7 @@ export default async function HomePage() {
       </section>
 
       {/* Stats bar */}
-      <section className="bg-slate-800 py-5 px-4 border-b border-slate-700">
+      <section className="bg-white py-5 px-4 border-y border-slate-200">
         <div className="mx-auto max-w-5xl grid grid-cols-2 gap-4 sm:grid-cols-4 text-center">
           {[
             { value: t("home.statSpeedValue"), label: t("home.statSpeed") },
@@ -93,8 +93,8 @@ export default async function HomePage() {
             { value: `฿${entryPrice}`, label: t("home.statPrice") },
           ].map((s) => (
             <div key={s.label} className="flex flex-col gap-0.5">
-              <span className="text-xl font-bold text-white">{s.value}</span>
-              <span className="text-xs text-slate-400">{s.label}</span>
+              <span className="text-xl font-bold text-slate-900">{s.value}</span>
+              <span className="text-xs text-slate-500">{s.label}</span>
             </div>
           ))}
         </div>
@@ -248,15 +248,15 @@ export default async function HomePage() {
       </section>
 
       {/* Distribution — Travy highlight */}
-      <section className="bg-slate-900 py-16 px-4 text-center text-white border-t border-slate-700">
+      <section className="bg-slate-50 py-16 px-4 text-center text-slate-900 border-t border-slate-200">
         <div className="mx-auto max-w-3xl">
-          <div className="mb-4 inline-block rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-white/20">
+          <div className="mb-4 inline-block rounded-full bg-blue-100 px-4 py-1.5 text-sm font-medium text-blue-800 ring-1 ring-blue-200">
             พร้อมสำหรับทุกช่องทาง
           </div>
           <h2 className="mb-4 text-2xl font-bold">
             ไฟล์พร้อมโพสต์ทุกช่องทาง รวมถึงแอป Travy และเว็บไซต์ Travy.buzz
           </h2>
-          <p className="mb-8 text-slate-400 max-w-xl mx-auto">
+          <p className="mb-8 text-slate-600 max-w-xl mx-auto">
             Travy คือแอปวิดีโอท่องเที่ยวของไทย พร้อมเว็บไซต์ Travy.buzz ที่นักท่องเที่ยวต่างชาติใช้
             ค้นหาประสบการณ์ในไทย — เราส่งออกไฟล์ในอัตราส่วนที่เหมาะกับแต่ละช่องทางให้พร้อมโพสต์
             และคลิปที่คัดเลือกอาจได้รับการนำไปเผยแพร่บนช่องทางของ RClipper
@@ -274,8 +274,8 @@ export default async function HomePage() {
                 key={ch.name}
                 className={`rounded-full px-4 py-1.5 text-sm font-medium ${
                   ch.highlight
-                    ? "bg-blue-600 text-white ring-2 ring-blue-400"
-                    : "border border-slate-700 bg-slate-800 text-slate-300"
+                    ? "bg-blue-600 text-white ring-2 ring-blue-300"
+                    : "border border-slate-200 bg-white text-slate-700"
                 }`}
               >
                 {ch.name}
