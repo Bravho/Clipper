@@ -1,5 +1,6 @@
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { DeviceRenderProgress } from "@/lib/mobile/deviceRenderClient";
+import { studioEnglish, type StudioT } from "./studioText";
 
 /**
  * What the phone is doing to make one video, as steps a person can follow.
@@ -43,23 +44,7 @@ export interface RenderTimeline {
   finished: boolean;
 }
 
-const PARTS: { id: RenderPart; label: string; detail: string }[] = [
-  {
-    id: "montage",
-    label: "Picture",
-    detail: "Your shots, trims, camera moves and transitions",
-  },
-  {
-    id: "master",
-    label: "Voice and music",
-    detail: "The voice-over mixed with the background music",
-  },
-  {
-    id: "final",
-    label: "Look and captions",
-    detail: "The frame, decoration and captions — the finished video",
-  },
-];
+const PARTS: { id: RenderPart }[] = [{ id: "montage" }, { id: "master" }, { id: "final" }];
 
 // Pipeline steps at or past each part's completion.
 const AFTER_MONTAGE: string[] = [
@@ -119,24 +104,38 @@ export function buildRenderTimeline(input: {
   paused: boolean;
   /** The server has a part queued for this phone right now. */
   workAvailable: boolean;
+  /** The studio's language; English when left out. */
+  t?: StudioT;
 }): RenderTimeline {
-  const done = partsDone(input.pipelineStep);
+  const t = input.t ?? studioEnglish;
+  const pipelineDone = partsDone(input.pipelineStep);
+
+  // The part the phone says it is on. While the phone is still sending or
+  // checking a part, the server may already have moved its step past it (it
+  // accepts the file before the phone hears back) — but that part is not over
+  // for the person watching, and the next one has not started. So while the
+  // phone is busy, ITS stage decides: everything before it is done, it is the
+  // active one, and nothing after it has begun. Without this, "Look and
+  // captions" lit up (showing the voice part's last few percent) before
+  // "Voice and music" had finished.
+  const reportedIndex =
+    input.busy && input.progress?.stage
+      ? PARTS.findIndex((part) => part.id === input.progress!.stage)
+      : -1;
+  const phoneOnIt =
+    reportedIndex >= 0 && input.progress != null && input.progress.phase !== "done";
+  const done = phoneOnIt ? reportedIndex : pipelineDone;
   const finished = done >= 3;
 
-  // The part the phone is on: what it is rendering now if it said, otherwise
-  // the first one not yet done.
-  const reported = input.busy ? input.progress?.stage : undefined;
-  const activeIndex = finished
-    ? -1
-    : reported
-      ? Math.max(done, PARTS.findIndex((part) => part.id === reported))
-      : done;
+  const activeIndex = finished ? -1 : phoneOnIt ? reportedIndex : done;
 
   const running = input.busy && input.progress != null;
   const activePercent = running ? partPercent(input.progress) : 0;
 
   const steps: RenderTimelineStep[] = PARTS.map((part, index) => ({
     ...part,
+    label: t(`studio.part.${part.id}`),
+    detail: t(`studio.part.detail.${part.id}`),
     state: index < done ? "done" : index === activeIndex ? "active" : "waiting",
     percent: index === activeIndex ? Math.round(activePercent) : null,
   }));
@@ -147,41 +146,41 @@ export function buildRenderTimeline(input: {
 
   let activity: RenderTimeline["activity"];
   let status: string;
-  const partName = activeIndex >= 0 ? PARTS[activeIndex].label.toLowerCase() : "";
+  const partName = activeIndex >= 0 ? t(`studio.part.${PARTS[activeIndex].id}`).toLowerCase() : "";
   const partNumber = activeIndex + 1;
   if (finished) {
     activity = "done";
-    status = "All three parts are made. Your video is ready to watch below.";
+    status = t("studio.timeline.allDone");
   } else if (running) {
     switch (input.progress!.phase) {
       case "rendering":
         activity = "rendering";
-        status = `Part ${partNumber} of 3 — making the ${partName} on this phone`;
+        status = t("studio.timeline.rendering", { n: partNumber, part: partName });
         break;
       case "uploading":
         activity = "uploading";
-        status = `Part ${partNumber} of 3 — sending the ${partName} to your request`;
+        status = t("studio.timeline.uploading", { n: partNumber, part: partName });
         break;
       case "finishing":
         activity = "checking";
-        status = `Part ${partNumber} of 3 — checking the file (length, picture size, sound)`;
+        status = t("studio.timeline.checking", { n: partNumber });
         break;
       default:
         activity = "preparing";
-        status = `Part ${partNumber} of 3 — getting your photos and clips ready`;
+        status = t("studio.timeline.preparing", { n: partNumber });
     }
   } else if (input.paused) {
     activity = "paused";
-    status = "Paused. Tap Resume rendering to carry on from here.";
+    status = t("studio.timeline.paused");
   } else if (input.workAvailable) {
     activity = "preparing";
-    status = `Part ${partNumber} of 3 is ready to start on this phone…`;
+    status = t("studio.timeline.readyToStart", { n: partNumber });
   } else {
     activity = "waiting";
     status =
       done === 0
-        ? "Lining up the first part…"
-        : `Part ${done} of 3 is done. Lining up part ${partNumber}…`;
+        ? t("studio.timeline.liningUpFirst")
+        : t("studio.timeline.liningUp", { done, n: partNumber });
   }
 
   const now = running && input.progress!.detail ? input.progress!.detail : null;

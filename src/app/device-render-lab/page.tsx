@@ -1,13 +1,12 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth/helpers";
 import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
 import MobileVideoEditor from "@/features/device-render/MobileVideoEditor";
+import { StudioBanner } from "@/features/device-render/StudioBanner";
 import type { EditorBrief } from "@/features/device-render/editorState";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { Platform } from "@/domain/enums/Platform";
 import { clipRequestService } from "@/services/ClipRequestService";
-import { getServerI18n } from "@/i18n/server";
 import { ROUTES } from "@/config/routes";
 
 /**
@@ -32,7 +31,6 @@ export default async function Page({
   if (!canAccessDeviceRenderLab(user?.email)) notFound();
 
   const { request } = await searchParams;
-  const { t } = getServerI18n();
 
   // Reopening a request the studio saved: show its brief, so the next save
   // edits what is there rather than overwriting it with blanks. Ownership is
@@ -71,17 +69,7 @@ export default async function Page({
         would lose the storyboard, the voice, the captions and the channel
         ratios in the process.
       */}
-      <div className="mx-auto max-w-3xl px-4 pt-4">
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-          <p className="text-sm text-amber-900">{t("renderTest.banner")}</p>
-          <Link
-            href={ROUTES.REQUESTS}
-            className="mt-2 inline-flex min-h-[44px] items-center text-sm font-semibold text-amber-900 underline"
-          >
-            {t("renderTest.goToRequests")}
-          </Link>
-        </div>
-      </div>
+      <StudioBanner requestsHref={ROUTES.REQUESTS} />
       <MobileVideoEditor
         requestId={request ?? null}
         requestLabel={requestLabel}

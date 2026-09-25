@@ -14,10 +14,7 @@ import {
 import { MOTION_TEMPLATES } from "@/config/motionTemplates";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import { DEFAULT_ELEVENLABS_VOICE_ID, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
-import {
-  PIPELINE_STEP_DESCRIPTIONS,
-  VideoGenerationStep,
-} from "@/domain/enums/VideoGenerationStep";
+import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import { loadLocalMediaIndex } from "@/features/requests/localMediaStore";
 import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
@@ -31,6 +28,8 @@ import {
 } from "@/lib/mobile/deviceRenderClient";
 import {
   autoArrange,
+  DEFAULT_SHOT_SECONDS,
+  shotFor,
   documentDurationSeconds,
   emptyDocument,
   findSource,
@@ -39,6 +38,7 @@ import {
   readImagePoster,
   retimeScenes,
   scenePlanFromScenes,
+  scenesFromScenePlan,
   scenesFromStoryboard,
   scenesPlaySeconds,
   storyboardFromScenes,
@@ -52,6 +52,13 @@ import {
   type EditorSource,
 } from "./editorState";
 import { subjectCentre } from "@/lib/mobile/shotFraming";
+import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
+import {
+  dropPrivateCopy,
+  looksLikeHeic,
+  PickedFileError,
+  takePrivateCopy,
+} from "./pickedFile";
 import { CapabilityNotice, ServerBadge, useStudioCapability } from "./StudioChrome";
 import { BriefPanel } from "./BriefPanel";
 import { SourcePicker } from "./SourcePicker";
@@ -64,6 +71,13 @@ import { StylePanel } from "./StylePanel";
 import { RenderPanel, type MainVideoControls } from "./RenderPanel";
 import { ChannelsPanel, channelShapes } from "./ChannelsPanel";
 import {
+  pipelineStepText,
+  StudioI18nProvider,
+  useStudioLocale,
+  useStudioT,
+  type StudioT,
+} from "./studioI18n";
+import {
   approveStudioContent,
   approveStudioProduction,
   approveStudioVideo,
@@ -72,6 +86,7 @@ import {
   fetchStudioFraming,
   generateStudioChannels,
   regenerateStudioVoice,
+  reopenStudioProduction,
   restoreStudioSources,
   submitStudioRequest,
   type StudioContent,
@@ -109,21 +124,39 @@ export interface MobileVideoEditorProps {
 
 type Step = "brief" | "source" | "scenes" | "audio" | "style" | "render" | "channels";
 
+/** The step's name in the studio's language. */
+function stepLabel(t: StudioT, step: Step): string {
+  return t(`studio.step.${step}`);
+}
+
 // The order is the order the decisions actually depend on each other: what the
 // video is for, what there is to work with, what the plan is, then the craft.
 // "scenes" is labelled Storyboard: it is where the pipeline's plan lands and
 // where it is rearranged, shot by shot. "style" is labelled Graphic: the Look
 // (captions' languages are chosen in Sound, with the background track). After
 // the main video is rendered and approved, Channels makes the other shapes.
-const STEPS: { id: Step; label: string }[] = [
-  { id: "brief", label: "Brief" },
-  { id: "source", label: "Media" },
-  { id: "scenes", label: "Storyboard" },
-  { id: "audio", label: "Sound" },
-  { id: "style", label: "Graphic" },
-  { id: "render", label: "Render" },
-  { id: "channels", label: "Channels" },
+const STEPS: { id: Step }[] = [
+  { id: "brief" },
+  { id: "source" },
+  { id: "scenes" },
+  { id: "audio" },
+  { id: "style" },
+  { id: "render" },
+  { id: "channels" },
 ];
+
+/**
+ * Refusals that clear up by themselves within seconds: the next part is not
+ * queued yet, the previous claim is still being closed, or the server is
+ * still preparing inputs. Waiting and asking again is the right answer.
+ */
+const PASSING_REFUSALS = new Set([
+  "no_render_queued",
+  "already_rendering",
+  "inputs_unavailable",
+  "manifest_unavailable",
+  "app_not_foreground",
+]);
 
 // Steps at or past the main video's approval.
 const AFTER_MAIN_APPROVAL: string[] = [
@@ -142,11 +175,23 @@ function withoutTravy(platforms: Platform[]): Platform[] {
   return platforms.filter((platform) => platform !== Platform.TravyApp);
 }
 
-export default function MobileVideoEditor({
+export default function MobileVideoEditor(props: MobileVideoEditorProps) {
+  // The studio's words follow the language picked in the menu, else the
+  // phone's own language (see studioI18n.tsx).
+  return (
+    <StudioI18nProvider>
+      <StudioEditor {...props} />
+    </StudioI18nProvider>
+  );
+}
+
+function StudioEditor({
   requestId: initialRequestId,
   requestLabel,
   initialBrief,
 }: MobileVideoEditorProps) {
+  const t = useStudioT();
+  const locale = useStudioLocale();
   const [step, setStep] = useState<Step>("brief");
   const [document, setDocument] = useState<EditorDocument>(() => {
     const fresh = emptyDocument();
@@ -160,10 +205,23 @@ export default function MobileVideoEditor({
   const [requestId, setRequestId] = useState<string | null>(initialRequestId ?? null);
   const [availability, setAvailability] = useState<DeviceRenderAvailability | null>(null);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<DeviceRenderProgress | null>(null);
+  const [progress, setProgressState] = useState<DeviceRenderProgress | null>(null);
+  // Which part and shape the phone last reported, for naming a failure.
+  const stageRef = useRef<string | null>(null);
+  const ratioRef = useRef<string | null>(null);
+  const setProgress = useCallback((next: DeviceRenderProgress | null) => {
+    if (next?.stage) stageRef.current = next.stage;
+    if (next?.ratio) ratioRef.current = next.ratio;
+    setProgressState(next);
+  }, []);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [serverOutcome, setServerOutcome] = useState<string | null>(null);
+  // The latest failed try in THIS session, with its step-by-step log. The
+  // server keeps a copy too (`lastPhoneError`), for a studio reopened later.
+  const [renderFailure, setRenderFailure] = useState<
+    { summary: string; log: string[]; stage: string | null; ratio: string | null } | null
+  >(null);
   // ── the pipeline, once the media is submitted ──
   const [content, setContent] = useState<StudioContent | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -183,7 +241,7 @@ export default function MobileVideoEditor({
   // step. Changing a choice there takes the confirmation back.
   const [soundConfirmed, setSoundConfirmed] = useState(false);
   const [graphicConfirmed, setGraphicConfirmed] = useState(false);
-  const [videoApproving, setVideoApproving] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
   // Channels: the extra shapes chosen, and the call that starts them.
   const [channelChoice, setChannelChoice] = useState<string[] | null>(null);
@@ -196,7 +254,16 @@ export default function MobileVideoEditor({
   const productionSending = useRef(false);
   // Set by Stop, cleared by tapping Render: stops the automatic render from
   // restarting the moment it was stopped.
-  const userStopped = useRef(false);
+  //
+  // It STARTS set. A studio opened on a request whose video was already being
+  // made — the app was closed mid-render and opened again — does not quietly
+  // start encoding: it shows "Resume rendering" in Render and Channels, and the
+  // person carries on when they are ready. Starting the main video, the channel
+  // shapes or a regenerate in this session clears it, so those still run by
+  // themselves from the first tap.
+  const userStopped = useRef(true);
+  // The studio lands on the step the request is at, once, when it is reopened.
+  const landed = useRef(false);
   // The job storyboard is applied to the timeline ONCE. After that the timeline
   // is the person's, and a poll that re-applied it would undo their edits.
   const storyboardApplied = useRef(false);
@@ -207,6 +274,9 @@ export default function MobileVideoEditor({
   const cancelRequested = useRef(false);
 
   // ── what the server would hand this phone ─────────────────────────────────
+  // Slow (15 s) at human-speed gates; quick (4 s) while a video or an extra
+  // shape is being made, when the next part is queued seconds after the last.
+  const [pollFast, setPollFast] = useState(false);
   useEffect(() => {
     if (!requestId) return;
     let cancelled = false;
@@ -215,17 +285,14 @@ export default function MobileVideoEditor({
       if (!cancelled) setAvailability(result);
     };
     void poll();
-    // Slow on purpose: the answer changes when an approval gate clears, which is
-    // a human-speed event. A tight poll would be a request a second for as long
-    // as the screen is open.
-    const timer = setInterval(() => void poll(), 15_000);
+    const timer = setInterval(() => void poll(), pollFast ? 4_000 : 15_000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [requestId]);
+  }, [pollFast, requestId]);
 
-  const problems = useMemo(() => validateDocument(document), [document]);
+  const problems = useMemo(() => validateDocument(document, t), [document, t]);
   const totalSeconds = useMemo(() => documentDurationSeconds(document), [document]);
 
   const update = useCallback((change: (current: EditorDocument) => EditorDocument) => {
@@ -255,11 +322,11 @@ export default function MobileVideoEditor({
       // A URL that could not be rewritten costs a reload's worth of context,
       // not the request — the id is already held in state.
     }
-    setMessage("Request saved. Now add your photos and clips.");
+    setMessage(t("studio.msg.requestSaved"));
     // Saving the brief is the end of that step; the next thing to do is the
     // media, so go there rather than leaving the person to find it.
     setStep("source");
-  }, []);
+  }, [t]);
 
   // ── media ─────────────────────────────────────────────────────────────────
   const addFiles = useCallback(
@@ -273,25 +340,44 @@ export default function MobileVideoEditor({
       const added: EditorSource[] = [];
       const notes: string[] = [];
       const failures: string[] = [];
-      for (const file of picked) {
-        const isClip = file.type.startsWith("video/");
+      for (const original of picked) {
+        const isClip = original.type.startsWith("video/");
+        const id = nextId("src");
+        let snapshotKey: string | null = null;
         try {
+          // A private copy FIRST, before anything decodes the file: the
+          // gallery's reference can die at any moment after this (see
+          // pickedFile.ts), and the copy is what everything below reads.
+          const copy = await takePrivateCopy(`studio-${id}`, original, t);
+          snapshotKey = copy.snapshotKey;
+          const file = copy.file;
           // One decode per file, producing the length, the frame shown in
           // every grid from here on, and — for a clip the in-app browser cannot
           // play — a preview copy made by the phone's own video engine. A photo
           // is downscaled: the tile and the storyboard frame should not be
           // carrying a six-megabyte original around.
           const prepared = isClip
-            ? await prepareClip(file)
+            ? await prepareClip(file, t)
             : {
                 durationSeconds: null,
                 posterUrl: await readImagePoster(file),
                 previewUrl: URL.createObjectURL(file),
                 note: null,
               };
+          if (!isClip && !prepared.posterUrl) {
+            // A photo this screen cannot draw would fail again at submit
+            // (its preview cannot be made), so say why now and leave it out.
+            URL.revokeObjectURL(prepared.previewUrl);
+            throw new PickedFileError(
+              (await looksLikeHeic(file))
+                ? t("studio.msg.heic", { name: file.name })
+                : t("studio.msg.notPicture", { name: file.name })
+            );
+          }
           if (prepared.note) notes.push(prepared.note);
           added.push({
-            id: nextId("src"),
+            id,
+            snapshotKey,
             kind: isClip ? "clip" : "image",
             file,
             previewUrl: prepared.previewUrl,
@@ -300,7 +386,14 @@ export default function MobileVideoEditor({
             fileName: file.name,
           });
         } catch (failure) {
-          failures.push(failure instanceof Error ? failure.message : `${file.name} could not be read.`);
+          void dropPrivateCopy(snapshotKey);
+          failures.push(
+            failure instanceof PickedFileError
+              ? failure.message
+              : failure instanceof Error
+                ? `${original.name}: ${failure.message}`
+                : t("studio.msg.fileUnreadable", { name: original.name })
+          );
         }
       }
 
@@ -316,12 +409,12 @@ export default function MobileVideoEditor({
           };
         });
         setMessage(
-          [`${added.length} item(s) added. Originals stay on this phone.`, ...notes].join(" ")
+          [t("studio.msg.itemsAdded", { count: added.length }), ...notes].join(" ")
         );
       }
       if (failures.length > 0) setError(failures.join(" "));
     },
-    [update]
+    [t, update]
   );
 
   const removeSource = useCallback(
@@ -333,6 +426,7 @@ export default function MobileVideoEditor({
           // The poster is a second object URL of its own; leaving it behind
           // holds the decoded frame for as long as the page is open.
           if (source.posterUrl) URL.revokeObjectURL(source.posterUrl);
+          void dropPrivateCopy(source.snapshotKey);
         }
         return {
           ...current,
@@ -367,41 +461,6 @@ export default function MobileVideoEditor({
     [update]
   );
 
-  const moveShot = useCallback(
-    (sceneId: string, index: number, by: -1 | 1) => {
-      update((current) => ({
-        ...current,
-        scenes: current.scenes.map((scene) => {
-          if (scene.id !== sceneId) return scene;
-          const target = index + by;
-          if (target < 0 || target >= scene.shots.length) return scene;
-          const shots = [...scene.shots];
-          [shots[index], shots[target]] = [shots[target], shots[index]];
-          return { ...scene, shots };
-        }),
-      }));
-    },
-    [update]
-  );
-
-  const removeShot = useCallback(
-    (sceneId: string, shotId: string) => {
-      update((current) => ({
-        ...current,
-        scenes: current.scenes
-          .map((scene) =>
-            scene.id !== sceneId
-              ? scene
-              : { ...scene, shots: scene.shots.filter((shot) => shot.id !== shotId) }
-          )
-          // A scene with nothing in it renders nothing, so it is dropped rather
-          // than left as an empty row someone has to tidy up.
-          .filter((scene) => scene.shots.length > 0),
-      }));
-    },
-    [update]
-  );
-
   const addScene = useCallback(() => {
     update((current) => ({
       ...current,
@@ -411,45 +470,6 @@ export default function MobileVideoEditor({
       ],
     }));
   }, [update]);
-
-  const addShotToScene = useCallback(
-    (sceneId: string, sourceId: string) => {
-      update((current) => {
-        const source = findSource(current, sourceId);
-        if (!source) return current;
-        const clipLength = source.durationSeconds ?? 0;
-        const duration =
-          source.kind === "clip" && clipLength > 0 ? Math.min(3, Math.max(0.5, clipLength)) : 3;
-        return {
-          ...current,
-          scenes: current.scenes.map((scene) =>
-            scene.id !== sceneId
-              ? scene
-              : {
-                  ...scene,
-                  shots: [
-                    ...scene.shots,
-                    {
-                      id: nextId("shot"),
-                      sourceId,
-                      durationSeconds: Math.round(duration * 10) / 10,
-                      motion: source.kind === "clip" ? "static" : "ken_burns_in",
-                      trimStartSeconds: 0,
-                      trimEndSeconds:
-                        source.kind === "clip" && clipLength > 0
-                          ? Math.round(Math.min(clipLength, duration) * 10) / 10
-                          : null,
-                      focusX: 0.5,
-                      focusY: 0.5,
-                    } satisfies EditorShot,
-                  ],
-                }
-          ),
-        };
-      });
-    },
-    [update]
-  );
 
   const setSceneTransition = useCallback(
     (sceneId: string, transition: MontageTransition) => {
@@ -505,24 +525,33 @@ export default function MobileVideoEditor({
    * stays, empty, so the person can pick something else for it rather than
    * losing the scene and its sentence along with the picture.
    */
+  /**
+   * Pick the scene's material. A scene holds ONE photo or clip, so picking
+   * another replaces it (keeping the slot's length for a photo), and tapping
+   * the one already there clears the scene.
+   */
   const toggleSource = useCallback(
     (sceneId: string, sourceId: string) => {
-      const scene = document.scenes.find((entry) => entry.id === sceneId);
-      if (!scene) return;
-      if (scene.shots.some((shot) => shot.sourceId === sourceId)) {
-        update((current) => ({
+      update((current) => {
+        const source = findSource(current, sourceId);
+        if (!source) return current;
+        return {
           ...current,
-          scenes: current.scenes.map((entry) =>
-            entry.id !== sceneId
-              ? entry
-              : { ...entry, shots: entry.shots.filter((shot) => shot.sourceId !== sourceId) }
-          ),
-        }));
-      } else {
-        addShotToScene(sceneId, sourceId);
-      }
+          scenes: current.scenes.map((scene) => {
+            if (scene.id !== sceneId) return scene;
+            if (scene.shots.some((shot) => shot.sourceId === sourceId)) {
+              return { ...scene, shots: [] };
+            }
+            const previous = scene.shots[0];
+            return {
+              ...scene,
+              shots: [shotFor(source, "ken_burns_in", previous?.durationSeconds ?? DEFAULT_SHOT_SECONDS)],
+            };
+          }),
+        };
+      });
     },
-    [addShotToScene, document.scenes, update]
+    [update]
   );
 
   // ── the pipeline: submit, follow, approve ─────────────────────────────────
@@ -580,6 +609,32 @@ export default function MobileVideoEditor({
     void refreshContent();
   }, [refreshContent]);
 
+  // Reopened mid-production: go straight to where the video is being made, so
+  // the Resume button (or the finished video and its download) is in view.
+  useEffect(() => {
+    if (landed.current || !content) return;
+    landed.current = true;
+    const at = content.currentStep;
+    if (!content.submitted || !at) return;
+    const inChannels =
+      at === VideoGenerationStep.AwaitingAdditionalRatios ||
+      at === VideoGenerationStep.GeneratingAdditionalRatios ||
+      at === VideoGenerationStep.AwaitingDistributionReview ||
+      at === VideoGenerationStep.Publishing ||
+      at === VideoGenerationStep.Complete;
+    const beforeProduction: string[] = [
+      VideoGenerationStep.AnalyzingContent,
+      VideoGenerationStep.AwaitingContentApproval,
+      VideoGenerationStep.GeneratingVoice,
+      VideoGenerationStep.AwaitingVoiceApproval,
+      VideoGenerationStep.GeneratingSceneDesign,
+      VideoGenerationStep.AwaitingSceneDesignApproval,
+      VideoGenerationStep.Failed,
+    ];
+    if (inChannels) setStep("channels");
+    else if (!beforeProduction.includes(at)) setStep("render");
+  }, [content]);
+
   // Follow the job once it exists: quickly while the storyboard and script are
   // being written, slowly afterwards so the voice's progress still shows.
   useEffect(() => {
@@ -600,22 +655,50 @@ export default function MobileVideoEditor({
       .then(({ sources, missing }) => {
         if (sources.length > 0) setDocument((current) => ({ ...current, sources }));
         if (missing.length > 0) {
-          setError(
-            `These originals are no longer on this phone: ${missing.join(", ")}. This phone cannot render the request.`
-          );
+          setError(t("studio.msg.originalsMissing", { names: missing.join(", ") }));
         }
       })
       .finally(() => {
         restoring.current = false;
       });
-  }, [content, document.sources.length]);
+  }, [content, document.sources.length, t]);
 
   // When the pipeline's storyboard arrives, it becomes the timeline — once.
+  // Once production has been started, the plan it was started with is the
+  // timeline instead (trims, focus, zoom, moves), with the sound and look it
+  // was made with, and all of it counts as approved — a reopened studio must
+  // be able to remake the same video, not a default one.
   useEffect(() => {
     if (!content?.storyboard || storyboardApplied.current) return;
     if (document.sources.length === 0) return;
     const plan = content.storyboard;
     const order = content.localMedia;
+    const sourceAt = (assetIndex: number) =>
+      order.length > 0
+        ? document.sources.find((source) => matchesLocal(source.id, order[assetIndex]?.localId))
+        : document.sources[assetIndex];
+    const production = content.production;
+    const produced = production?.scenePlan
+      ? scenesFromScenePlan(production.scenePlan, sourceAt)
+      : [];
+    if (produced.length > 0 && production) {
+      storyboardApplied.current = true;
+      setDocument((current) => ({
+        ...current,
+        scenes: produced,
+        ...(production.musicTrackId
+          ? { musicTrackId: production.musicTrackId === "none" ? null : production.musicTrackId }
+          : {}),
+        ...(production.subtitleLanguages.length > 0
+          ? { captionLanguages: production.subtitleLanguages as typeof current.captionLanguages }
+          : {}),
+        ...(production.templateId ? { templateId: production.templateId } : {}),
+      }));
+      setApprovedScenes(produced);
+      setSoundConfirmed(true);
+      setGraphicConfirmed(true);
+      return;
+    }
     storyboardApplied.current = true;
     update((current) => ({
       ...current,
@@ -627,10 +710,10 @@ export default function MobileVideoEditor({
     }));
     setMessage(
       contentApproved
-        ? "This is the storyboard approved with the script."
-        : "Your storyboard is ready. Rearrange it here, then approve the script in Sound."
+        ? t("studio.msg.storyboardApprovedWithScript")
+        : t("studio.msg.storyboardReady")
     );
-  }, [content, contentApproved, document.sources.length, matchesLocal, update]);
+  }, [content, contentApproved, document.sources, matchesLocal, t, update]);
 
   // Every picture's shape, read once from its poster: it is what decides how
   // much of a tall clip a wide video can show (see shotFraming.ts).
@@ -720,17 +803,18 @@ export default function MobileVideoEditor({
         requestId,
         sources: document.sources,
         onProgress: (done, total) => setSubmitProgress({ done, total }),
+        t,
       });
       await refreshContent();
       setStep("scenes");
-      setMessage("Submitted. Your storyboard and speaking script are being written.");
+      setMessage(t("studio.msg.submitted"));
     } catch (failure) {
       setSubmitError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setSubmitting(false);
       setSubmitProgress(null);
     }
-  }, [document.sources, refreshContent, requestId]);
+  }, [document.sources, refreshContent, requestId, t]);
 
   const approveScript = useCallback(async () => {
     if (!requestId || !script) return;
@@ -742,15 +826,16 @@ export default function MobileVideoEditor({
         script,
         voiceId,
         storyboard: storyboardFromScenes(document.scenes, indexOfSource),
+        t,
       });
       await refreshContent();
-      setMessage("Script approved. The voice is being made from it.");
+      setMessage(t("studio.msg.scriptApproved"));
     } catch (failure) {
       setApproveError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setApproving(false);
     }
-  }, [document.scenes, indexOfSource, refreshContent, requestId, script, voiceId]);
+  }, [document.scenes, indexOfSource, refreshContent, requestId, script, t, voiceId]);
 
   const scriptStatus: ScriptStatus = !submitted
     ? "not_submitted"
@@ -778,6 +863,12 @@ export default function MobileVideoEditor({
   const productionStarted =
     submitted && !PRE_PRODUCTION.includes(step_) && step_ !== VideoGenerationStep.Failed;
   const atDesignGate = step_ === VideoGenerationStep.AwaitingSceneDesignApproval;
+  // While the finished main video waits for review, the storyboard, sound and
+  // look open up again: changing them and tapping "Regenerate the video" is
+  // how a video is remade. Before that point, and once the video has been
+  // taken on to Channels, what was sent is what is being made.
+  const editLocked =
+    productionStarted && step_ !== VideoGenerationStep.AwaitingOverlayApproval;
   const voiceStatus: VoiceStatus =
     step_ === VideoGenerationStep.GeneratingVoice
       ? "generating"
@@ -810,30 +901,30 @@ export default function MobileVideoEditor({
     setVoiceBusy(true);
     setVoiceError(null);
     try {
-      await approveStudioVoice({ requestId, jobId: content.jobId, platforms: orderedPlatforms });
+      await approveStudioVoice({ requestId, jobId: content.jobId, platforms: orderedPlatforms, t });
       await refreshContent();
-      setMessage("Voice approved. The scene design is being prepared for your storyboard.");
+      setMessage(t("studio.msg.voiceApproved"));
     } catch (failure) {
       setVoiceError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setVoiceBusy(false);
     }
-  }, [content?.jobId, orderedPlatforms, refreshContent, requestId]);
+  }, [content?.jobId, orderedPlatforms, refreshContent, requestId, t]);
 
   const regenerateVoice = useCallback(async () => {
     if (!requestId || !content?.jobId) return;
     setVoiceBusy(true);
     setVoiceError(null);
     try {
-      await regenerateStudioVoice({ requestId, jobId: content.jobId, voiceId });
+      await regenerateStudioVoice({ requestId, jobId: content.jobId, voiceId, t });
       await refreshContent();
-      setMessage("Making the voice again.");
+      setMessage(t("studio.msg.voiceAgain"));
     } catch (failure) {
       setVoiceError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setVoiceBusy(false);
     }
-  }, [content?.jobId, refreshContent, requestId, voiceId]);
+  }, [content?.jobId, refreshContent, requestId, t, voiceId]);
 
   /**
    * Send the storyboard — every shot, trim, move and transition — as the
@@ -851,18 +942,19 @@ export default function MobileVideoEditor({
         jobId: content.jobId,
         scenePlan: scenePlanFromScenes(document, indexOfSource),
         durationSeconds: Math.min(
-          30,
+          STUDIO_MAX_DURATION_SECONDS,
           Math.max(5, Math.round(voiceSeconds ?? document.brief.targetSeconds))
         ),
         musicTrackId: document.musicTrackId,
         subtitleLanguages: document.captionLanguages,
         templateId: document.templateId,
+        t,
       });
       setApprovedScenes(document.scenes);
       userStopped.current = false;
       await refreshContent();
       setStep("render");
-      setMessage("Rendering the main video on this phone. Keep the app open.");
+      setMessage(t("studio.msg.renderingMain"));
       // Ask now rather than wait for the next slow poll: the montage is queued
       // for this phone the moment the plan is accepted.
       setAvailability(await checkDeviceRenderAvailability(requestId));
@@ -872,7 +964,7 @@ export default function MobileVideoEditor({
       productionSending.current = false;
       setSendingProduction(false);
     }
-  }, [content?.jobId, document, indexOfSource, refreshContent, requestId, voiceSeconds]);
+  }, [content?.jobId, document, indexOfSource, refreshContent, requestId, t, voiceSeconds]);
 
   /**
    * Approve the storyboard and move on to Sound. Approving never starts the
@@ -883,10 +975,10 @@ export default function MobileVideoEditor({
     setStep("audio");
     setMessage(
       contentApproved
-        ? "Storyboard approved. Now confirm the sound."
-        : "Storyboard approved. Now check the speaking script — it is approved together with it."
+        ? t("studio.msg.storyboardApprovedSound")
+        : t("studio.msg.storyboardApprovedScript")
     );
-  }, [contentApproved, document.scenes]);
+  }, [contentApproved, document.scenes, t]);
 
   const fitStoryboard = useCallback(
     (seconds: number) => {
@@ -904,24 +996,24 @@ export default function MobileVideoEditor({
 
   const coverageHint = covered
     ? null
-    : `The voice needs at least ${requiredSeconds?.toFixed(1)}s of picture — use Fit before rendering.`;
+    : t("studio.msg.coverage", { seconds: requiredSeconds?.toFixed(1) ?? "" });
   const storyboardApproval: StoryboardApproval | null =
-    !submitted || productionStarted || analysing
+    !submitted || editLocked || analysing
       ? null
       : storyboardApproved
         ? {
-            label: "Approved — continue to Sound",
-            hint: coverageHint ?? "Change anything here and it needs approving again.",
+            label: t("studio.approval.approvedLabel"),
+            hint: coverageHint ?? t("studio.approval.approvedHint"),
             disabled: false,
             busy: false,
           }
         : {
-            label: "Approve the storyboard",
+            label: t("studio.approval.label"),
             hint:
               coverageHint ??
               (contentApproved
-                ? "Next: confirm the sound."
-                : "Next: the speaking script in Sound, approved together with this storyboard."),
+                ? t("studio.approval.nextSound")
+                : t("studio.approval.nextScript")),
             disabled: !hasShots,
             busy: false,
           };
@@ -950,40 +1042,52 @@ export default function MobileVideoEditor({
     void sendProduction();
   }, [atDesignGate, sendProduction]);
 
-  const approveMainVideo = useCallback(async () => {
+  /**
+   * Remake the main video from what the storyboard, Sound and Graphic say
+   * NOW: reopen the scene-design gate on the server, then send the current
+   * plan exactly as the first Render did. Only while the finished video is
+   * waiting for review — once Channels has started from it, it is final.
+   */
+  const regenerateVideo = useCallback(async () => {
     if (!requestId || !content?.jobId) return;
-    setVideoApproving(true);
+    setRegenerating(true);
     setVideoError(null);
     try {
-      await approveStudioVideo({ requestId, jobId: content.jobId });
+      await reopenStudioProduction({ requestId, jobId: content.jobId, t });
       await refreshContent();
-      setStep("channels");
-      setMessage(
-        otherShapes.length > 0
-          ? "Video approved. Choose the other channel shapes to make."
-          : "Video approved. Your channels all use this shape, so it is ready."
-      );
+      await sendProduction();
     } catch (failure) {
       setVideoError(failure instanceof Error ? failure.message : String(failure));
     } finally {
-      setVideoApproving(false);
+      setRegenerating(false);
     }
-  }, [content?.jobId, otherShapes.length, refreshContent, requestId]);
+  }, [content?.jobId, refreshContent, requestId, sendProduction, t]);
 
   const startChannels = useCallback(
     async (ratios: string[]) => {
       if (!requestId || !content?.jobId) return;
+      const jobId = content.jobId;
       setChannelsStarting(true);
       setChannelsError(null);
       try {
-        await generateStudioChannels({ requestId, jobId: content.jobId, ratios });
+        // Choosing the shapes IS taking the main video: there is no separate
+        // Approve step any more. When every channel uses the main shape, the
+        // server finishes right here and there is nothing more to start.
+        let current = content.currentStep;
+        if (current === VideoGenerationStep.AwaitingOverlayApproval) {
+          await approveStudioVideo({ requestId, jobId, t });
+          current = (await fetchStudioContent(requestId)).currentStep;
+        }
+        if (current === VideoGenerationStep.AwaitingAdditionalRatios) {
+          await generateStudioChannels({ requestId, jobId, ratios, t });
+        }
         userStopped.current = false;
         await refreshContent();
         setAvailability(await checkDeviceRenderAvailability(requestId));
         setMessage(
-          ratios.length > 0
-            ? `Rendering ${ratios.join(", ")} on this phone. Keep the app open.`
-            : "Done. Your video is ready."
+          ratios.length > 0 && current === VideoGenerationStep.AwaitingAdditionalRatios
+            ? t("studio.msg.makingShapes", { ratios: ratios.join(", ") })
+            : t("studio.msg.doneReady")
         );
       } catch (failure) {
         setChannelsError(failure instanceof Error ? failure.message : String(failure));
@@ -991,42 +1095,65 @@ export default function MobileVideoEditor({
         setChannelsStarting(false);
       }
     },
-    [content?.jobId, refreshContent, requestId]
+    [content?.currentStep, content?.jobId, refreshContent, requestId, t]
   );
 
   const renderChecklist = [
-    { label: "Storyboard approved", done: storyboardApproved },
+    { label: t("studio.check.storyboard"), done: storyboardApproved },
     {
       // The picture has to run at least as long as the voice-over plus the
       // short music intro and ending, or the end of the voice plays over black.
       label:
         requiredSeconds != null
-          ? `Video is long enough for the voice-over (${storyboardSeconds.toFixed(1)}s — needs at least ${requiredSeconds.toFixed(1)}s)`
-          : "Video is long enough for the voice-over (checked once the voice is made)",
+          ? t("studio.check.lengthKnown", {
+              have: storyboardSeconds.toFixed(1),
+              need: requiredSeconds.toFixed(1),
+            })
+          : t("studio.check.lengthUnknown"),
       done: requiredSeconds != null && covered,
     },
-    { label: "Script and voice approved", done: voiceStatus === "approved" },
-    { label: "Sound confirmed", done: soundConfirmed },
-    { label: "Look confirmed", done: graphicConfirmed },
+    { label: t("studio.check.voice"), done: voiceStatus === "approved" },
+    { label: t("studio.check.sound"), done: soundConfirmed },
+    { label: t("studio.check.look"), done: graphicConfirmed },
     {
       // What the server does at this point is small: it records the edit plan
       // and the timed captions from the approved voice. No video is made there.
       label: atDesignGate
-        ? "Edit plan ready — the video is made on this phone"
+        ? t("studio.check.planReady")
         : step_ === VideoGenerationStep.GeneratingSceneDesign
-          ? "Getting the edit plan ready (a few seconds)…"
-          : "Edit plan — ready once the voice is approved",
+          ? t("studio.check.planMaking")
+          : t("studio.check.planLater"),
       done: atDesignGate,
     },
   ];
 
+  const phoneWorkExpected =
+    productionStarted &&
+    step_ !== VideoGenerationStep.AwaitingOverlayApproval &&
+    step_ !== VideoGenerationStep.AwaitingAdditionalRatios &&
+    step_ !== VideoGenerationStep.AwaitingDistributionReview &&
+    step_ !== VideoGenerationStep.Publishing &&
+    step_ !== VideoGenerationStep.Complete;
+  useEffect(() => setPollFast(phoneWorkExpected), [phoneWorkExpected]);
+
+  // What has to be true before the video can be remade: everything the first
+  // Render needed, except the server gate, which regenerating reopens itself.
+  const regenerateBlocker =
+    renderChecklist.slice(0, -1).find((item) => !item.done)?.label ?? null;
+
   // ── live progress while the phone makes the video ─────────────────────────
+  // Something this phone can carry on with: a queued part, or a part a closed
+  // app was making whose claim is about to lapse.
+  const resumable = Boolean(
+    availability?.available || (availability?.resumeInSeconds ?? 0) > 0
+  );
   const timeline = productionStarted
     ? buildRenderTimeline({
         pipelineStep: step_,
+        t,
         busy,
         progress,
-        paused: userStopped.current,
+        paused: userStopped.current && resumable,
         workAvailable: Boolean(availability?.available),
       })
     : null;
@@ -1060,24 +1187,6 @@ export default function MobileVideoEditor({
   }, [shapesRendering]);
   const elapsedAny = shapesStartedAt !== null ? formatElapsed(now - shapesStartedAt) : null;
 
-  const mainControls: MainVideoControls | null = requestId
-    ? {
-        checklist: renderChecklist,
-        productionStarted,
-        starting: sendingProduction,
-        onStart: startMainRender,
-        video: mainVideoOutput
-          ? { url: mainVideoOutput.url, ratio: mainVideoOutput.ratio, madeOn: mainVideoOutput.madeOn }
-          : null,
-        awaitingApproval: atVideoGate,
-        approved: mainApproved,
-        approving: videoApproving,
-        onApprove: () => void approveMainVideo(),
-        error: videoError,
-        timeline,
-        elapsed,
-      }
-    : null;
 
   // ── rendering ─────────────────────────────────────────────────────────────
   const renderForServer = useCallback(async () => {
@@ -1086,56 +1195,123 @@ export default function MobileVideoEditor({
     setError(null);
     setServerOutcome(null);
     cancelRequested.current = false;
-    setStep("render");
+    // No navigation here. This also runs by itself while the person is in
+    // Channels (every extra shape is rendered through it), and pulling them
+    // back to Render each time was the "it jumps back to Render" bug.
 
-    try {
-      // The originals this phone kept at submission. Without them a
-      // local-first manifest has nothing to stage and every render would fail.
-      const localMedia = await loadLocalMediaIndex();
-      let outcome = await runDeviceRender({
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const run = () =>
+      runDeviceRender({
         requestId,
         localMedia,
         onProgress: setProgress,
         shouldCancel: () => cancelRequested.current,
+        t,
       });
-      // A montage is one task per scene, then the master and the final. Keep
-      // going while the server has more for this phone, so one tap renders the
-      // whole video rather than one piece of it.
+    let localMedia: Awaited<ReturnType<typeof loadLocalMediaIndex>>;
+
+    try {
+      // The originals this phone kept at submission. Without them a
+      // local-first manifest has nothing to stage and every render would fail.
+      localMedia = await loadLocalMediaIndex();
+
+      // ONE TAP (or none) RENDERS EVERYTHING. The video is several parts — the
+      // picture, voice and music, look and captions, then each extra shape —
+      // queued one after another, and the server needs a moment to queue the
+      // next part after accepting one. The old loop asked once, and when the
+      // next part was not queued YET it stopped; a refusal from that race was
+      // treated like the person pressing Stop, which parked the render behind
+      // a "Resume rendering" button. That was the endless Resume. Now:
+      //   • a moment's wait for the next part is just a wait;
+      //   • a passing refusal ("nothing queued yet", "already rendering") is
+      //     retried after a short pause;
+      //   • a failed part is retried twice before anything asks the person;
+      //   • only Stop, or a refusal that will not change by waiting (an app
+      //     build or phone that cannot do this), stops the chain.
+      let outcome = await run();
       let completed = 0;
-      while (outcome.status === "completed" && !cancelRequested.current && completed < 24) {
-        completed += 1;
-        const next = await checkDeviceRenderAvailability(requestId);
+      let retries = 0;
+      let waits = 0;
+      for (;;) {
+        if (outcome.status === "failed") {
+          setRenderFailure({
+            summary: outcome.reason ?? t("studio.render.noReason"),
+            log: outcome.log ?? [],
+            stage: stageRef.current,
+            ratio: ratioRef.current,
+          });
+        } else if (outcome.status === "completed") {
+          setRenderFailure(null);
+        }
+        if (cancelRequested.current) break;
+        if (outcome.status === "completed") {
+          completed += 1;
+          retries = 0;
+        } else if (outcome.status === "refused" && PASSING_REFUSALS.has(outcome.reason ?? "")) {
+          if (++waits > 40) break;
+          await pause(3_000);
+        } else if (outcome.status === "failed" && retries < 1) {
+          // ONE automatic retry. A part that fails the same way twice will fail
+          // a third time too — the native renderer already falls back to hard
+          // cuts and then to plain framing inside each try — and re-rendering
+          // it again is what looked like the Picture part looping forever.
+          retries += 1;
+          setServerOutcome(
+            t("studio.render.retrying", { reason: outcome.reason ?? t("studio.render.unknown") })
+          );
+          await pause(2_000);
+        } else {
+          break;
+        }
+        if (cancelRequested.current) break;
+
+        // Is there another part for this phone? Give the server a few seconds
+        // to queue it before deciding the video is done for now.
+        // A part a closed app was making is held until its claim lapses
+        // (`resumeInSeconds`); wait that out instead of giving up on Resume.
+        let next = await checkDeviceRenderAvailability(requestId);
+        let tries = 0;
+        let lapseWaits = 0;
+        while (!next.available && !cancelRequested.current) {
+          if ((next.resumeInSeconds ?? 0) > 0 && lapseWaits < 40) {
+            lapseWaits += 1;
+            setServerOutcome(
+              t("studio.render.pickingUp", { seconds: next.resumeInSeconds ?? 0 })
+            );
+            await pause(Math.min(5, next.resumeInSeconds!) * 1_000);
+          } else if (tries < 5) {
+            tries += 1;
+            await pause(2_500);
+          } else {
+            break;
+          }
+          next = await checkDeviceRenderAvailability(requestId);
+        }
+        if (lapseWaits > 0) setServerOutcome(null);
         setAvailability(next);
         if (!next.available) break;
-        outcome = await runDeviceRender({
-          requestId,
-          localMedia,
-          onProgress: setProgress,
-          shouldCancel: () => cancelRequested.current,
-        });
+        outcome = await run();
       }
       void refreshContent();
 
-      // Anything but a clean finish pauses the automatic render until Render is
-      // tapped. Otherwise a step the phone cannot take yet (its inputs are not
-      // ready, say) would be offered, refused and re-offered in a tight loop
-      // for as long as the screen is open.
-      if (outcome.status !== "completed") userStopped.current = true;
+      const stoppedByPerson = cancelRequested.current;
+      const hardStop =
+        outcome.status === "failed" ||
+        (outcome.status === "refused" && !PASSING_REFUSALS.has(outcome.reason ?? ""));
+      // Only the person's Stop, or something waiting cannot fix, parks the
+      // automatic render behind "Resume rendering".
+      userStopped.current = stoppedByPerson || hardStop;
 
-      if (outcome.status === "completed" || (completed > 0 && outcome.status === "refused")) {
+      if (stoppedByPerson || outcome.status === "released") {
+        setServerOutcome(t("studio.render.stopped"));
+      } else if (outcome.status === "failed") {
         setServerOutcome(
-          `Done — ${Math.max(1, completed)} part(s) rendered on this phone and checked by the server.`
+          t("studio.render.failedTwice", { reason: outcome.reason ?? t("studio.render.unknown") })
         );
-      } else if (outcome.status === "refused") {
-        setServerOutcome(explainRefusal(outcome.reason));
-      } else if (outcome.status === "released") {
-        // The step goes back in the queue — for THIS phone. Nothing else holds
-        // the originals, so no server will pick it up in the meantime.
-        setServerOutcome("Stopped. Tap Render to carry on — this video is rendered on this phone only.");
-      } else {
-        setServerOutcome(
-          `This phone could not finish this part (${outcome.reason ?? "unknown"}). Keep the app open and tap Render to try again.`
-        );
+      } else if (hardStop) {
+        setServerOutcome(explainRefusal(outcome.reason, t));
+      } else if (completed > 0) {
+        setServerOutcome(t("studio.render.partsMade", { count: completed }));
       }
       setAvailability(await checkDeviceRenderAvailability(requestId));
     } catch (failure) {
@@ -1143,14 +1319,29 @@ export default function MobileVideoEditor({
     } finally {
       setBusy(false);
     }
-  }, [refreshContent, requestId]);
+  }, [refreshContent, requestId, setProgress, t]);
+
+  /**
+   * Carry on after Stop, a failure, or the app being closed mid-render. Parts
+   * already accepted by the server are kept; the one that was in progress is
+   * made again from the start.
+   */
+  const resumeRender = useCallback(async () => {
+    if (busy) return;
+    userStopped.current = false;
+    // After a reload the native renderer can still be busy with the render the
+    // old page started; nobody is listening for it any more, so stop it first
+    // or the new one is refused as "already active".
+    await cancelDeviceRender();
+    void renderForServer();
+  }, [busy, renderForServer]);
 
   const cancel = useCallback(async () => {
     cancelRequested.current = true;
     userStopped.current = true;
     await cancelDeviceRender();
-    setMessage("Stopping…");
-  }, []);
+    setMessage(t("studio.editor.stopping"));
+  }, [t]);
 
   /**
    * Render without being asked, once production has handed this phone work.
@@ -1171,34 +1362,119 @@ export default function MobileVideoEditor({
   const stepDone: Record<Step, boolean> = {
     brief: Boolean(requestId),
     source: submitted,
-    scenes: storyboardApproved || productionStarted,
-    audio: soundConfirmed || productionStarted,
-    style: graphicConfirmed || productionStarted,
-    render: mainApproved,
+    scenes: storyboardApproved || editLocked,
+    audio: soundConfirmed || editLocked,
+    style: graphicConfirmed || editLocked,
+    // Green as soon as the finished video is here — nothing to approve.
+    render: mainApproved || (atVideoGate && mainVideoOutput != null),
     channels:
       step_ === VideoGenerationStep.AwaitingDistributionReview ||
       step_ === VideoGenerationStep.Complete,
   };
 
-  const mediaProblems = submissionProblems(document.sources);
+  const mediaProblems = submissionProblems(document.sources, t);
   // The bar is for Stop while rendering, and for picking a stopped render back
   // up. Starting the main video is Render's own button.
+  // Stop while rendering; Resume only after Stop or a failure that waiting
+  // cannot fix. Otherwise the render starts by itself and there is nothing to
+  // press — a Resume button beside a render that is about to start anyway was
+  // one of the buttons that never seemed to end.
+  const canResume = Boolean(
+    requestId && productionStarted && !busy && userStopped.current && resumable
+  );
+  const resumeControls = canResume
+    ? {
+        waitSeconds: availability?.available ? null : availability?.resumeInSeconds ?? null,
+        disabled: !nativeReady,
+        onResume: () => void resumeRender(),
+      }
+    : null;
+
+  // Why the last try stopped: this session's, else the server's record of it.
+  const PART_NAMES: Record<string, string> = {
+    montage: t("studio.part.montage"),
+    master: t("studio.part.master"),
+    final: t("studio.part.final"),
+  };
+  const latestFailure = renderFailure
+    ? renderFailure
+    : content?.lastPhoneError
+      ? {
+          summary: content.lastPhoneError.reason,
+          log: content.lastPhoneError.log ?? [],
+          stage: content.lastPhoneError.stage,
+          ratio: content.lastPhoneError.ratio,
+        }
+      : null;
+  const describedFailure = latestFailure
+    ? {
+        summary:
+          latestFailure.stage || latestFailure.ratio
+            ? `${latestFailure.summary} (${
+                PART_NAMES[latestFailure.stage ?? ""] ?? latestFailure.stage ?? t("studio.part.generic")
+              }${latestFailure.ratio ? `, ${latestFailure.ratio}` : ""})`
+            : latestFailure.summary,
+        log: latestFailure.log,
+        ratio: latestFailure.ratio,
+      }
+    : null;
+  // The main video's failures show in Render; an extra shape's in Channels.
+  const mainFailure =
+    describedFailure && (!describedFailure.ratio || describedFailure.ratio === primaryRatio)
+      ? describedFailure
+      : null;
+  const shapeFailure =
+    describedFailure && describedFailure.ratio && describedFailure.ratio !== primaryRatio
+      ? describedFailure
+      : null;
+
+  const mainControls: MainVideoControls | null = requestId
+    ? {
+        checklist: renderChecklist,
+        productionStarted,
+        starting: sendingProduction,
+        onStart: startMainRender,
+        video: mainVideoOutput
+          ? {
+              url: mainVideoOutput.url,
+              ratio: mainVideoOutput.ratio,
+              madeOn: mainVideoOutput.madeOn,
+              assetId: mainVideoOutput.assetId,
+            }
+          : null,
+        requestId,
+        channel: channelShapes(orderedPlatforms).find((shape) => shape.ratio === primaryRatio)
+          ?.channels.join(", "),
+        resume: resumeControls,
+        atReview: atVideoGate,
+        approved: mainApproved,
+        regenerating: regenerating || sendingProduction,
+        onRegenerate: () => void regenerateVideo(),
+        regenerateBlocker: regenerateBlocker,
+        onChannels: () => setStep("channels"),
+        error: videoError,
+        timeline,
+        elapsed,
+        phoneError: mainFailure?.summary ?? null,
+        phoneErrorLog: mainFailure?.log ?? [],
+      }
+    : null;
+
+  // Render and Channels show their own Resume, next to the progress it resumes.
   const showActions =
-    busy || Boolean(requestId && productionStarted && availability?.available);
+    busy || (canResume && step !== "render" && step !== "channels");
 
   return (
-    <main className="studio">
+    <main className="studio" lang={locale}>
       <header className="studio-header">
         <ServerBadge />
-        <h1 className="studio-title">{requestLabel ?? "Video studio"}</h1>
+        <h1 className="studio-title">{requestLabel ?? t("studio.editor.title")}</h1>
         <p className="studio-subtitle">
-          {requestId
-            ? "Edit and render this request on your phone. Approvals, credits and publishing stay on the server."
-            : "A draft tool. Nothing here submits a request, spends credits or publishes anything."}
+          {requestId ? t("studio.editor.subtitleRequest") : t("studio.editor.subtitleDraft")}
         </p>
       </header>
 
-      <nav className="studio-steps" aria-label="Editing steps">
+      <nav className="studio-steps" aria-label={t("studio.editor.stepsLabel")}>
         {STEPS.map((entry, index) => (
           <button
             key={entry.id}
@@ -1210,7 +1486,7 @@ export default function MobileVideoEditor({
             <span className="studio-step-index" aria-hidden>
               {stepDone[entry.id] ? "✓" : index + 1}
             </span>
-            {entry.label}
+            {stepLabel(t, entry.id)}
           </button>
         ))}
       </nav>
@@ -1263,8 +1539,6 @@ export default function MobileVideoEditor({
             transitions={MONTAGE_TRANSITIONS}
             motions={MOTION_PRESETS as MotionPreset[]}
             onPatchShot={patchShot}
-            onMoveShot={moveShot}
-            onRemoveShot={removeShot}
             onAddScene={addScene}
             onToggleSource={toggleSource}
             onSceneTransition={setSceneTransition}
@@ -1279,15 +1553,15 @@ export default function MobileVideoEditor({
             planning={analysing && !content?.storyboard}
             planError={
               analysisFailed
-                ? "The storyboard could not be written. Open the request from your request list to retry it."
+                ? t("studio.msg.planError")
                 : null
             }
             lockedNote={
-              productionStarted
-                ? "In production. This storyboard is what is being rendered, so it can no longer be changed here."
+              editLocked
+                ? t("studio.msg.lockedStoryboard")
                 : null
             }
-            disabled={busy || productionStarted || sendingProduction}
+            disabled={busy || editLocked || sendingProduction}
           />
         )}
 
@@ -1325,18 +1599,18 @@ export default function MobileVideoEditor({
             onConfirm={() => {
               setSoundConfirmed(true);
               setStep("style");
-              setMessage("Sound confirmed. Now choose the look.");
+              setMessage(t("studio.msg.soundConfirmed"));
             }}
             confirmBlocker={
               productionStarted || voiceStatus === "approved"
                 ? null
                 : scriptStatus === "review"
-                  ? "Approve the script first, then the voice."
+                  ? t("studio.blocker.approveScript")
                   : voiceStatus === "review"
-                    ? "Listen to the voice and approve it first."
-                    : "The voice has to be made and approved first."
+                    ? t("studio.blocker.listenVoice")
+                    : t("studio.blocker.voiceNeeded")
             }
-            locked={productionStarted}
+            locked={editLocked}
             disabled={busy}
           />
         )}
@@ -1354,9 +1628,13 @@ export default function MobileVideoEditor({
             onConfirm={() => {
               setGraphicConfirmed(true);
               setStep("render");
-              setMessage("Look confirmed. Render the main video when you are ready.");
+              setMessage(
+                mainVideoOutput
+                  ? t("studio.msg.lookConfirmedRegenerate")
+                  : t("studio.msg.lookConfirmed")
+              );
             }}
-            locked={productionStarted}
+            locked={editLocked}
             disabled={busy}
           />
         )}
@@ -1372,15 +1650,15 @@ export default function MobileVideoEditor({
             progress={progress}
             draft={null}
             serverOutcome={serverOutcome}
-            pipelineStatus={
-              step_ ? PIPELINE_STEP_DESCRIPTIONS[step_ as VideoGenerationStep] ?? null : null
-            }
+            pipelineStatus={pipelineStepText(t, step_)}
             main={mainControls}
           />
         )}
 
         {step === "channels" && (
           <ChannelsPanel
+            requestId={requestId}
+            resume={resumeControls}
             platforms={orderedPlatforms}
             primaryRatio={primaryRatio}
             currentStep={step_}
@@ -1401,6 +1679,7 @@ export default function MobileVideoEditor({
             busy={busy}
             progress={progress}
             elapsed={elapsedAny}
+            failure={shapeFailure}
           />
         )}
 
@@ -1418,7 +1697,7 @@ export default function MobileVideoEditor({
               className="studio-button studio-button-ghost"
               onClick={() => void cancel()}
             >
-              Stop
+              {t("studio.editor.stop")}
             </button>
           ) : (
             <button
@@ -1426,11 +1705,10 @@ export default function MobileVideoEditor({
               className="studio-button studio-button-primary"
               disabled={!nativeReady}
               onClick={() => {
-                userStopped.current = false;
-                void renderForServer();
+                void resumeRender();
               }}
             >
-              Resume rendering
+              {t("studio.editor.resume")}
               {availability?.ratio ? ` · ${availability.ratio}` : ""}
             </button>
           )}

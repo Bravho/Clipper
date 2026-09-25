@@ -61,6 +61,15 @@ export const PIPELINE_STEP_COSTS = {
   DEFAULT_DURATION_SECONDS: 15,
 } as const;
 
+/**
+ * The longest video the PHONE STUDIO may ask for. Every frame of a studio
+ * request is made on the phone, so the server's 30-second cap (which bounds
+ * the Mac Mini's render time) does not apply to it. Every other path — the web
+ * request form, older app builds, anything rendered on the server — keeps
+ * {@link PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS}.
+ */
+export const STUDIO_MAX_DURATION_SECONDS = 90;
+
 export interface PipelineCostBreakdown {
   step1: number;
   step2: number;

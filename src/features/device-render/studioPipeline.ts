@@ -10,8 +10,10 @@ import type { Platform } from "@/domain/enums/Platform";
 import { describeDeviceRenderCapability } from "@/lib/mobile/deviceRenderBridge";
 import type { LocalAnalysisFrame, LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
 import type { SubjectBox } from "@/lib/mobile/shotFraming";
+import { isUnreadableFileError } from "@/features/requests/uploadDiagnostics";
 import { supportsManifestRender } from "@/lib/mobile/deviceRenderBridge";
 import { prepareClip } from "./clipPreview";
+import { studioEnglish, type StudioT } from "./studioText";
 import {
   readImagePoster,
   type EditorSource,
@@ -80,6 +82,22 @@ export interface StudioContent {
   outputs: StudioOutput[];
   /** The extra-shape render in progress, if any. */
   chain: StudioChain | null;
+  /** Why the phone's latest part stopped with an error, if it did. */
+  lastPhoneError?: {
+    stage: string;
+    ratio: string;
+    reason: string;
+    at: string;
+    /** Every step of the failed attempt, phone and app together. */
+    log?: string[];
+  } | null;
+  /** What production was last started with; null before the first start. */
+  production?: {
+    scenePlan: StudioScenePlan[] | null;
+    musicTrackId: string | null;
+    subtitleLanguages: string[];
+    templateId: string | null;
+  } | null;
 }
 
 async function readError(response: Response, fallback: string): Promise<string> {
@@ -120,24 +138,35 @@ export async function submitStudioRequest(input: {
   requestId: string;
   sources: EditorSource[];
   onProgress?: (done: number, total: number) => void;
+  /** The studio's language for the sentences this can fail with. */
+  t?: StudioT;
 }): Promise<void> {
   const { requestId, sources } = input;
+  const t = input.t ?? studioEnglish;
 
   if (sources.some((source) => source.kind === "clip") && !(await supportsManifestRender())) {
-    throw new Error(
-      "This app version cannot edit video on the phone, so a clip cannot be kept here. Update the app, or use photos only."
-    );
+    throw new Error(t("studio.pipe.noClipSupport"));
   }
 
   const materials: LocalMediaDescriptor[] = [];
   const analysisFrames: LocalAnalysisFrame[] = [];
   for (const [index, source] of sources.entries()) {
-    const descriptor = await retainLocalFile(
-      requestId,
-      source.id,
-      source.file,
-      source.durationSeconds
-    );
+    let descriptor: LocalMediaDescriptor;
+    try {
+      descriptor = await retainLocalFile(
+        requestId,
+        source.id,
+        source.file,
+        source.durationSeconds
+      );
+    } catch (error) {
+      // Name the file and say what to do, instead of Chrome's bare
+      // "could not be read, typically due to permission problems…".
+      if (isUnreadableFileError(error)) {
+        throw new Error(t("studio.pipe.unreadable", { name: source.fileName }));
+      }
+      throw error;
+    }
     materials.push(descriptor);
     const frame = await createLocalAnalysisFrame(
       descriptor,
@@ -145,9 +174,7 @@ export async function submitStudioRequest(input: {
       source.kind === "clip" ? await posterDataUrl(source.posterUrl) : undefined
     );
     if (!frame) {
-      throw new Error(
-        `A preview of ${source.fileName} could not be made, so the storyboard would not see it. Remove it or add it again.`
-      );
+      throw new Error(t("studio.pipe.noPreview", { name: source.fileName }));
     }
     analysisFrames.push(frame);
     input.onProgress?.(index + 1, sources.length);
@@ -172,7 +199,7 @@ export async function submitStudioRequest(input: {
     }),
   });
   if (!response.ok) {
-    throw new Error(await readError(response, "The request could not be submitted."));
+    throw new Error(await readError(response, t("studio.pipe.submitFailed")));
   }
 }
 
@@ -221,6 +248,7 @@ export async function approveStudioContent(input: {
   script: StudioScript;
   storyboard: StoryboardPlanScene[];
   voiceId: ElevenLabsVoiceId;
+  t?: StudioT;
 }): Promise<void> {
   const response = await fetch(`/api/requests/${input.requestId}/start-production`, {
     method: "POST",
@@ -237,7 +265,9 @@ export async function approveStudioContent(input: {
     }),
   });
   if (!response.ok) {
-    throw new Error(await readError(response, "The script could not be approved."));
+    throw new Error(
+      await readError(response, (input.t ?? studioEnglish)("studio.pipe.scriptFailed"))
+    );
   }
 }
 
@@ -306,11 +336,12 @@ export function approveStudioVoice(input: {
   requestId: string;
   jobId: string;
   platforms: Platform[];
+  t?: StudioT;
 }): Promise<void> {
   return postJson(
     `/api/requests/${input.requestId}/approve-voice`,
     { jobId: input.jobId, targetPlatforms: input.platforms },
-    "The voice could not be approved."
+    (input.t ?? studioEnglish)("studio.pipe.voiceFailed")
   );
 }
 
@@ -319,11 +350,12 @@ export function regenerateStudioVoice(input: {
   requestId: string;
   jobId: string;
   voiceId: ElevenLabsVoiceId;
+  t?: StudioT;
 }): Promise<void> {
   return postJson(
     `/api/requests/${input.requestId}/voice/regenerate`,
     { jobId: input.jobId, voiceId: input.voiceId },
-    "The voice could not be made again."
+    (input.t ?? studioEnglish)("studio.pipe.voiceAgainFailed")
   );
 }
 
@@ -345,6 +377,7 @@ export function approveStudioProduction(input: {
   musicTrackId: string | null;
   subtitleLanguages: string[];
   templateId: string;
+  t?: StudioT;
 }): Promise<void> {
   return postJson(
     `/api/requests/${input.requestId}/scene-design/approve`,
@@ -357,7 +390,7 @@ export function approveStudioProduction(input: {
       selectedMotionTemplate: input.templateId,
       autoApproveRemaining: true,
     },
-    "The storyboard could not be sent for production."
+    (input.t ?? studioEnglish)("studio.pipe.productionFailed")
   );
 }
 
@@ -366,11 +399,32 @@ export function approveStudioProduction(input: {
  * The server then waits for the channel choice (or finishes, when the brief's
  * channels need no other shape).
  */
-export function approveStudioVideo(input: { requestId: string; jobId: string }): Promise<void> {
+export function approveStudioVideo(input: {
+  requestId: string;
+  jobId: string;
+  t?: StudioT;
+}): Promise<void> {
   return postJson(
     `/api/requests/${input.requestId}/approve-overlay`,
     { jobId: input.jobId },
-    "The video could not be approved."
+    (input.t ?? studioEnglish)("studio.pipe.videoFailed")
+  );
+}
+
+/**
+ * Put the finished (not yet approved) main video back at the scene-design
+ * gate, so the current storyboard, sound and look can be sent again and the
+ * phone makes the video anew.
+ */
+export function reopenStudioProduction(input: {
+  requestId: string;
+  jobId: string;
+  t?: StudioT;
+}): Promise<void> {
+  return postJson(
+    "/api/device-render/regenerate",
+    { requestId: input.requestId, jobId: input.jobId },
+    (input.t ?? studioEnglish)("studio.pipe.remakeFailed")
   );
 }
 
@@ -382,10 +436,11 @@ export function generateStudioChannels(input: {
   requestId: string;
   jobId: string;
   ratios: string[];
+  t?: StudioT;
 }): Promise<void> {
   return postJson(
     `/api/requests/${input.requestId}/generate-additional-ratios`,
     { jobId: input.jobId, ratios: input.ratios },
-    "The channel shapes could not be started."
+    (input.t ?? studioEnglish)("studio.pipe.channelsFailed")
   );
 }

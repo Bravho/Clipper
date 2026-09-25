@@ -183,6 +183,32 @@ export async function releaseStagedSources(staged: StagedLocalSource[]): Promise
  * succeeded or not — they are copies, and leaving them in the plugin's cache is
  * how a phone with a full disk gets fuller.
  */
+/**
+ * A native render that failed, with what the phone knows about why: the root
+ * cause as one sentence (`message`) and every step it took (`log`) — see
+ * `RenderErrorLog.java` / `ManifestJob.swift`. An older app build sends no
+ * log; the message is then Media3's or AVFoundation's own.
+ */
+export class NativeRenderError extends Error {
+  readonly log: string[];
+  constructor(message: string, log: string[]) {
+    super(message);
+    this.name = "NativeRenderError";
+    this.log = log;
+  }
+}
+
+function nativeFailure(error: unknown): Error {
+  const data = (error as { data?: { diagnosis?: unknown; log?: unknown } } | null)?.data;
+  const log = Array.isArray(data?.log)
+    ? data!.log.filter((line): line is string => typeof line === "string")
+    : [];
+  const message =
+    (typeof data?.diagnosis === "string" && data.diagnosis) ||
+    (error instanceof Error ? error.message : String(error));
+  return new NativeRenderError(message, log);
+}
+
 export async function renderManifestOnDevice(
   manifest: DeviceRenderManifest,
   staged: StagedLocalSource[]
@@ -195,6 +221,8 @@ export async function renderManifestOnDevice(
       manifest: JSON.stringify(manifest),
       stagedSources: staged,
     });
+  } catch (error) {
+    throw nativeFailure(error);
   } finally {
     await releaseStagedSources(staged);
   }

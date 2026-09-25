@@ -3,7 +3,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestService } from "@/services/ClipRequestService";
-import { clipRequestFormSchema } from "@/features/requests/validation/clipRequestSchema";
+import {
+  clipRequestFormSchema,
+  studioClipRequestFormSchema,
+} from "@/features/requests/validation/clipRequestSchema";
+import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
 import { cookies } from "next/headers";
 import { DEFAULT_LOCALE, isAppLocale, LOCALE_COOKIE } from "@/i18n/config";
 
@@ -35,8 +39,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  // Validate form data
-  const parsed = clipRequestFormSchema.safeParse(body);
+  // Validate form data. The phone studio (which renders on the phone) may ask
+  // for a longer video; everything else keeps the server's limits.
+  const studio =
+    (body as { studio?: unknown } | null)?.studio === true &&
+    canAccessDeviceRenderLab(session.user.email);
+  const parsed = (studio ? studioClipRequestFormSchema : clipRequestFormSchema).safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed.", details: parsed.error.flatten() },

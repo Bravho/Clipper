@@ -124,6 +124,10 @@ export class DeviceRenderService {
     step?: string;
     stage?: DeviceRenderStage;
     ratio?: DeviceRenderRatio;
+    /** The step was being rendered on a phone that stopped (app closed); resuming restarts it. */
+    interrupted?: boolean;
+    /** A phone's claim has gone quiet; it can be resumed in about this many seconds. */
+    resumeInSeconds?: number;
   }> {
     if (!DEVICE_RENDER.enabled) {
       return { available: false, reason: "device_rendering_disabled" };
@@ -134,7 +138,15 @@ export class DeviceRenderService {
     }
     const task = await renderTaskRepository.findActiveByRequest(requestId);
     if (!task) return { available: false, reason: "no_render_queued" };
-    if (task.state !== "queued") return { available: false, reason: "already_rendering" };
+    let interrupted = false;
+    if (task.state !== "queued") {
+      const lapse = deviceClaimLapse(task);
+      if (lapse === null) return { available: false, reason: "already_rendering" };
+      if (lapse > 0) {
+        return { available: false, reason: "already_rendering", resumeInSeconds: lapse };
+      }
+      interrupted = true;
+    }
     // A device-only task is this phone's work by construction — its footage is
     // here and nowhere else — so the eligible-step allowlist, which exists to
     // limit what a phone may opportunistically take off the worker, does not
@@ -144,7 +156,13 @@ export class DeviceRenderService {
     }
     const stage = stageForTask(task);
     const ratio = await this._ratioForTask(task);
-    return { available: true, step: task.step, stage, ratio };
+    return {
+      available: true,
+      step: task.step,
+      stage,
+      ratio,
+      ...(interrupted ? { interrupted: true } : {}),
+    };
   }
 
   /**
@@ -170,9 +188,27 @@ export class DeviceRenderService {
       throw new DeviceRenderError("Request not found.", "request_not_found", 404);
     }
 
-    const task = await renderTaskRepository.findActiveByRequest(input.requestId);
+    let task = await renderTaskRepository.findActiveByRequest(input.requestId);
     if (!task) return { claimed: false, reason: "no_render_queued" };
-    if (task.state !== "queued") return { claimed: false, reason: "already_rendering" };
+    if (task.state !== "queued") {
+      // A phone that was closed mid-render never released its claim, and a
+      // device-only task is never reclaimed by the worker. Once that claim has
+      // gone quiet, its own requester takes it back: this is "Resume".
+      if (deviceClaimLapse(task) !== 0) return { claimed: false, reason: "already_rendering" };
+      const previous = task.claimedBy!;
+      const released = await renderTaskRepository.releaseClaim(task.id, previous);
+      if (released) {
+        await deviceRenderAttemptRepository
+          .update(previous, { state: "expired" })
+          .catch(() => null);
+        console.log(
+          `[device-render] request ${input.requestId}: resuming ${task.step} after interrupted attempt ${previous}`
+        );
+      }
+      task = await renderTaskRepository.findActiveByRequest(input.requestId);
+      if (!task) return { claimed: false, reason: "no_render_queued" };
+      if (task.state !== "queued") return { claimed: false, reason: "already_rendering" };
+    }
     if (!isRenderStep(task.step)) {
       return { claimed: false, reason: "step_runs_on_server" };
     }
@@ -352,7 +388,9 @@ export class DeviceRenderService {
   async release(
     attemptId: string,
     userId: string,
-    reason: string
+    reason: string,
+    /** The phone's step-by-step log of what failed, kept with the attempt. */
+    log?: string[]
   ): Promise<{ released: boolean }> {
     const attempt = await this._ownedAttempt(attemptId, userId);
     if (attempt.state === "completed") return { released: false };
@@ -361,6 +399,7 @@ export class DeviceRenderService {
     await deviceRenderAttemptRepository.update(attemptId, {
       state: reason === "cancelled" ? "released" : "failed",
       error: reason.slice(0, 500),
+      ...(log && log.length > 0 ? { result: { errorLog: log.slice(0, 120) } } : {}),
     });
     await videoGenerationJobRepository
       .update(attempt.jobId, { renderProgress: null, renderProgressDetail: null })
@@ -687,11 +726,20 @@ export class DeviceRenderService {
       );
     }
 
+    // Judge the size AS SHOWN. Android's Media3 (by default, and as a fallback
+    // when a phone's encoder cannot take a portrait frame) stores a 9:16
+    // video as 1920x1080 frames with a 90° rotation tag; every player shows it
+    // 1080x1920. Comparing the stored size rejected correct portrait videos
+    // ("The uploaded video is 1920x1080, not 1080x1920").
     const expected = expectedDimensions(attempt.ratio);
-    if (summary.width && summary.height) {
-      if (summary.width !== expected.width || summary.height !== expected.height) {
+    const shownWidth = summary.displayWidth ?? summary.width;
+    const shownHeight = summary.displayHeight ?? summary.height;
+    if (shownWidth && shownHeight) {
+      if (shownWidth !== expected.width || shownHeight !== expected.height) {
         throw new DeviceRenderError(
-          `The uploaded video is ${summary.width}x${summary.height}, not ${expected.width}x${expected.height}.`,
+          `The uploaded video is ${shownWidth}x${shownHeight}` +
+            (summary.rotation ? ` (stored ${summary.width}x${summary.height}, rotated ${summary.rotation}°)` : "") +
+            `, not ${expected.width}x${expected.height}.`,
           "wrong_dimensions",
           422
         );
@@ -1103,3 +1151,18 @@ function appOrigin(): string {
 }
 
 export const deviceRenderService = new DeviceRenderService();
+
+/**
+ * For a task claimed by a PHONE, how many seconds until that claim counts as
+ * abandoned: 0 once it already has (the app that held it was closed or stopped
+ * heartbeating), a positive number while it is still inside the grace window.
+ * Null when the task is not a phone's claim — a worker's claim is never taken
+ * over from here.
+ */
+export function deviceClaimLapse(task: RenderTask, now: number = Date.now()): number | null {
+  if (task.state !== "claimed" || !task.claimedBy?.startsWith("dev_")) return null;
+  const lastSeen = (task.heartbeatAt ?? task.claimedAt)?.getTime();
+  if (lastSeen == null) return 0;
+  const left = Math.ceil((lastSeen + DEVICE_RENDER.resumeAfterSeconds * 1000 - now) / 1000);
+  return Math.max(0, left);
+}

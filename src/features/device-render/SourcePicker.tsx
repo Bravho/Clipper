@@ -4,13 +4,9 @@ import type { ReactNode } from "react";
 
 import type { EditorRatio, EditorSource } from "./editorState";
 import { MediaThumb } from "./MediaThumb";
+import { useStudioT } from "./studioI18n";
 
-const RATIOS: { id: EditorRatio; label: string; note: string }[] = [
-  { id: "9:16", label: "9:16", note: "Reels · Shorts · TikTok" },
-  { id: "16:9", label: "16:9", note: "YouTube · Facebook" },
-  { id: "1:1", label: "1:1", note: "Square" },
-  { id: "4:5", label: "4:5", note: "Instagram feed" },
-];
+const RATIOS: EditorRatio[] = ["9:16", "16:9", "1:1", "4:5"];
 
 /**
  * Choosing the material and the canvas.
@@ -45,49 +41,45 @@ export function SourcePicker({
   /** Rendered directly under the media grid — the submit step lives here. */
   footer?: ReactNode;
 }) {
+  const t = useStudioT();
   const clips = sources.filter((source) => source.kind === "clip").length;
   const photos = sources.length - clips;
 
   return (
     <>
       <section className="studio-panel">
-        <h2 className="studio-panel-title">Main Video Shape</h2>
-        <p className="studio-panel-hint">
-          The shape the main video is made in. Your other channels&apos; shapes are made from it
-          after you approve it.
-        </p>
-        <div className="studio-chip-row" role="group" aria-label="Output shape">
+        <h2 className="studio-panel-title">{t("studio.source.shapeTitle")}</h2>
+        <p className="studio-panel-hint">{t("studio.source.shapeHint")}</p>
+        <div className="studio-chip-row" role="group" aria-label={t("studio.source.shapeAria")}>
           {RATIOS.map((entry) => (
             <button
-              key={entry.id}
+              key={entry}
               type="button"
               className="studio-chip"
-              aria-pressed={ratio === entry.id}
+              aria-pressed={ratio === entry}
               disabled={disabled}
-              onClick={() => onRatioChange(entry.id)}
+              onClick={() => onRatioChange(entry)}
             >
-              <strong>{entry.label}</strong>
-              <span style={{ color: "var(--s-text-faint)", fontWeight: 500 }}>{entry.note}</span>
+              <strong>{entry}</strong>
+              <span style={{ color: "var(--s-text-faint)", fontWeight: 500 }}>
+                {t(`studio.source.ratio.${entry}`)}
+              </span>
             </button>
           ))}
         </div>
       </section>
 
       <section className="studio-panel">
-        <h2 className="studio-panel-title">Your footage</h2>
-        <p className="studio-panel-hint">
-          Originals stay on this phone. A clip&apos;s camera sound is removed — the narration
-          is the approved speaking voice.
-        </p>
+        <h2 className="studio-panel-title">{t("studio.source.footageTitle")}</h2>
+        <p className="studio-panel-hint">{t("studio.source.footageHint")}</p>
 
         {locked ? (
           <p className="studio-note" style={{ marginBottom: 14 }}>
-            Submitted. This material is fixed now, because the storyboard refers
-            to it item by item.
+            {t("studio.source.locked")}
           </p>
         ) : (
         <label className="studio-button studio-button-ghost" style={{ marginBottom: 14 }}>
-          Add photos and clips
+          {t("studio.source.add")}
           <input
             type="file"
             accept="image/jpeg,image/png,image/webp,video/mp4"
@@ -112,12 +104,12 @@ export function SourcePicker({
             <span style={{ fontSize: 26 }} aria-hidden>
               ⬚
             </span>
-            Nothing added yet
+            {t("studio.source.empty")}
           </p>
         ) : (
           <>
             <p className="studio-panel-hint" style={{ marginBottom: 10 }}>
-              {photos} photo{photos === 1 ? "" : "s"} · {clips} clip{clips === 1 ? "" : "s"}
+              {t("studio.source.counts", { photos, clips })}
             </p>
             <ul className="studio-media-grid">
               {sources.map((source) => (
@@ -126,14 +118,14 @@ export function SourcePicker({
                   <span className="studio-media-badge">
                     {source.kind === "clip"
                       ? `${(source.durationSeconds ?? 0).toFixed(1)}s`
-                      : "photo"}
+                      : t("studio.source.photoBadge")}
                   </span>
                   {!locked && (
                     <button
                       type="button"
                       className="studio-media-remove"
                       disabled={disabled}
-                      aria-label={`Remove ${source.fileName}`}
+                      aria-label={t("studio.source.remove", { name: source.fileName })}
                       onClick={() => onRemove(source.id)}
                     >
                       ×

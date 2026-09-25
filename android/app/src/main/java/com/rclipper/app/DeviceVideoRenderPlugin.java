@@ -26,6 +26,7 @@ import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 import androidx.media3.transformer.ProgressHolder;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -580,14 +581,19 @@ public class DeviceVideoRenderPlugin extends Plugin {
                 }
 
                 @Override
-                public void onFailure(String message, Exception error) {
+                public void onFailure(String message, Exception error, java.util.List<String> log) {
                     synchronized (DeviceVideoRenderPlugin.this) {
                         activeManifestJob = null;
                         if (activeCall != call) return;
                         activeCall = null;
                     }
-                    if (error == null) call.reject(message);
-                    else call.reject(message, error);
+                    // The plain-language root cause is the message; the step-by-step
+                    // log rides along as data, so the studio can show exactly what
+                    // failed and send it with the attempt.
+                    JSObject data = new JSObject();
+                    data.put("diagnosis", message);
+                    data.put("log", new JSArray(log));
+                    call.reject(message, "RENDER_FAILED", error, data);
                 }
             });
 

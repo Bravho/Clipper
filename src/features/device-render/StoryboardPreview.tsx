@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 
 import type { MotionPreset } from "@/config/montage";
 import { aspectOfRatio, framePlacement } from "@/lib/mobile/shotFraming";
+import { useStudioT } from "./studioI18n";
 import {
   findSource,
   shotFrameZoom,
@@ -40,6 +41,12 @@ export function framingStyle(
     right: "auto",
     bottom: "auto",
     objectFit: "fill",
+    // globals.css caps every img/video at max-width: 100% ("media should never
+    // widen a layout"). A zoomed-in picture is MEANT to be wider than its
+    // frame (the frame crops it), and the cap squeezed it sideways — the
+    // wrong-proportion preview. The frame's overflow: hidden does the cropping.
+    maxWidth: "none",
+    maxHeight: "none",
   };
 }
 
@@ -81,13 +88,14 @@ interface PreviewShot {
 function motionFrames(motion: MotionPreset): [string, string] {
   switch (motion) {
     case "ken_burns_in":
-      return ["scale(1)", "scale(1.15)"];
+      return ["scale(1)", "scale(1.25)"];
     case "ken_burns_out":
-      return ["scale(1.15)", "scale(1)"];
+      return ["scale(1.25)", "scale(1)"];
+    // Same direction as the renderer's table (KEN_BURNS_KEYFRAMES).
     case "pan_left":
-      return ["scale(1.12) translateX(4%)", "scale(1.12) translateX(-4%)"];
+      return ["scale(1.18) translateX(-7%)", "scale(1.18) translateX(7%)"];
     case "pan_right":
-      return ["scale(1.12) translateX(-4%)", "scale(1.12) translateX(4%)"];
+      return ["scale(1.18) translateX(7%)", "scale(1.18) translateX(-7%)"];
     default:
       return ["scale(1)", "scale(1)"];
   }
@@ -106,6 +114,7 @@ export function StoryboardPreview({
   /** Start playback at this flat shot index; `nonce` makes a repeat tap count. */
   jump: { index: number; nonce: number } | null;
 }) {
+  const t = useStudioT();
   const shots = useMemo<PreviewShot[]>(() => {
     const list: PreviewShot[] = [];
     let cursor = 0;
@@ -312,24 +321,28 @@ export function StoryboardPreview({
         <button
           type="button"
           className="studio-preview-play"
-          aria-label={playing ? "Pause the preview" : "Play the preview"}
+          aria-label={playing ? t("studio.preview.pause") : t("studio.preview.play")}
           onClick={() => (playing ? stop() : play())}
         >
           <span aria-hidden>{playing ? "❚❚" : "▶"}</span>
         </button>
         <span className="studio-preview-badge">
-          Scene {(current?.sceneIndex ?? 0) + 1} · shot {index + 1}/{shots.length}
+          {t("studio.preview.badge", {
+            scene: (current?.sceneIndex ?? 0) + 1,
+            shot: index + 1,
+            total: shots.length,
+          })}
         </span>
       </div>
 
-      <div className="studio-preview-track" role="group" aria-label="Jump to a shot">
+      <div className="studio-preview-track" role="group" aria-label={t("studio.preview.jump")}>
         {shots.map((shot, at) => (
           <button
             key={`${shot.source.id}-${at}`}
             type="button"
             className="studio-preview-seg"
             aria-current={at === index ? "true" : undefined}
-            aria-label={`Play from shot ${at + 1}`}
+            aria-label={t("studio.preview.playFrom", { number: at + 1 })}
             style={{ flexGrow: shot.durationSeconds }}
             onClick={() => play(at)}
           >

@@ -3,24 +3,20 @@
 import type { MotionTemplate } from "@/config/motionTemplates";
 import type { EditorDocument } from "./editorState";
 import { TemplateExample } from "./TemplateExample";
+import { useStudioT, type StudioT } from "./studioI18n";
 
-// English names for the studio's English screen. The ids are the server's;
-// the catalogue's own names are Thai and stay on the request page.
-const LOOK_NAMES: Record<string, { name: string; description: string }> = {
-  none: { name: "Clean", description: "Full-screen video with captions and nothing else." },
-  clean_frame: {
-    name: "Minimal frame",
-    description: "White corner brackets, a faint ripple and an accent bar.",
-  },
-  framed_cream: {
-    name: "Warm frame",
-    description: "The video in a rounded window on a warm background, with fine line art.",
-  },
-  editorial: {
-    name: "Editorial",
-    description: "A hairline border, soft top and bottom shading and a small accent mark.",
-  },
-};
+// The studio's names for the Looks, in its language. The ids are the server's;
+// the catalogue's own (Thai) names stay on the request page, and are the
+// fallback for a Look the studio has no words for yet.
+const LOOK_IDS = new Set(["none", "clean_frame", "framed_cream", "editorial"]);
+
+function lookWords(t: StudioT, template: MotionTemplate): { name: string; description: string } {
+  if (!LOOK_IDS.has(template.id)) {
+    return { name: template.name, description: template.description };
+  }
+  const id = template.id as "none";
+  return { name: t(`studio.look.${id}.name`), description: t(`studio.look.${id}.description`) };
+}
 
 /**
  * Graphic: the Look the captions and decoration are drawn in.
@@ -52,6 +48,7 @@ export function StylePanel({
   locked: boolean;
   disabled: boolean;
 }) {
+  const t = useStudioT();
   // The first picture of the edit — a photo, or a clip's poster frame.
   const firstShot = document.scenes.flatMap((scene) => scene.shots)[0];
   const picture =
@@ -60,19 +57,13 @@ export function StylePanel({
 
   return (
     <section className="studio-panel">
-      <h2 className="studio-panel-title">Look</h2>
-      <p className="studio-panel-hint">
-        Example frames from your own material. Decoration that moves in the video is shown at
-        rest; accent colours are matched to your script when it renders.
-      </p>
+      <h2 className="studio-panel-title">{t("studio.look.title")}</h2>
+      <p className="studio-panel-hint">{t("studio.look.hint")}</p>
 
-      <div className="studio-look-grid" role="radiogroup" aria-label="Look">
+      <div className="studio-look-grid" role="radiogroup" aria-label={t("studio.look.title")}>
         {templates.map((template) => {
           const selected = document.templateId === template.id;
-          const words = LOOK_NAMES[template.id] ?? {
-            name: template.name,
-            description: template.description,
-          };
+          const words = lookWords(t, template);
           return (
             <button
               key={template.id}
@@ -83,7 +74,14 @@ export function StylePanel({
               onClick={() => onTemplate(template.id)}
               className="studio-look"
             >
-              <TemplateExample template={template} pictureUrl={pictureUrl} ratio={ratio} height={200} />
+              <TemplateExample
+                template={template}
+                pictureUrl={pictureUrl}
+                ratio={ratio}
+                height={200}
+                sampleCaption={t("studio.look.sampleCaption")}
+                alt={t("studio.look.exampleAlt", { name: words.name })}
+              />
               <span className="studio-look-name">
                 {selected ? "✓ " : ""}
                 {words.name}
@@ -101,12 +99,12 @@ export function StylePanel({
           disabled={disabled}
           onClick={onConfirm}
         >
-          {graphicConfirmed ? "Confirmed — continue to Render" : "Confirm the look"}
+          {graphicConfirmed ? t("studio.look.confirmed") : t("studio.look.confirm")}
         </button>
         <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
           {locked
-            ? "In production — this is the look being rendered."
-            : "Next: render the main video on this phone."}
+            ? t("studio.look.lockedHint")
+            : t("studio.look.next")}
         </p>
       </div>
     </section>

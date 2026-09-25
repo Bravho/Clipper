@@ -143,7 +143,10 @@ export interface KenBurnsKeyframes {
 }
 
 /**
- * The same table as `remotion/montageMotion.ts` `getKenBurnsKeyframes`.
+ * Started as the table in `remotion/montageMotion.ts` `getKenBurnsKeyframes`;
+ * the PHONE's moves are now deliberately bigger (1.25 zoom, 7 % pans against
+ * the server's 1.12 / 4 %), because at phone sizes the server's moves read as a
+ * still picture. The server path keeps its own values.
  *
  * Duplicated deliberately: the Remotion bundle is built separately and cannot
  * import from the app's module graph, and the native engines cannot import the
@@ -152,22 +155,22 @@ export interface KenBurnsKeyframes {
  */
 export const KEN_BURNS_KEYFRAMES: Record<MotionPreset, KenBurnsKeyframes> = {
   ken_burns_in: {
-    scaleFrom: 1.0, scaleTo: 1.12,
+    scaleFrom: 1.0, scaleTo: 1.25,
     translateXFrom: 0, translateXTo: 0, translateYFrom: 0, translateYTo: 0,
   },
   ken_burns_out: {
-    scaleFrom: 1.12, scaleTo: 1.0,
+    scaleFrom: 1.25, scaleTo: 1.0,
     translateXFrom: 0, translateXTo: 0, translateYFrom: 0, translateYTo: 0,
   },
   // The camera direction is opposite the image's translation: moving the
   // oversized image right reveals its left side, so the camera pans left.
   pan_left: {
-    scaleFrom: 1.08, scaleTo: 1.08,
-    translateXFrom: -4, translateXTo: 4, translateYFrom: 0, translateYTo: 0,
+    scaleFrom: 1.18, scaleTo: 1.18,
+    translateXFrom: -7, translateXTo: 7, translateYFrom: 0, translateYTo: 0,
   },
   pan_right: {
-    scaleFrom: 1.08, scaleTo: 1.08,
-    translateXFrom: 4, translateXTo: -4, translateYFrom: 0, translateYTo: 0,
+    scaleFrom: 1.18, scaleTo: 1.18,
+    translateXFrom: 7, translateXTo: -7, translateYFrom: 0, translateYTo: 0,
   },
   static: {
     scaleFrom: 1.0, scaleTo: 1.0,

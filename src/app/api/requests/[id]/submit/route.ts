@@ -16,6 +16,7 @@ import {
 } from "@/lib/mobile/localMediaContract";
 import { MANIFEST_RENDER_PLUGIN_VERSION } from "@/lib/mobile/deviceRenderPluginVersion";
 import { LOCAL_FIRST_MEDIA_ENABLED } from "@/config/localMedia";
+import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { storeLocalMediaDerivatives } from "@/services/LocalMediaDerivativeService";
 
 const submitBodySchema = z.object({
@@ -117,6 +118,23 @@ export async function POST(
 
   try {
     const beforeSubmit = await clipRequestService.getOwnedRequest(id, session.user.id);
+    // A studio brief may ask for up to 90 seconds because the PHONE renders it.
+    // If this submission is not going to be rendered on the phone after all,
+    // the server's own 30-second limit applies — refuse before anything is
+    // charged or stored, rather than start a video the server cannot finish.
+    if (
+      beforeSubmit.status === RequestStatus.Draft &&
+      !rendersOnDevice &&
+      (beforeSubmit.durationSeconds ?? 0) > PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
+    ) {
+      return NextResponse.json(
+        {
+          error: `Videos longer than ${PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS} seconds are made on the phone, and this app version cannot do that. Shorten the video in Brief, or update the app.`,
+          code: "duration_needs_device_render",
+        },
+        { status: 409 }
+      );
+    }
     let submitted = beforeSubmit;
     const localMedia = parsed.data.localMedia;
     let localDerivativeUrls: string[] | null = null;

@@ -68,9 +68,12 @@ describe("briefProblems", () => {
       clipName: "Name here",
       placeName: "Pho 54",
       details: "Twenty characters of description, at least, to clear the minimum.",
-      targetSeconds: 90,
+      // The studio allows up to 90 seconds (the phone renders it); past that
+      // is refused.
+      targetSeconds: 91,
     };
     expect(briefProblems(brief).join(" ")).toContain("Video length");
+    expect(briefProblems({ ...brief, targetSeconds: 90 }).join(" ")).not.toContain("Video length");
   });
 
   it("starts on TikTok — the studio does not offer Travy for now", () => {
@@ -163,8 +166,18 @@ describe("scenesFromStoryboard", () => {
       { sceneNumber: 1, summary: "The shop front", assetIndexes: [0] },
       { sceneNumber: 2, summary: "The broth", assetIndexes: [1, 2] },
     ]);
-    expect(scenes.map((scene) => scene.summary)).toEqual(["The shop front", "The broth"]);
-    expect(scenes[1].shots.map((shot) => shot.sourceId)).toEqual(["b", "c"]);
+    // One photo or clip per scene: the second storyboard scene's two pieces
+    // become two scenes, in order, sharing its sentence.
+    expect(scenes.map((scene) => scene.summary)).toEqual([
+      "The shop front",
+      "The broth",
+      "The broth",
+    ]);
+    expect(scenes.map((scene) => scene.shots.map((shot) => shot.sourceId))).toEqual([
+      ["a"],
+      ["b"],
+      ["c"],
+    ]);
   });
 
   it("opens on a cut and dissolves into everything after it", () => {
@@ -253,7 +266,8 @@ describe("storyboardFromScenes", () => {
   it("round-trips a storyboard, keeping the scene order and sentences", () => {
     expect(storyboardFromScenes(document, indexOf)).toEqual([
       { sceneNumber: 1, summary: "Front", assetIndexes: [2] },
-      { sceneNumber: 2, summary: "Food", assetIndexes: [0, 1] },
+      { sceneNumber: 2, summary: "Food", assetIndexes: [0] },
+      { sceneNumber: 3, summary: "Food", assetIndexes: [1] },
     ]);
   });
 
@@ -263,9 +277,10 @@ describe("storyboardFromScenes", () => {
   });
 
   it("leaves out scenes with nothing in them and renumbers the rest", () => {
-    const withEmpty = [{ ...document[0], shots: [] }, document[1]];
+    const withEmpty = [{ ...document[0], shots: [] }, document[1], document[2]];
     expect(storyboardFromScenes(withEmpty, indexOf)).toEqual([
-      { sceneNumber: 1, summary: "Food", assetIndexes: [0, 1] },
+      { sceneNumber: 1, summary: "Food", assetIndexes: [0] },
+      { sceneNumber: 2, summary: "Food", assetIndexes: [1] },
     ]);
   });
 });

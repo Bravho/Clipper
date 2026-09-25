@@ -45,7 +45,10 @@ export function assessDeviceRenderEligibility(
   }
   if (!device.appInForeground) return reject("app_not_foreground");
   if (device.lowPowerMode) return reject("low_power_mode");
-  if (!Number.isFinite(workload.durationSeconds) || workload.durationSeconds <= 0 || workload.durationSeconds > 90) {
+  if (!Number.isFinite(workload.durationSeconds) || workload.durationSeconds <= 0 || workload.durationSeconds > 120) {
+    // The studio allows a 90-second video; the picture may run a few seconds
+    // past the voice (intro, ending, a storyboard longer than the voice), so
+    // the phone's cap leaves room above that.
     return reject("unsupported_duration");
   }
   if (workload.width * workload.height > 1920 * 1080 || workload.fps > 30) {

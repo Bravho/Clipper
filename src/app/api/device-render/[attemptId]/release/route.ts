@@ -20,6 +20,8 @@ import { deviceRenderService } from "@/services/DeviceRenderService";
  */
 const releaseSchema = z.object({
   reason: z.string().min(1).max(200).default("cancelled"),
+  /** The phone's step-by-step log of the failed attempt (see RenderErrorLog). */
+  log: z.array(z.string().max(600)).max(120).optional(),
 });
 
 export async function POST(
@@ -36,9 +38,10 @@ export async function POST(
   // than refusing to let go of the lease.
   const parsed = releaseSchema.safeParse(json.ok ? json.body : {});
   const reason = parsed.success ? parsed.data.reason : "cancelled";
+  const log = parsed.success ? parsed.data.log : undefined;
 
   try {
-    const result = await deviceRenderService.release(attemptId, auth.caller.userId, reason);
+    const result = await deviceRenderService.release(attemptId, auth.caller.userId, reason, log);
     return NextResponse.json(result);
   } catch (err) {
     return deviceRenderErrorResponse(err);

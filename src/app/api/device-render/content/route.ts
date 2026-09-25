@@ -45,6 +45,15 @@ function parseStoryboard(raw: string | null | undefined): StoryboardScene[] | nu
   }
 }
 
+function parseScenePlan(raw: string): unknown[] | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseLocalMedia(payload: Record<string, unknown> | null | undefined): LocalMediaDescriptor[] {
   const list = payload?.localMedia;
   if (!Array.isArray(list)) return [];
@@ -77,6 +86,8 @@ export async function GET(request: Request) {
     return NextResponse.json(
       { submitted, jobId: null, currentStep: null, failedAtStep: null, contentApproved: false,
         storyboard: null, script: null, voice: null, localMedia: [], outputs: [], phoneParts: [],
+        lastPhoneError: null,
+        production: null,
         chain: null },
       { headers: { "Cache-Control": "no-store, max-age=0" } }
     );
@@ -123,6 +134,28 @@ export async function GET(request: Request) {
         platform: attempt?.platform ?? null,
       };
     });
+  // Why the phone's most recent part stopped, when it stopped with an error and
+  // nothing has been finished since — shown in Render, so a failure is a
+  // sentence the person can read rather than a progress bar that restarts.
+  const newestFirst = [...attempts].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+  const newest = newestFirst[0];
+  const lastPhoneError =
+    newest && newest.state === "failed" && newest.error
+      ? {
+          stage: newest.stage,
+          ratio: newest.ratio,
+          reason: newest.error,
+          at: newest.updatedAt,
+          log: Array.isArray((newest.result as { errorLog?: unknown } | null)?.errorLog)
+            ? ((newest.result as { errorLog: unknown[] }).errorLog.filter(
+                (line): line is string => typeof line === "string"
+              ))
+            : [],
+        }
+      : null;
+
   // Every part a phone finished for this request, oldest first.
   const phoneParts = attempts
     .filter((attempt) => attempt.resultAssetId)
@@ -148,6 +181,18 @@ export async function GET(request: Request) {
       contentApproved,
       storyboard,
       phoneParts,
+      lastPhoneError,
+      // What production was last started with, so a reopened studio shows —
+      // and "Regenerate the video" re-sends — the same edit, sound and look
+      // rather than the defaults. Null until production has been started once.
+      production: job.approvedScenePlan
+        ? {
+            scenePlan: parseScenePlan(job.approvedScenePlan),
+            musicTrackId: job.selectedMusicTrack ?? null,
+            subtitleLanguages: job.subtitleLanguages ?? [],
+            templateId: job.selectedMotionTemplate ?? null,
+          }
+        : null,
       script: hasScript
         ? {
             // Named "Thai" for history; it is written in the request's content

@@ -301,11 +301,14 @@ export function TemplateExample({
   ratio,
   sampleCaption = "Your caption appears here",
   height = 240,
+  alt,
 }: {
   template: MotionTemplate;
   pictureUrl: string | null;
   ratio: string;
   sampleCaption?: string;
+  /** The frame's description for screen readers; defaults to the template id. */
+  alt?: string;
   /** Display height in CSS pixels; drawn at twice that for a sharp retina tile. */
   height?: number;
 }) {
@@ -339,7 +342,7 @@ export function TemplateExample({
     // eslint-disable-next-line @next/next/no-img-element -- a data URL drawn on the phone
     <img
       src={src}
-      alt={`Example frame: ${template.id}`}
+      alt={alt ?? `Example frame: ${template.id}`}
       width={size.width}
       height={size.height}
       className="studio-look-frame"

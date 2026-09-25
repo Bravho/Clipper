@@ -3,7 +3,7 @@
  *
  * WHY A STYLESHEET AND NOT MORE TAILWIND. The rest of the product is a
  * document-shaped web app: white cards on grey, read top to bottom, fine at a
- * desk. An editor is not that. It is a dark, dense, touch-first tool where the
+ * desk. An editor is not that. It is a dense, touch-first tool where the
  * footage is the brightest thing on screen and every control has to be reachable
  * with a thumb while the other hand holds the phone. That is a different visual
  * system, not a different set of utility classes, and giving it real tokens
@@ -11,8 +11,9 @@
  *
  * The rules that shape everything below:
  *
- *   DARK, BECAUSE OF THE FOOTAGE. Video is judged against its surround. A white
- *   page makes every clip look muddy and every exposure decision wrong.
+ *   LIGHT CHROME, DARK FOOTAGE. The editor itself is light (Joe's call, 25 Sep
+ *   2026) but every place footage is shown keeps a black surround and dark
+ *   overlays, so clips are still judged against black, as in a player.
  *
  *   44px MINIMUM TOUCH TARGET. Apple's number, and the reason the old lab's
  *   number inputs were painful: a 28px stepper is a coin toss on a moving bus.
@@ -25,27 +26,30 @@
  */
 
 .studio {
-  /* ── Surfaces: four steps, dark to light, so depth needs no shadows ───── */
-  --s-bg: #0b0d12;
-  --s-surface: #141821;
-  --s-surface-raised: #1c222e;
-  --s-surface-hover: #242b3a;
-  --s-border: #2a3240;
-  --s-border-strong: #3a4455;
+  /* ── Surfaces: light, four steps from page to pressed ─────────────────── */
+  color-scheme: light;
+  --s-bg: #f5f6f8;
+  --s-surface: #ffffff;
+  --s-surface-raised: #eef0f4;
+  --s-surface-hover: #e4e8ee;
+  --s-border: #dce0e7;
+  --s-border-strong: #bfc6d1;
 
   /* ── Text: three weights of attention ─────────────────────────────────── */
-  --s-text: #eef1f6;
-  --s-text-muted: #9aa5b8;
-  --s-text-faint: #6b7789;
+  --s-text: #111827;
+  --s-text-muted: #4b5563;
+  --s-text-faint: #6b7280;
 
-  /* ── Accent: amber reads as "recording / live" and survives on video ──── */
-  --s-accent: #f5a524;
-  --s-accent-strong: #ffb948;
+  /* ── Accent: amber is the live action. As a FILL it keeps dark ink; as
+     TEXT on white it needs the deeper shade (--s-accent-text) to be read. */
+  --s-accent: #f59e0b;
+  --s-accent-strong: #d97706;
   --s-accent-ink: #1a1205;
+  --s-accent-text: #b45309;
 
-  --s-positive: #34d399;
-  --s-warning: #fbbf24;
-  --s-danger: #f87171;
+  --s-positive: #059669;
+  --s-warning: #d97706;
+  --s-danger: #dc2626;
 
   /* ── Rhythm ───────────────────────────────────────────────────────────── */
   --s-radius: 14px;
@@ -53,8 +57,13 @@
   --s-tap: 44px;
 
   /* The shell is full-bleed, so every edge has to respect the hardware. */
-  --s-safe-top: env(safe-area-inset-top, 0px);
-  --s-safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Android 15+ draws the app edge to edge (under the status bar and the
+     navigation bar). Capacitor 8's SystemBars plugin publishes the real insets
+     as --safe-area-inset-* for WebViews whose env() still reports 0; prefer
+     those, fall back to env(). Without this the header sat under the clock
+     and the bottom bar under the navigation buttons. */
+  --s-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --s-safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
 
   background: var(--s-bg);
   color: var(--s-text);
@@ -66,7 +75,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* A dark page inside a light shell needs its own scrollbar and selection. */
+/* The studio has its own tokens, so it needs its own selection colour. */
 .studio ::selection {
   background: var(--s-accent);
   color: var(--s-accent-ink);
@@ -79,7 +88,13 @@
   top: 0;
   z-index: 20;
   padding: calc(var(--s-safe-top) + 12px) 16px 12px;
-  background: color-mix(in srgb, var(--s-bg) 88%, transparent);
+  /* The strip under the status bar stays the app bar's dark slate: the native
+     status-bar icons are drawn light for the dark app bar above the studio, and
+     would vanish on the light header once it sticks to the top. */
+  background-color: color-mix(in srgb, var(--s-bg) 88%, transparent);
+  background-image: linear-gradient(#0f172a, #0f172a);
+  background-size: 100% var(--s-safe-top);
+  background-repeat: no-repeat;
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--s-border);
 }
@@ -907,8 +922,8 @@
   width: auto;
 }
 
-/* The trim bar was built for the light request page; lift its muted text so it
-   reads on the studio's dark surface. */
+/* The trim bar was built for the request page; map its Tailwind greys onto the
+   studio tokens so it matches the studio surface. */
 .studio-trim .text-slate-500,
 .studio-trim .text-slate-600,
 .studio-trim .text-slate-700 {
@@ -1008,7 +1023,7 @@
 }
 
 .studio-track-check {
-  color: var(--s-accent);
+  color: var(--s-accent-text);
   font-weight: 800;
 }
 
@@ -1031,7 +1046,7 @@
 
 .studio-track-play-button[aria-pressed="true"] {
   border-color: var(--s-accent);
-  color: var(--s-accent);
+  color: var(--s-accent-text);
 }
 
 /* ── Graphic: each Look with an example frame ──────────────────────────── */
@@ -1242,7 +1257,7 @@
 
 .studio-render-steps li[data-state="active"] .studio-render-step-mark {
   border-color: var(--s-accent);
-  color: var(--s-accent);
+  color: var(--s-accent-text);
 }
 
 .studio-render-steps li[data-state="done"] .studio-render-step-mark {
@@ -1304,19 +1319,25 @@
 
 .studio-framing-frame {
   position: relative;
+  display: block;
   width: 100%;
-  max-width: 280px;
-  max-height: 280px;
+  max-width: 320px;
+  padding: 0;
   overflow: hidden;
   border-radius: 10px;
   border: 1px solid var(--s-border);
   background: #000;
+  cursor: crosshair;
+}
+
+.studio-framing-frame:disabled {
+  cursor: default;
 }
 
 .studio-framing-frame[style*="9 / 16"],
 .studio-framing-frame[style*="4 / 5"] {
   width: auto;
-  height: 280px;
+  height: 240px;
 }
 
 .studio-framing-frame img {
@@ -1342,4 +1363,93 @@
   gap: 8px;
   font-size: 12px;
   color: var(--s-text-muted);
+}
+
+/* ── scene / shot reordering ─────────────────────────────────────────────── */
+.studio-scene {
+  /* Room for the sticky header when a moved scene is scrolled to. */
+  scroll-margin-top: 140px;
+  transition: box-shadow 0.3s ease;
+}
+
+.studio-scene[data-moved="true"] {
+  box-shadow: 0 0 0 2px var(--s-accent);
+}
+
+.studio-scene-move {
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--s-border);
+  border-radius: 10px;
+  background: var(--s-surface);
+  color: var(--s-text);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.studio-scene-move:disabled {
+  opacity: 0.35;
+}
+
+/* ── brief: video length slider ──────────────────────────────────────────── */
+.studio-length-value {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.studio-length-value strong {
+  font-size: 28px;
+  color: var(--s-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.studio-range-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--s-text-muted);
+}
+
+/* ── Download a finished video; resume a render the app was closed on ───── */
+.studio-download {
+  margin-top: 10px;
+  display: grid;
+}
+
+.studio-download .studio-button {
+  width: 100%;
+}
+
+.studio-resume {
+  margin-top: 12px;
+  display: grid;
+}
+
+/* ── why a render stopped ────────────────────────────────────────────────── */
+.studio-failure {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.studio-failure-log summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio-failure-log pre {
+  margin: 8px 0;
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--s-text);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

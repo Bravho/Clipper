@@ -1,6 +1,6 @@
 "use client";
 
-import { PIPELINE_STEP_COSTS } from "@/config/credits";
+import { PIPELINE_STEP_COSTS, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import {
   ACCEPTED_MIME_TYPES,
   MAX_CLIP_DURATION_SECONDS,
@@ -11,6 +11,7 @@ import {
 } from "@/domain/enums/AssetType";
 import type { MontageTransition, MotionPreset } from "@/config/montage";
 import { Platform } from "@/domain/enums/Platform";
+import { studioEnglish, type StudioT } from "./studioText";
 import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
 import {
   aspectOfRatio,
@@ -51,6 +52,11 @@ export interface EditorSource {
   /** Real length for a clip; null for a still. */
   durationSeconds: number | null;
   fileName: string;
+  /**
+   * Key of the app's private copy of the picked file (see pickedFile.ts), to
+   * delete it with the source. Absent when no copy could be made.
+   */
+  snapshotKey?: string | null;
   /** Width ÷ height as shown (rotation applied); unknown until measured. */
   aspect?: number | null;
   /** Where the AI found the main subject, 0..1 across the picture. */
@@ -388,34 +394,34 @@ export function findSource(document: EditorDocument, sourceId: string): EditorSo
  * say why — "Render" greyed out with no explanation is the thing people file
  * bugs about.
  */
-export function validateDocument(document: EditorDocument): string[] {
+export function validateDocument(document: EditorDocument, t: StudioT = studioEnglish): string[] {
   const problems: string[] = [];
 
   if (document.sources.length === 0) {
-    problems.push("Add at least one photo or clip.");
+    problems.push(t("studio.validate.noSource"));
   }
   if (document.scenes.length === 0 || document.scenes.every((s) => s.shots.length === 0)) {
-    problems.push("Add at least one shot to a scene.");
+    problems.push(t("studio.validate.noShot"));
   }
 
   for (const [sceneIndex, scene] of document.scenes.entries()) {
     for (const [shotIndex, shot] of scene.shots.entries()) {
-      const label = `Scene ${sceneIndex + 1}, shot ${shotIndex + 1}`;
+      const label = t("studio.validate.shotLabel", { scene: sceneIndex + 1, shot: shotIndex + 1 });
       const source = findSource(document, shot.sourceId);
       if (!source) {
-        problems.push(`${label} refers to media that is no longer here.`);
+        problems.push(t("studio.validate.missing", { label }));
         continue;
       }
       if (!(shot.durationSeconds > 0)) {
-        problems.push(`${label} needs a length greater than zero.`);
+        problems.push(t("studio.validate.zero", { label }));
       }
       if (source.kind === "clip") {
         const available = source.durationSeconds ?? 0;
         if (shot.trimStartSeconds < 0) {
-          problems.push(`${label} starts before the beginning of its clip.`);
+          problems.push(t("studio.validate.beforeStart", { label }));
         }
         if (shot.trimEndSeconds != null && shot.trimEndSeconds <= shot.trimStartSeconds) {
-          problems.push(`${label} ends before it starts.`);
+          problems.push(t("studio.validate.endsBefore", { label }));
         }
         if (
           shot.trimEndSeconds != null &&
@@ -423,7 +429,7 @@ export function validateDocument(document: EditorDocument): string[] {
           shot.trimEndSeconds > available + 0.05
         ) {
           problems.push(
-            `${label} plays past the end of its clip (${available.toFixed(1)}s available).`
+            t("studio.validate.pastEnd", { label, seconds: available.toFixed(1) })
           );
         }
       }
@@ -442,37 +448,63 @@ export function validateDocument(document: EditorDocument): string[] {
  */
 export function autoArrange(sources: EditorSource[]): EditorScene[] {
   if (sources.length === 0) return [];
-  return [
-    {
-      id: nextId("scene"),
-      transitionIn: "fade",
-      summary: "",
-      shots: sources.map((source, index) => {
-        const clipLength = source.durationSeconds ?? 0;
-        const duration =
-          source.kind === "clip" && clipLength > 0
-            ? Math.min(DEFAULT_SHOT_SECONDS, Math.max(0.5, clipLength))
-            : DEFAULT_SHOT_SECONDS;
-        return {
-          id: nextId("shot"),
-          sourceId: source.id,
-          durationSeconds: Math.round(duration * 10) / 10,
-          motion:
-            source.kind === "clip"
-              ? "static"
-              : index % 2 === 0
-                ? "ken_burns_in"
-                : "ken_burns_out",
-          trimStartSeconds: 0,
-          trimEndSeconds: source.kind === "clip" && clipLength > 0
-            ? Math.round(Math.min(clipLength, duration) * 10) / 10
-            : null,
-          focusX: 0.5,
-          focusY: 0.5,
-        };
-      }),
-    },
-  ];
+  // One scene per photo or clip: a scene is ONE piece of material.
+  return sources.map((source, index) => ({
+    id: nextId("scene"),
+    transitionIn: index === 0 ? "cut" : "fade",
+    summary: "",
+    shots: [shotFor(source, index % 2 === 0 ? "ken_burns_in" : "ken_burns_out")],
+  }));
+}
+
+/** A fresh shot of one source, with the defaults every new shot starts from. */
+export function shotFor(
+  source: EditorSource,
+  photoMotion: MotionPreset = "ken_burns_in",
+  seconds: number = DEFAULT_SHOT_SECONDS
+): EditorShot {
+  const clipLength = source.durationSeconds ?? 0;
+  const duration =
+    source.kind === "clip" && clipLength > 0 ? Math.min(seconds, Math.max(0.5, clipLength)) : seconds;
+  return {
+    id: nextId("shot"),
+    sourceId: source.id,
+    durationSeconds: Math.round(duration * 10) / 10,
+    motion: source.kind === "clip" ? "static" : photoMotion,
+    trimStartSeconds: 0,
+    trimEndSeconds:
+      source.kind === "clip" && clipLength > 0
+        ? Math.round(Math.min(clipLength, duration) * 10) / 10
+        : null,
+    focusX: 0.5,
+    focusY: 0.5,
+  };
+}
+
+/**
+ * ONE SCENE, ONE PIECE OF MATERIAL.
+ *
+ * A scene is a single photo or a single clip. The storyboard model (and older
+ * plans) sometimes put several in one scene; each extra one becomes its own
+ * scene right after, carrying the same description and entering with a
+ * dissolve, so nothing the plan chose is lost and the order is unchanged.
+ */
+export function oneMaterialPerScene(scenes: EditorScene[]): EditorScene[] {
+  const out: EditorScene[] = [];
+  for (const scene of scenes) {
+    if (scene.shots.length <= 1) {
+      out.push(scene);
+      continue;
+    }
+    scene.shots.forEach((shot, index) => {
+      out.push(
+        index === 0
+          ? { ...scene, shots: [shot] }
+          : { id: nextId("scene"), transitionIn: "fade", summary: scene.summary, shots: [shot] }
+      );
+    });
+  }
+  return out;
 }
 
 // ── the brief, the storyboard and the clock ─────────────────────────────────
@@ -485,28 +517,30 @@ export function autoArrange(sources: EditorSource[]): EditorScene[] {
  * can say what is wrong while the person is still looking at the field, instead
  * of after a round trip that returns a 422.
  */
-export function briefProblems(brief: EditorBrief): string[] {
+export function briefProblems(brief: EditorBrief, t: StudioT = studioEnglish): string[] {
   const problems: string[] = [];
   if (brief.clipName.trim().length < 3) {
-    problems.push("Give the clip a name of at least 3 characters.");
+    problems.push(t("studio.brief.problem.name"));
   }
   if (brief.placeName.trim().length === 0) {
-    problems.push("Name the place or business this is for.");
+    problems.push(t("studio.brief.problem.place"));
   }
   if (brief.details.trim().length < 20) {
-    problems.push("Describe the clip in at least 20 characters.");
+    problems.push(t("studio.brief.problem.details"));
   }
   if (
     brief.targetSeconds < PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS ||
-    brief.targetSeconds > PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
+    brief.targetSeconds > STUDIO_MAX_DURATION_SECONDS
   ) {
     problems.push(
-      `Video length must be between ${PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS} and ` +
-        `${PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS} seconds.`
+      t("studio.brief.problem.length", {
+        min: PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS,
+        max: STUDIO_MAX_DURATION_SECONDS,
+      })
     );
   }
   if (brief.platforms.length === 0) {
-    problems.push("Choose at least one place to publish.");
+    problems.push(t("studio.brief.problem.platform"));
   }
   return problems;
 }
@@ -632,10 +666,53 @@ export function scenesFromStoryboard(
   }
 
   return retimeScenes(
-    scenes,
+    oneMaterialPerScene(scenes),
     document.brief.targetSeconds,
     (sourceId) => findSource(document, sourceId)?.durationSeconds ?? null
   );
+}
+
+/**
+ * The timeline as production last received it — the inverse of
+ * {@link scenePlanFromScenes}.
+ *
+ * A reopened studio would otherwise rebuild the timeline from the storyboard
+ * alone and lose every trim, focus point, zoom and camera move the video was
+ * made with; "Regenerate the video" would then quietly remake a different
+ * edit. Assets whose material is no longer on this phone are left out.
+ */
+export function scenesFromScenePlan(
+  plan: StudioScenePlan[],
+  sourceAt: (assetIndex: number) => EditorSource | undefined
+): EditorScene[] {
+  const scenes: EditorScene[] = [];
+  for (const entry of plan) {
+    const shots: EditorShot[] = [];
+    for (const asset of entry.assets ?? []) {
+      const source = sourceAt(asset.assetIndex);
+      if (!source || !(asset.durationSeconds > 0)) continue;
+      const isClip = source.kind === "clip";
+      shots.push({
+        id: nextId("shot"),
+        sourceId: source.id,
+        durationSeconds: asset.durationSeconds,
+        motion: isClip ? "static" : asset.motion,
+        trimStartSeconds: isClip ? asset.trimStartSeconds ?? 0 : 0,
+        trimEndSeconds: isClip ? asset.trimEndSeconds ?? null : null,
+        focusX: Number.isFinite(asset.focusX) ? asset.focusX : 0.5,
+        focusY: Number.isFinite(asset.focusY) ? asset.focusY : 0.5,
+        frameZoom: Number.isFinite(asset.frameZoom) ? asset.frameZoom : null,
+      });
+    }
+    if (shots.length === 0) continue;
+    scenes.push({
+      id: nextId("scene"),
+      transitionIn: scenes.length === 0 ? "cut" : entry.transitionIn ?? "fade",
+      summary: entry.visualDescriptionThai ?? "",
+      shots,
+    });
+  }
+  return oneMaterialPerScene(scenes);
 }
 
 /**
@@ -675,14 +752,22 @@ export function storyboardFromScenes(
  * finding out about a MOV clip only after copying ten files is a long wait for
  * a "no".
  */
-export function submissionProblems(sources: EditorSource[]): string[] {
+export function submissionProblems(
+  sources: EditorSource[],
+  t: StudioT = studioEnglish
+): string[] {
   const problems: string[] = [];
   if (sources.length === 0) {
-    problems.push("Add at least one photo or clip.");
+    problems.push(t("studio.submit.problem.none"));
     return problems;
   }
   if (sources.length > MAX_UPLOAD_COUNT) {
-    problems.push(`A request can use at most ${MAX_UPLOAD_COUNT} items — remove ${sources.length - MAX_UPLOAD_COUNT}.`);
+    problems.push(
+      t("studio.submit.problem.tooMany", {
+        max: MAX_UPLOAD_COUNT,
+        extra: sources.length - MAX_UPLOAD_COUNT,
+      })
+    );
   }
 
   const accepted = new Set<string>(ACCEPTED_MIME_TYPES);
@@ -693,25 +778,37 @@ export function submissionProblems(sources: EditorSource[]): string[] {
     if (!accepted.has(type)) {
       problems.push(
         source.kind === "clip"
-          ? `${source.fileName}: only MP4 clips can be submitted.`
-          : `${source.fileName}: only JPEG, PNG, WebP or GIF photos can be submitted.`
+          ? t("studio.submit.problem.mp4", { name: source.fileName })
+          : t("studio.submit.problem.photoType", { name: source.fileName })
       );
       continue;
     }
     const cap = source.kind === "clip" ? MAX_VIDEO_SIZE_BYTES : MAX_IMAGE_SIZE_BYTES;
     if (source.file.size > cap) {
-      problems.push(`${source.fileName} is larger than ${Math.round(cap / (1024 * 1024))} MB.`);
+      problems.push(
+        t("studio.submit.problem.tooLarge", {
+          name: source.fileName,
+          mb: Math.round(cap / (1024 * 1024)),
+        })
+      );
     }
     if (
       source.kind === "clip" &&
       source.durationSeconds != null &&
       source.durationSeconds > MAX_CLIP_DURATION_SECONDS
     ) {
-      problems.push(`${source.fileName} is longer than ${MAX_CLIP_DURATION_SECONDS} seconds.`);
+      problems.push(
+        t("studio.submit.problem.tooLong", {
+          name: source.fileName,
+          seconds: MAX_CLIP_DURATION_SECONDS,
+        })
+      );
     }
   }
   if (total > MAX_UPLOAD_SIZE_BYTES) {
-    problems.push(`All items together must be under ${Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024))} MB.`);
+    problems.push(
+      t("studio.submit.problem.total", { mb: Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024)) })
+    );
   }
   return problems;
 }

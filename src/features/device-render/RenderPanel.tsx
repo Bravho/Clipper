@@ -7,7 +7,10 @@ import {
   type DeviceRenderProgress,
 } from "@/lib/mobile/deviceRenderClient";
 import type { LocalDraftResult } from "./localDraft";
+import { DownloadVideoButton, ResumeCallout, type ResumeControls } from "./DownloadVideoButton";
 import type { RenderTimeline } from "./renderTimeline";
+import { RenderFailureLog } from "./RenderFailureLog";
+import { useStudioT } from "./studioI18n";
 
 /** One thing that has to be true before the main video can be rendered. */
 export interface RenderReadiness {
@@ -24,18 +27,37 @@ export interface MainVideoControls {
   starting: boolean;
   onStart: () => void;
   /** The finished, captioned main video, once the phone has rendered it. */
-  video: { url: string; ratio: string; madeOn?: "phone" | "server" } | null;
-  /** The video is waiting for the person's approval. */
-  awaitingApproval: boolean;
-  /** Already approved (the job has moved on to the channel shapes). */
+  video: {
+    url: string;
+    ratio: string;
+    madeOn?: "phone" | "server";
+    assetId: string;
+  } | null;
+  /** The request, for the download link. */
+  requestId: string;
+  /** The first channel's names, to name the downloaded file. */
+  channel?: string;
+  /** Present while the render is paused (app was closed, Stop, or a failure). */
+  resume: ResumeControls | null;
+  /** The finished video is here and nothing has been made from it yet. */
+  atReview: boolean;
+  /** Taken on to Channels (the job has moved on to the channel shapes). */
   approved: boolean;
-  approving: boolean;
-  onApprove: () => void;
+  /** Remaking it from the current storyboard, sound and look. */
+  regenerating: boolean;
+  onRegenerate: () => void;
+  /** Why it cannot be remade yet (the first unmet checklist item), or null. */
+  regenerateBlocker: string | null;
+  onChannels: () => void;
   error: string | null;
   /** The three parts of the video and where the phone is with them. */
   timeline: RenderTimeline | null;
   /** How long this phone has been working on the video, e.g. "1:24". */
   elapsed: string | null;
+  /** Why the phone's last try at a part stopped, when it stopped with an error. */
+  phoneError?: string | null;
+  /** That try's step-by-step log (app + phone renderer). */
+  phoneErrorLog?: string[];
 }
 
 /**
@@ -78,6 +100,7 @@ export function RenderPanel({
   /** Present when the studio is attached to a request. */
   main?: MainVideoControls | null;
 }) {
+  const t = useStudioT();
   const ready = main ? main.checklist.every((item) => item.done) : false;
 
   const preview = draft?.preview;
@@ -86,15 +109,15 @@ export function RenderPanel({
   return (
     <>
       <section className="studio-panel">
-        <h2 className="studio-panel-title">Ready to render</h2>
+        <h2 className="studio-panel-title">{t("studio.render.readyTitle")}</h2>
         <dl className="studio-stats">
           <div className="studio-stat">
-            <dt>Picture</dt>
+            <dt>{t("studio.render.picture")}</dt>
             <dd>{totalSeconds.toFixed(1)}s</dd>
           </div>
           <div className="studio-stat">
-            <dt>Sound</dt>
-            <dd>{hasVoice ? "Voice + bed" : "Silent"}</dd>
+            <dt>{t("studio.render.sound")}</dt>
+            <dd>{hasVoice ? t("studio.render.voiceBed") : t("studio.render.silent")}</dd>
           </div>
         </dl>
 
@@ -111,8 +134,7 @@ export function RenderPanel({
 
         {!nativeReady && problems.length === 0 && (
           <p className="studio-note studio-note-warning" style={{ marginTop: 12 }}>
-            This app build cannot render on the phone. Update the RClipper app — a studio
-            video is rendered on this phone, not on the server.
+            {t("studio.render.cannotRender")}
           </p>
         )}
 
@@ -133,12 +155,12 @@ export function RenderPanel({
                 disabled={!ready || !nativeReady || main.starting || busy}
                 onClick={main.onStart}
               >
-                {main.starting ? "Starting…" : "Render the main video"}
+                {main.starting ? t("studio.render.starting") : t("studio.render.renderMain")}
               </button>
               <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
                 {ready
-                  ? "Sends your storyboard, sound and look, then this phone renders the video. Keep the app open."
-                  : "Finish the steps above first."}
+                  ? t("studio.render.readyHint")
+                  : t("studio.render.finishFirst")}
               </p>
             </div>
           </>
@@ -148,9 +170,9 @@ export function RenderPanel({
       {main?.productionStarted && main.timeline && (
         <section className="studio-panel" aria-live="polite">
           <h2 className="studio-panel-title">
-            <span className="studio-eyebrow" style={{ color: "var(--s-accent)" }}>
+            <span className="studio-eyebrow" style={{ color: "var(--s-accent-text)" }}>
               {busy && <span className="studio-live-dot" aria-hidden />}
-              {main.timeline.finished ? "Made on this phone" : "Making your video on this phone"}
+              {main.timeline.finished ? t("studio.render.madeHere") : t("studio.render.making")}
             </span>
           </h2>
           <div
@@ -190,21 +212,28 @@ export function RenderPanel({
                 </span>
                 <span className="studio-render-step-state">
                   {entry.state === "done"
-                    ? "Done"
+                    ? t("studio.render.done")
                     : entry.state === "active"
                       ? busy && entry.percent != null
                         ? `${entry.percent}%`
-                        : "Next"
-                      : "Waiting"}
+                        : t("studio.render.next")
+                      : t("studio.render.waiting")}
                 </span>
               </li>
             ))}
           </ol>
 
-          {!main.timeline.finished && (
+          {!main.timeline.finished && main.resume && !busy && (
+            <ResumeCallout resume={main.resume} what={t("studio.render.pausedMain")} />
+          )}
+
+          {main.phoneError && !busy && !main.timeline.finished && (
+            <RenderFailureLog summary={main.phoneError} log={main.phoneErrorLog ?? []} />
+          )}
+          {!main.timeline.finished && !main.resume && (
             <p className="studio-shot-meta" style={{ marginTop: 10 }}>
-              {main.elapsed ? `Working for ${main.elapsed}. ` : ""}
-              Keep the app open and the screen on — every frame is made here, on this phone.
+              {main.elapsed ? t("studio.render.workingFor", { elapsed: main.elapsed }) : ""}
+              {t("studio.render.keepOpen")}
             </p>
           )}
         </section>
@@ -213,7 +242,7 @@ export function RenderPanel({
       {progress && !main?.productionStarted && (
         <section className="studio-panel">
           <h2 className="studio-panel-title">
-            <span className="studio-eyebrow" style={{ color: "var(--s-accent)" }}>
+            <span className="studio-eyebrow" style={{ color: "var(--s-accent-text)" }}>
               {busy && <span className="studio-live-dot" aria-hidden />}
               {progress.phase}
             </span>
@@ -230,7 +259,7 @@ export function RenderPanel({
 
       {pipelineStatus && !main?.productionStarted && (
         <p className="studio-note">
-          <strong>Production: </strong>
+          <strong>{t("studio.render.production")}</strong>
           {pipelineStatus}
         </p>
       )}
@@ -241,7 +270,9 @@ export function RenderPanel({
 
       {main?.video && (
         <section className="studio-panel">
-          <h2 className="studio-panel-title">Main video · {main.video.ratio}</h2>
+          <h2 className="studio-panel-title">
+            {t("studio.render.mainVideo", { ratio: main.video.ratio })}
+          </h2>
           <video
             key={main.video.url}
             src={main.video.url}
@@ -252,35 +283,56 @@ export function RenderPanel({
           />
           {main.video.madeOn === "server" && (
             <p className="studio-note" role="alert" style={{ marginTop: 10 }}>
-              <strong>This video was not made on this phone.</strong> The server&apos;s video
-              worker picked it up, and the server only has a still picture of each of your clips
-              — so the clips play as snapshots. That worker needs updating so it leaves phone requests
-              alone. Don&apos;t approve this one.
+              <strong>{t("studio.render.serverMadeTitle")}</strong>{" "}
+              {t("studio.render.serverMadeBody")}
             </p>
           )}
           {main.video.madeOn === "phone" && (
             <p className="studio-shot-meta" style={{ marginTop: 8 }}>
-              Made on this phone from your original clips and photos.
+              {t("studio.render.madeFromOriginals")}
             </p>
           )}
-          {main.awaitingApproval && (
-            <div className="studio-approve">
-              <button
-                type="button"
-                className="studio-button studio-button-primary"
-                disabled={main.approving || busy}
-                onClick={main.onApprove}
-              >
-                {main.approving ? "Approving…" : "Approve the video"}
-              </button>
-              <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
-                Next: choose which other channel shapes to make from it.
+          <DownloadVideoButton
+            requestId={main.requestId}
+            assetId={main.video.assetId}
+            channel={main.channel}
+            label={t("studio.render.downloadMain", { ratio: main.video.ratio })}
+          />
+          {main.atReview && (
+            <>
+              <p className="studio-note studio-note-positive" style={{ marginTop: 12 }}>
+                {t("studio.render.videoReady")}
               </p>
-            </div>
+              <div className="studio-approve">
+                <button
+                  type="button"
+                  className="studio-button studio-button-primary"
+                  disabled={busy || main.regenerating}
+                  onClick={main.onChannels}
+                >
+                  {t("studio.render.toChannels")}
+                </button>
+                <button
+                  type="button"
+                  className="studio-button studio-button-ghost"
+                  disabled={busy || main.regenerating || main.regenerateBlocker !== null}
+                  onClick={main.onRegenerate}
+                >
+                  {main.regenerating ? t("studio.render.startingAgain") : t("studio.render.regenerate")}
+                </button>
+                <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
+                  {main.regenerateBlocker
+                    ? t("studio.render.toRegenerate", {
+                        what: `${main.regenerateBlocker.charAt(0).toLowerCase()}${main.regenerateBlocker.slice(1)}`,
+                      })
+                    : t("studio.render.regenerateHint")}
+                </p>
+              </div>
+            </>
           )}
           {main.approved && (
             <p className="studio-note studio-note-positive" style={{ marginTop: 12 }}>
-              Approved. The other channel shapes are made in Channels.
+              {t("studio.render.mainDone")}
             </p>
           )}
         </section>
@@ -289,12 +341,12 @@ export function RenderPanel({
       {main?.error && <p className="studio-note studio-note-danger">{main.error}</p>}
 
       {availability && !availability.available && (
-        <p className="studio-note">{explainRefusal(availability.reason)}</p>
+        <p className="studio-note">{explainRefusal(availability.reason, t)}</p>
       )}
 
       {preview && previewSrc && (
         <section className="studio-panel">
-          <h2 className="studio-panel-title">What this phone produced</h2>
+          <h2 className="studio-panel-title">{t("studio.render.produced")}</h2>
           <video
             key={preview.path}
             src={previewSrc}
@@ -304,35 +356,33 @@ export function RenderPanel({
           />
           <dl className="studio-stats" style={{ marginTop: 12 }}>
             <div className="studio-stat">
-              <dt>Length</dt>
+              <dt>{t("studio.render.length")}</dt>
               <dd>{preview.durationSeconds.toFixed(2)}s</dd>
             </div>
             <div className="studio-stat">
-              <dt>Size</dt>
+              <dt>{t("studio.render.size")}</dt>
               <dd>{(preview.fileSizeBytes / 1e6).toFixed(1)} MB</dd>
             </div>
             <div className="studio-stat">
-              <dt>Sound</dt>
+              <dt>{t("studio.render.sound")}</dt>
               <dd style={{ color: preview.hasAudioTrack ? undefined : "var(--s-danger)" }}>
-                {preview.hasAudioTrack ? "Present" : "None"}
+                {preview.hasAudioTrack ? t("studio.render.present") : t("studio.render.none")}
               </dd>
             </div>
             <div className="studio-stat">
-              <dt>Scene joins</dt>
-              <dd>{preview.crossDissolved ? "Dissolve" : "Hard cuts"}</dd>
+              <dt>{t("studio.render.joins")}</dt>
+              <dd>{preview.crossDissolved ? t("studio.render.dissolve") : t("studio.render.hardCuts")}</dd>
             </div>
           </dl>
 
           {!preview.crossDissolved && (
             <p className="studio-note studio-note-warning" style={{ marginTop: 12 }}>
-              The dissolving composition would not export on this phone, so the scenes were
-              joined with hard cuts. A server render dissolves them — worth noting when
-              comparing the two.
+              {t("studio.render.hardCutsNote")}
             </p>
           )}
           {draft?.final?.coverPath && (
             <p className="studio-shot-meta" style={{ marginTop: 10 }}>
-              A cover image was taken from this video&apos;s own frames.
+              {t("studio.render.cover")}
             </p>
           )}
         </section>

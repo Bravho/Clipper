@@ -67,6 +67,15 @@ public final class ManifestRenderer {
 
     private final Context context;
 
+    /**
+     * The last-resort build: every shot plainly cover-cropped to the canvas,
+     * as renders were before per-shot framing existed. {@link ManifestJob}
+     * switches it on only after the normal builds have failed on this phone, so
+     * a framing this phone's GPU pipeline refuses costs the framing, never the
+     * video.
+     */
+    public boolean plainFraming = false;
+
     public ManifestRenderer(Context context) {
         this.context = context;
     }
@@ -292,7 +301,7 @@ public final class ManifestRenderer {
         // off-centre subject in view) fits the whole picture and then places it
         // — see ShotFraming and src/lib/mobile/shotFraming.ts.
         Matrix framing = null;
-        if (ShotFraming.needsPlacement(shot.frameZoom, shot.focusX, shot.focusY)) {
+        if (!plainFraming && ShotFraming.needsPlacement(shot.frameZoom, shot.focusX, shot.focusY)) {
             int[] size = ShotFraming.pictureSize(file, source.isImage());
             if (size != null) {
                 framing = ShotFraming.placement(size[0], size[1], manifest.width, manifest.height,
@@ -355,13 +364,38 @@ public final class ManifestRenderer {
             .build();
     }
 
+    /**
+     * Seconds since this item's FIRST frame.
+     *
+     * THE BUG THIS REMOVES. Inside a sequence, Media3 hands an item's effects
+     * presentation times that already include the length of every item before
+     * it in the sequence — the shot at 0:09 sees its first frame at 9 000 000
+     * µs, not 0. The Ken Burns effect divided that by the shot's own length, so
+     * every photo after the first began at progress > 1, was clamped to the
+     * end of its move, and sat perfectly still: a still image where a camera
+     * move was approved. Measuring from the first frame the effect actually
+     * sees is right whatever offset Media3 applies (and still right when there
+     * is none, as for the first shot).
+     */
+    private static final class ItemClock {
+        private long firstUs = Long.MIN_VALUE;
+
+        double secondsAt(long presentationTimeUs) {
+            if (firstUs == Long.MIN_VALUE || presentationTimeUs < firstUs) {
+                firstUs = presentationTimeUs;
+            }
+            return (presentationTimeUs - firstUs) / 1_000_000d;
+        }
+    }
+
     /** Ken Burns, plus the named transition's entrance flourish while it fades. */
     private MatrixTransformation kenBurnsEffect(
         RenderManifest.Shot shot, double durationSeconds, String transition, double dissolveSeconds
     ) {
         final double duration = Math.max(durationSeconds, 1d / 1000d);
+        final ItemClock clock = new ItemClock();
         return presentationTimeUs -> {
-            double t = presentationTimeUs / 1_000_000d;
+            double t = clock.secondsAt(presentationTimeUs);
             float progress = (float) (t / duration);
             Matrix matrix = MotionMath.kenBurns(shot.motion, progress, shot.focusX, shot.focusY);
 
@@ -375,8 +409,9 @@ public final class ManifestRenderer {
     }
 
     private MatrixTransformation entranceEffect(String transition, double dissolveSeconds) {
+        final ItemClock clock = new ItemClock();
         return presentationTimeUs -> {
-            double t = presentationTimeUs / 1_000_000d;
+            double t = clock.secondsAt(presentationTimeUs);
             float fade = dissolveSeconds > 0
                 ? MotionMath.clamp((float) (t / dissolveSeconds), 0f, 1f) : 1f;
             return MotionMath.entrance(transition, fade);

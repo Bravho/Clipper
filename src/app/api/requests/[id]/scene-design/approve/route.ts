@@ -11,6 +11,7 @@ import {
 } from "@/config/montage";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import { isValidTemplateId } from "@/config/motionTemplates";
+import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 
 /** At most two subtitle languages fit on screen at once. */
 const MAX_SUBTITLE_LANGS = 2;
@@ -41,7 +42,14 @@ export async function POST(
     return NextResponse.json({ error: "Missing scene design fields." }, { status: 400 });
   }
 
-  if (!Number.isFinite(durationSeconds) || durationSeconds < 5 || durationSeconds > 30) {
+  // A phone-rendered request may run longer: the phone makes every frame.
+  const maxDurationSeconds =
+    clipRequest.renderLocation === "device" ? STUDIO_MAX_DURATION_SECONDS : 30;
+  if (
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds < 5 ||
+    durationSeconds > maxDurationSeconds
+  ) {
     return NextResponse.json({ error: "Invalid durationSeconds." }, { status: 400 });
   }
 

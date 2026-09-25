@@ -103,4 +103,27 @@ describe("render timeline", () => {
     expect(running.now).toBe("Editorial look · caption 3 of 7 · 0:09 of 0:24");
     expect(buildRenderTimeline({ ...idle, pipelineStep: null }).now).toBeNull();
   });
+
+  it("keeps Voice and music active until the phone has finished sending it", () => {
+    // The server has already accepted the master and moved on, but the phone
+    // is still hearing back — Look and captions must not light up yet.
+    const timeline = buildRenderTimeline({
+      ...idle,
+      pipelineStep: VideoGenerationStep.GeneratingOverlay,
+      busy: true,
+      progress: { phase: "finishing", percent: 60, message: "", stage: "master" },
+    });
+    expect(timeline.steps.map((step) => step.state)).toEqual(["done", "active", "waiting"]);
+    expect(timeline.status).toContain("Part 2 of 3");
+  });
+
+  it("moves to Look and captions once the phone starts it", () => {
+    const timeline = buildRenderTimeline({
+      ...idle,
+      pipelineStep: VideoGenerationStep.GeneratingOverlay,
+      busy: true,
+      progress: { phase: "rendering", percent: 10, message: "", stage: "final" },
+    });
+    expect(timeline.steps.map((step) => step.state)).toEqual(["done", "done", "active"]);
+  });
 });

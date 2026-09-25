@@ -2,6 +2,7 @@
 
 import { makePreviewProxyOnDevice } from "@/lib/mobile/deviceVideoRender";
 import { probeVideo } from "./editorState";
+import { studioEnglish, type StudioT } from "./studioText";
 
 /**
  * Get a clip ready for the studio: its length, a poster frame, and something
@@ -26,7 +27,10 @@ export interface PreparedClip {
 
 export class ClipUnreadableError extends Error {}
 
-export async function prepareClip(file: File): Promise<PreparedClip> {
+export async function prepareClip(
+  file: File,
+  t: StudioT = studioEnglish
+): Promise<PreparedClip> {
   try {
     const probed = await probeVideo(file);
     return {
@@ -52,18 +56,12 @@ export async function prepareClip(file: File): Promise<PreparedClip> {
         durationSeconds: probed.durationSeconds,
         posterUrl: probed.posterUrl,
         previewUrl: URL.createObjectURL(proxy),
-        note:
-          `${file.name} is in a format this screen cannot play, so the app made a lighter ` +
-          "preview copy on this phone. Your video is still made from the original.",
+        note: t("studio.pipe.proxyNote", { name: file.name }),
       };
     } catch {
       // Fall through to the plain explanation.
     }
   }
 
-  throw new ClipUnreadableError(
-    `${file.name} could not be read on this phone. It is probably in a format the phone ` +
-      "cannot open (for example HDR or 8K). Export it again as a standard MP4 " +
-      "(H.264, up to 4K) and add it again."
-  );
+  throw new ClipUnreadableError(t("studio.pipe.clipUnreadable", { name: file.name }));
 }

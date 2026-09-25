@@ -45,6 +45,39 @@ final class ManifestJob {
 
     private var downloaded: [URL] = []
 
+    // ── what happened, for the person when it fails ─────────────────────────
+    // The Swift half of `RenderErrorLog.java`: every step, and every failed
+    // export with its full error chain (domain, code, underlying error), handed
+    // back with the rejection so the studio can show the root cause.
+    private let logLock = NSLock()
+    private var logLines: [String] = []
+    private let startedAt = Date()
+
+    var log: [String] {
+        logLock.lock(); defer { logLock.unlock() }
+        return logLines
+    }
+
+    func note(_ line: String) {
+        logLock.lock(); defer { logLock.unlock() }
+        guard logLines.count < 80 else { return }
+        let seconds = Date().timeIntervalSince(startedAt)
+        logLines.append(String(format: "[%5.1fs] ", seconds) + String(line.prefix(400)))
+    }
+
+    static func chain(_ error: Error) -> String {
+        var parts: [String] = []
+        var current: NSError? = error as NSError
+        var depth = 0
+        while let nsError = current, depth < 5 {
+            parts.append("\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)"
+                + (nsError.localizedFailureReason.map { " — \($0)" } ?? ""))
+            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+            depth += 1
+        }
+        return parts.joined(separator: " ← caused by ")
+    }
+
     init(
         manifest: RenderManifest,
         workDirectory: URL,
@@ -83,9 +116,16 @@ final class ManifestJob {
     /// Run the whole stage. Call from a background queue.
     func run() throws -> Result {
         var output: URL?
+        note("Phone: \(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)")
+        note("Stage \(manifest.stage) at \(manifest.width)×\(manifest.height), \(manifest.fps) fps")
         do {
             let inputs = try fetchInputs()
             try throwIfCancelled()
+            for (key, url) in inputs {
+                let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size]
+                    as? NSNumber)?.doubleValue ?? 0
+                note(String(format: "Input %@: %.1f MB", key, size / 1_000_000))
+            }
 
             let outputURL = workDirectory.appendingPathComponent("\(UUID().uuidString)-output.mp4")
             output = outputURL
@@ -145,6 +185,7 @@ final class ManifestJob {
                     } catch RenderError.cancelled {
                         throw RenderError.cancelled
                     } catch {
+                        note("Attempt with the look (template) FAILED — \(Self.chain(error))")
                         try? FileManager.default.removeItem(at: outputURL)
                         let plain = try renderer.buildMontage(
                             resolve: resolve,
@@ -232,6 +273,7 @@ final class ManifestJob {
             report(100)
             return result
         } catch {
+            note("Render FAILED — \(Self.chain(error))")
             cleanupDownloads()
             if let output { try? FileManager.default.removeItem(at: output) }
             throw error
@@ -385,6 +427,7 @@ final class ManifestJob {
         case .cancelled:
             throw RenderError.cancelled
         default:
+            if let error = session.error { note("Export FAILED — \(Self.chain(error))") }
             throw RenderError.export(
                 "Export failed: \(session.error?.localizedDescription ?? "status \(session.status.rawValue)")")
         }

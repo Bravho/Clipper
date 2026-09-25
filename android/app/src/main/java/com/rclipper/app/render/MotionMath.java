@@ -38,13 +38,13 @@ public final class MotionMath {
     public static float[] keyframes(String motion) {
         // { scaleFrom, scaleTo, txFrom, txTo, tyFrom, tyTo } — translates in percent.
         switch (motion == null ? "static" : motion) {
-            case "ken_burns_in":  return new float[] { 1.00f, 1.12f,  0f,  0f, 0f, 0f };
-            case "ken_burns_out": return new float[] { 1.12f, 1.00f,  0f,  0f, 0f, 0f };
+            case "ken_burns_in":  return new float[] { 1.00f, 1.25f,  0f,  0f, 0f, 0f };
+            case "ken_burns_out": return new float[] { 1.25f, 1.00f,  0f,  0f, 0f, 0f };
             // The camera direction is opposite the image's translation: moving
             // the oversized image right reveals its left side, so the camera
             // pans left.
-            case "pan_left":      return new float[] { 1.08f, 1.08f, -4f,  4f, 0f, 0f };
-            case "pan_right":     return new float[] { 1.08f, 1.08f,  4f, -4f, 0f, 0f };
+            case "pan_left":      return new float[] { 1.18f, 1.18f, -7f,  7f, 0f, 0f };
+            case "pan_right":     return new float[] { 1.18f, 1.18f,  7f, -7f, 0f, 0f };
             default:              return new float[] { 1.00f, 1.00f,  0f,  0f, 0f, 0f };
         }
     }

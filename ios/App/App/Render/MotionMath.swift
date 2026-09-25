@@ -35,22 +35,22 @@ enum MotionMath {
     static func keyframes(_ motion: RenderManifest.Motion) -> Keyframes {
         switch motion {
         case .kenBurnsIn:
-            return Keyframes(scaleFrom: 1.00, scaleTo: 1.12,
+            return Keyframes(scaleFrom: 1.00, scaleTo: 1.25,
                              translateXFrom: 0, translateXTo: 0,
                              translateYFrom: 0, translateYTo: 0)
         case .kenBurnsOut:
-            return Keyframes(scaleFrom: 1.12, scaleTo: 1.00,
+            return Keyframes(scaleFrom: 1.25, scaleTo: 1.00,
                              translateXFrom: 0, translateXTo: 0,
                              translateYFrom: 0, translateYTo: 0)
         // The camera direction is opposite the image's translation: moving the
         // oversized image right reveals its left side, so the camera pans left.
         case .panLeft:
-            return Keyframes(scaleFrom: 1.08, scaleTo: 1.08,
-                             translateXFrom: -4, translateXTo: 4,
+            return Keyframes(scaleFrom: 1.18, scaleTo: 1.18,
+                             translateXFrom: -7, translateXTo: 7,
                              translateYFrom: 0, translateYTo: 0)
         case .panRight:
-            return Keyframes(scaleFrom: 1.08, scaleTo: 1.08,
-                             translateXFrom: 4, translateXTo: -4,
+            return Keyframes(scaleFrom: 1.18, scaleTo: 1.18,
+                             translateXFrom: 7, translateXTo: -7,
                              translateYFrom: 0, translateYTo: 0)
         case .staticFrame:
             return Keyframes(scaleFrom: 1.00, scaleTo: 1.00,

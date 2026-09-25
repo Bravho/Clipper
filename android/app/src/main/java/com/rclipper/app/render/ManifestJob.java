@@ -42,7 +42,11 @@ public final class ManifestJob {
     public interface Callback {
         void onProgress(double percent);
         void onSuccess(Result result);
-        void onFailure(String message, Exception error);
+        /**
+         * `message` is the root cause as one plain sentence; `log` is every
+         * step and every failed attempt, for the person and for support.
+         */
+        void onFailure(String message, Exception error, java.util.List<String> log);
     }
 
     /** Everything the web layer needs to report the render and complete it. */
@@ -71,6 +75,7 @@ public final class ManifestJob {
     private volatile Transformer transformer;
     private volatile boolean cancelled;
     private final Map<String, File> downloaded = new HashMap<>();
+    private final RenderErrorLog log = new RenderErrorLog();
 
     public ManifestJob(
         Context context,
@@ -112,8 +117,13 @@ public final class ManifestJob {
     public void run() {
         File output = null;
         try {
+            log.note("Stage " + manifest.stage + " at " + manifest.width + "×" + manifest.height
+                + ", " + manifest.fps + " fps, from originals: " + manifest.buildFromSources);
             Map<String, File> inputs = fetchInputs();
             if (cancelled) throw new InterruptedException();
+            for (RenderManifest.Source source : manifest.sources) {
+                log.describeInput(source.assetId, inputs.get(source.assetId), !source.isImage());
+            }
 
             output = new File(workDirectory, java.util.UUID.randomUUID() + "-output.mp4");
             ManifestRenderer renderer = new ManifestRenderer(context);
@@ -146,10 +156,27 @@ public final class ManifestJob {
                     export(built, output);
                 } catch (Exception dissolveFailure) {
                     if (cancelled) throw dissolveFailure;
+                    log.failure("Attempt with cross-dissolves", dissolveFailure);
                     if (dissolving != null) releaseOverlays(dissolving);
                     retriedWithHardCuts = true;
-                    built = renderer.buildMontage(manifest, resolver, false);
-                    export(built, output);
+                    try {
+                        built = renderer.buildMontage(manifest, resolver, false);
+                        export(built, output);
+                    } catch (Exception hardCutFailure) {
+                        if (cancelled) throw hardCutFailure;
+                        log.failure("Attempt with hard cuts", hardCutFailure);
+                        // Last resort: plain cover-cropped framing. Report the
+                        // FIRST failure if even this fails — it is the real one.
+                        renderer.plainFraming = true;
+                        try {
+                            built = renderer.buildMontage(manifest, resolver, false);
+                            export(built, output);
+                        } catch (Exception plainFailure) {
+                            if (cancelled) throw plainFailure;
+                            log.failure("Attempt with plain framing (last resort)", plainFailure);
+                            throw dissolveFailure;
+                        }
+                    }
                 }
             } else if (manifest.buildFromSources) {
                 // The master or the final straight from the originals, one
@@ -189,11 +216,27 @@ public final class ManifestJob {
                             export(built, output);
                         } catch (Exception dissolveFailure) {
                             if (cancelled) throw dissolveFailure;
+                            log.failure("Attempt with cross-dissolves", dissolveFailure);
                             if (dissolving != null) releaseOverlays(dissolving);
                             retriedWithHardCuts = true;
-                            built = renderer.buildMasterFromSources(
-                                manifest, resolver, mixed, total, false);
-                            export(built, output);
+                            try {
+                                built = renderer.buildMasterFromSources(
+                                    manifest, resolver, mixed, total, false);
+                                export(built, output);
+                            } catch (Exception hardCutFailure) {
+                                if (cancelled) throw hardCutFailure;
+                                log.failure("Attempt with hard cuts", hardCutFailure);
+                                renderer.plainFraming = true;
+                                try {
+                                    built = renderer.buildMasterFromSources(
+                                        manifest, resolver, mixed, total, false);
+                                    export(built, output);
+                                } catch (Exception plainFailure) {
+                                    if (cancelled) throw plainFailure;
+                                    log.failure("Attempt with plain framing (last resort)", plainFailure);
+                                    throw dissolveFailure;
+                                }
+                            }
                         }
                     } else {
                         // Three attempts, each giving up the least important
@@ -226,8 +269,29 @@ public final class ManifestJob {
                                 break;
                             } catch (Exception failure) {
                                 if (cancelled) throw failure;
+                                log.failure("Final-part attempt (dissolves " + dissolve + ", template " + withTemplate + ")", failure);
                                 if (candidate != null) releaseOverlays(candidate);
                                 lastFailure = failure;
+                            }
+                        }
+                        if (lastFailure != null) {
+                            // Last resort: plain cover-cropped framing, hard
+                            // cuts, with the template. Report the original
+                            // failure if even this does not work.
+                            renderer.plainFraming = true;
+                            ManifestRenderer.Built plain = null;
+                            try {
+                                plain = renderer.buildFinalFromSources(
+                                    manifest, resolver, mixed, total, false, true);
+                                built = plain;
+                                export(plain, output);
+                                retriedWithHardCuts = true;
+                                templateDropped = false;
+                                lastFailure = null;
+                            } catch (Exception plainFailure) {
+                                if (cancelled) throw plainFailure;
+                                log.failure("Attempt with plain framing (last resort)", plainFailure);
+                                if (plain != null) releaseOverlays(plain);
                             }
                         }
                         if (lastFailure != null) throw lastFailure;
@@ -315,15 +379,22 @@ public final class ManifestJob {
 
             cleanupDownloads();
             report(100);
+            log.note("Finished: " + String.format(java.util.Locale.US, "%.1fs of video, %.1f MB",
+                result.durationSeconds, result.fileSizeBytes / 1_000_000d));
             callback.onSuccess(result);
         } catch (InterruptedException cancellation) {
             cleanupDownloads();
             if (output != null) output.delete();
-            callback.onFailure("Render cancelled", null);
+            callback.onFailure("Render cancelled", null, log.lines());
         } catch (Exception error) {
             cleanupDownloads();
             if (output != null) output.delete();
-            callback.onFailure(describe(error), error);
+            // The FIRST failure is the root cause; what reached here is usually
+            // the last fallback giving up, or the re-thrown first failure.
+            Throwable root = log.lastFailure() != null ? log.lastFailure() : error;
+            if (log.lastFailure() == null) log.failure("Render", error);
+            else log.note("Gave up after the attempts above.");
+            callback.onFailure(RenderErrorLog.diagnose(root), error, log.lines());
         }
     }
 
@@ -431,6 +502,14 @@ public final class ManifestJob {
         mainHandler.post(() -> {
             try {
                 Transformer built2 = new Transformer.Builder(context)
+                    // Encode a portrait video AS portrait. By default Media3
+                    // turns portrait frames sideways before encoding and tags
+                    // the file with a 90° rotation; players cope, but the file
+                    // is then 1920x1080 as stored, which is not what anyone
+                    // asked for and what a size check sees. (Media3 still falls
+                    // back to the rotated form on an encoder that cannot take a
+                    // portrait frame; the server check reads the rotation.)
+                    .setPortraitEncodingEnabled(true)
                     .setVideoMimeType(ManifestRenderer.videoMimeType())
                     .setAudioMimeType(ManifestRenderer.audioMimeType())
                     .addListener(new Transformer.Listener() {
@@ -455,6 +534,10 @@ public final class ManifestJob {
                     })
                     .build();
                 transformer = built2;
+                log.note(String.format(java.util.Locale.US,
+                    "Encoding %.1fs (%s, cross-dissolves %s, template %s)",
+                    built.durationSeconds, ManifestRenderer.videoMimeType(),
+                    built.crossDissolved, built.templateIncluded));
                 built2.start(built.composition, output.getAbsolutePath());
                 pollProgress(built2);
             } catch (RuntimeException error) {

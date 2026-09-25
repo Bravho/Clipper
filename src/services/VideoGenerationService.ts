@@ -58,7 +58,7 @@ import {
   resolveElevenLabsVoiceId,
   type ElevenLabsVoiceId,
 } from "@/config/elevenLabsVoices";
-import { PIPELINE_STEP_COSTS } from "@/config/credits";
+import { PIPELINE_STEP_COSTS, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE, renderPriorityForRequest } from "@/config/renderQueue";
 import { RENDER_TUNING } from "@/config/renderTuning";
@@ -173,10 +173,14 @@ function businessProfileMatchesPlace(
   return normalize(profileBusinessName) === normalize(requested);
 }
 
-function clampPipelineDurationSeconds(value: number): number {
+function clampPipelineDurationSeconds(
+  value: number,
+  /** STUDIO_MAX_DURATION_SECONDS for a phone-rendered request; the server's cap otherwise. */
+  maximum: number = PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
+): number {
   if (!Number.isFinite(value)) return PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS;
   return Math.min(
-    PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS,
+    maximum,
     Math.max(PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS, Math.round(value))
   );
 }
@@ -2045,11 +2049,15 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (!Number.isFinite(job.voiceDurationSeconds) || (job.voiceDurationSeconds as number) <= 0) {
       throw new Error("Voice duration is not ready yet. Please wait for audio processing to finish.");
     }
-    const maximumVoiceSeconds =
-      PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS - minMontageTotalSeconds(0);
+    // A phone-rendered request may run to the studio's longer limit; every
+    // other request keeps the server's.
+    const videoLimitSeconds = (await this._isDeviceRendered(job.requestId))
+      ? STUDIO_MAX_DURATION_SECONDS
+      : PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS;
+    const maximumVoiceSeconds = videoLimitSeconds - minMontageTotalSeconds(0);
     if ((job.voiceDurationSeconds as number) > maximumVoiceSeconds + 1e-6) {
       throw new Error(
-        `Voiceover is too long for the ${PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS}-second video limit. Shorten it to ${Math.floor(maximumVoiceSeconds)} seconds or less and regenerate the voice.`
+        `Voiceover is too long for the ${videoLimitSeconds}-second video limit. Shorten it to ${Math.floor(maximumVoiceSeconds)} seconds or less and regenerate the voice.`
       );
     }
 
@@ -2092,7 +2100,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingSceneDesignApproval);
     const job = await this._getJob(jobId);
     const durationSeconds = clampPipelineDurationSeconds(
-      job.voiceDurationSeconds ?? approved.durationSeconds
+      job.voiceDurationSeconds ?? approved.durationSeconds,
+      (await this._isDeviceRendered(job.requestId))
+        ? STUDIO_MAX_DURATION_SECONDS
+        : PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
     );
     const parsedScenePlan = sanitizeScenePlanDescriptions(
       JSON.parse(approved.scenePlan) as ScenePlan[]
@@ -2418,6 +2429,58 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         baseVideoAssetId: null,
         // Back at the screen where the express lane is chosen, so drop it rather
         // than silently re-applying a choice made last time round.
+        autoApproveRemaining: false,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "reopened" }
+    );
+  }
+
+  /**
+   * Remake a phone-rendered main video from the studio's CURRENT choices.
+   *
+   * The studio's Render step offers "Regenerate the video" while the finished
+   * main video waits at the overlay gate, instead of an Approve button. This
+   * puts the job back at the scene-design gate — the one place the storyboard,
+   * music, caption languages and look are all accepted together — so the
+   * studio can re-send them (`scene-design/approve`) and the phone renders the
+   * whole video again. The approved script and voice are kept.
+   *
+   * Device requests only: a server-rendered job has its own revision paths,
+   * and nothing here may change how those behave. Refused while a part is
+   * still being made, so a stale result can never land on the new plan.
+   */
+  async reopenDeviceProductionByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    if (!(await this._isDeviceRendered(job.requestId))) {
+      throw new Error("Only a video made on the phone can be remade from the studio.");
+    }
+    const active = await renderTaskRepository.findActiveByJob(jobId).catch(() => null);
+    if (active) {
+      throw new Error("This video is still being made. Wait for it to finish, then remake it.");
+    }
+    return videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
+        currentSceneIndex: 0,
+        videoGenStatus: null,
+        sceneVideoAssetIds: null,
+        baseVideoAssetId: null,
+        // The old video must not be shown as the result while the new one is
+        // being made. The assets themselves are kept (scheduled deletion
+        // handles them); only the job's pointers are cleared.
+        finalExport_9_16_assetId: null,
+        finalExport_16_9_assetId: null,
+        finalExport_1_1_assetId: null,
+        finalExport_4_5_assetId: null,
+        captionedExport_9_16_assetId: null,
+        captionedExport_16_9_assetId: null,
+        captionedExport_1_1_assetId: null,
+        captionedExport_4_5_assetId: null,
+        // The studio re-sends its express-lane choice with the new plan.
         autoApproveRemaining: false,
       },
       { ...this._actorFor(jobId, userId), resolution: "reopened" }

@@ -496,7 +496,12 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
                     self.activeManifestJob = nil
                     guard self.activeCall === call else { return }
                     self.activeCall = nil
-                    call.reject(error.localizedDescription, nil, error)
+                    // The step-by-step log rides along as data, so the studio can
+                    // show the person what failed and store it with the attempt.
+                    call.reject(error.localizedDescription, "RENDER_FAILED", error, [
+                        "diagnosis": error.localizedDescription,
+                        "log": job.log,
+                    ])
                 }
             }
         }

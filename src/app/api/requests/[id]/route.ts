@@ -3,7 +3,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestService } from "@/services/ClipRequestService";
-import { draftClipRequestSchema } from "@/features/requests/validation/clipRequestSchema";
+import {
+  draftClipRequestSchema,
+  studioDraftClipRequestSchema,
+} from "@/features/requests/validation/clipRequestSchema";
+import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
 
 /**
  * PUT /api/requests/[id]
@@ -32,7 +36,11 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const parsed = draftClipRequestSchema.safeParse(body);
+  // The phone studio may ask for a longer video (it renders on the phone).
+  const studio =
+    (body as { studio?: unknown } | null)?.studio === true &&
+    canAccessDeviceRenderLab(session.user.email);
+  const parsed = (studio ? studioDraftClipRequestSchema : draftClipRequestSchema).safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed.", details: parsed.error.flatten() },

@@ -1,5 +1,7 @@
 "use client";
 
+import { useStudioT } from "./studioI18n";
+
 /**
  * The submit step, under the media grid.
  *
@@ -39,6 +41,7 @@ export function SubmitMedia({
   onGoToBrief: () => void;
   disabled: boolean;
 }) {
+  const t = useStudioT();
   if (submitted) return null;
 
   return (
@@ -46,10 +49,10 @@ export function SubmitMedia({
       {!hasRequest ? (
         <>
           <p className="studio-note studio-note-warning">
-            Save the brief first — the media is submitted to that request.
+            {t("studio.submit.saveBriefFirst")}
           </p>
           <button type="button" className="studio-button studio-button-ghost" onClick={onGoToBrief}>
-            Go to the brief
+            {t("studio.submit.goToBrief")}
           </button>
         </>
       ) : (
@@ -74,9 +77,7 @@ export function SubmitMedia({
               onChange={(event) => onConfirm(event.target.checked)}
             />
             <span style={{ color: "var(--s-text-muted)" }}>
-              I accept the service charge for this video, confirm I have the rights to
-              this material and to have it published, and allow AI processing of my
-              brief and the previews.
+              {t("studio.submit.consent")}
             </span>
           </label>
 
@@ -88,13 +89,12 @@ export function SubmitMedia({
           >
             {submitting
               ? progress
-                ? `Keeping originals on this phone… ${progress.done}/${progress.total}`
-                : "Submitting…"
-              : "Submit and plan the storyboard"}
+                ? t("studio.submit.keeping", { done: progress.done, total: progress.total })
+                : t("studio.submit.submitting")
+              : t("studio.submit.submit")}
           </button>
           <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
-            Uses one video from your quota. Your photos and clips stay on this phone;
-            RClipper receives your brief and one small preview of each.
+            {t("studio.submit.note")}
           </p>
         </>
       )}

@@ -3,10 +3,11 @@
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 
-import { PIPELINE_STEP_COSTS } from "@/config/credits";
+import { PIPELINE_STEP_COSTS, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import { FORM_PLATFORMS, Platform, PLATFORM_LABELS } from "@/domain/enums/Platform";
 import { geocodePlaceName } from "@/features/requests/components/GoogleMapLocationPicker";
 import { briefProblems, type EditorBrief } from "./editorState";
+import { useStudioT } from "./studioI18n";
 
 // The same picker the web request form uses, loaded only when it is opened:
 // the Maps script is heavy, and most people never need to move the pin that the
@@ -42,7 +43,6 @@ const GoogleMapLocationPicker = dynamic(
  * originals this pipeline exists to keep on the device.
  */
 
-const LENGTH_PRESETS = [15, 20, 30];
 
 export function BriefPanel({
   brief,
@@ -59,6 +59,7 @@ export function BriefPanel({
   onRequestSaved: (requestId: string) => void;
   disabled: boolean;
 }) {
+  const t = useStudioT();
   const [mapOpen, setMapOpen] = useState(false);
   const [finding, setFinding] = useState(false);
   const [locationNote, setLocationNote] = useState<string | null>(null);
@@ -66,7 +67,7 @@ export function BriefPanel({
   const [saved, setSaved] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const problems = briefProblems(brief);
+  const problems = briefProblems(brief, t);
   const hasPin = brief.latitude != null && brief.longitude != null;
 
   // Held stable on purpose. The picker re-runs its whole geocode-and-reset
@@ -99,9 +100,7 @@ export function BriefPanel({
     try {
       const found = await geocodePlaceName(brief.placeName);
       if (!found) {
-        setLocationNote(
-          `Google Maps has no match for "${brief.placeName.trim()}". Place the pin on the map yourself.`
-        );
+        setLocationNote(t("studio.brief.noMatch", { place: brief.placeName.trim() }));
         return null;
       }
       const pin = {
@@ -112,7 +111,7 @@ export function BriefPanel({
       return pin;
     } catch (failure) {
       setLocationNote(
-        failure instanceof Error ? failure.message : "Google Maps could not be reached."
+        failure instanceof Error ? failure.message : t("studio.brief.mapsUnreachable")
       );
       return null;
     } finally {
@@ -142,7 +141,7 @@ export function BriefPanel({
       let pin = hasPin ? { latitude: brief.latitude!, longitude: brief.longitude! } : null;
       if (!pin) pin = await findPlace();
       if (!pin) {
-        throw new Error("Set the location on the map before saving.");
+        throw new Error(t("studio.brief.setLocation"));
       }
 
       const payload = {
@@ -154,6 +153,9 @@ export function BriefPanel({
         targetAudience: "",
         targetPlatforms: brief.platforms,
         durationSeconds: brief.targetSeconds,
+        // Tells the server this brief is the phone studio's, which may run
+        // longer than the web form's limit because the phone renders it.
+        studio: true,
       };
 
       const response = await fetch(requestId ? `/api/requests/${requestId}` : "/api/requests", {
@@ -167,13 +169,13 @@ export function BriefPanel({
       if (!response.ok) {
         throw new Error(
           response.status === 409
-            ? "This request has already been submitted, so its brief can no longer be changed."
-            : (body?.error ?? "The request could not be saved.")
+            ? t("studio.brief.alreadySubmitted")
+            : (body?.error ?? t("studio.brief.saveFailed"))
         );
       }
 
       const id = requestId ?? body?.requestId ?? body?.request?.id;
-      if (!id) throw new Error("The server did not say which request it saved.");
+      if (!id) throw new Error(t("studio.brief.noId"));
       setSaved(id);
       onRequestSaved(id);
     } catch (failure) {
@@ -186,58 +188,53 @@ export function BriefPanel({
   return (
     <>
       <section className="studio-panel">
-        <h2 className="studio-panel-title">About this clip</h2>
-        <p className="studio-panel-hint">
-          The storyboard is planned from these answers, and the shot lengths are
-          divided out of the video length.
-        </p>
+        <h2 className="studio-panel-title">{t("studio.brief.aboutTitle")}</h2>
+        <p className="studio-panel-hint">{t("studio.brief.aboutHint")}</p>
 
         <label className="studio-field">
-          <span className="studio-label">Clip name</span>
+          <span className="studio-label">{t("studio.brief.clipName")}</span>
           <input
             className="studio-input"
             type="text"
             value={brief.clipName}
             maxLength={100}
-            placeholder="e.g. Summer promotion — July"
+            placeholder={t("studio.brief.clipNamePlaceholder")}
             disabled={disabled}
             onChange={(event) => change({ clipName: event.target.value })}
           />
         </label>
 
         <label className="studio-field">
-          <span className="studio-label">Place name</span>
+          <span className="studio-label">{t("studio.brief.placeName")}</span>
           <input
             className="studio-input"
             type="text"
             value={brief.placeName}
             maxLength={150}
-            placeholder="e.g. Pho 54"
+            placeholder={t("studio.brief.placePlaceholder")}
             disabled={disabled}
             onChange={(event) =>
               // A new name makes the old pin a pin for somewhere else.
               change({ placeName: event.target.value, latitude: null, longitude: null })
             }
           />
-          <p className="studio-counter">
-            Written exactly as you type it — never translated or shortened.
-          </p>
+          <p className="studio-counter">{t("studio.brief.placeNote")}</p>
         </label>
 
         <div className="studio-field">
-          <span className="studio-label">Location on the map</span>
+          <span className="studio-label">{t("studio.brief.location")}</span>
           <button
             type="button"
             className="studio-button studio-button-ghost"
             disabled={disabled || finding || !hasPlace}
             onClick={() => void checkOnMap()}
           >
-            {finding ? "Searching Google Maps…" : "Check or move the pin"}
+            {finding ? t("studio.brief.searching") : t("studio.brief.checkPin")}
           </button>
           <p className="studio-counter" style={{ textAlign: "left" }}>
             {hasPlace
-              ? "Finds the place name on Google Maps and opens the map on it, so you can check the pin and drag it if needed."
-              : "Type the place name first — the map is searched with it."}
+              ? t("studio.brief.checkPinHint")
+              : t("studio.brief.typePlaceFirst")}
           </p>
           {hasPin && (
             <p className="studio-counter" style={{ textAlign: "left" }}>
@@ -252,64 +249,60 @@ export function BriefPanel({
         </div>
 
         <label className="studio-field">
-          <span className="studio-label">Clip details</span>
+          <span className="studio-label">{t("studio.brief.details")}</span>
           <textarea
             className="studio-textarea"
             value={brief.details}
             maxLength={2000}
-            placeholder="What are you promoting, and what is the one thing a viewer should remember?"
+            placeholder={t("studio.brief.detailsPlaceholder")}
             disabled={disabled}
             onChange={(event) => change({ details: event.target.value })}
           />
-          <p className="studio-counter">{brief.details.trim().length} / 2000 · 20 minimum</p>
-        </label>
-      </section>
-
-      <section className="studio-panel">
-        <h2 className="studio-panel-title">Video length</h2>
-        <div className="studio-chip-row" role="group" aria-label="Video length">
-          {LENGTH_PRESETS.map((seconds) => (
-            <button
-              key={seconds}
-              type="button"
-              className="studio-chip"
-              aria-pressed={brief.targetSeconds === seconds}
-              disabled={disabled}
-              onClick={() => change({ targetSeconds: seconds })}
-            >
-              <strong>{seconds}s</strong>
-            </button>
-          ))}
-        </div>
-        <label className="studio-field" style={{ marginTop: 14 }}>
-          <span className="studio-label">Or an exact length, in seconds</span>
-          <input
-            className="studio-input"
-            type="number"
-            inputMode="numeric"
-            min={PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS}
-            max={PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS}
-            step={1}
-            value={brief.targetSeconds}
-            disabled={disabled}
-            onChange={(event) =>
-              change({ targetSeconds: Math.round(Number(event.target.value) || 0) })
-            }
-          />
           <p className="studio-counter">
-            {PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS}–
-            {PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS} seconds
+            {t("studio.brief.detailsCounter", { count: brief.details.trim().length })}
           </p>
         </label>
       </section>
 
       <section className="studio-panel">
-        <h2 className="studio-panel-title">Where it goes</h2>
-        <p className="studio-panel-hint">
-          The main video is made in the shape chosen in Media. The other channels&apos; shapes
-          can be made after you approve it.
-        </p>
-        <div className="studio-chip-row" role="group" aria-label="Publishing channels">
+        <h2 className="studio-panel-title">{t("studio.brief.lengthTitle")}</h2>
+        <label className="studio-field">
+          <span className="studio-label studio-length-value">
+            <strong>{brief.targetSeconds}s</strong>
+            <span>
+              {brief.targetSeconds >= 60
+                ? t("studio.brief.minutes", {
+                    minutes: Math.floor(brief.targetSeconds / 60),
+                    seconds: brief.targetSeconds % 60 ? `${brief.targetSeconds % 60}s` : "",
+                  }).trim()
+                : ""}
+            </span>
+          </span>
+          <input
+            className="studio-range"
+            type="range"
+            min={PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS}
+            max={STUDIO_MAX_DURATION_SECONDS}
+            step={1}
+            value={brief.targetSeconds}
+            disabled={disabled}
+            aria-label={t("studio.brief.lengthAria")}
+            onChange={(event) => change({ targetSeconds: Math.round(Number(event.target.value)) })}
+          />
+          <span className="studio-range-ends">
+            <span>{PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS}s</span>
+            <span>{STUDIO_MAX_DURATION_SECONDS}s</span>
+          </span>
+          <p className="studio-counter" style={{ textAlign: "left" }}>
+            {t("studio.brief.lengthHint")}
+          </p>
+        </label>
+      </section>
+
+      <section className="studio-panel">
+        <h2 className="studio-panel-title">{t("studio.brief.whereTitle")}</h2>
+        <p className="studio-panel-hint">{t("studio.brief.whereHint")}</p>
+        <div className="studio-chip-row" role="group" aria-label={t("studio.brief.channelsAria")}>
           {/* Travy is not offered in the studio for now: its export is made
               from server-held masters, which a phone-rendered request lacks. */}
           {FORM_PLATFORMS.filter((platform) => platform !== Platform.TravyApp).map((platform) => (
@@ -335,12 +328,12 @@ export function BriefPanel({
 
       <section className="studio-panel">
         <h2 className="studio-panel-title">
-          {requestId ? "This clip's request" : "Save as a request"}
+          {requestId ? t("studio.brief.requestTitle") : t("studio.brief.saveTitle")}
         </h2>
         <p className="studio-panel-hint">
           {requestId
-            ? "Saved as a draft request. Changes here update it until it is submitted. You keep editing on this phone."
-            : "Creates the request on RClipper with these answers. Nothing is uploaded and nothing is charged — you carry on editing here, and your photos and clips stay on this phone."}
+            ? t("studio.brief.savedHint")
+            : t("studio.brief.createHint")}
         </p>
 
         {problems.length > 0 ? (
@@ -360,16 +353,16 @@ export function BriefPanel({
             onClick={() => void save()}
           >
             {saving
-              ? "Saving…"
+              ? t("studio.brief.saving")
               : requestId
-                ? "Save changes to the request"
-                : "Create the request and keep editing"}
+                ? t("studio.brief.saveChanges")
+                : t("studio.brief.create")}
           </button>
         )}
 
         {saved && !saveError && (
           <p className="studio-note studio-note-positive" style={{ marginTop: 12 }}>
-            Saved. Carry on with your media and storyboard.
+            {t("studio.brief.saved")}
           </p>
         )}
         {saveError && (

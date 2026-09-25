@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { MANIFEST_RENDER_PLUGIN_VERSION } from "@/lib/mobile/deviceRenderPluginVersion";
+import { useStudioT } from "./studioI18n";
 
 /**
  * The editor's framing: which server it is talking to, and what this app build
@@ -18,6 +19,7 @@ import { MANIFEST_RENDER_PLUGIN_VERSION } from "@/lib/mobile/deviceRenderPluginV
 
 /** Where the app is actually loading from, in words a tester can act on. */
 export function ServerBadge() {
+  const t = useStudioT();
   const [origin, setOrigin] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,14 +46,14 @@ export function ServerBadge() {
   return (
     <span
       className="studio-eyebrow"
-      title={isLocal ? "This build only works next to that machine" : "Connected to the live server"}
+      title={isLocal ? t("studio.chrome.lanTitle") : t("studio.chrome.liveTitle")}
     >
       <span
         className="studio-live-dot"
         style={isLocal ? { background: "var(--s-warning)" } : undefined}
         aria-hidden
       />
-      {isLocal ? `LAN build · ${host}` : host}
+      {isLocal ? t("studio.chrome.lanBuild", { host }) : host}
     </span>
   );
 }
@@ -73,17 +75,17 @@ export interface StudioCapability {
  * needs updating.
  */
 export function CapabilityNotice({ capability }: { capability: StudioCapability | null }) {
+  const t = useStudioT();
   if (!capability) {
-    return <p className="studio-note">Checking what this phone can do…</p>;
+    return <p className="studio-note">{t("studio.chrome.checking")}</p>;
   }
 
   if (!capability.isNative) {
     return (
       <div className="studio-note studio-note-warning">
-        <strong>You are in a browser, not the app.</strong>
+        <strong>{t("studio.chrome.browserTitle")}</strong>
         <br />
-        You can lay out the timeline here, but rendering needs the installed app — a
-        browser has no video encoder this editor can drive.
+        {t("studio.chrome.browserBody")}
       </div>
     );
   }
@@ -91,12 +93,12 @@ export function CapabilityNotice({ capability }: { capability: StudioCapability 
   if (!capability.canRender) {
     return (
       <div className="studio-note studio-note-warning">
-        <strong>This app version cannot render yet.</strong>
+        <strong>{t("studio.chrome.oldTitle")}</strong>
         <br />
-        It has render plugin v{capability.pluginVersion ?? "?"}; the editor needs v
-        {MANIFEST_RENDER_PLUGIN_VERSION}. Install the current build — updating the website
-        cannot update the native part of an app that is already on your phone. Until then
-        your videos are uploaded and rendered on the server, exactly as before.
+        {t("studio.chrome.oldBody", {
+          have: capability.pluginVersion ?? "?",
+          need: MANIFEST_RENDER_PLUGIN_VERSION,
+        })}
       </div>
     );
   }
@@ -107,25 +109,19 @@ export function CapabilityNotice({ capability }: { capability: StudioCapability 
   return (
     <details className="studio-note">
       <summary style={{ cursor: "pointer", fontWeight: 650, color: "var(--s-text)" }}>
-        Editing on this phone{gigabytes ? ` · ${gigabytes} GB free` : ""}
+        {t("studio.chrome.editingHere")}
+        {gigabytes ? t("studio.chrome.free", { gb: gigabytes }) : ""}
       </summary>
       <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-        <p style={{ margin: 0 }}>
-          Your photos and clips stay on this phone. Only the finished video is uploaded,
-          and only after the server has checked it. Scripts, the speaking voice and
-          publishing still come from the server — they are small, text-sized requests.
-        </p>
+        <p style={{ margin: 0 }}>{t("studio.chrome.privacy")}</p>
         <p style={{ margin: 0, color: "var(--s-text)", fontWeight: 650 }}>
-          Not identical to a server render:
+          {t("studio.chrome.notIdentical")}
         </p>
         <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
-          <li>Template decoration is drawn still; the server animates it.</li>
-          <li>Captions use this phone&apos;s system font, so the weight is a touch lighter.</li>
-          <li>
-            On Android, if the dissolving composition will not export, scenes are joined
-            with hard cuts — the result tells you when that happened.
-          </li>
-          <li>Voice loudness is matched in one pass rather than two, so it can differ by about a decibel.</li>
+          <li>{t("studio.chrome.diff1")}</li>
+          <li>{t("studio.chrome.diff2")}</li>
+          <li>{t("studio.chrome.diff3")}</li>
+          <li>{t("studio.chrome.diff4")}</li>
         </ul>
       </div>
     </details>

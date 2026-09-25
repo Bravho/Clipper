@@ -5,7 +5,7 @@ import {
   MAX_UPLOAD_SIZE_BYTES,
   MAX_CLIP_DURATION_SECONDS,
 } from "@/domain/enums/AssetType";
-import { PIPELINE_STEP_COSTS } from "@/config/credits";
+import { PIPELINE_STEP_COSTS, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 
 /**
  * Zod schema for the clip request submission form.
@@ -150,3 +150,20 @@ export function validateClipDuration(durationSeconds: number): string | null {
 
 // STYLE_OPTIONS removed — preferred style is no longer collected on the form.
 // LANGUAGE_OPTIONS removed — preferred language is no longer collected on the form.
+
+/**
+ * The same form for a request made in the PHONE STUDIO, where the video is
+ * rendered on the phone and may run to {@link STUDIO_MAX_DURATION_SECONDS}.
+ * Used only when the caller says it is the studio AND is allowed into it; the
+ * web form keeps the schemas above.
+ */
+export const studioClipRequestFormSchema = clipRequestFormSchema.extend({
+  durationSeconds: z.coerce
+    .number({ invalid_type_error: "Enter the video length" })
+    .int("Whole seconds only")
+    .min(PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS, `At least ${PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS} seconds`)
+    .max(STUDIO_MAX_DURATION_SECONDS, `At most ${STUDIO_MAX_DURATION_SECONDS} seconds`),
+});
+
+export const studioDraftClipRequestSchema = studioClipRequestFormSchema.partial();
+

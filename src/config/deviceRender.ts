@@ -30,6 +30,17 @@ export const DEVICE_RENDER = {
   heartbeatSeconds: 20,
 
   /**
+   * How long a device claim may go without a heartbeat before its own
+   * requester may take it back and render it again.
+   *
+   * A studio request's tasks are `device_only`: the Mac worker's stale-claim
+   * reclaim skips them, so a phone that was closed mid-render would otherwise
+   * hold its claim for good and the video could never be resumed. Three missed
+   * heartbeats means the app that held it is gone (or no longer rendering).
+   */
+  resumeAfterSeconds: Number(process.env.DEVICE_RENDER_RESUME_AFTER_SECONDS ?? 60),
+
+  /**
    * Largest output a device may upload, per render.
    *
    * A 60 s 1080p H.264 export lands around 30–60 MB; 400 MB is generous enough

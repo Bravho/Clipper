@@ -5,16 +5,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MusicTrack } from "@/config/backgroundMusic";
 import { ELEVENLABS_VOICES, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import {
-  PIPELINE_STEP_DESCRIPTIONS,
-  type VideoGenerationStep,
-} from "@/domain/enums/VideoGenerationStep";
-import {
   DEVICE_MUSIC_BED_VOLUME,
   DEVICE_MUSIC_LEAD_IN_SECONDS,
 } from "@/lib/mobile/deviceRenderAudio";
 import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
 import type { EditorDocument } from "./editorState";
 import type { StudioScript } from "./studioPipeline";
+import { pipelineStepText, useStudioT } from "./studioI18n";
 
 /** Where the speaking script is, from the studio's point of view. */
 export type ScriptStatus = "not_submitted" | "writing" | "review" | "approved" | "failed";
@@ -22,17 +19,12 @@ export type ScriptStatus = "not_submitted" | "writing" | "review" | "approved" |
 /** Where the generated voice is. */
 export type VoiceStatus = "none" | "generating" | "review" | "approved";
 
-// Plain-language names for the two voices, for an English screen. The ids are
-// the server's; only the words are the studio's.
-const VOICE_LABELS: Record<string, string> = {
-  female: "Female voice",
-  male: "Male voice",
-};
 
-const LANGUAGES: { id: CaptionLanguage; label: string; note: string }[] = [
-  { id: "th", label: "ไทย", note: "White, largest" },
-  { id: "en", label: "English", note: "White" },
-  { id: "zh", label: "中文", note: "Yellow" },
+// Each caption language is named in its own script, as a language menu is.
+const LANGUAGES: { id: CaptionLanguage; label: string }[] = [
+  { id: "th", label: "ไทย" },
+  { id: "en", label: "English" },
+  { id: "zh", label: "中文" },
 ];
 
 /**
@@ -111,7 +103,16 @@ export function AudioPanel({
   locked: boolean;
   disabled: boolean;
 }) {
+  const t = useStudioT();
   const choicesDisabled = disabled || locked;
+  // The voices by gender, in the studio's language. The ids are the server's;
+  // only the words are the studio's.
+  const voiceName = (voice: { gender: string; label: string }) =>
+    voice.gender === "female"
+      ? t("studio.audio.voice.female")
+      : voice.gender === "male"
+        ? t("studio.audio.voice.male")
+        : voice.label;
 
   // ── background preview: one shared player, one track at a time ──
   const player = useRef<HTMLAudioElement | null>(null);
@@ -163,55 +164,44 @@ export function AudioPanel({
     onLanguages(next);
   };
 
-  const stepDescription = currentStep
-    ? PIPELINE_STEP_DESCRIPTIONS[currentStep as VideoGenerationStep]
-    : null;
+  const stepDescription = pipelineStepText(t, currentStep);
 
   return (
     <>
       <section className="studio-panel">
         <h2 className="studio-panel-title">
           {scriptStatus === "writing" ? (
-            <span className="studio-eyebrow" style={{ color: "var(--s-accent)" }}>
+            <span className="studio-eyebrow" style={{ color: "var(--s-accent-text)" }}>
               <span className="studio-live-dot" aria-hidden />
-              Writing the speaking script
+              {t("studio.audio.writing")}
             </span>
           ) : (
-            "Speaking script"
+            t("studio.audio.scriptTitle")
           )}
         </h2>
 
         {scriptStatus === "not_submitted" && (
-          <p className="studio-panel-hint">
-            The speaking script is written from your brief and your material once
-            you submit the media.
-          </p>
+          <p className="studio-panel-hint">{t("studio.audio.notSubmitted")}</p>
         )}
 
         {scriptStatus === "writing" && (
-          <p className="studio-panel-hint">
-            It is written together with the storyboard and appears here for you to
-            check as soon as it is ready.
-          </p>
+          <p className="studio-panel-hint">{t("studio.audio.writingHint")}</p>
         )}
 
         {scriptStatus === "failed" && (
-          <p className="studio-note studio-note-danger">
-            The script could not be written. Open the request from your request list
-            to retry it.
-          </p>
+          <p className="studio-note studio-note-danger">{t("studio.audio.failed")}</p>
         )}
 
         {(scriptStatus === "review" || scriptStatus === "approved") && script && (
           <>
             <p className="studio-panel-hint">
               {scriptStatus === "review"
-                ? "Read it aloud once. Edit anything that does not sound like you, then approve it to make the voice."
-                : "Approved. The voice is made from this script."}
+                ? t("studio.audio.reviewHint")
+                : t("studio.audio.approvedHint")}
             </p>
 
             <label className="studio-field">
-              <span className="studio-label">Script</span>
+              <span className="studio-label">{t("studio.audio.script")}</span>
               <textarea
                 className="studio-textarea"
                 style={{ minHeight: 160 }}
@@ -220,11 +210,13 @@ export function AudioPanel({
                 disabled={disabled || approving}
                 onChange={(event) => onScriptChange({ text: event.target.value })}
               />
-              <p className="studio-counter">{script.text.trim().length} characters</p>
+              <p className="studio-counter">
+                {t("studio.audio.characters", { count: script.text.trim().length })}
+              </p>
             </label>
 
             <label className="studio-field">
-              <span className="studio-label">Post caption</span>
+              <span className="studio-label">{t("studio.audio.postCaption")}</span>
               <textarea
                 className="studio-textarea"
                 style={{ minHeight: 88 }}
@@ -237,8 +229,8 @@ export function AudioPanel({
 
             {scriptStatus === "review" && (
               <>
-                <span className="studio-label">Voice</span>
-                <div className="studio-chip-row" role="group" aria-label="Voice">
+                <span className="studio-label">{t("studio.audio.voice")}</span>
+                <div className="studio-chip-row" role="group" aria-label={t("studio.audio.voice")}>
                   {ELEVENLABS_VOICES.map((voice) => (
                     <button
                       key={voice.id}
@@ -248,7 +240,7 @@ export function AudioPanel({
                       disabled={disabled || approving}
                       onClick={() => onVoice(voice.id)}
                     >
-                      <strong>{VOICE_LABELS[voice.gender] ?? voice.label}</strong>
+                      <strong>{voiceName(voice)}</strong>
                     </button>
                   ))}
                 </div>
@@ -260,10 +252,10 @@ export function AudioPanel({
                   disabled={disabled || approving || !script.text.trim()}
                   onClick={onApprove}
                 >
-                  {approving ? "Approving…" : "Approve the script and make the voice"}
+                  {approving ? t("studio.audio.approving") : t("studio.audio.approveScript")}
                 </button>
                 <p className="studio-counter" style={{ textAlign: "left" }}>
-                  Your storyboard is approved with it, as it is arranged now.
+                  {t("studio.audio.approvedWith")}
                 </p>
               </>
             )}
@@ -285,20 +277,17 @@ export function AudioPanel({
         <section className="studio-panel">
           <h2 className="studio-panel-title">
             {voiceStatus === "generating" ? (
-              <span className="studio-eyebrow" style={{ color: "var(--s-accent)" }}>
+              <span className="studio-eyebrow" style={{ color: "var(--s-accent-text)" }}>
                 <span className="studio-live-dot" aria-hidden />
-                Making the voice
+                {t("studio.audio.making")}
               </span>
             ) : (
-              "Voice"
+              t("studio.audio.voice")
             )}
           </h2>
 
           {voiceStatus === "generating" && (
-            <p className="studio-panel-hint">
-              ElevenLabs is reading the approved script. It appears here to listen to as soon as
-              it is ready.
-            </p>
+            <p className="studio-panel-hint">{t("studio.audio.makingHint")}</p>
           )}
 
           {voiceStatus !== "generating" && voiceUrl && (
@@ -312,8 +301,7 @@ export function AudioPanel({
               />
               {voiceSeconds != null && (
                 <p className="studio-counter" style={{ textAlign: "left" }}>
-                  {voiceSeconds.toFixed(1)}s — the storyboard must run at least this long, plus a
-                  short intro and ending.
+                  {t("studio.audio.voiceLength", { seconds: voiceSeconds.toFixed(1) })}
                 </p>
               )}
             </>
@@ -322,9 +310,9 @@ export function AudioPanel({
           {voiceStatus === "review" && (
             <>
               <span className="studio-label" style={{ marginTop: 12 }}>
-                Speaker
+                {t("studio.audio.speaker")}
               </span>
-              <div className="studio-chip-row" role="group" aria-label="Speaker">
+              <div className="studio-chip-row" role="group" aria-label={t("studio.audio.speaker")}>
                 {ELEVENLABS_VOICES.map((voice) => (
                   <button
                     key={voice.id}
@@ -334,7 +322,7 @@ export function AudioPanel({
                     disabled={disabled || voiceBusy}
                     onClick={() => onVoice(voice.id)}
                   >
-                    <strong>{VOICE_LABELS[voice.gender] ?? voice.label}</strong>
+                    <strong>{voiceName(voice)}</strong>
                   </button>
                 ))}
               </div>
@@ -345,7 +333,7 @@ export function AudioPanel({
                 disabled={disabled || voiceBusy}
                 onClick={onApproveVoice}
               >
-                {voiceBusy ? "Working…" : "Approve the voice"}
+                {voiceBusy ? t("studio.audio.working") : t("studio.audio.approveVoice")}
               </button>
               <button
                 type="button"
@@ -354,14 +342,14 @@ export function AudioPanel({
                 disabled={disabled || voiceBusy}
                 onClick={onRegenerateVoice}
               >
-                Make it again with the selected speaker
+                {t("studio.audio.again")}
               </button>
             </>
           )}
 
           {voiceStatus === "approved" && (
             <p className="studio-note studio-note-positive" style={{ marginTop: 10 }}>
-              Voice approved. Choose the background and captions, then confirm the sound.
+              {t("studio.audio.voiceApproved")}
             </p>
           )}
 
@@ -374,9 +362,9 @@ export function AudioPanel({
       )}
 
       <section className="studio-panel">
-        <h2 className="studio-panel-title">Background</h2>
-        <p className="studio-panel-hint">Tap ▶ to listen, then choose the one you want.</p>
-        <ul className="studio-track-list" role="radiogroup" aria-label="Background music">
+        <h2 className="studio-panel-title">{t("studio.audio.background")}</h2>
+        <p className="studio-panel-hint">{t("studio.audio.backgroundHint")}</p>
+        <ul className="studio-track-list" role="radiogroup" aria-label={t("studio.audio.backgroundAria")}>
           <li>
             <button
               type="button"
@@ -389,7 +377,7 @@ export function AudioPanel({
               <span className="studio-track-play" aria-hidden>
                 –
               </span>
-              <span className="studio-track-label">No background music</span>
+              <span className="studio-track-label">{t("studio.audio.noMusic")}</span>
               <span className="studio-track-check" aria-hidden>
                 {document.musicTrackId === null ? "✓" : ""}
               </span>
@@ -403,7 +391,11 @@ export function AudioPanel({
                 <button
                   type="button"
                   className="studio-track-play studio-track-play-button"
-                  aria-label={isPlaying ? `Stop ${track.label}` : `Listen to ${track.label}`}
+                  aria-label={
+                    isPlaying
+                      ? t("studio.audio.stopTrack", { track: track.label })
+                      : t("studio.audio.listenTrack", { track: track.label })
+                  }
                   aria-pressed={isPlaying}
                   onClick={() => togglePreview(track)}
                 >
@@ -429,13 +421,12 @@ export function AudioPanel({
       </section>
 
       <section className="studio-panel">
-        <h2 className="studio-panel-title">Captions</h2>
+        <h2 className="studio-panel-title">{t("studio.audio.captions")}</h2>
         <p className="studio-panel-hint">
-          Burned into the video, stacked from the bottom in this order. Up to{" "}
-          {MAX_CAPTION_LANGUAGES} languages.
+          {t("studio.audio.captionsHint", { max: MAX_CAPTION_LANGUAGES })}
         </p>
 
-        <div className="studio-chip-row" role="group" aria-label="Caption languages">
+        <div className="studio-chip-row" role="group" aria-label={t("studio.audio.captionsAria")}>
           {LANGUAGES.map((language) => {
             const chosen = document.captionLanguages.includes(language.id);
             const full = !chosen && document.captionLanguages.length >= MAX_CAPTION_LANGUAGES;
@@ -450,7 +441,7 @@ export function AudioPanel({
               >
                 <strong>{language.label}</strong>
                 <span style={{ color: "var(--s-text-faint)", fontWeight: 500 }}>
-                  {language.note}
+                  {t(`studio.audio.lang.${language.id}`)}
                 </span>
               </button>
             );
@@ -459,21 +450,18 @@ export function AudioPanel({
 
         {document.captionLanguages.length === 0 && (
           <p className="studio-note studio-note-warning" style={{ marginTop: 12 }}>
-            With no language chosen the video has no captions.
+            {t("studio.audio.noCaptions")}
           </p>
         )}
       </section>
 
       <section className="studio-panel">
-        <h2 className="studio-panel-title">How the mix is built</h2>
+        <h2 className="studio-panel-title">{t("studio.audio.mixTitle")}</h2>
         <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6, fontSize: 13, color: "var(--s-text-muted)" }}>
-          <li>Opens on {DEVICE_MUSIC_LEAD_IN_SECONDS}s of music before the narration starts.</li>
-          <li>The voice is levelled to −16 LUFS with a −1.5 dBTP ceiling.</li>
-          <li>
-            The bed sits at {Math.round(DEVICE_MUSIC_BED_VOLUME * 100)}% and ducks under speech,
-            recovering between sentences and under the ending.
-          </li>
-          <li>Camera sound from your clips is never used.</li>
+          <li>{t("studio.audio.mix1", { seconds: DEVICE_MUSIC_LEAD_IN_SECONDS })}</li>
+          <li>{t("studio.audio.mix2")}</li>
+          <li>{t("studio.audio.mix3", { percent: Math.round(DEVICE_MUSIC_BED_VOLUME * 100) })}</li>
+          <li>{t("studio.audio.mix4")}</li>
         </ul>
       </section>
 
@@ -488,13 +476,13 @@ export function AudioPanel({
               onConfirm();
             }}
           >
-            {soundConfirmed ? "Confirmed — continue to Graphic" : "Confirm the sound"}
+            {soundConfirmed ? t("studio.audio.confirmed") : t("studio.audio.confirm")}
           </button>
           <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
             {confirmBlocker ??
               (locked
-                ? "In production — the sound is what is being rendered."
-                : "Voice, background and captions go into the render as chosen here.")}
+                ? t("studio.audio.lockedHint")
+                : t("studio.audio.confirmHint"))}
           </p>
         </div>
       </section>

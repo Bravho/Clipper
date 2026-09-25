@@ -261,3 +261,44 @@ describe("VideoGenerationService — channel shapes of a phone-rendered request"
     expect(await mockTaskRepo.findActiveByJob(job.id)).toBeNull();
   });
 });
+
+describe("Regenerate the video (studio)", () => {
+  it("puts a finished phone video back at the scene-design gate and hides the old result", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingOverlayApproval, {
+      captionedExport_9_16_assetId: "final_9x16",
+      autoApproveRemaining: true,
+    });
+
+    const reopened = await service.reopenDeviceProductionByRequester(job.id, USER_ID);
+
+    expect(reopened.currentStep).toBe(VideoGenerationStep.AwaitingSceneDesignApproval);
+    expect(reopened.baseVideoAssetId).toBeNull();
+    expect(reopened.finalExport_9_16_assetId).toBeNull();
+    expect(reopened.captionedExport_9_16_assetId).toBeNull();
+    expect(reopened.autoApproveRemaining).toBe(false);
+    // The approved script and voice are kept.
+    expect(reopened.processedVoiceAssetId).toBe("voice");
+    expect(reopened.approvedScriptThai).toBe("สวัสดี");
+  });
+
+  it("refuses a server-rendered request", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("server");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingOverlayApproval);
+    await expect(service.reopenDeviceProductionByRequester(job.id, USER_ID)).rejects.toThrow(
+      /made on the phone/
+    );
+    expect((await mockJobRepo.findById(job.id))!.currentStep).toBe(
+      VideoGenerationStep.AwaitingOverlayApproval
+    );
+  });
+
+  it("refuses anywhere but the finished-video review", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.GeneratingAdditionalRatios);
+    await expect(service.reopenDeviceProductionByRequester(job.id, USER_ID)).rejects.toThrow();
+  });
+});

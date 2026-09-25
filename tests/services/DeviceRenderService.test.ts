@@ -46,6 +46,7 @@ jest.mock("@/config/deviceRender", () => {
       enabled: true,
       leaseSeconds: 600,
       heartbeatSeconds: 20,
+      resumeAfterSeconds: 60,
       maxOutputBytes: 400 * 1024 * 1024,
       maxCoverBytes: 4 * 1024 * 1024,
       eligibleSteps: [Step.OverlayComposition],
@@ -86,6 +87,9 @@ let mediaSummary: {
   audioCodec: string | null;
   width: number | null;
   height: number | null;
+  rotation?: number;
+  displayWidth?: number | null;
+  displayHeight?: number | null;
 } = {
   durationSeconds: 15.2,
   hasVideo: true,
@@ -570,6 +574,40 @@ describe("DeviceRenderService", () => {
       ).rejects.toMatchObject({ code: "wrong_dimensions" });
     });
 
+    it("accepts a portrait video stored sideways with a 90° rotation tag", async () => {
+      // What Android's Media3 writes for 9:16 unless portrait encoding is on:
+      // 1920x1080 frames, shown upright as 1080x1920.
+      const { job, attemptId, uploadKey } = await claimed();
+      mediaSummary = {
+        ...mediaSummary,
+        width: 1920,
+        height: 1080,
+        rotation: 90,
+        displayWidth: 1080,
+        displayHeight: 1920,
+      };
+
+      await expect(
+        service.complete(completion(attemptId, job.id, uploadKey))
+      ).resolves.toBeDefined();
+    });
+
+    it("still refuses a sideways video that is not rotated back upright", async () => {
+      const { job, attemptId, uploadKey } = await claimed();
+      mediaSummary = {
+        ...mediaSummary,
+        width: 1920,
+        height: 1080,
+        rotation: 0,
+        displayWidth: 1920,
+        displayHeight: 1080,
+      };
+
+      await expect(
+        service.complete(completion(attemptId, job.id, uploadKey))
+      ).rejects.toMatchObject({ code: "wrong_dimensions" });
+    });
+
     it("refuses an export that is not H.264", async () => {
       const { job, attemptId, uploadKey } = await claimed();
       mediaSummary = { ...mediaSummary, videoCodec: "hevc" };
@@ -687,6 +725,59 @@ describe("DeviceRenderService", () => {
       expect(afterRenderStepCompleted).toHaveBeenCalledTimes(1);
     });
 
+    it("lets the owner resume a render the closed app never released, once it lapses", async () => {
+      // A studio task is device-only: the worker never reclaims it. Without
+      // this, closing the app mid-render left the claim held forever and the
+      // video could not be resumed.
+      const { request, job, attemptId, uploadKey } = await claimed();
+
+      const soon = await service.describeAvailableWork(request.id, OWNER);
+      expect(soon.available).toBe(false);
+      expect(soon.reason).toBe("already_rendering");
+      expect(soon.resumeInSeconds).toBeGreaterThan(0);
+      const early = await service.claim({ requestId: request.id, userId: OWNER, capabilities });
+      expect(early).toEqual({ claimed: false, reason: "already_rendering" });
+
+      const realNow = Date.now();
+      const clock = jest.spyOn(Date, "now").mockReturnValue(realNow + 61_000);
+      try {
+        const later = await service.describeAvailableWork(request.id, OWNER);
+        expect(later).toMatchObject({ available: true, interrupted: true });
+
+        const resumed = await service.claim({ requestId: request.id, userId: OWNER, capabilities });
+        if ("claimed" in resumed) throw new Error("expected the resume to claim");
+        expect(resumed.attemptId).not.toBe(attemptId);
+
+        const task = await renderTaskRepository.findActiveByJob(job.id);
+        expect(task?.state).toBe("claimed");
+        expect(task?.claimedBy).toBe(resumed.attemptId);
+        expect((await deviceRenderAttemptRepository.findById(attemptId))?.state).toBe("expired");
+      } finally {
+        clock.mockRestore();
+      }
+
+      // The abandoned attempt can no longer complete over the resumed one.
+      await expect(
+        service.complete(completion(attemptId, job.id, uploadKey))
+      ).rejects.toMatchObject({ code: "attempt_superseded" });
+    });
+
+    it("never takes a quiet claim away from the worker", async () => {
+      const { request } = await seed();
+      await renderTaskRepository.claimNext("mac-worker", 120);
+
+      const realNow = Date.now();
+      const clock = jest.spyOn(Date, "now").mockReturnValue(realNow + 3_600_000);
+      try {
+        const availability = await service.describeAvailableWork(request.id, OWNER);
+        expect(availability).toEqual({ available: false, reason: "already_rendering" });
+        const result = await service.claim({ requestId: request.id, userId: OWNER, capabilities });
+        expect(result).toEqual({ claimed: false, reason: "already_rendering" });
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
     it("releases the task back to the queue with its position intact", async () => {
       const { job, attemptId } = await claimed();
 
@@ -700,6 +791,21 @@ describe("DeviceRenderService", () => {
       // And the worker can now take it.
       const claimedByWorker = await renderTaskRepository.claimNext("mac-worker", 120);
       expect(claimedByWorker?.claimedBy).toBe("mac-worker");
+    });
+
+    it("keeps the phone's step-by-step log with a failed attempt", async () => {
+      const { attemptId } = await claimed();
+      const log = [
+        "[  0.0s] Claimed attempt dev_1",
+        "[ 12.3s]   Attempt with cross-dissolves FAILED — ExportException[ERROR_CODE_DECODING_FAILED]",
+      ];
+
+      await service.release(attemptId, OWNER, "Failed while making the video on this phone: x", log);
+
+      const attempt = await deviceRenderAttemptRepository.findById(attemptId);
+      expect(attempt?.state).toBe("failed");
+      expect(attempt?.error).toContain("Failed while making the video");
+      expect(attempt?.result).toEqual({ errorLog: log });
     });
 
     it("tells a device on its heartbeat when the work was reclaimed", async () => {

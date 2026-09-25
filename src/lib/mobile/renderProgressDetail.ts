@@ -1,4 +1,12 @@
 import type { DeviceRenderManifest } from "@/lib/mobile/deviceRenderContract";
+import { messages, translate, type MessageKey } from "@/i18n/messages";
+
+/**
+ * A translator for the progress lines: the studio passes its own (it follows
+ * the menu's or the phone's language); anything else gets English, as before.
+ */
+export type ProgressText = (key: MessageKey, values?: Record<string, string | number>) => string;
+export const englishProgressText: ProgressText = (key, values) => translate("en", key, values);
 
 /**
  * Turn the phone's bare percentage into what it is actually working on.
@@ -47,6 +55,8 @@ export interface ManifestPlan {
   captionCount: number;
   captionStarts: number[];
   lookName: string;
+  /** The Look's id, so the line can name it in the screen's language. */
+  lookId?: string;
   mixesSound: boolean;
 }
 
@@ -101,6 +111,7 @@ export function planFromManifest(
     captionCount: manifest.captions.length,
     captionStarts: manifest.captions.map((caption) => caption.startSeconds),
     lookName: LOOK_NAMES[manifest.template.id] ?? manifest.template.id,
+    lookId: manifest.template.id,
     mixesSound: Boolean(manifest.voiceUrl),
   };
 }
@@ -118,19 +129,20 @@ export function formatClock(seconds: number): string {
 export function describeRenderPosition(
   plan: ManifestPlan,
   nativePercent: number,
-  totalSeconds: number = plan.pictureSeconds
+  totalSeconds: number = plan.pictureSeconds,
+  t: ProgressText = englishProgressText
 ): string {
   if (nativePercent < RENDER_FROM) {
     return plan.mixesSound && plan.stage !== "montage"
-      ? "Mixing the voice-over with the background music…"
-      : "Opening your photos and clips…";
+      ? t("studio.progress.mixing")
+      : t("studio.progress.opening");
   }
-  if (nativePercent >= RENDER_TO) return "Taking the cover picture from the finished video…";
+  if (nativePercent >= RENDER_TO) return t("studio.progress.cover");
 
   const fraction = (nativePercent - RENDER_FROM) / (RENDER_TO - RENDER_FROM);
   const length = totalSeconds > 0 ? totalSeconds : plan.pictureSeconds;
   const at = fraction * length;
-  const clock = `${formatClock(at)} of ${formatClock(length)}`;
+  const clock = t("studio.progress.clock", { at: formatClock(at), length: formatClock(length) });
 
   const parts: string[] = [];
   if (plan.drawsShots && plan.shots.length > 0) {
@@ -139,28 +151,38 @@ export function describeRenderPosition(
       plan.shots[plan.shots.length - 1];
     const what =
       shot.kind === "clip"
-        ? `clip ${shot.name}${
+        ? `${t("studio.progress.clip", { name: shot.name })}${
             shot.trimEnd != null
               ? ` (${formatClock(shot.trimStart ?? 0)}–${formatClock(shot.trimEnd)})`
               : ""
           }`
-        : `photo ${shot.name}`;
+        : t("studio.progress.photo", { name: shot.name });
     parts.push(
-      `Scene ${shot.sceneNumber} of ${plan.sceneCount} · shot ${shot.flatIndex + 1} of ${
-        plan.shots.length
-      } — ${what}`
+      t("studio.progress.shot", {
+        scene: shot.sceneNumber,
+        scenes: plan.sceneCount,
+        shot: shot.flatIndex + 1,
+        shots: plan.shots.length,
+        what,
+      })
     );
   }
 
   if (plan.stage === "final") {
     const shown = plan.captionStarts.filter((start) => start <= at).length;
+    const lookKey = `studio.look.${plan.lookId}.name`;
+    const look = plan.lookId && lookKey in messages.en ? t(lookKey as MessageKey) : plan.lookName;
     parts.push(
       plan.captionCount > 0
-        ? `${plan.lookName} look · caption ${Math.max(1, shown)} of ${plan.captionCount}`
-        : `${plan.lookName} look`
+        ? t("studio.progress.lookCaption", {
+            look,
+            caption: Math.max(1, shown),
+            captions: plan.captionCount,
+          })
+        : t("studio.progress.look", { look })
     );
   } else if (plan.stage === "master") {
-    parts.push("adding voice-over and music");
+    parts.push(t("studio.progress.addingSound"));
   }
 
   return `${parts.join(" · ")} · ${clock}`;

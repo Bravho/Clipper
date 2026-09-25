@@ -7,6 +7,7 @@ import {
   type DeviceRenderStage,
 } from "@/lib/mobile/deviceRenderContract";
 import {
+  NativeRenderError,
   cancelDeviceRender,
   observeManifestProgress,
   releaseRenderedOutput,
@@ -17,7 +18,13 @@ import {
 } from "@/lib/mobile/deviceRenderBridge";
 import { getNativeRenderCapabilities } from "@/lib/mobile/deviceVideoRender";
 import type { LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
-import { describeRenderPosition, planFromManifest } from "@/lib/mobile/renderProgressDetail";
+import {
+  describeRenderPosition,
+  englishProgressText,
+  planFromManifest,
+  type ProgressText,
+} from "@/lib/mobile/renderProgressDetail";
+import type { MessageKey } from "@/i18n/messages";
 
 /**
  * The whole phone-render round trip, as one call.
@@ -69,6 +76,13 @@ export interface DeviceRenderAvailability {
   step?: string;
   stage?: DeviceRenderStage;
   ratio?: string;
+  /** This step was being made on a phone that stopped (the app was closed). */
+  interrupted?: boolean;
+  /**
+   * A phone's claim on this step has gone quiet (the app was closed mid-render);
+   * it can be resumed in about this many seconds.
+   */
+  resumeInSeconds?: number;
 }
 
 export interface DeviceRenderOutcome {
@@ -77,30 +91,41 @@ export interface DeviceRenderOutcome {
   assetId?: string | null;
   /** What the phone actually produced, for the on-device preview. */
   preview?: { path: string; durationSeconds: number; crossDissolved: boolean };
+  /**
+   * Every step of this attempt — the app's and, when the phone's renderer
+   * failed, the renderer's own — so a failure shows its root cause.
+   */
+  log?: string[];
 }
 
-/** Reasons the UI should explain rather than show as an error. */
-const REFUSAL_COPY: Record<string, string> = {
-  device_rendering_disabled: "Rendering on this phone is not switched on yet for this account.",
-  no_render_queued: "There is nothing waiting to be rendered for this video right now.",
-  already_rendering: "The server is already rendering this step.",
-  step_runs_on_server: "This step runs on the server, not on a phone.",
-  inputs_unavailable: "The server does not have everything this phone would need yet.",
-  manifest_unavailable: "The render could not be prepared; the server will do this one.",
-  request_not_found: "This video could not be found.",
-  job_not_found: "This video has no production job to render.",
-  unsupported_app_build: "This app build cannot render video. Update the app.",
-  unsupported_encoder: "This phone cannot encode H.264 and AAC.",
-  app_not_foreground: "Keep RClipper open on screen while it renders.",
-  low_power_mode: "Turn off Low Power Mode to render on this phone.",
-  unsupported_duration: "This video is too long to render on a phone.",
-  unsupported_output_size: "This output size is too large to render on a phone.",
-  insufficient_storage: "There is not enough free space on this phone to render.",
-};
+/**
+ * Reasons the UI should explain rather than show as an error. The sentences
+ * are `studio.refusal.<reason>` in the catalogues (English unless a
+ * translator is passed).
+ */
+const EXPLAINED_REFUSALS = new Set([
+  "device_rendering_disabled",
+  "no_render_queued",
+  "already_rendering",
+  "step_runs_on_server",
+  "inputs_unavailable",
+  "manifest_unavailable",
+  "request_not_found",
+  "job_not_found",
+  "unsupported_app_build",
+  "unsupported_encoder",
+  "app_not_foreground",
+  "low_power_mode",
+  "unsupported_duration",
+  "unsupported_output_size",
+  "insufficient_storage",
+]);
 
-export function explainRefusal(reason?: string): string {
-  if (!reason) return "This phone cannot take this render right now.";
-  return REFUSAL_COPY[reason] ?? `This phone cannot take this render right now (${reason}).`;
+export function explainRefusal(reason?: string, t: ProgressText = englishProgressText): string {
+  if (!reason) return t("studio.refusal.generic");
+  return EXPLAINED_REFUSALS.has(reason)
+    ? t(`studio.refusal.${reason}` as MessageKey)
+    : t("studio.refusal.genericWith", { reason });
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -137,6 +162,8 @@ export interface RunDeviceRenderInput {
   onProgress?: (progress: DeviceRenderProgress) => void;
   /** Resolves true when the user has asked to stop. */
   shouldCancel?: () => boolean;
+  /** Words for the progress lines; English when left out. */
+  t?: ProgressText;
 }
 
 /**
@@ -152,6 +179,7 @@ export async function runDeviceRender(
   // after that can name it.
   let stage: DeviceRenderStage | undefined;
   let ratio: string | undefined;
+  const t = input.t ?? englishProgressText;
   const report = (
     phase: DeviceRenderPhase,
     percent: number,
@@ -159,7 +187,7 @@ export async function runDeviceRender(
     detail?: string
   ) => input.onProgress?.({ phase, percent, message, stage, ratio, detail });
 
-  report("checking", 0, "Checking what this phone can render…");
+  report("checking", 0, t("studio.progress.checking"));
 
   if (!Capacitor.isNativePlatform()) {
     return { status: "refused", reason: "not_a_native_build" };
@@ -191,6 +219,21 @@ export async function runDeviceRender(
   if (!claim.claimed) return { status: "refused", reason: claim.reason };
 
   const { attemptId, heartbeatSeconds } = claim;
+
+  // ── the attempt's log ────────────────────────────────────────────────────
+  // What was done, in order, with the time since the claim. `doing` names the
+  // step in progress, so a failure says WHERE it happened ("while sending the
+  // video") as well as what the error was.
+  const startedAt = Date.now();
+  const trail: string[] = [];
+  const note = (line: string) => {
+    if (trail.length >= 100) return;
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1).padStart(5);
+    trail.push(`[${seconds}s] ${line}`);
+  };
+  let doing = "checking the render plan";
+  note(`Claimed attempt ${attemptId.slice(0, 12)}…`);
+
   let manifest: DeviceRenderManifest;
   try {
     // Validate what the server sent before rendering it. The server validates
@@ -199,12 +242,18 @@ export async function runDeviceRender(
     manifest = validateDeviceRenderManifest(claim.manifest);
     stage = manifest.stage;
     ratio = manifest.ratio;
+    note(
+      `Part: ${manifest.stage} at ${manifest.ratio} (${manifest.width}×${manifest.height}), ` +
+        `${manifest.scenes.length} scene(s), ${manifest.sources.length} source(s), ` +
+        `${manifest.captions.length} caption(s), from originals: ${manifest.buildFromSources}`
+    );
   } catch (error) {
-    await release(attemptId, "invalid_manifest");
-    return {
-      status: "failed",
-      reason: error instanceof Error ? error.message : "The render manifest was not usable.",
-    };
+    const reason = `The render plan from the server is not usable: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    note(reason);
+    await release(attemptId, "invalid_manifest", trail);
+    return { status: "failed", reason, log: trail };
   }
 
   let rendered: NativeManifestResult | null = null;
@@ -250,36 +299,51 @@ export async function runDeviceRender(
         report(
           "rendering",
           percent,
-          "Rendering on this phone…",
-          describeRenderPosition(plan, percent)
+          t("studio.progress.rendering"),
+          describeRenderPosition(plan, percent, undefined, t)
         );
       },
       onUpload: (percent) =>
-        report("uploading", percent, "Uploading the finished video…", uploadNote.detail),
+        report("uploading", percent, t("studio.progress.uploading"), uploadNote.detail),
     });
 
-    report("rendering", 0, "Preparing the approved media…", "Finding your originals on this phone…");
+    report("rendering", 0, t("studio.progress.preparing"), t("studio.progress.finding"));
 
+    doing = "getting your original photos and clips ready";
     const staged = await stageManifestSources(
       manifest,
       input.localMedia ?? new Map(),
-      (done, total) =>
+      (done, total) => {
+        note(`Copying original ${done} of ${total} to the renderer`);
         report(
           "rendering",
           0,
-          "Preparing the approved media…",
-          `Getting your originals ready — ${done} of ${total}`
-        )
+          t("studio.progress.preparing"),
+          t("studio.progress.staging", { done, total })
+        );
+      }
     );
+    note(`Originals ready: ${staged.length}`);
     if (input.shouldCancel?.()) throw new CancelledError();
 
+    doing = "making the video on this phone";
+    note("Phone renderer started");
     rendered = await renderManifestOnDevice(manifest, staged);
+    note(
+      `Phone renderer finished: ${rendered.durationSeconds.toFixed(1)}s, ` +
+        `${(rendered.fileSizeBytes / 1_000_000).toFixed(1)} MB, ${rendered.width}×${rendered.height}, ` +
+        `sound ${rendered.hasAudioTrack ? "yes" : "no"}, cross-dissolves ${rendered.crossDissolved}`
+    );
     if (cancelledByServer) throw new SupersededError();
     if (input.shouldCancel?.()) throw new CancelledError();
 
     const megabytes = (rendered.fileSizeBytes / 1_000_000).toFixed(1);
-    uploadNote.detail = `Sending ${megabytes} MB (${rendered.durationSeconds.toFixed(1)}s of video) to your request`;
-    report("uploading", 0, "Asking for somewhere to put the video…", uploadNote.detail);
+    uploadNote.detail = t("studio.progress.sending", {
+      mb: megabytes,
+      seconds: rendered.durationSeconds.toFixed(1),
+    });
+    report("uploading", 0, t("studio.progress.asking"), uploadNote.detail);
+    doing = "sending the video to your request";
     const upload = await postJson<{
       storageKey: string;
       uploadId: string;
@@ -306,15 +370,18 @@ export async function runDeviceRender(
       coverUrl: upload.coverUrl,
     });
 
-    report("finishing", 0, "Assembling the upload…", "Joining the uploaded pieces into one file");
+    note(`Uploaded ${parts.length} part(s)`);
+    report("finishing", 0, t("studio.progress.assembling"), t("studio.progress.joining"));
+    doing = "joining the uploaded pieces on the server";
     await postJson(`/api/device-render/${attemptId}/upload`, { action: "finish", parts });
 
     report(
       "finishing",
       50,
-      "Checking the finished video…",
-      "The server is checking its length, picture size, format and sound"
+      t("studio.progress.checkingVideo"),
+      t("studio.progress.serverChecking")
     );
+    doing = "having the server check the finished video";
     const result = await postJson<{ ok: true; assetId: string | null }>(
       `/api/device-render/${attemptId}/complete`,
       {
@@ -334,7 +401,8 @@ export async function runDeviceRender(
     );
 
     completed = true;
-    report("done", 100, "Done. The server has the finished video.");
+    note("The server accepted the video");
+    report("done", 100, t("studio.progress.done"));
     return {
       status: "completed",
       assetId: result.assetId,
@@ -346,25 +414,38 @@ export async function runDeviceRender(
     };
   } catch (error) {
     await cancelDeviceRender();
+    const message = error instanceof Error ? error.message : String(error);
     const reason =
       error instanceof CancelledError
         ? "cancelled"
         : error instanceof SupersededError
           ? "taken_over_by_server"
-          : error instanceof Error
-            ? error.message
-            : String(error);
-    await release(attemptId, reason);
+          : `Failed while ${doing}: ${message}`;
+    // The phone renderer's own steps, where the failure happened.
+    const nativeLog = error instanceof NativeRenderError ? error.log : [];
+    if (nativeLog.length > 0) {
+      note("Phone renderer log:");
+      for (const line of nativeLog) note(`  ${line}`);
+    }
+    note(
+      error instanceof CancelledError
+        ? "Stopped by the person"
+        : error instanceof SupersededError
+          ? "The server gave this part to another render"
+          : `FAILED while ${doing}: ${message}`
+    );
+    await release(attemptId, reason, trail);
     report(
       error instanceof CancelledError ? "released" : "failed",
       0,
       error instanceof CancelledError
-        ? "Stopped. The server will render this one."
-        : `This phone could not finish: ${reason}`
+        ? t("studio.progress.stopped")
+        : t("studio.progress.failed", { reason })
     );
     return {
       status: error instanceof CancelledError ? "released" : "failed",
       reason,
+      log: trail,
       ...(rendered
         ? {
             preview: {
@@ -385,9 +466,15 @@ export async function runDeviceRender(
 }
 
 /** Hand the render task back so the Mac Mini worker takes it. */
-export async function release(attemptId: string, reason: string): Promise<void> {
+export async function release(
+  attemptId: string,
+  reason: string,
+  /** The attempt's step-by-step log, kept with it on the server. */
+  log?: string[]
+): Promise<void> {
   await postJson(`/api/device-render/${attemptId}/release`, {
     reason: reason.slice(0, 200),
+    ...(log && log.length > 0 ? { log: log.map((line) => line.slice(0, 600)).slice(0, 120) } : {}),
   }).catch(() => {
     // A release that cannot be delivered is not fatal: the lease expires on its
     // own and the worker reclaims the task. Losing the render for good would be
