@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { ROUTES } from "@/config/routes";
-import { REQUESTS_PER_PAID_MONTH, VIDEO_PACKAGES } from "@/config/videoPackages";
+import { ENTRY_PACKAGE, managementPriceCredits } from "@/config/management";
+import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { useStudioT } from "./studioI18n";
 import type { StudioT } from "./studioText";
 
@@ -27,11 +28,8 @@ export interface StudioQuota {
   canSubmit: boolean;
 }
 
-/** The cheapest package, quoted wherever the studio invites an upgrade. */
-const ENTRY_PRICE = VIDEO_PACKAGES.reduce(
-  (cheapest, entry) => Math.min(cheapest, entry.priceCredits),
-  Number.POSITIVE_INFINITY
-);
+/** The cheapest package on sale (Starter, 1 month), quoted wherever the studio invites an upgrade. */
+const ENTRY_PRICE = managementPriceCredits(ENTRY_PACKAGE);
 
 function formatDay(iso: string | null): string | null {
   if (!iso) return null;
@@ -42,7 +40,11 @@ function formatDay(iso: string | null): string | null {
 
 function exhaustedBody(t: StudioT, renewsAt: string | null): string {
   const date = formatDay(renewsAt);
-  const values = { paidTotal: REQUESTS_PER_PAID_MONTH, price: ENTRY_PRICE };
+  const values = {
+    starterTotal: PACKAGE_TIER_REQUESTS.starter,
+    proTotal: PACKAGE_TIER_REQUESTS.pro,
+    price: ENTRY_PRICE,
+  };
   return date
     ? t("studio.quota.body", { ...values, date })
     : t("studio.quota.bodyNoDate", values);

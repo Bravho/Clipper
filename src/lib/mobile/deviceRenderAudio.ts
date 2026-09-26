@@ -27,8 +27,20 @@ export const DEVICE_MUSIC_LEAD_IN_SECONDS = 0.6;
 /** Linear music bed level before ducking. `MUSIC_BED_VOLUME`. */
 export const DEVICE_MUSIC_BED_VOLUME = 0.3;
 
-/** `sidechaincompress` ratio — how far the bed drops under speech. */
-export const DEVICE_MUSIC_DUCK_RATIO = 2.5;
+/**
+ * `sidechaincompress` ratio — how far the bed drops under speech.
+ *
+ * DELIBERATELY GENTLER THAN THE SERVER (2.5), Tho 26 Sep 2026: phone renders
+ * came out with the music effectively gone under the voice and back only after
+ * the narration ended, while server-made videos kept it audible. The phone's
+ * single-pass normaliser sets the voice's RMS to -16 dBFS, which lands a few
+ * dB LOUDER than FFmpeg's gated `loudnorm=-16 LUFS`, and its peak-following
+ * envelope ducks ~1 dB deeper than FFmpeg's RMS detector — together enough to
+ * push the bed below what a phone speaker reproduces. 1.6 drops the bed ~4 dB
+ * under normal speech instead of ~8 dB. It travels in every manifest, so a
+ * change here reaches both apps with a server deploy, no new build.
+ */
+export const DEVICE_MUSIC_DUCK_RATIO = 1.6;
 
 /** `sidechaincompress` threshold, linear amplitude. */
 export const DEVICE_MUSIC_DUCK_THRESHOLD = 0.03;
@@ -141,10 +153,10 @@ export function nextEnvelope(
  *
  * Mirrors `sidechaincompress=threshold=T:ratio=R`: below the threshold the bed
  * is untouched; above it, the amount by which the key exceeds the threshold is
- * divided by the ratio, in dB. With T = 0.03 and R = 2.5 a key at full scale
- * pulls the bed down by about 18 dB, and speech at a normal level lands around
- * −8 dB — audible, not gone, which is the level the pipeline settled on after
- * two rounds of complaints that the bed disappeared.
+ * divided by the ratio, in dB. On the server (R = 2.5) speech at a normal level
+ * pulls the bed down about 8 dB — the level the pipeline settled on after two
+ * rounds of complaints that the bed disappeared. The phone uses R = 1.6
+ * (`DEVICE_MUSIC_DUCK_RATIO`), about 4 dB, for the reasons given there.
  *
  * @returns Linear gain multiplier in (0, 1].
  */

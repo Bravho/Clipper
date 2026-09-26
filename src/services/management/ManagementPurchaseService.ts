@@ -217,6 +217,13 @@ export class ManagementPurchaseService {
       };
     }
 
+    // How many video requests each granted month is worth: the DB row (after
+    // migration 037), else the catalogue, else the historical 10.
+    const requestsPerMonth =
+      product.videoRequestsPerMonth ??
+      findManagementProduct(product.code)?.videoRequestsPerMonth ??
+      REQUESTS_PER_PAID_MONTH;
+
     // Populated inside the transaction when the product is a bundle.
     let videoWindows: { startsAt: Date; expiresAt: Date }[] = [];
 
@@ -401,8 +408,22 @@ export class ManagementPurchaseService {
             LIMIT 1`,
           [params.userId, now]
         );
+        // An UPGRADE starts now. A Pro package bought while only Starter months
+        // (fewer requests) are running would otherwise sit behind them, and
+        // the buyer paid for more videos today, not after the Starter runs
+        // out. The windows then run side by side; spending takes the one
+        // expiring first, so nothing bought is lost.
+        const liveAllowance = await client.query<{ max_allowance: number | null }>(
+          `SELECT MAX(total_allowance) AS max_allowance
+             FROM video_allowance_windows
+            WHERE user_id = $1 AND status = 'active'
+              AND starts_at <= $2 AND expires_at > $2`,
+          [params.userId, now]
+        );
+        const runningAllowance = Number(liveAllowance.rows[0]?.max_allowance ?? 0);
+        const isUpgrade = runningAllowance > 0 && requestsPerMonth > runningAllowance;
         const videoStartFrom =
-          usableNow.rows.length > 0 && currentVideo.rows[0]
+          !isUpgrade && usableNow.rows.length > 0 && currentVideo.rows[0]
             ? new Date(currentVideo.rows[0].expires_at)
             : now;
 
@@ -421,7 +442,7 @@ export class ManagementPurchaseService {
               purchase.id,
               sequence,
               creditTransactionId,
-              REQUESTS_PER_PAID_MONTH,
+              requestsPerMonth,
               w.startsAt,
               w.expiresAt,
             ]
@@ -517,7 +538,7 @@ export class ManagementPurchaseService {
           metadata: {
             productCode: product.code,
             months: videoWindows.length,
-            requestsPerMonth: REQUESTS_PER_PAID_MONTH,
+            requestsPerMonth,
             startsAt: videoWindows[0].startsAt.toISOString(),
             expiresAt:
               videoWindows[videoWindows.length - 1].expiresAt.toISOString(),

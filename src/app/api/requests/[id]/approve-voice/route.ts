@@ -7,7 +7,10 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { Platform } from "@/domain/enums/Platform";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
-import { videoGenerationService } from "@/services/VideoGenerationService";
+import {
+  videoGenerationService,
+  VoiceTooLongForMaterialError,
+} from "@/services/VideoGenerationService";
 
 export async function POST(
   request: Request,
@@ -47,6 +50,19 @@ export async function POST(
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
+    if (err instanceof VoiceTooLongForMaterialError) {
+      // The studio shows its own sentence from these numbers, in its language.
+      return NextResponse.json(
+        {
+          error: err.message,
+          code: err.code,
+          voiceSeconds: err.voiceSeconds,
+          materialSeconds: err.materialSeconds,
+          maxVoiceSeconds: err.maxVoiceSeconds,
+        },
+        { status: 400 }
+      );
+    }
     const message = err instanceof Error ? err.message : "Failed to approve voice.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

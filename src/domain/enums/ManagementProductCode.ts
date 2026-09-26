@@ -28,6 +28,16 @@
  *   management_bundle_3_months  — 3 months of both.
  *   management_bundle_6_months  — 6 months of both.
  *   management_bundle_1_year    — 12 months of both.
+ *
+ * 2026-09-27: the bundles ARE the "Pro" packages (10 videos a month), and the
+ * `management_starter_*` codes are the "Starter" packages (5 a month) — same
+ * shape, a smaller video allowance. These eight are the only products sold;
+ * the rest are retired and honoured until they expire (see config/management.ts).
+ *
+ *   management_starter_1_month  — 1 month of publishing + 5 videos a month.
+ *   management_starter_3_months — 3 months.
+ *   management_starter_6_months — 6 months.
+ *   management_starter_1_year   — 12 months.
  */
 export type ManagementProductCode =
   | "management_single_video"
@@ -38,7 +48,11 @@ export type ManagementProductCode =
   | "management_bundle_1_month"
   | "management_bundle_3_months"
   | "management_bundle_6_months"
-  | "management_bundle_1_year";
+  | "management_bundle_1_year"
+  | "management_starter_1_month"
+  | "management_starter_3_months"
+  | "management_starter_6_months"
+  | "management_starter_1_year";
 
 export const MANAGEMENT_PRODUCT_CODES: readonly ManagementProductCode[] = [
   "management_single_video",
@@ -50,6 +64,10 @@ export const MANAGEMENT_PRODUCT_CODES: readonly ManagementProductCode[] = [
   "management_bundle_3_months",
   "management_bundle_6_months",
   "management_bundle_1_year",
+  "management_starter_1_month",
+  "management_starter_3_months",
+  "management_starter_6_months",
+  "management_starter_1_year",
 ] as const;
 
 export function isManagementProductCode(value: unknown): value is ManagementProductCode {
@@ -78,9 +96,13 @@ export const PRODUCT_CODE_TO_ENTITLEMENT_TYPE = {
   management_bundle_3_months: "three_months",
   management_bundle_6_months: "six_months",
   management_bundle_1_year: "one_year",
+  management_starter_1_month: "one_month",
+  management_starter_3_months: "three_months",
+  management_starter_6_months: "six_months",
+  management_starter_1_year: "one_year",
 } as const;
 
 /** True when the code is one of the combined video + publishing bundles. */
 export function isManagementBundleCode(code: ManagementProductCode): boolean {
-  return code.startsWith("management_bundle_");
+  return code.startsWith("management_bundle_") || code.startsWith("management_starter_");
 }

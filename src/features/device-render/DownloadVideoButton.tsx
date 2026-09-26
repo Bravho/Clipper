@@ -20,9 +20,11 @@ export function DownloadVideoButton({
   const t = useStudioT();
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [percent, setPercent] = useState<number | null>(null);
 
   const download = async () => {
     setDownloading(true);
+    setPercent(null);
     setError(null);
     try {
       await downloadStudioVideo({
@@ -30,6 +32,7 @@ export function DownloadVideoButton({
         assetId,
         channel,
         failedMessage: t("studio.download.failed"),
+        onProgress: (fraction) => setPercent(Math.round(fraction * 100)),
       });
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -46,7 +49,11 @@ export function DownloadVideoButton({
         disabled={downloading}
         onClick={() => void download()}
       >
-        {downloading ? t("studio.download.preparing") : (label ?? t("studio.download.default"))}
+        {downloading
+          ? percent != null && percent < 100
+            ? t("studio.download.progress", { percent })
+            : t("studio.download.preparing")
+          : (label ?? t("studio.download.default"))}
       </button>
       {error && (
         <p className="studio-note studio-note-danger" style={{ marginTop: 8 }}>

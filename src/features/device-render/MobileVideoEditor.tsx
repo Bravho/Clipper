@@ -54,6 +54,11 @@ import {
 import { subjectCentre } from "@/lib/mobile/shotFraming";
 import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import {
+  materialSeconds,
+  maxVoiceSecondsForMaterial,
+  voiceFitsMaterial,
+} from "@/config/materialLength";
+import {
   dropPrivateCopy,
   looksLikeHeic,
   PickedFileError,
@@ -62,7 +67,10 @@ import {
 import { CapabilityNotice, ServerBadge, useStudioCapability } from "./StudioChrome";
 import { QuotaDialog, QuotaStatus, type StudioQuota } from "./QuotaPrompt";
 import { BriefPanel } from "./BriefPanel";
-import { SourcePicker } from "./SourcePicker";
+import { SourcePicker, type PendingMedia } from "./SourcePicker";
+import { MissingOriginals } from "./MissingOriginals";
+import { sweepFinishedVideos } from "@/lib/mobile/finishedVideoCache";
+import type { LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
 import { prepareClip } from "./clipPreview";
 import { buildRenderTimeline } from "./renderTimeline";
 import { SubmitMedia } from "./SubmitMedia";
@@ -289,7 +297,15 @@ function StudioEditor({
     null
   );
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Originals this phone lost since submitting (reinstall, cleared data,
+  // Android freeing space); the person can pick them again.
+  const [missingOriginals, setMissingOriginals] = useState<LocalMediaDescriptor[]>([]);
+  // Picked media still being copied and read, shown as tiles of their own.
+  const [pending, setPending] = useState<PendingMedia[]>([]);
   const [script, setScript] = useState<StudioScript | null>(null);
+  // The person has changed the script since the server last had it. Until the
+  // change is approved or turned into a voice, a poll must not undo it.
+  const [scriptEdited, setScriptEdited] = useState(false);
   const [voiceId, setVoiceId] = useState<ElevenLabsVoiceId>(DEFAULT_ELEVENLABS_VOICE_ID);
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
@@ -326,6 +342,11 @@ function StudioEditor({
   // The job storyboard is applied to the timeline ONCE. After that the timeline
   // is the person's, and a poll that re-applied it would undo their edits.
   const storyboardApplied = useRef(false);
+
+  // Finished videos this phone kept for instant downloads: drop the old ones.
+  useEffect(() => {
+    void sweepFinishedVideos();
+  }, []);
 
   const capability = useStudioCapability();
   const nativeReady = capability?.canRender === true;
@@ -394,29 +415,62 @@ function StudioEditor({
       const picked = Array.from(files ?? []).slice(0, 20);
       if (picked.length === 0) return;
 
+      // Every picked item gets its tile AT ONCE — waiting, then copying with a
+      // percentage, then reading, then its thumbnail (or an error). Preparing
+      // can take many seconds per clip, and a grid that stays empty all that
+      // time reads as "nothing happened".
+      //
+      // One at a time, in the order picked (Tho, 26 Sep): the tile being
+      // worked on is always the next one, and a phone with big 4K clips is
+      // not asked to copy and decode several at once.
+      const batch: PendingMedia[] = picked.map((original) => ({
+        id: nextId("src"),
+        fileName: original.name,
+        kind: original.type.startsWith("video/") ? "clip" : "image",
+        state: "waiting",
+        progress: null,
+        posterUrl: null,
+        error: null,
+      }));
+      // A new batch replaces the error tiles of the last one.
+      setPending(batch);
+      const patch = (id: string, change: Partial<PendingMedia>) =>
+        setPending((current) =>
+          current.map((item) => (item.id === id ? { ...item, ...change } : item))
+        );
+
       // One file that will not open must not lose the others, so each is
-      // prepared on its own and the ones that failed are named at the end.
+      // prepared on its own and the ones that failed stay as named error tiles.
       const added: EditorSource[] = [];
       const notes: string[] = [];
-      const failures: string[] = [];
-      for (const original of picked) {
-        const isClip = original.type.startsWith("video/");
-        const id = nextId("src");
+      let failed = 0;
+      for (const [index, original] of picked.entries()) {
+        const { id, kind } = batch[index];
+        const isClip = kind === "clip";
         let snapshotKey: string | null = null;
+        patch(id, { state: "copying", progress: 0 });
         try {
           // A private copy FIRST, before anything decodes the file: the
           // gallery's reference can die at any moment after this (see
           // pickedFile.ts), and the copy is what everything below reads.
-          const copy = await takePrivateCopy(`studio-${id}`, original, t);
+          let lastShown = 0;
+          const copy = await takePrivateCopy(`studio-${id}`, original, t, (fraction) => {
+            // A 4K clip is hundreds of chunks; redraw every 2% at most.
+            if (fraction - lastShown >= 0.02 || fraction >= 1) {
+              lastShown = fraction;
+              patch(id, { progress: fraction });
+            }
+          });
           snapshotKey = copy.snapshotKey;
           const file = copy.file;
+          patch(id, { state: "reading", progress: null });
           // One decode per file, producing the length, the frame shown in
           // every grid from here on, and — for a clip the in-app browser cannot
           // play — a preview copy made by the phone's own video engine. A photo
           // is downscaled: the tile and the storyboard frame should not be
           // carrying a six-megabyte original around.
           const prepared = isClip
-            ? await prepareClip(file, t)
+            ? await prepareClip(file, t, () => patch(id, { state: "converting" }))
             : {
                 durationSeconds: null,
                 posterUrl: await readImagePoster(file),
@@ -434,7 +488,7 @@ function StudioEditor({
             );
           }
           if (prepared.note) notes.push(prepared.note);
-          added.push({
+          const source: EditorSource = {
             id,
             snapshotKey,
             kind: isClip ? "clip" : "image",
@@ -443,19 +497,34 @@ function StudioEditor({
             posterUrl: prepared.posterUrl,
             durationSeconds: prepared.durationSeconds,
             fileName: file.name,
+          };
+          added.push(source);
+          patch(id, {
+            state: "ready",
+            progress: null,
+            posterUrl: prepared.posterUrl,
+            durationSeconds: prepared.durationSeconds,
           });
         } catch (failure) {
           void dropPrivateCopy(snapshotKey);
-          failures.push(
-            failure instanceof PickedFileError
-              ? failure.message
-              : failure instanceof Error
-                ? `${original.name}: ${failure.message}`
-                : t("studio.msg.fileUnreadable", { name: original.name })
-          );
+          failed += 1;
+          patch(id, {
+            state: "failed",
+            progress: null,
+            error:
+              failure instanceof PickedFileError
+                ? failure.message
+                : failure instanceof Error
+                  ? `${original.name}: ${failure.message}`
+                  : t("studio.msg.fileUnreadable", { name: original.name }),
+          });
         }
       }
 
+      // The finished items join the material together, in the order picked,
+      // so the automatic arrangement sees the whole batch once. Their tiles
+      // already show the same thumbnails, so nothing jumps.
+      const addedIds = new Set(added.map((source) => source.id));
       if (added.length > 0) {
         update((current) => {
           const sources = [...current.sources, ...added];
@@ -471,10 +540,19 @@ function StudioEditor({
           [t("studio.msg.itemsAdded", { count: added.length }), ...notes].join(" ")
         );
       }
-      if (failures.length > 0) setError(failures.join(" "));
+      setPending((current) => current.filter((item) => !addedIds.has(item.id)));
+      if (failed > 0) setError(t("studio.media.someFailed", { count: failed }));
     },
     [t, update]
   );
+
+  const preparingMedia = pending.some(
+    (item) => item.state !== "ready" && item.state !== "failed"
+  );
+
+  const dismissPending = useCallback((id: string) => {
+    setPending((current) => current.filter((item) => item.id !== id));
+  }, []);
 
   const removeSource = useCallback(
     (sourceId: string) => {
@@ -711,16 +789,33 @@ function StudioEditor({
     if (document.sources.length > 0 || restoring.current) return;
     restoring.current = true;
     void restoreStudioSources(content.localMedia)
-      .then(({ sources, missing }) => {
+      .then(({ sources, missingMedia }) => {
         if (sources.length > 0) setDocument((current) => ({ ...current, sources }));
-        if (missing.length > 0) {
-          setError(t("studio.msg.originalsMissing", { names: missing.join(", ") }));
-        }
+        // Said by the MissingOriginals panel, with the way to put them back.
+        setMissingOriginals(missingMedia);
       })
       .finally(() => {
         restoring.current = false;
       });
   }, [content, document.sources.length, t]);
+
+  /** After originals were picked again: bring the material back in full. */
+  const afterOriginalsRestored = useCallback(
+    async () => {
+      if (!content) return;
+      const { sources, missingMedia } = await restoreStudioSources(content.localMedia);
+      // The storyboard was built without the lost items; build it again now
+      // that they are back.
+      storyboardApplied.current = false;
+      setDocument((current) => ({ ...current, sources }));
+      setMissingOriginals(missingMedia);
+      if (missingMedia.length === 0) {
+        setError(null);
+        setMessage(t("studio.originals.allBack"));
+      }
+    },
+    [content, t]
+  );
 
   // When the pipeline's storyboard arrives, it becomes the timeline — once.
   // Once production has been started, the plan it was started with is the
@@ -849,8 +944,10 @@ function StudioEditor({
   // approved, the server's copy is the truth again.
   useEffect(() => {
     if (!content?.script) return;
-    setScript((current) => (current && !content.contentApproved ? current : content.script));
-  }, [content]);
+    setScript((current) =>
+      current && (scriptEdited || !content.contentApproved) ? current : content.script
+    );
+  }, [content, scriptEdited]);
 
   const submitMedia = useCallback(async () => {
     if (!requestId) return;
@@ -900,13 +997,17 @@ function StudioEditor({
     setApproving(true);
     setApproveError(null);
     try {
+      // An English script written for different Thai would caption the video
+      // wrongly; leave it empty and the server translates the edited one.
+      const unchanged = script.text.trim() === (content?.script?.text ?? "").trim();
       await approveStudioContent({
         requestId,
-        script,
+        script: unchanged ? script : { ...script, english: "" },
         voiceId,
         storyboard: storyboardFromScenes(document.scenes, indexOfSource),
         t,
       });
+      setScriptEdited(false);
       await refreshContent();
       setMessage(t("studio.msg.scriptApproved"));
     } catch (failure) {
@@ -914,7 +1015,7 @@ function StudioEditor({
     } finally {
       setApproving(false);
     }
-  }, [document.scenes, indexOfSource, refreshContent, requestId, script, t, voiceId]);
+  }, [content?.script?.text, document.scenes, indexOfSource, refreshContent, requestId, script, t, voiceId]);
 
   const scriptStatus: ScriptStatus = !submitted
     ? "not_submitted"
@@ -957,6 +1058,36 @@ function StudioEditor({
           ? "approved"
           : "none";
   const voiceSeconds = content?.voice?.durationSeconds ?? null;
+  // How long the picked material is, and so how long the voice may be. A
+  // submitted request is measured from what the server holds (the same list
+  // its own check reads); before that, from the media on screen.
+  const materialTotal = useMemo(
+    () =>
+      content?.localMedia && content.localMedia.length > 0
+        ? materialSeconds(
+            content.localMedia.map((item) => ({
+              isClip: item.mimeType.startsWith("video/"),
+              durationSeconds: item.durationSeconds,
+            }))
+          )
+        : materialSeconds(
+            document.sources.map((source) => ({
+              isClip: source.kind === "clip",
+              durationSeconds: source.durationSeconds,
+            }))
+          ),
+    [content?.localMedia, document.sources]
+  );
+  const maxVoiceSeconds = maxVoiceSecondsForMaterial(materialTotal);
+  const voiceTooLong =
+    voiceSeconds != null && materialTotal > 0 && !voiceFitsMaterial(voiceSeconds, materialTotal);
+  // The voice was made from the server's approved script; a different script
+  // on screen means the voice no longer says what is written.
+  const voiceScriptStale =
+    Boolean(content?.voice) &&
+    Boolean(content?.contentApproved) &&
+    script != null &&
+    script.text.trim() !== (content?.script?.text ?? "").trim();
   const requiredSeconds = voiceSeconds != null ? minMontageTotalSeconds(voiceSeconds) : null;
   const storyboardSeconds = scenesPlaySeconds(document.scenes);
   const covered = requiredSeconds == null || storyboardSeconds + 1 / 30 >= requiredSeconds;
@@ -995,7 +1126,14 @@ function StudioEditor({
     setVoiceBusy(true);
     setVoiceError(null);
     try {
-      await regenerateStudioVoice({ requestId, jobId: content.jobId, voiceId, t });
+      await regenerateStudioVoice({
+        requestId,
+        jobId: content.jobId,
+        voiceId,
+        scriptText: scriptEdited ? script?.text : null,
+        t,
+      });
+      setScriptEdited(false);
       await refreshContent();
       setMessage(t("studio.msg.voiceAgain"));
     } catch (failure) {
@@ -1003,7 +1141,7 @@ function StudioEditor({
     } finally {
       setVoiceBusy(false);
     }
-  }, [content?.jobId, refreshContent, requestId, t, voiceId]);
+  }, [content?.jobId, refreshContent, requestId, script?.text, scriptEdited, t, voiceId]);
 
   /**
    * Make the voice again AFTER it was approved.
@@ -1024,7 +1162,14 @@ function StudioEditor({
       if (content.currentStep === VideoGenerationStep.AwaitingOverlayApproval) {
         await reopenStudioProduction({ requestId, jobId, t });
       }
-      await regenerateStudioVoice({ requestId, jobId, voiceId, t });
+      await regenerateStudioVoice({
+        requestId,
+        jobId,
+        voiceId,
+        scriptText: scriptEdited ? script?.text : null,
+        t,
+      });
+      setScriptEdited(false);
       setSoundConfirmed(false);
       await refreshContent();
       setMessage(t("studio.msg.voiceAgain"));
@@ -1033,7 +1178,16 @@ function StudioEditor({
     } finally {
       setVoiceBusy(false);
     }
-  }, [content?.currentStep, content?.jobId, refreshContent, requestId, t, voiceId]);
+  }, [
+    content?.currentStep,
+    content?.jobId,
+    refreshContent,
+    requestId,
+    script?.text,
+    scriptEdited,
+    t,
+    voiceId,
+  ]);
 
   /**
    * Send the storyboard — every shot, trim, move and transition — as the
@@ -1144,7 +1298,14 @@ function StudioEditor({
         .filter((ratio) => ratio !== primaryRatio),
     [orderedPlatforms, primaryRatio]
   );
-  const selectedShapes = channelChoice ?? otherShapes;
+  // Before delivery every extra shape starts ticked; after it, none does — the
+  // remaining ones are offered, not assumed.
+  const selectedShapes =
+    channelChoice ??
+    (step_ === VideoGenerationStep.AwaitingDistributionReview ||
+    step_ === VideoGenerationStep.Complete
+      ? []
+      : otherShapes);
 
   const startMainRender = useCallback(() => {
     if (!atDesignGate) return;
@@ -1187,14 +1348,21 @@ function StudioEditor({
           await approveStudioVideo({ requestId, jobId, t });
           current = (await fetchStudioContent(requestId)).currentStep;
         }
-        if (current === VideoGenerationStep.AwaitingAdditionalRatios) {
+        // After delivery a shape that was skipped can still be made.
+        const delivered =
+          current === VideoGenerationStep.AwaitingDistributionReview ||
+          current === VideoGenerationStep.Complete;
+        const making =
+          ratios.length > 0 &&
+          (current === VideoGenerationStep.AwaitingAdditionalRatios || delivered);
+        if (current === VideoGenerationStep.AwaitingAdditionalRatios || (delivered && making)) {
           await generateStudioChannels({ requestId, jobId, ratios, t });
         }
         userStopped.current = false;
         await refreshContent();
         setAvailability(await checkDeviceRenderAvailability(requestId));
         setMessage(
-          ratios.length > 0 && current === VideoGenerationStep.AwaitingAdditionalRatios
+          making
             ? t("studio.msg.makingShapes", { ratios: ratios.join(", ") })
             : t("studio.msg.doneReady")
         );
@@ -1247,6 +1415,10 @@ function StudioEditor({
 
   // What has to be true before the video can be remade: everything the first
   // Render needed, except the server gate, which regenerating reopens itself.
+  // Since 2026-09-27 an approved step is final (config/requestLimits.ts): the
+  // server refuses to reopen it, so the studio stops offering to.
+  const lockedAfterApproval = content?.lockedAfterApproval === true;
+
   const regenerateBlocker =
     renderChecklist.slice(0, -1).find((item) => !item.done)?.label ?? null;
 
@@ -1560,6 +1732,7 @@ function StudioEditor({
         regenerating: regenerating || sendingProduction,
         onRegenerate: () => void regenerateVideo(),
         regenerateBlocker: regenerateBlocker,
+        regenerateLocked: lockedAfterApproval,
         onChannels: () => setStep("channels"),
         error: videoError,
         timeline,
@@ -1606,6 +1779,9 @@ function StudioEditor({
           <QuotaStatus quota={quota} />
         )}
 
+        {/* First, above every step: nothing can be rendered until they are back. */}
+        <MissingOriginals missing={missingOriginals} onRestored={afterOriginalsRestored} />
+
         {step === "brief" && (
           <BriefPanel
             brief={document.brief}
@@ -1622,6 +1798,8 @@ function StudioEditor({
             ratio={document.ratio}
             onAdd={addFiles}
             onRemove={removeSource}
+            pending={pending}
+            onDismissPending={dismissPending}
             onRatioChange={(ratio: EditorRatio) => update((current) => ({ ...current, ratio }))}
             disabled={busy || submitting}
             locked={submitted}
@@ -1639,7 +1817,7 @@ function StudioEditor({
                   onSubmit={() => void submitMedia()}
                   onGoToBrief={() => setStep("brief")}
                   quota={submitted ? null : quota}
-                  disabled={busy}
+                  disabled={busy || preparingMedia}
                 />
               ) : null
             }
@@ -1689,9 +1867,14 @@ function StudioEditor({
             scriptStatus={scriptStatus}
             script={script}
             currentStep={content?.currentStep ?? null}
-            onScriptChange={(change) =>
-              setScript((current) => (current ? { ...current, ...change } : current))
-            }
+            onScriptChange={(change) => {
+              setScriptEdited(true);
+              setScript((current) => (current ? { ...current, ...change } : current));
+            }}
+            voiceScriptStale={voiceScriptStale}
+            materialSeconds={materialTotal}
+            maxVoiceSeconds={maxVoiceSeconds}
+            voiceTooLong={voiceTooLong}
             voiceId={voiceId}
             onVoice={setVoiceId}
             onApprove={() => void approveScript()}
@@ -1702,9 +1885,11 @@ function StudioEditor({
             voiceSeconds={voiceSeconds}
             onApproveVoice={() => void approveVoice()}
             onRegenerateVoice={() => void regenerateVoice()}
-            onRemakeVoice={() => void remakeApprovedVoice()}
+            onRemakeVoice={lockedAfterApproval ? null : () => void remakeApprovedVoice()}
             remakeBlocker={
-              busy || sendingProduction
+              lockedAfterApproval
+                ? t("studio.audio.remakeLocked")
+                : busy || sendingProduction
                 ? t("studio.audio.remakeWhileMaking")
                 : step_ === VideoGenerationStep.AwaitingSceneDesignApproval ||
                     step_ === VideoGenerationStep.AwaitingOverlayApproval
@@ -1714,6 +1899,7 @@ function StudioEditor({
                     : t("studio.audio.remakeWhileMaking")
             }
             remakeDiscardsVideo={step_ === VideoGenerationStep.AwaitingOverlayApproval}
+            voiceMakes={content?.voiceMakes ?? null}
             voiceBusy={voiceBusy}
             voiceError={voiceError}
             onLanguages={(languages: CaptionLanguage[]) => {
@@ -1797,7 +1983,7 @@ function StudioEditor({
                   : otherShapes.filter((entry) => entry === ratio || selectedShapes.includes(entry))
               )
             }
-            onStart={() => void startChannels(selectedShapes)}
+            onStart={(ratios) => void startChannels(ratios)}
             onFinish={() => void startChannels([])}
             starting={channelsStarting}
             error={channelsError}
@@ -1806,6 +1992,7 @@ function StudioEditor({
             elapsed={elapsedAny}
             failure={shapeFailure}
             management={management}
+            delivered={content?.delivered === true}
           />
         )}
 

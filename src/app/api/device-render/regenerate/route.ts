@@ -41,6 +41,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
     const message = err instanceof Error ? err.message : "The video could not be remade.";
-    return NextResponse.json({ error: message }, { status: 409 });
+    // Since 2026-09-27 an approved video is never remade (config/requestLimits.ts).
+    const code =
+      err instanceof Error && (err as { code?: unknown }).code === "locked_after_approval"
+        ? "locked_after_approval"
+        : undefined;
+    return NextResponse.json({ error: message, ...(code ? { code } : {}) }, { status: 409 });
   }
 }

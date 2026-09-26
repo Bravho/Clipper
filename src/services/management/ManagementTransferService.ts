@@ -388,7 +388,13 @@ export class ManagementTransferService {
         })
       : null;
     const defaultCaption =
-      suggestedDefault?.caption || normalizedDraft?.caption?.trim() || job.captionThai || null;
+      suggestedDefault?.caption ||
+      normalizedDraft?.caption?.trim() ||
+      // No per-channel draft yet: the caption the AI wrote with the script.
+      // The studio no longer shows it for editing, so it is used as written.
+      job.approvedCaptionThai?.trim() ||
+      job.captionThai ||
+      null;
     const defaultHashtags = suggestedDefault?.hashtags ?? normalizedDraft?.hashtags ?? [];
 
     const thumbnailStorageKey = await this._posterKeyFor(asset);

@@ -3,7 +3,11 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
-import { videoGenerationService } from "@/services/VideoGenerationService";
+import {
+  videoGenerationService,
+  StepLockedAfterApprovalError,
+  VoiceMakeLimitError,
+} from "@/services/VideoGenerationService";
 import {
   ELEVENLABS_FEMALE_VOICE_ID,
   ELEVENLABS_MALE_VOICE_ID,
@@ -14,6 +18,8 @@ const schema = z.object({
   voiceId: z
     .enum([ELEVENLABS_FEMALE_VOICE_ID, ELEVENLABS_MALE_VOICE_ID])
     .optional(),
+  /** The script as edited in the studio; replaces the approved one when it differs. */
+  scriptText: z.string().trim().min(1).max(5000).optional(),
 });
 
 /**
@@ -45,11 +51,23 @@ export async function POST(
     const updated = await videoGenerationService.regenerateVoice(
       body.jobId,
       requester.id,
-      body.voiceId
+      body.voiceId,
+      body.scriptText ?? null
     );
 
     return NextResponse.json({ currentStep: updated.currentStep }, { status: 200 });
   } catch (err) {
+    // The per-request limits (config/requestLimits.ts): a code the studio can
+    // show in the requester's language, and the count so it can say how many.
+    if (err instanceof VoiceMakeLimitError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code, used: err.used, limit: err.limit },
+        { status: 409 }
+      );
+    }
+    if (err instanceof StepLockedAfterApprovalError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
+    }
     const message = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 400 });
   }

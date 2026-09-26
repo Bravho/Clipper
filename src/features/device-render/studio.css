@@ -1485,3 +1485,91 @@ a.studio-button {
     align-items: center;
   }
 }
+
+/* ── Picked media on its way in ─────────────────────────────────────────── */
+/* A tile appears the moment an item is picked: a spinner and the file's name,
+   then the copy's percentage, then its thumbnail — or what went wrong. */
+.studio-media-pending-body {
+  justify-items: center;
+}
+
+.studio-media-pending-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--s-text-muted);
+  font-weight: 600;
+}
+
+.studio-media-pending-status {
+  color: var(--s-text-faint);
+}
+
+.studio-media-pending[data-state="failed"] {
+  border-color: color-mix(in srgb, var(--s-danger) 55%, transparent);
+}
+
+.studio-media-pending[data-state="failed"] .studio-media-pending-status {
+  color: var(--s-danger);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.studio-media-pending-error {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--s-danger);
+  color: #fff;
+  font-size: 13px;
+}
+
+.studio-media-pending[data-state="waiting"] {
+  opacity: 0.7;
+}
+
+.studio-media-pending-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--s-border);
+  overflow: hidden;
+}
+
+.studio-media-pending-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--s-accent);
+  transition: width 0.2s linear;
+}
+
+.studio-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 3px solid var(--s-border);
+  border-top-color: var(--s-accent);
+  animation: studio-spin 0.8s linear infinite;
+}
+
+.studio-spinner-idle {
+  animation: none;
+  border-top-color: var(--s-border);
+}
+
+@keyframes studio-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-spinner { animation-duration: 2.4s; }
+  .studio-media-pending-bar > span { transition: none; }
+}

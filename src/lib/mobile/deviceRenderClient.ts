@@ -17,6 +17,7 @@ import {
   type NativeManifestResult,
 } from "@/lib/mobile/deviceRenderBridge";
 import { getNativeRenderCapabilities } from "@/lib/mobile/deviceVideoRender";
+import { keepFinishedVideo } from "@/lib/mobile/finishedVideoCache";
 import type { LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
 import {
   describeRenderPosition,
@@ -402,6 +403,11 @@ export async function runDeviceRender(
 
     completed = true;
     note("The server accepted the video");
+    // A finished, captioned video stays on this phone too, so Download can
+    // save it at once instead of fetching it back from the server.
+    if (manifest.stage === "final" && result.assetId) {
+      await keepFinishedVideo(result.assetId, rendered.path);
+    }
     report("done", 100, t("studio.progress.done"));
     return {
       status: "completed",

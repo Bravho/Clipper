@@ -1,26 +1,17 @@
 import type { Metadata } from "next";
 import { getServerI18n } from "@/i18n/server";
 import type { MessageKey } from "@/i18n/messages";
-import {
-  FREE_REQUESTS_PER_WINDOW,
-  FREE_WINDOW_DAYS,
-  REQUESTS_PER_PAID_MONTH,
-  VIDEO_PACKAGES,
-} from "@/config/videoPackages";
-import {
-  MANAGEMENT_BUNDLE_PRODUCTS,
-  MANAGEMENT_PUBLISHING_PRODUCTS,
-  managementPriceCredits,
-  type ManagementProductDefinition,
-} from "@/config/management";
-import { managementPackageCopy } from "@/features/pricing/packageCopy";
+import { FREE_REQUESTS_PER_WINDOW, FREE_WINDOW_DAYS } from "@/config/videoPackages";
+import { MANAGEMENT_PACKAGES_ON_SALE, managementPriceCredits } from "@/config/management";
+import { PACKAGE_TIER_REQUESTS, PACKAGE_TIERS } from "@/config/packageTiers";
+import { tierPackageOptions } from "@/features/pricing/tierOptions";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
 
 export const metadata: Metadata = { title: "Plans and pricing" };
 
 /**
- * Public pricing, read straight from the same config the in-app pricing page
- * sells from (`config/videoPackages.ts`, `config/management.ts`), so the
+ * Public pricing, read straight from the same catalogue the in-app pricing page
+ * sells from (`config/management.ts`, the Starter and Pro packages), so the
  * marketing site cannot quote a price the app does not charge.
  * Buying happens in the app (or, signed in, on /dashboard/pricing).
  */
@@ -44,16 +35,26 @@ export default function PlansPage() {
     </div>
   );
 
-  const managementCard = (product: ManagementProductDefinition) => {
-    const copy = managementPackageCopy(t, {
-      code: product.code,
-      productType: product.productType,
-      durationMonths: product.durationMonths,
-      uploadAllowance: product.uploadAllowance,
-      accessWindowDays: product.accessWindowDays,
-      videoMonths: product.videoMonths,
-    });
-    return card(product.code, copy.name, managementPriceCredits(product), copy.description, copy.terms);
+  // The catalogue rows in the shape the tier helper takes: the price shown is
+  // the one charged (launch price when a promotion runs).
+  const rows = MANAGEMENT_PACKAGES_ON_SALE.map((p) => ({
+    code: p.code,
+    productType: p.productType,
+    durationMonths: p.durationMonths,
+    uploadAllowance: p.uploadAllowance,
+    accessWindowDays: p.accessWindowDays,
+    videoMonths: p.videoMonths,
+    videoRequestsPerMonth: p.videoRequestsPerMonth,
+    priceCredits: managementPriceCredits(p),
+    fullPriceCredits: p.fullPriceCredits,
+  }));
+  const tierName: Record<(typeof PACKAGE_TIERS)[number], MessageKey> = {
+    starter: "pricing.tier.starter.name",
+    pro: "pricing.tier.pro.name",
+  };
+  const tierBody: Record<(typeof PACKAGE_TIERS)[number], MessageKey> = {
+    starter: "pricing.tier.starter.body",
+    pro: "pricing.tier.pro.body",
   };
 
   return (
@@ -65,42 +66,36 @@ export default function PlansPage() {
         </header>
 
         <section className="mb-12">
-          <h2 className="mb-4 text-xl font-bold text-slate-900">{t("mkt.plans.videos")}</h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <h2 className="mb-4 text-xl font-bold text-slate-900">{t("mkt.plans.freeName")}</h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {card(
               "free",
               t("mkt.plans.freeName"),
               0,
               t("mkt.plans.freeBody", { freeTotal: FREE_REQUESTS_PER_WINDOW, days: FREE_WINDOW_DAYS })
             )}
-            {[...VIDEO_PACKAGES]
-              .sort((a, b) => a.sortOrder - b.sortOrder)
-              .map((pkg) =>
+          </div>
+        </section>
+
+        {PACKAGE_TIERS.map((tier) => (
+          <section key={tier} className="mb-12">
+            <h2 className="mb-1 text-xl font-bold text-slate-900">{t(tierName[tier])}</h2>
+            <p className="mb-4 text-sm text-slate-600">
+              {t(tierBody[tier], { videos: PACKAGE_TIER_REQUESTS[tier] })}
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {tierPackageOptions(t, rows, tier).map((option) =>
                 card(
-                  pkg.code,
-                  t(pkg.nameKey as MessageKey),
-                  pkg.priceCredits,
-                  t(pkg.descriptionKey as MessageKey, { paidTotal: REQUESTS_PER_PAID_MONTH })
+                  option.code,
+                  option.name,
+                  option.priceCredits,
+                  option.description,
+                  option.badge ? `${option.terms} · ${option.badge}` : option.terms
                 )
               )}
-          </div>
-        </section>
-
-        <section className="mb-12">
-          <h2 className="mb-1 text-xl font-bold text-slate-900">{t("mkt.plans.publishing")}</h2>
-          <p className="mb-4 text-sm text-slate-600">{t("mkt.plans.publishingBody")}</p>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {MANAGEMENT_PUBLISHING_PRODUCTS.map(managementCard)}
-          </div>
-        </section>
-
-        <section className="mb-12">
-          <h2 className="mb-1 text-xl font-bold text-slate-900">{t("mkt.plans.bundles")}</h2>
-          <p className="mb-4 text-sm text-slate-600">{t("mkt.plans.bundlesBody")}</p>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {MANAGEMENT_BUNDLE_PRODUCTS.map(managementCard)}
-          </div>
-        </section>
+            </div>
+          </section>
+        ))}
 
         <p className="mb-10 text-center text-sm text-slate-500">{t("mkt.plans.credits")}</p>
         <StoreButtons t={t} />

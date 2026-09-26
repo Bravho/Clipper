@@ -35,25 +35,7 @@ export function DashboardShell({
   const { t } = useI18n();
   const pathname = usePathname();
 
-  const navLinks = [
-    { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
-    // The studio is the one way to make a video (rendered on the phone).
-    { href: ROUTES.STUDIO, label: t("sidebar.newVideo"), icon: "✚" },
-    { href: ROUTES.REQUESTS, label: t("sidebar.requests"), icon: "◫" },
-    { href: ROUTES.CREDITS, label: t("sidebar.credits"), icon: "◈" },
-    // Pricing sits directly under Credits because they answer consecutive
-    // questions: "what do I have?" then "what does more cost?". Unlike the
-    // Management links it is NOT gated — every user can reach the packages,
-    // including the free-tier user who has just run out and needs to see them.
-    { href: ROUTES.PRICING, label: t("sidebar.pricing"), icon: "❖" },
-    ...(showManagement
-      ? [
-          { href: ROUTES.MANAGEMENT, label: t("sidebar.management"), icon: "◉" },
-          { href: ROUTES.MANAGEMENT_CONNECTIONS, label: t("sidebar.channels"), icon: "⚙" },
-          { href: ROUTES.MANAGEMENT_POSTS, label: t("sidebar.posts"), icon: "▤" },
-        ]
-      : []),
-  ];
+  const navLinks = useRequesterNavLinks(showManagement);
 
   // Mirror these links into the navbar hamburger for small screens.
   useRegisterPortalNav({ id: "requester-portal", title: "RClipper Portal", links: navLinks });
@@ -108,4 +90,43 @@ export function DashboardShell({
       </div>
     </div>
   );
+}
+
+/**
+ * The requester's section links — the sidebar here, and the navbar hamburger
+ * on a phone. Shared so a page outside the dashboard layout (the studio)
+ * offers exactly the same menu instead of a shorter one.
+ */
+export function useRequesterNavLinks(showManagement: boolean) {
+  const { t } = useI18n();
+  return [
+    { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
+    // The studio is the one way to make a video (rendered on the phone).
+    { href: ROUTES.STUDIO, label: t("sidebar.newVideo"), icon: "✚" },
+    { href: ROUTES.REQUESTS, label: t("sidebar.requests"), icon: "◫" },
+    { href: ROUTES.CREDITS, label: t("sidebar.credits"), icon: "◈" },
+    // Pricing sits directly under Credits because they answer consecutive
+    // questions: "what do I have?" then "what does more cost?". Unlike the
+    // Management links it is NOT gated — every user can reach the packages,
+    // including the free-tier user who has just run out and needs to see them.
+    { href: ROUTES.PRICING, label: t("sidebar.pricing"), icon: "❖" },
+    ...(showManagement
+      ? [
+          { href: ROUTES.MANAGEMENT, label: t("sidebar.management"), icon: "◉" },
+          { href: ROUTES.MANAGEMENT_CONNECTIONS, label: t("sidebar.channels"), icon: "⚙" },
+          { href: ROUTES.MANAGEMENT_POSTS, label: t("sidebar.posts"), icon: "▤" },
+        ]
+      : []),
+  ];
+}
+
+/**
+ * Registers the requester menu in the navbar hamburger without drawing the
+ * sidebar — for full-screen pages such as the studio, which live outside
+ * `app/(auth)/dashboard` and so had only the navbar's short list.
+ */
+export function RequesterPortalNav({ showManagement = false }: { showManagement?: boolean }) {
+  const navLinks = useRequesterNavLinks(showManagement);
+  useRegisterPortalNav({ id: "requester-portal", title: "RClipper Portal", links: navLinks });
+  return null;
 }

@@ -25,25 +25,27 @@
  *
  * Credit unit: 1 credit = ฿1 (see src/config/credits.ts).
  *
- * PRICING (set 2026-09-09). Every product carries a full list price and a
- * launch price with a single flag switching between them, so a promotion can be
- * started or ended by flipping one boolean rather than editing prices in
- * several places. The two are currently EQUAL on everything except the entry
- * bundle: the ladder below is the real, intended price, not a discount off an
- * invented higher number. Set a lower `launchPriceCredits` to run a promotion.
+ * PRICING (set 2026-09-27, replacing the 2026-09-09 ladder). ONE kind of
+ * product is sold: a PACKAGE that includes video making AND unlimited
+ * publishing for its whole term, in two tiers (see config/packageTiers.ts):
  *
- *   Publishing only   1mo 180 . 3mo 500 . 6mo 1000 . 12mo 2000
- *   Bundle (+video)   1mo 350 . 3mo 1000 . 6mo 1900 . 12mo 3500
+ *   Starter  5 videos/month   1mo 190 . 3mo 540 . 6mo 1030 . 12mo 1890
+ *   Pro     10 videos/month   1mo 350 . 3mo 990 . 6mo 1890 . 12mo 3490
  *
- * A BUNDLE grants a publishing pass AND a video-generation allowance of the
- * same length in one purchase and one debit (see ManagementProductCode and
- * ManagementPurchaseService). Buying the two separately costs 180 + 200 = 380
- * a month, so the bundle saves 30 a month at the entry tier and more further up
- * the ladder - a discount funded entirely out of publishing's margin, which is
- * near-total because publishing consumes no render capacity.
+ * The Pro packages keep the old `management_bundle_*` codes (they were already
+ * "10 videos a month + unlimited publishing"); Starter adds
+ * `management_starter_*`. The publishing-only passes, the 4-upload entry
+ * bundle and the video-only packages (config/videoPackages.ts) are RETIRED:
+ * `onSale: false`, refused at checkout, hidden from every picker, and honoured
+ * until they expire.
+ *
+ * Every product still carries a full list price and a launch price with a
+ * single flag switching between them. They are equal on everything sold today;
+ * set a lower `launchPriceCredits` to run a promotion.
  */
 
 import type { ManagementProductCode } from "@/domain/enums/ManagementProductCode";
+import { PACKAGE_TIER_REQUESTS, type PackageTier } from "@/config/packageTiers";
 
 /** When true, Management packages are charged at their launch (50 % off) price. */
 export const MANAGEMENT_LAUNCH_DISCOUNT_ACTIVE = true;
@@ -114,6 +116,20 @@ export interface ManagementProductDefinition {
    * bundle month and a video-package month are the same thing.
    */
   videoMonths: number | null;
+  /**
+   * Packages only: how many video requests each of the `videoMonths` months is
+   * worth. Starter = 5, Pro = 10. null for a publishing-only product.
+   */
+  videoRequestsPerMonth: number | null;
+  /** Which package tier this is (see config/packageTiers.ts). null for legacy products. */
+  tier: PackageTier | null;
+  /**
+   * True for the products SOLD today: the Starter and Pro packages. Everything
+   * else is retired (2026-09-27) but stays in the catalogue so earlier purchases
+   * keep their name, their pass and their unspent tokens until they expire.
+   * Checkout refuses a product that is not on sale.
+   */
+  onSale: boolean;
   /** Full list price, in credits (= ฿). */
   fullPriceCredits: number;
   /** Discounted launch price, in credits (= ฿). */
@@ -152,6 +168,9 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: 4,
     accessWindowDays: 30,
     videoMonths: null,
+    videoRequestsPerMonth: null,
+    tier: null,
+    onSale: false,
     fullPriceCredits: 100,
     launchPriceCredits: 50,
     sortOrder: 1,
@@ -165,6 +184,9 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: null,
+    videoRequestsPerMonth: null,
+    tier: null,
+    onSale: false,
     fullPriceCredits: 180,
     launchPriceCredits: 180,
     sortOrder: 2,
@@ -178,6 +200,9 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: null,
+    videoRequestsPerMonth: null,
+    tier: null,
+    onSale: false,
     fullPriceCredits: 500,
     launchPriceCredits: 500,
     sortOrder: 3,
@@ -191,6 +216,9 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: null,
+    videoRequestsPerMonth: null,
+    tier: null,
+    onSale: false,
     fullPriceCredits: 1000,
     launchPriceCredits: 1000,
     sortOrder: 4,
@@ -204,9 +232,76 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: null,
+    videoRequestsPerMonth: null,
+    tier: null,
+    onSale: false,
     fullPriceCredits: 2000,
     launchPriceCredits: 2000,
     sortOrder: 5,
+  },
+  {
+    code: "management_starter_1_month",
+    nameKey: "management.product.starter1Month.name",
+    descriptionKey: "management.product.starter1Month.description",
+    productType: "access_pass",
+    durationMonths: 1,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 1,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
+    tier: "starter",
+    onSale: true,
+    fullPriceCredits: 190,
+    launchPriceCredits: 190,
+    sortOrder: 6,
+  },
+  {
+    code: "management_starter_3_months",
+    nameKey: "management.product.starter3Months.name",
+    descriptionKey: "management.product.starter3Months.description",
+    productType: "access_pass",
+    durationMonths: 3,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 3,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
+    tier: "starter",
+    onSale: true,
+    fullPriceCredits: 540,
+    launchPriceCredits: 540,
+    sortOrder: 7,
+  },
+  {
+    code: "management_starter_6_months",
+    nameKey: "management.product.starter6Months.name",
+    descriptionKey: "management.product.starter6Months.description",
+    productType: "access_pass",
+    durationMonths: 6,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 6,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
+    tier: "starter",
+    onSale: true,
+    fullPriceCredits: 1030,
+    launchPriceCredits: 1030,
+    sortOrder: 8,
+  },
+  {
+    code: "management_starter_1_year",
+    nameKey: "management.product.starter1Year.name",
+    descriptionKey: "management.product.starter1Year.description",
+    productType: "access_pass",
+    durationMonths: 12,
+    uploadAllowance: null,
+    accessWindowDays: null,
+    videoMonths: 12,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
+    tier: "starter",
+    onSale: true,
+    fullPriceCredits: 1890,
+    launchPriceCredits: 1890,
+    sortOrder: 9,
   },
   {
     code: "management_bundle_1_month",
@@ -217,9 +312,12 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: 1,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
+    tier: "pro",
+    onSale: true,
     fullPriceCredits: 350,
     launchPriceCredits: 350,
-    sortOrder: 6,
+    sortOrder: 10,
   },
   {
     code: "management_bundle_3_months",
@@ -230,9 +328,12 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: 3,
-    fullPriceCredits: 1000,
-    launchPriceCredits: 1000,
-    sortOrder: 7,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
+    tier: "pro",
+    onSale: true,
+    fullPriceCredits: 990,
+    launchPriceCredits: 990,
+    sortOrder: 11,
   },
   {
     code: "management_bundle_6_months",
@@ -243,9 +344,12 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: 6,
-    fullPriceCredits: 1900,
-    launchPriceCredits: 1900,
-    sortOrder: 8,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
+    tier: "pro",
+    onSale: true,
+    fullPriceCredits: 1890,
+    launchPriceCredits: 1890,
+    sortOrder: 12,
   },
   {
     code: "management_bundle_1_year",
@@ -256,11 +360,36 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     uploadAllowance: null,
     accessWindowDays: null,
     videoMonths: 12,
-    fullPriceCredits: 3500,
-    launchPriceCredits: 3500,
-    sortOrder: 9,
+    videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
+    tier: "pro",
+    onSale: true,
+    fullPriceCredits: 3490,
+    launchPriceCredits: 3490,
+    sortOrder: 13,
   },
 ] as const;
+
+/**
+ * The packages sold today, Starter first, then Pro, each by term. This is what
+ * every pricing surface lists and the only thing checkout accepts.
+ */
+export const MANAGEMENT_PACKAGES_ON_SALE: readonly ManagementProductDefinition[] =
+  [...MANAGEMENT_PRODUCTS.filter((p) => p.onSale)].sort((a, b) => a.sortOrder - b.sortOrder);
+
+/** The packages of one tier, shortest term first. */
+export function packagesForTier(tier: PackageTier): ManagementProductDefinition[] {
+  return MANAGEMENT_PACKAGES_ON_SALE.filter((p) => p.tier === tier);
+}
+
+/** Is this product code sold today? Unknown codes are not. */
+export function isManagementProductOnSale(code: string): boolean {
+  return MANAGEMENT_PRODUCTS.some((p) => p.code === code && p.onSale);
+}
+
+/** The cheapest package on sale — quoted wherever the app invites an upgrade. */
+export const ENTRY_PACKAGE: ManagementProductDefinition = MANAGEMENT_PACKAGES_ON_SALE.reduce(
+  (cheapest, p) => (p.launchPriceCredits < cheapest.launchPriceCredits ? p : cheapest)
+);
 
 /** Products that grant a video allowance as well as a publishing pass. */
 export const MANAGEMENT_BUNDLE_PRODUCTS: readonly ManagementProductDefinition[] =

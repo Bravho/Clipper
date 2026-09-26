@@ -37,7 +37,16 @@ describe("device audio mix", () => {
     // approved master. Catching the drift here beats catching it by ear.
     expect(DEVICE_MUSIC_LEAD_IN_SECONDS).toBe(MUSIC_LEAD_IN_SECONDS);
     expect(DEVICE_MUSIC_BED_VOLUME).toBe(MUSIC_BED_VOLUME);
-    expect(DEVICE_MUSIC_DUCK_RATIO).toBe(MUSIC_DUCK_RATIO);
+  });
+
+  it("ducks the bed less than the server does (26 Sep 2026)", () => {
+    // Phone renders lost the music under the voice; see DEVICE_MUSIC_DUCK_RATIO.
+    expect(DEVICE_MUSIC_DUCK_RATIO).toBe(1.6);
+    expect(DEVICE_MUSIC_DUCK_RATIO).toBeLessThan(MUSIC_DUCK_RATIO);
+    // Speech at -16 dBFS RMS: about 4 dB of ducking, not 8.
+    const reduction = -linearToDb(duckGain(0.158));
+    expect(reduction).toBeGreaterThan(3);
+    expect(reduction).toBeLessThan(6);
   });
 
   it("drops the lead-in when no music was selected", () => {

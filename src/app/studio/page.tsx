@@ -15,6 +15,7 @@ import {
 } from "@/features/management/server/buildDistributionTransferView";
 import { APP_STORE_URL, PLAY_STORE_URL } from "@/config/studioRollout";
 import { isManagementEnabledFor } from "@/config/management";
+import { RequesterPortalNav } from "@/components/layout/DashboardShell";
 import { headers } from "next/headers";
 import { parseAppUserAgent } from "@/lib/mobile/appUserAgent";
 
@@ -93,18 +94,23 @@ export default async function StudioPage({
   }
 
   return (
-    <StudioAppGate
-      appStoreUrl={APP_STORE_URL}
-      playStoreUrl={PLAY_STORE_URL}
-      appClient={parseAppUserAgent(headers().get("user-agent"))}
-    >
-      <MobileVideoEditor
-        requestId={requestId}
-        requestLabel={requestLabel}
-        initialBrief={initialBrief}
-        quota={quota}
-        management={management}
-      />
-    </StudioAppGate>
+    <>
+      {/* The same hamburger menu as the dashboard: the studio lives outside the
+          dashboard layout, which is what used to register those links. */}
+      <RequesterPortalNav showManagement={isManagementEnabledFor(user)} />
+      <StudioAppGate
+        appStoreUrl={APP_STORE_URL}
+        playStoreUrl={PLAY_STORE_URL}
+        appClient={parseAppUserAgent(headers().get("user-agent"))}
+      >
+        <MobileVideoEditor
+          requestId={requestId}
+          requestLabel={requestLabel}
+          initialBrief={initialBrief}
+          quota={quota}
+          management={management}
+        />
+      </StudioAppGate>
+    </>
   );
 }

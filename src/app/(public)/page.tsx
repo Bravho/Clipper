@@ -13,9 +13,9 @@ import { isBrowserMarketingOnly } from "@/config/studioRollout";
 import {
   FREE_REQUESTS_PER_WINDOW,
   FREE_WINDOW_DAYS,
-  REQUESTS_PER_PAID_MONTH,
-  VIDEO_PACKAGES,
 } from "@/config/videoPackages";
+import { ENTRY_PACKAGE, managementPriceCredits } from "@/config/management";
+import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
 
 /**
@@ -45,7 +45,8 @@ export default async function HomePage() {
     redirect(ROUTES.LOGIN);
   }
 
-  const entryPrice = Math.min(...VIDEO_PACKAGES.map((p) => p.priceCredits));
+  // The cheapest package on sale: Starter, 1 month (config/management.ts).
+  const entryPrice = managementPriceCredits(ENTRY_PACKAGE);
 
   const features: { icon: string; title: MessageKey; body: MessageKey }[] = [
     { icon: "📱", title: "mkt.feature.phone.title", body: "mkt.feature.phone.body" },
@@ -160,7 +161,8 @@ export default async function HomePage() {
             {t("mkt.pricing.body", {
               freeTotal: FREE_REQUESTS_PER_WINDOW,
               days: FREE_WINDOW_DAYS,
-              paidTotal: REQUESTS_PER_PAID_MONTH,
+              starterTotal: PACKAGE_TIER_REQUESTS.starter,
+              proTotal: PACKAGE_TIER_REQUESTS.pro,
               price: entryPrice,
             })}
           </p>

@@ -48,6 +48,8 @@ export interface MainVideoControls {
   onRegenerate: () => void;
   /** Why it cannot be remade yet (the first unmet checklist item), or null. */
   regenerateBlocker: string | null;
+  /** Approved steps are final: no "Regenerate the video" at all. */
+  regenerateLocked?: boolean;
   onChannels: () => void;
   error: string | null;
   /** The three parts of the video and where the phone is with them. */
@@ -312,21 +314,29 @@ export function RenderPanel({
                 >
                   {t("studio.render.toChannels")}
                 </button>
-                <button
-                  type="button"
-                  className="studio-button studio-button-ghost"
-                  disabled={busy || main.regenerating || main.regenerateBlocker !== null}
-                  onClick={main.onRegenerate}
-                >
-                  {main.regenerating ? t("studio.render.startingAgain") : t("studio.render.regenerate")}
-                </button>
-                <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
-                  {main.regenerateBlocker
-                    ? t("studio.render.toRegenerate", {
-                        what: `${main.regenerateBlocker.charAt(0).toLowerCase()}${main.regenerateBlocker.slice(1)}`,
-                      })
-                    : t("studio.render.regenerateHint")}
-                </p>
+                {main.regenerateLocked ? (
+                  <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
+                    {t("studio.render.lockedHint")}
+                  </p>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="studio-button studio-button-ghost"
+                      disabled={busy || main.regenerating || main.regenerateBlocker !== null}
+                      onClick={main.onRegenerate}
+                    >
+                      {main.regenerating ? t("studio.render.startingAgain") : t("studio.render.regenerate")}
+                    </button>
+                    <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
+                      {main.regenerateBlocker
+                        ? t("studio.render.toRegenerate", {
+                            what: `${main.regenerateBlocker.charAt(0).toLowerCase()}${main.regenerateBlocker.slice(1)}`,
+                          })
+                        : t("studio.render.regenerateHint")}
+                    </p>
+                  </>
+                )}
               </div>
             </>
           )}

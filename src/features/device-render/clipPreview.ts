@@ -29,7 +29,9 @@ export class ClipUnreadableError extends Error {}
 
 export async function prepareClip(
   file: File,
-  t: StudioT = studioEnglish
+  t: StudioT = studioEnglish,
+  /** Told when the slow path starts: the phone is making a preview copy. */
+  onProxy?: () => void
 ): Promise<PreparedClip> {
   try {
     const probed = await probeVideo(file);
@@ -44,6 +46,7 @@ export async function prepareClip(
   }
 
   let proxy: File | null = null;
+  onProxy?.();
   try {
     proxy = await makePreviewProxyOnDevice(file);
   } catch {

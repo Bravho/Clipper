@@ -40,10 +40,12 @@ export interface PrivateCopy {
 export async function takePrivateCopy(
   key: string,
   file: File,
-  t: StudioT = studioEnglish
+  t: StudioT = studioEnglish,
+  /** The share of the copy made so far, 0..1 — for the tile's progress. */
+  onProgress?: (fraction: number) => void
 ): Promise<PrivateCopy> {
   try {
-    const snapshot = await createSnapshot(key, file);
+    const snapshot = await createSnapshot(key, file, onProgress);
     if (snapshot) return { file: await snapshotFile(snapshot), snapshotKey: key };
   } catch (error) {
     if (isUnreadableFileError(error)) throw new PickedFileError(unreadableMessage(file.name, t));

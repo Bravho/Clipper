@@ -14,13 +14,10 @@ import {
   managementUploadBundleRepository,
   videoAllowanceWindowRepository,
 } from "@/repositories";
-import { isManagementEnabledFor } from "@/config/management";
+import { findManagementProduct, isManagementEnabledFor } from "@/config/management";
+import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { ManagementPurchaseStatus } from "@/domain/models/ManagementPurchase";
-import {
-  PackagePicker,
-  type PackageOption,
-} from "@/features/management/components/PackagePicker";
-import { VideoPackagePicker } from "@/features/pricing/components/VideoPackagePicker";
+import { PackageTiers } from "@/features/pricing/components/PackageTiers";
 import { EntitlementSummary } from "@/features/pricing/components/EntitlementSummary";
 import {
   PurchaseHistory,
@@ -30,8 +27,6 @@ import { managementPackageCopy } from "@/features/pricing/packageCopy";
 import {
   FREE_REQUESTS_PER_WINDOW,
   FREE_WINDOW_DAYS,
-  REQUESTS_PER_PAID_MONTH,
-  VIDEO_PACKAGES,
   findVideoPackage,
 } from "@/config/videoPackages";
 import { getServerI18n } from "@/i18n/server";
@@ -155,7 +150,11 @@ export default async function PricingPage() {
 
   for (const purchase of managementPurchases) {
     if (purchase.status !== ManagementPurchaseStatus.Paid) continue;
-    const product = managementProducts.find((m) => m.code === purchase.productCode);
+    // Retired products are no longer in listActive(), so their name comes
+    // from the catalogue, which keeps every product ever sold.
+    const product =
+      managementProducts.find((m) => m.code === purchase.productCode) ??
+      findManagementProduct(purchase.productCode);
     const copy = product
       ? managementPackageCopy(t, product)
       : { name: purchase.productCode, description: "", terms: "" };
@@ -184,57 +183,16 @@ export default async function PricingPage() {
   history.sort((a, b) => timeOf(b) - timeOf(a));
 
   // ── Package cards ─────────────────────────────────────────────────────────
-  const entryPrice = Math.min(...VIDEO_PACKAGES.map((p) => p.priceCredits));
+  // One kind of package since 2026-09-27: video making + Channel Management,
+  // in two tiers (config/packageTiers.ts). The video-only packages and the
+  // publishing-only passes are retired; the ones people hold still show in the
+  // status card and the history below.
   const ladderVars = {
     freeTotal: FREE_REQUESTS_PER_WINDOW,
     days: FREE_WINDOW_DAYS,
-    paidTotal: REQUESTS_PER_PAID_MONTH,
-    price: entryPrice,
+    starterTotal: PACKAGE_TIER_REQUESTS.starter,
+    proTotal: PACKAGE_TIER_REQUESTS.pro,
   };
-
-  /** What the same term costs bought as two separate packages. */
-  const separatePriceFor = (months: number | null): number | null => {
-    const videoPkg = VIDEO_PACKAGES.find((v) => v.months === months);
-    const pass = managementProducts.find(
-      (m) => m.videoMonths == null && m.durationMonths === months
-    );
-    if (!videoPkg || !pass) return null;
-    return videoPkg.priceCredits + pass.priceCredits;
-  };
-
-  const toOption = (p: (typeof managementProducts)[number]): PackageOption => {
-    const copy = managementPackageCopy(t, p);
-    const separate = p.videoMonths ? separatePriceFor(p.durationMonths) : null;
-    return {
-      code: p.code,
-      name: copy.name,
-      description: copy.description,
-      terms: copy.terms,
-      productType: p.productType,
-      durationMonths: p.durationMonths,
-      uploadAllowance: p.uploadAllowance,
-      accessWindowDays: p.accessWindowDays,
-      videoMonths: p.videoMonths,
-      badge:
-        separate && separate > p.priceCredits
-          ? t("pricing.bundleSaving", { amount: separate - p.priceCredits })
-          : null,
-      priceCredits: p.priceCredits,
-      fullPriceCredits: p.fullPriceCredits,
-    };
-  };
-
-  const bundleOptions = managementProducts
-    .filter((p) => p.videoMonths != null)
-    .map(toOption);
-  // The entry upload bundle is no longer offered for sale. It stays in the
-  // catalogue (and in `managementProducts` above) so purchase history and any
-  // unspent tokens still resolve to a name — it is only withheld from the
-  // picker.
-  const publishingOptions = managementProducts
-    .filter((p) => p.videoMonths == null)
-    .filter((p) => p.code !== "management_single_video")
-    .map(toOption);
 
   return (
     <div className="mx-auto w-full min-w-0 max-w-4xl px-4 py-8 sm:py-10">
@@ -281,52 +239,18 @@ export default async function PricingPage() {
         management={managementStatus}
       />
 
-      {/* 1. Video generation on its own. */}
-      <div className="mb-10">
-        <VideoPackagePicker balanceCredits={balance} activeUntil={videoActiveUntil} />
-      </div>
-
-      {/* 2. Channel Management on its own. Hidden entirely for users it is not
-          enabled for, rather than shown as something they cannot buy. */}
-      {managementEnabled && publishingOptions.length > 0 && (
-        <section className="mb-10">
-          <h2 className="text-base font-semibold text-slate-900">
-            {t("pricing.managementHeading")}
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            {t("pricing.managementSubheading")}
-          </p>
-          <div className="mt-4">
-            <PackagePicker
-              balanceCredits={balance}
-              returnTo={ROUTES.PRICING}
-              chrome={false}
-              products={publishingOptions}
-            />
-          </div>
-        </section>
-      )}
-
-      {/* 3. Both together, last — by now the reader knows what the two halves
-          cost separately, so the saving badge is checkable rather than a claim. */}
-      {managementEnabled && bundleOptions.length > 0 && (
-        <section>
-          <h2 className="text-base font-semibold text-slate-900">
-            {t("pricing.bundleHeading")}
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            {t("pricing.bundleSubheading", { paidTotal: REQUESTS_PER_PAID_MONTH })}
-          </p>
-          <div className="mt-4">
-            <PackagePicker
-              balanceCredits={balance}
-              returnTo={ROUTES.PRICING}
-              chrome={false}
-              products={bundleOptions}
-            />
-          </div>
-          <p className="mt-3 text-xs text-slate-400">{t("pricing.bundleFootnote")}</p>
-        </section>
+      {/* The packages: Starter, then Pro. Hidden only for a user Channel
+          Management is not enabled for (it is on for everyone in production),
+          because every package includes it and checkout goes through it. */}
+      {managementEnabled && (
+        <div className="mb-10">
+          <PackageTiers
+            t={t}
+            rows={managementProducts}
+            balanceCredits={balance}
+            returnTo={ROUTES.PRICING}
+          />
+        </div>
       )}
 
       <PurchaseHistory rows={history} />

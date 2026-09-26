@@ -18,13 +18,11 @@ import {
   assertStoreCatalogueVerified,
 } from "@/config/mobilePurchases";
 import { TOPUP_BUNDLES, CREDITS_CONFIG } from "@/config/credits";
-import { VIDEO_PACKAGES } from "@/config/videoPackages";
-import { MANAGEMENT_PRODUCTS, managementPriceCredits } from "@/config/management";
+import { MANAGEMENT_PACKAGES_ON_SALE, managementPriceCredits } from "@/config/management";
 
-const packagePrices = [
-  ...VIDEO_PACKAGES.map((p) => p.priceCredits),
-  ...MANAGEMENT_PRODUCTS.map(managementPriceCredits),
-];
+// What is SOLD today (the Starter and Pro packages, 2026-09-27). Retired
+// products cannot be bought, so the ladder no longer has to reach them.
+const packagePrices = MANAGEMENT_PACKAGES_ON_SALE.map(managementPriceCredits);
 const dearest = Math.max(...packagePrices);
 const cheapestPackage = Math.min(...packagePrices);
 
@@ -57,23 +55,23 @@ describe("credit ladder reachability", () => {
     // The entry video package and the entry bundle are what most buyers reach
     // for. Those must never be a multi-transaction ordeal.
     for (const ladder of [IOS, ANDROID]) {
-      expect(topUpsFor(ladder, 200)).toBe(1); // 1-month video
-      expect(topUpsFor(ladder, 350)).toBe(1); // 1-month bundle
+      expect(topUpsFor(ladder, 190)).toBe(1); // Starter, 1 month
+      expect(topUpsFor(ladder, 350)).toBe(1); // Pro, 1 month
     }
   });
 
-  it("gets a store buyer to the 6-month bundle in one transaction", () => {
+  it("gets a store buyer to Pro 6 months and Starter 1 year in one transaction", () => {
     // The 2,000 rung was added for exactly this: 1,900 credits used to take two
     // purchases. Now an invariant worth protecting, not a pin.
     for (const ladder of [IOS, ANDROID]) {
-      expect(topUpsFor(ladder, 1900)).toBe(1);
+      expect(topUpsFor(ladder, 1890)).toBe(1);
     }
   });
 
   it("documents that the annual bundle still costs a store buyer two transactions", () => {
-    // 3,500 credits against a 2,000 ceiling. Down from four, not yet one. Adding
-    // a 4,000 rung (~฿5,200 at the flat 1.30 rate) would finish the job; until
-    // then this is pinned so the suite stays honest rather than aspirational.
+    // Pro 1 year is 3,490 credits against a 2,000 ceiling. Adding a 3,500 rung
+    // (~฿4,550 at the flat 1.30 rate, created in both consoles first) would
+    // finish the job; until then this is pinned so the suite stays honest.
     expect(topUpsFor(ANDROID, dearest)).toBe(2);
     expect(topUpsFor(IOS, dearest)).toBe(2);
   });

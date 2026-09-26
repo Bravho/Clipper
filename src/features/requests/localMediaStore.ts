@@ -168,10 +168,42 @@ async function writeRetained(
   source: File,
   meta: { fileName: string; mimeType: string; durationSeconds: number | null }
 ): Promise<LocalMediaDescriptor> {
+  return writeRetainedAs(safeLocalId(requestId, itemId), source, meta);
+}
+
+/**
+ * Put an original back under the `localId` the server already knows it by.
+ *
+ * WHY. The app's private storage is not guaranteed to last: reinstalling the
+ * app, clearing its data, or Android reclaiming space under storage pressure
+ * empties it, and then a request can no longer be rendered on this phone
+ * ("This phone no longer has the original for …"). The server keeps only the
+ * descriptors, so the way back is for the person to pick the same files from
+ * the gallery again; each is stored under its old `localId` and every later
+ * render finds it as if nothing had happened.
+ */
+export async function restoreLocalMaterial(
+  descriptor: LocalMediaDescriptor,
+  source: File
+): Promise<LocalMediaDescriptor> {
+  if (!snapshotsSupported()) {
+    throw new Error("Device-private media storage is unavailable.");
+  }
+  return writeRetainedAs(descriptor.localId, source, {
+    fileName: descriptor.fileName,
+    mimeType: descriptor.mimeType,
+    durationSeconds: descriptor.durationSeconds,
+  });
+}
+
+async function writeRetainedAs(
+  localId: string,
+  source: File,
+  meta: { fileName: string; mimeType: string; durationSeconds: number | null }
+): Promise<LocalMediaDescriptor> {
   // Ask the WebView to exempt these user-owned originals from routine storage
   // pressure eviction. The request is advisory on both platforms.
   await navigator.storage.persist?.().catch(() => false);
-  const localId = safeLocalId(requestId, itemId);
   const dir = await materialDir();
   const handle = await dir.getFileHandle(localId, { create: true });
   const writable = await handle.createWritable();

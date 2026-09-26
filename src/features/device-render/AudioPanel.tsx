@@ -55,6 +55,10 @@ export function AudioPanel({
   script,
   currentStep,
   onScriptChange,
+  voiceScriptStale = false,
+  materialSeconds = 0,
+  maxVoiceSeconds = 0,
+  voiceTooLong = false,
   voiceId,
   onVoice,
   onApprove,
@@ -68,6 +72,7 @@ export function AudioPanel({
   onRemakeVoice,
   remakeBlocker = null,
   remakeDiscardsVideo = false,
+  voiceMakes = null,
   voiceBusy,
   voiceError,
   onLanguages,
@@ -84,6 +89,14 @@ export function AudioPanel({
   script: StudioScript | null;
   currentStep: string | null;
   onScriptChange: (change: Partial<StudioScript>) => void;
+  /** The script on screen is not the one the current voice was made from. */
+  voiceScriptStale?: boolean;
+  /** Total length of the picked clips and photos, seconds. */
+  materialSeconds?: number;
+  /** The longest voice that material can carry, seconds. */
+  maxVoiceSeconds?: number;
+  /** The voice is longer than `maxVoiceSeconds`. */
+  voiceTooLong?: boolean;
   voiceId: ElevenLabsVoiceId;
   onVoice: (voiceId: ElevenLabsVoiceId) => void;
   onApprove: () => void;
@@ -96,6 +109,8 @@ export function AudioPanel({
   onRegenerateVoice: () => void;
   /** Make the voice again after it was approved (null: not offered). */
   onRemakeVoice?: (() => void) | null;
+  /** Voice makes used / allowed for this request; null from an older server. */
+  voiceMakes?: { used: number; limit: number } | null;
   /** Why the approved voice cannot be made again right now, or null. */
   remakeBlocker?: string | null;
   /** Remaking the voice sets the finished main video aside. */
@@ -114,6 +129,18 @@ export function AudioPanel({
 }) {
   const t = useStudioT();
   const choicesDisabled = disabled || locked;
+  // Voice makes left for this video (config/requestLimits.ts; the server
+  // refuses the next one anyway, this only says so before it is pressed).
+  const makesLeft = voiceMakes ? Math.max(0, voiceMakes.limit - voiceMakes.used) : null;
+  const makesExhausted = makesLeft === 0;
+  const makesNote =
+    voiceMakes && makesLeft !== null ? (
+      <p className="studio-counter" style={{ textAlign: "left" }}>
+        {makesExhausted
+          ? t("studio.audio.makesUsedUp", { limit: voiceMakes.limit })
+          : t("studio.audio.makesLeft", { left: makesLeft, limit: voiceMakes.limit })}
+      </p>
+    ) : null;
   // The voices by gender, in the studio's language. The ids are the server's;
   // only the words are the studio's.
   const voiceName = (voice: { gender: string; label: string }) =>
@@ -209,32 +236,58 @@ export function AudioPanel({
                 : t("studio.audio.approvedHint")}
             </p>
 
+            {/* Always editable. Once a voice exists, an edit means the voice
+                no longer says what is written, which is said right below. The
+                post caption is not edited here: it is written for each channel
+                when the videos go to Channel Management. */}
             <label className="studio-field">
               <span className="studio-label">{t("studio.audio.script")}</span>
               <textarea
                 className="studio-textarea"
                 style={{ minHeight: 160 }}
                 value={script.text}
-                readOnly={scriptStatus !== "review"}
-                disabled={disabled || approving}
+                readOnly={approving}
                 onChange={(event) => onScriptChange({ text: event.target.value })}
               />
               <p className="studio-counter">
                 {t("studio.audio.characters", { count: script.text.trim().length })}
               </p>
+              {materialSeconds > 0 && (
+                <p className="studio-counter" style={{ textAlign: "left" }}>
+                  {t("studio.audio.materialHint", {
+                    material: materialSeconds.toFixed(1),
+                    max: maxVoiceSeconds.toFixed(1),
+                  })}
+                </p>
+              )}
             </label>
 
-            <label className="studio-field">
-              <span className="studio-label">{t("studio.audio.postCaption")}</span>
-              <textarea
-                className="studio-textarea"
-                style={{ minHeight: 88 }}
-                value={script.caption}
-                readOnly={scriptStatus !== "review"}
-                disabled={disabled || approving}
-                onChange={(event) => onScriptChange({ caption: event.target.value })}
-              />
-            </label>
+            {voiceScriptStale && (
+              <div className="studio-note studio-note-warning" role="status" style={{ marginBottom: 12 }}>
+                <p style={{ margin: 0 }}>
+                  <strong>{t("studio.audio.staleTitle")}</strong> {t("studio.audio.staleBody")}
+                </p>
+                {voiceStatus === "generating" ? (
+                  <p style={{ margin: "8px 0 0" }}>{t("studio.audio.staleWait")}</p>
+                ) : voiceStatus === "approved" && (!onRemakeVoice || remakeBlocker) ? (
+                  <p style={{ margin: "8px 0 0" }}>{remakeBlocker ?? t("studio.audio.remakeFinal")}</p>
+                ) : (
+                  <button
+                    type="button"
+                    className="studio-button studio-button-primary"
+                    style={{ marginTop: 10 }}
+                    disabled={disabled || voiceBusy || !script.text.trim() || makesExhausted}
+                    onClick={() =>
+                      voiceStatus === "approved" && onRemakeVoice
+                        ? onRemakeVoice()
+                        : onRegenerateVoice()
+                    }
+                  >
+                    {voiceBusy ? t("studio.audio.working") : t("studio.audio.makeAgainEdited")}
+                  </button>
+                )}
+              </div>
+            )}
 
             {scriptStatus === "review" && (
               <>
@@ -339,20 +392,35 @@ export function AudioPanel({
                 type="button"
                 className="studio-button studio-button-primary"
                 style={{ marginTop: 14 }}
-                disabled={disabled || voiceBusy}
+                disabled={disabled || voiceBusy || voiceTooLong || voiceScriptStale}
                 onClick={onApproveVoice}
               >
                 {voiceBusy ? t("studio.audio.working") : t("studio.audio.approveVoice")}
               </button>
+              {voiceTooLong && voiceSeconds != null && (
+                <p className="studio-note studio-note-danger" role="alert" style={{ marginTop: 8 }}>
+                  {t("studio.audio.voiceTooLong", {
+                    voice: voiceSeconds.toFixed(1),
+                    material: materialSeconds.toFixed(1),
+                    max: maxVoiceSeconds.toFixed(1),
+                  })}
+                </p>
+              )}
+              {!voiceTooLong && voiceScriptStale && (
+                <p className="studio-counter" style={{ textAlign: "left" }}>
+                  {t("studio.audio.approveStale")}
+                </p>
+              )}
               <button
                 type="button"
                 className="studio-button studio-button-ghost"
                 style={{ marginTop: 8 }}
-                disabled={disabled || voiceBusy}
+                disabled={disabled || voiceBusy || makesExhausted}
                 onClick={onRegenerateVoice}
               >
                 {t("studio.audio.again")}
               </button>
+              {makesNote}
             </>
           )}
 
@@ -388,11 +456,12 @@ export function AudioPanel({
                 type="button"
                 className="studio-button studio-button-ghost"
                 style={{ marginTop: 10 }}
-                disabled={disabled || voiceBusy || remakeBlocker !== null}
+                disabled={disabled || voiceBusy || remakeBlocker !== null || makesExhausted}
                 onClick={onRemakeVoice}
               >
                 {voiceBusy ? t("studio.audio.working") : t("studio.audio.remake")}
               </button>
+              {makesNote}
               <p className="studio-counter" style={{ textAlign: "left" }}>
                 {remakeBlocker ??
                   (remakeDiscardsVideo

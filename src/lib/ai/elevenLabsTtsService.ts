@@ -41,6 +41,13 @@ export interface StoredVoiceResult {
 }
 
 /**
+ * The file name every ElevenLabs make is stored under. Voice makes per request
+ * are counted by it (VideoGenerationService.countVoiceMakes), so it must not
+ * change without migrating that count.
+ */
+export const ELEVENLABS_VOICE_FILE_NAME = "elevenlabs_generated.mp3";
+
+/**
  * Synthesize the script with ElevenLabs and upload the MP3 to DO Spaces.
  * Throws with a descriptive message on any failure (API key, quota, network).
  */
@@ -99,6 +106,6 @@ export async function synthesizeAndStore(
     storageUrl: spacesPublicUrl(storageKey),
     fileSizeBytes: buffer.byteLength,
     mimeType: "audio/mpeg",
-    fileName: "elevenlabs_generated.mp3",
+    fileName: ELEVENLABS_VOICE_FILE_NAME,
   };
 }

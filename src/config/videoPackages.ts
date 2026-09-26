@@ -37,7 +37,12 @@ export const FREE_REQUESTS_PER_WINDOW = 3;
  */
 export const FREE_WINDOW_DAYS = 30;
 
-/** Requests one purchased month is worth. Never carried into the next month. */
+/**
+ * Requests one purchased month is worth on the retired video packages and on a
+ * Pro package. Starter months are worth 5 — the per-tier numbers live in
+ * config/packageTiers.ts and each window stores its own `total_allowance`.
+ * Never carried into the next month.
+ */
 export const REQUESTS_PER_PAID_MONTH = 10;
 
 /**
@@ -64,6 +69,12 @@ export interface VideoPackageDefinition {
   priceCredits: number;
   /** Display order in the pricing page. */
   sortOrder: number;
+  /**
+   * False for every video-only package since 2026-09-27: packages now include
+   * Channel Management and are sold from config/management.ts. Kept so months
+   * already bought still name their product and are honoured until they expire.
+   */
+  onSale: boolean;
 }
 
 /**
@@ -87,6 +98,7 @@ export const VIDEO_PACKAGES: readonly VideoPackageDefinition[] = [
     windowDays: 30,
     priceCredits: 200,
     sortOrder: 1,
+    onSale: false,
   },
   {
     code: "video_3_months",
@@ -97,6 +109,7 @@ export const VIDEO_PACKAGES: readonly VideoPackageDefinition[] = [
     windowDays: 30,
     priceCredits: 570,
     sortOrder: 2,
+    onSale: false,
   },
   {
     code: "video_6_months",
@@ -107,6 +120,7 @@ export const VIDEO_PACKAGES: readonly VideoPackageDefinition[] = [
     windowDays: 30,
     priceCredits: 1140,
     sortOrder: 3,
+    onSale: false,
   },
   {
     code: "video_12_months",
@@ -117,6 +131,7 @@ export const VIDEO_PACKAGES: readonly VideoPackageDefinition[] = [
     windowDays: null,
     priceCredits: 2160,
     sortOrder: 4,
+    onSale: false,
   },
 ] as const;
 

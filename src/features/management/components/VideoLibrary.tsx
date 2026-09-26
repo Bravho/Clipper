@@ -10,6 +10,7 @@ import {
   managementPublishReturnPath,
 } from "@/config/routes";
 import { UploadVideoButton } from "@/features/management/components/UploadVideoButton";
+import { useI18n } from "@/i18n/client";
 import {
   PublishFlowModal,
   type PublishFlowAsset,
@@ -93,6 +94,12 @@ export function VideoLibrary({
   const [notice, setNotice] = useState<string | null>(null);
   const resumedPublishingId = useRef<string | null>(null);
   const requestedPublishingId = searchParams.get("publish");
+  const { t } = useI18n();
+  // Videos that just came over from the studio (`?arrived=id,id`): announced,
+  // highlighted, and the first one scrolled into view.
+  const arrivedParam = searchParams.get("arrived") ?? "";
+  const [arrived] = useState(() => new Set(arrivedParam.split(",").filter(Boolean)));
+  const arrivalAnnounced = useRef(false);
 
   const pageCount = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -121,6 +128,25 @@ export function VideoLibrary({
       .getElementById(`management-video-${requestedPublishingId}`)
       ?.scrollIntoView({ block: "center" });
   }, [requestedPublishingId, safePage]);
+
+  useEffect(() => {
+    if (arrivalAnnounced.current || arrived.size === 0) return;
+    arrivalAnnounced.current = true;
+    const firstIndex = list.findIndex((item) => arrived.has(item.id));
+    if (firstIndex < 0) return;
+    setPage(Math.floor(firstIndex / PAGE_SIZE) + 1);
+    setNotice(t("mgmt.transfer.arrived", { count: arrived.size }));
+    window.setTimeout(() => {
+      document
+        .getElementById(`management-video-${list[firstIndex].id}`)
+        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 60);
+    // Drop the parameter so a reload does not announce the arrival again.
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("arrived");
+    const query = nextParams.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [arrived, list, pathname, router, searchParams, t]);
 
   function closePublishingFlow() {
     setPublishingVideo(null);
@@ -186,6 +212,7 @@ export function VideoLibrary({
               <VideoRow
                 key={v.id}
                 video={v}
+                highlighted={arrived.has(v.id)}
                 publishReady={unlimited || tokens > 0}
                 onRemoved={() => setList((cur) => cur.filter((x) => x.id !== v.id))}
                 onSaved={(updated) =>
@@ -381,12 +408,15 @@ function PageButton({
 
 function VideoRow({
   video,
+  highlighted = false,
   publishReady,
   onRemoved,
   onSaved,
   onPublish,
 }: {
   video: LibraryVideo;
+  /** Just arrived from the studio. */
+  highlighted?: boolean;
   publishReady: boolean;
   onRemoved: () => void;
   onSaved: (
@@ -477,7 +507,14 @@ function VideoRow({
   }
 
   return (
-    <li id={`management-video-${video.id}`} className="scroll-mt-6">
+    <li
+      id={`management-video-${video.id}`}
+      className={
+        highlighted
+          ? "scroll-mt-20 rounded-xl ring-2 ring-blue-500 ring-offset-2"
+          : "scroll-mt-6"
+      }
+    >
       <Card>
         <div className="flex flex-col gap-4 sm:flex-row">
           {/* Media — the player, with a still preview image beneath it. */}

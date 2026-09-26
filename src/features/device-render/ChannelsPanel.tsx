@@ -53,6 +53,7 @@ export function ChannelsPanel({
   elapsed = null,
   failure = null,
   management = null,
+  delivered = false,
 }: {
   requestId: string | null;
   /** Present while the shapes' render is paused (app was closed, Stop, or a failure). */
@@ -64,7 +65,8 @@ export function ChannelsPanel({
   chain: StudioChain | null;
   selected: string[];
   onToggle: (ratio: string) => void;
-  onStart: () => void;
+  /** Make these extra shapes (only ones not made yet). */
+  onStart: (ratios: string[]) => void;
   onFinish: () => void;
   starting: boolean;
   error: string | null;
@@ -76,6 +78,8 @@ export function ChannelsPanel({
   failure?: { summary: string; log: string[] } | null;
   /** Channel Management for this account; the finished videos are handed to it. */
   management?: StudioManagement | null;
+  /** Delivered once already: finished videos may be handed over now. */
+  delivered?: boolean;
 }) {
   const t = useStudioT();
   const shapes = useMemo(() => channelShapes(platforms), [platforms]);
@@ -91,6 +95,15 @@ export function ChannelsPanel({
     currentStep === VideoGenerationStep.Complete;
   const before = !choosing && !rendering && !done;
   const outputFor = (ratio: string) => outputs.find((output) => output.ratio === ratio) ?? null;
+  // After delivery, every shape not made yet stays on offer: choosing only
+  // TikTok first never rules out Instagram later.
+  const unmade = others.filter((shape) => !outputFor(shape.ratio)).map((shape) => shape.ratio);
+  const addingLater = done && unmade.length > 0;
+  const choosable = (ratio: string) =>
+    (choosing && ratio !== primaryRatio) || (addingLater && unmade.includes(ratio));
+  const toMake = (choosing ? others.map((shape) => shape.ratio) : unmade).filter((ratio) =>
+    selected.includes(ratio)
+  );
 
   return (
     <>
@@ -122,7 +135,7 @@ export function ChannelsPanel({
             return (
               <li key={shape.ratio} className="studio-channel">
                 <div className="studio-channel-head">
-                  {choosing && !isPrimary ? (
+                  {choosable(shape.ratio) ? (
                     <button
                       type="button"
                       className="studio-chip"
@@ -148,7 +161,9 @@ export function ChannelsPanel({
                           : rendering && chain?.queue.includes(shape.ratio)
                             ? t("studio.channels.waiting")
                             : done
-                              ? t("studio.channels.notMade")
+                              ? chosen
+                                ? t("studio.channels.willMake")
+                                : t("studio.channels.notMade")
                               : ""}
                   </span>
                 </div>
@@ -189,12 +204,12 @@ export function ChannelsPanel({
               <button
                 type="button"
                 className="studio-button studio-button-primary"
-                disabled={starting || busy || selected.length === 0}
-                onClick={onStart}
+                disabled={starting || busy || toMake.length === 0}
+                onClick={() => onStart(toMake)}
               >
                 {starting
                   ? t("studio.render.starting")
-                  : t("studio.channels.renderMore", { count: selected.length })}
+                  : t("studio.channels.renderMore", { count: toMake.length })}
               </button>
             )}
             <button
@@ -208,6 +223,24 @@ export function ChannelsPanel({
           </div>
         )}
 
+        {addingLater && (
+          <div className="studio-approve">
+            <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
+              {t("studio.channels.addLaterHint")}
+            </p>
+            <button
+              type="button"
+              className="studio-button studio-button-primary"
+              disabled={starting || busy || toMake.length === 0}
+              onClick={() => onStart(toMake)}
+            >
+              {starting
+                ? t("studio.render.starting")
+                : t("studio.channels.renderMore", { count: toMake.length })}
+            </button>
+          </div>
+        )}
+
         {failure && !busy && <RenderFailureLog summary={failure.summary} log={failure.log} />}
         {error && (
           <p className="studio-note studio-note-danger" style={{ marginTop: 12 }}>
@@ -216,7 +249,9 @@ export function ChannelsPanel({
         )}
       </section>
 
-      {done && requestId && management?.enabled && (
+      {/* Also while a skipped shape is being made after delivery: the videos
+          already finished can go to Channel Management meanwhile. */}
+      {(done || (rendering && delivered)) && requestId && management?.enabled && (
         <ChannelHandover
           requestId={requestId}
           outputs={outputs}

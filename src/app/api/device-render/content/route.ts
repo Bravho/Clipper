@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { authorizeDeviceRenderRequest } from "../_guard";
+import { videoGenerationService } from "@/services/VideoGenerationService";
+import { LOCK_AFTER_APPROVAL, MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { StoryboardScene } from "@/domain/models/VideoGenerationJob";
@@ -175,6 +177,7 @@ export async function GET(request: Request) {
   return NextResponse.json(
     {
       submitted,
+      delivered: clipRequest.status === RequestStatus.Delivered,
       jobId: job.id,
       currentStep: job.currentStep,
       failedAtStep: job.failedAtStep ?? null,
@@ -219,6 +222,12 @@ export async function GET(request: Request) {
       localMedia: parseLocalMedia(job.renderPayload ?? null),
       outputs,
       chain,
+      // The per-request limits (config/requestLimits.ts), so the studio can say
+      // how many voice makes are left and stop offering remakes after approval.
+      voiceMakes: await videoGenerationService
+        .voiceMakesFor(requestId)
+        .catch(() => ({ used: 0, limit: MAX_VOICE_MAKES_PER_REQUEST })),
+      lockedAfterApproval: LOCK_AFTER_APPROVAL,
     },
     { headers: { "Cache-Control": "no-store, max-age=0" } }
   );

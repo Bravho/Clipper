@@ -5,10 +5,10 @@ import { Role } from "@/domain/enums/Role";
 import { ROUTES, requestDetailPath } from "@/config/routes";
 import { creditService } from "@/services/CreditService";
 import { TransactionType } from "@/domain/enums/TransactionType";
+import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import {
   FREE_REQUESTS_PER_WINDOW,
   FREE_WINDOW_DAYS,
-  REQUESTS_PER_PAID_MONTH,
 } from "@/config/videoPackages";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -112,8 +112,9 @@ export default async function CreditsPage({
           <li className="flex items-start gap-2">
             <span className="text-green-500 font-bold mt-0.5">+</span>
             Every account gets {FREE_REQUESTS_PER_WINDOW} free videos per{" "}
-            {FREE_WINDOW_DAYS} days. A monthly package raises that to{" "}
-            {REQUESTS_PER_PAID_MONTH} and moves you up the render queue.
+            {FREE_WINDOW_DAYS} days. A Starter package gives{" "}
+            {PACKAGE_TIER_REQUESTS.starter} a month and a Pro package{" "}
+            {PACKAGE_TIER_REQUESTS.pro}, both with Channel Management included.
           </li>
         </ul>
       </Card>

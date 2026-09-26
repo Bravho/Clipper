@@ -156,7 +156,7 @@ export async function stageManifestSources(
         (await descriptorForLocalId(source.localId));
       if (!descriptor) {
         throw new Error(
-          `This phone no longer has the original for ${source.localId}. Re-select it to render here.`
+          `This phone no longer has the original for ${source.localId}. Pick your photos and clips again in the studio (the red box at the top) to render here.`
         );
       }
       const file = await readLocalMaterial(descriptor);

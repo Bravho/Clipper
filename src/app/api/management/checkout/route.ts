@@ -6,6 +6,7 @@ import {
 } from "@/services/management/ManagementPurchaseService";
 import { managementEntitlementService } from "@/services/management/ManagementEntitlementService";
 import { requireManagementUser, managementErrorResponse } from "../_guard";
+import { isManagementProductOnSale } from "@/config/management";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
   const { productCode, contentId, idempotencyToken } = parsed.data;
+
+  // Only the Starter and Pro packages are sold (2026-09-27). The retired
+  // publishing passes and entry bundle stay honoured for people who hold them,
+  // but cannot be bought again. Migration 037 also deactivates their rows, so
+  // the service refuses them too; this answer is just clearer.
+  if (!isManagementProductOnSale(productCode)) {
+    return NextResponse.json(
+      { error: "This package is no longer sold.", code: "product_retired" },
+      { status: 410 }
+    );
+  }
 
   try {
     // Never charge for something the user can already do.

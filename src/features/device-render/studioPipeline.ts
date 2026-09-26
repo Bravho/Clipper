@@ -3,6 +3,7 @@
 import {
   createLocalAnalysisFrame,
   readLocalMaterial,
+  restoreLocalMaterial,
   retainLocalFile,
 } from "@/features/requests/localMediaStore";
 import type { ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
@@ -83,6 +84,15 @@ export interface StudioContent {
   outputs: StudioOutput[];
   /** The extra-shape render in progress, if any. */
   chain: StudioChain | null;
+  /** The request has been delivered at least once (its videos can go to Channel Management). */
+  delivered?: boolean;
+  /**
+   * Voice makes used and allowed for this request (config/requestLimits.ts).
+   * Absent from an older server.
+   */
+  voiceMakes?: { used: number; limit: number };
+  /** Approved steps can no longer be reopened or remade (2026-09-27). */
+  lockedAfterApproval?: boolean;
   /** Why the phone's latest part stopped with an error, if it did. */
   lastPhoneError?: {
     stage: string;
@@ -322,9 +332,10 @@ export async function approveStudioContent(input: {
  */
 export async function restoreStudioSources(
   localMedia: LocalMediaDescriptor[]
-): Promise<{ sources: EditorSource[]; missing: string[] }> {
+): Promise<{ sources: EditorSource[]; missing: string[]; missingMedia: LocalMediaDescriptor[] }> {
   const sources: EditorSource[] = [];
   const missing: string[] = [];
+  const missingMedia: LocalMediaDescriptor[] = [];
 
   for (const descriptor of localMedia) {
     try {
@@ -350,10 +361,74 @@ export async function restoreStudioSources(
       });
     } catch {
       missing.push(descriptor.fileName);
+      missingMedia.push(descriptor);
     }
   }
 
-  return { sources, missing };
+  return { sources, missing, missingMedia };
+}
+
+/**
+ * Which picked file is which lost original: same name and size first, then
+ * the same name, then the same size (a gallery can rename on export, but it
+ * rarely changes the bytes). Each file and each original is used once.
+ */
+export function matchOriginals(
+  missing: readonly LocalMediaDescriptor[],
+  files: readonly File[]
+): { pairs: { descriptor: LocalMediaDescriptor; file: File }[]; unused: File[] } {
+  const left = [...missing];
+  const pool = [...files];
+  const pairs: { descriptor: LocalMediaDescriptor; file: File }[] = [];
+  const passes: ((descriptor: LocalMediaDescriptor, file: File) => boolean)[] = [
+    (d, f) => f.name === d.fileName && f.size === d.fileSizeBytes,
+    (d, f) => f.name === d.fileName,
+    (d, f) => f.size === d.fileSizeBytes,
+  ];
+  for (const same of passes) {
+    for (let i = 0; i < left.length; ) {
+      const at = pool.findIndex((file) => same(left[i], file));
+      if (at >= 0) {
+        pairs.push({ descriptor: left[i], file: pool[at] });
+        pool.splice(at, 1);
+        left.splice(i, 1);
+      } else {
+        i += 1;
+      }
+    }
+  }
+  return { pairs, unused: pool };
+}
+
+/**
+ * Put back originals this phone lost, from files the person picked again.
+ * Returns the originals still missing afterwards.
+ */
+export async function relinkStudioOriginals(
+  missing: readonly LocalMediaDescriptor[],
+  files: readonly File[],
+  onProgress?: (done: number, total: number) => void
+): Promise<{ restored: number; stillMissing: LocalMediaDescriptor[]; unused: string[] }> {
+  const { pairs, unused } = matchOriginals(missing, files);
+  let done = 0;
+  const failed = new Set<string>();
+  for (const { descriptor, file } of pairs) {
+    onProgress?.(done + 1, pairs.length);
+    try {
+      await restoreLocalMaterial(descriptor, file);
+    } catch {
+      failed.add(descriptor.localId);
+    }
+    done += 1;
+  }
+  const restoredIds = new Set(
+    pairs.map((pair) => pair.descriptor.localId).filter((id) => !failed.has(id))
+  );
+  return {
+    restored: restoredIds.size,
+    stillMissing: missing.filter((descriptor) => !restoredIds.has(descriptor.localId)),
+    unused: unused.map((file) => file.name),
+  };
 }
 
 async function postJson(url: string, body: unknown, fallback: string): Promise<void> {
@@ -378,11 +453,38 @@ export function approveStudioVoice(input: {
   platforms: Platform[];
   t?: StudioT;
 }): Promise<void> {
-  return postJson(
-    `/api/requests/${input.requestId}/approve-voice`,
-    { jobId: input.jobId, targetPlatforms: input.platforms },
-    (input.t ?? studioEnglish)("studio.pipe.voiceFailed")
-  );
+  const t = input.t ?? studioEnglish;
+  return (async () => {
+    const response = await fetch(`/api/requests/${input.requestId}/approve-voice`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: input.jobId, targetPlatforms: input.platforms }),
+    });
+    if (response.ok) return;
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      code?: string;
+      voiceSeconds?: number;
+      materialSeconds?: number;
+      maxVoiceSeconds?: number;
+    } | null;
+    // The server's own length check: say it in the studio's language.
+    if (
+      body?.code === "voice_too_long_for_material" &&
+      typeof body.voiceSeconds === "number" &&
+      typeof body.materialSeconds === "number" &&
+      typeof body.maxVoiceSeconds === "number"
+    ) {
+      throw new Error(
+        t("studio.audio.voiceTooLong", {
+          voice: body.voiceSeconds.toFixed(1),
+          material: body.materialSeconds.toFixed(1),
+          max: body.maxVoiceSeconds.toFixed(1),
+        })
+      );
+    }
+    throw new Error(body?.error ?? t("studio.pipe.voiceFailed"));
+  })();
 }
 
 /** Make the voice again, optionally with the other speaker. */
@@ -390,11 +492,14 @@ export function regenerateStudioVoice(input: {
   requestId: string;
   jobId: string;
   voiceId: ElevenLabsVoiceId;
+  /** The script as edited here; the server replaces the approved one when it differs. */
+  scriptText?: string | null;
   t?: StudioT;
 }): Promise<void> {
+  const scriptText = input.scriptText?.trim();
   return postJson(
     `/api/requests/${input.requestId}/voice/regenerate`,
-    { jobId: input.jobId, voiceId: input.voiceId },
+    { jobId: input.jobId, voiceId: input.voiceId, ...(scriptText ? { scriptText } : {}) },
     (input.t ?? studioEnglish)("studio.pipe.voiceAgainFailed")
   );
 }

@@ -49,13 +49,23 @@ const {
   clipRequestRepository: mockClipRepo,
   videoGenerationJobRepository: mockJobRepo,
   renderTaskRepository: mockTaskRepo,
+  uploadedAssetRepository: mockAssetRepo,
 } = jest.requireMock("@/repositories/index") as {
+  uploadedAssetRepository: MockUploadedAssetRepository;
   clipRequestRepository: MockClipRequestRepository;
   videoGenerationJobRepository: MockVideoGenerationJobRepository;
   renderTaskRepository: MockRenderTaskRepository;
 };
 
-import { VideoGenerationService } from "@/services/VideoGenerationService";
+import {
+  VideoGenerationService,
+  StepLockedAfterApprovalError,
+  VoiceMakeLimitError,
+} from "@/services/VideoGenerationService";
+import { MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
+import { ELEVENLABS_VOICE_FILE_NAME } from "@/lib/ai/elevenLabsTtsService";
+import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
+import type { MockUploadedAssetRepository } from "@/repositories/mock/MockUploadedAssetRepository";
 
 const USER_ID = "user-dev-1";
 
@@ -263,7 +273,7 @@ describe("VideoGenerationService — channel shapes of a phone-rendered request"
 });
 
 describe("Regenerate the video (studio)", () => {
-  it("puts a finished phone video back at the scene-design gate and hides the old result", async () => {
+  it("refuses to remake an approved phone video (2026-09-27: approved steps are final)", async () => {
     const service = new VideoGenerationService();
     const request = await createRequest("device");
     const job = await createJob(request.id, VideoGenerationStep.AwaitingOverlayApproval, {
@@ -271,16 +281,13 @@ describe("Regenerate the video (studio)", () => {
       autoApproveRemaining: true,
     });
 
-    const reopened = await service.reopenDeviceProductionByRequester(job.id, USER_ID);
-
-    expect(reopened.currentStep).toBe(VideoGenerationStep.AwaitingSceneDesignApproval);
-    expect(reopened.baseVideoAssetId).toBeNull();
-    expect(reopened.finalExport_9_16_assetId).toBeNull();
-    expect(reopened.captionedExport_9_16_assetId).toBeNull();
-    expect(reopened.autoApproveRemaining).toBe(false);
-    // The approved script and voice are kept.
-    expect(reopened.processedVoiceAssetId).toBe("voice");
-    expect(reopened.approvedScriptThai).toBe("สวัสดี");
+    await expect(service.reopenDeviceProductionByRequester(job.id, USER_ID)).rejects.toBeInstanceOf(
+      StepLockedAfterApprovalError
+    );
+    // Nothing moved: the finished video is still the result.
+    const after = (await mockJobRepo.findById(job.id))!;
+    expect(after.currentStep).toBe(VideoGenerationStep.AwaitingOverlayApproval);
+    expect(after.captionedExport_9_16_assetId).toBe("final_9x16");
   });
 
   it("refuses a server-rendered request", async () => {
@@ -300,5 +307,236 @@ describe("Regenerate the video (studio)", () => {
     const request = await createRequest("device");
     const job = await createJob(request.id, VideoGenerationStep.GeneratingAdditionalRatios);
     await expect(service.reopenDeviceProductionByRequester(job.id, USER_ID)).rejects.toThrow();
+  });
+});
+
+describe("A skipped channel shape after delivery (studio, 26 Sep)", () => {
+  let service: VideoGenerationService;
+  beforeEach(() => {
+    service = new VideoGenerationService();
+    jest
+      .spyOn(VideoGenerationService.prototype as any, "_generatePublishingDrafts")
+      .mockResolvedValue({});
+    jest
+      .spyOn(VideoGenerationService.prototype as any, "_attachChannelPreviews")
+      .mockImplementation(async (...args: unknown[]) => args[2]);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("makes a shape that was not chosen the first time", async () => {
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingDistributionReview, {
+      captionedExport_9_16_assetId: "captioned_9x16",
+    });
+
+    await service.generateAdditionalRatiosByRequester(job.id, USER_ID, ["4:5"]);
+    expect((await mockJobRepo.findById(job.id))?.currentStep).toBe(
+      VideoGenerationStep.GeneratingAdditionalRatios
+    );
+    const first = await mockTaskRepo.findActiveByJob(job.id);
+    expect(first?.payload).toMatchObject({ ratio: "4:5", stage: "montage", queue: [] });
+
+    await finishActiveLink(service, job.id, "montage_4x5");
+    await finishActiveLink(service, job.id, "master_4x5");
+    await finishActiveLink(service, job.id, "captioned_4x5");
+    const done = await mockJobRepo.findById(job.id);
+    expect(done?.captionedExport_4_5_assetId).toBe("captioned_4x5");
+    expect(done?.captionedExport_9_16_assetId).toBe("captioned_9x16");
+    expect(done?.currentStep).toBe(VideoGenerationStep.AwaitingDistributionReview);
+  });
+
+  it("does not remake a shape that is already made", async () => {
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingDistributionReview, {
+      captionedExport_4_5_assetId: "captioned_4x5",
+    });
+    await expect(
+      service.generateAdditionalRatiosByRequester(job.id, USER_ID, ["4:5"])
+    ).rejects.toThrow(/already made/);
+    expect((await mockJobRepo.findById(job.id))?.currentStep).toBe(
+      VideoGenerationStep.AwaitingDistributionReview
+    );
+  });
+
+  it("keeps a server request's delivered job closed", async () => {
+    const request = await createRequest("server");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingDistributionReview);
+    await expect(
+      service.generateAdditionalRatiosByRequester(job.id, USER_ID, ["4:5"])
+    ).rejects.toThrow();
+  });
+});
+
+describe("The voice must fit the picked material (studio, 26 Sep)", () => {
+  const media = (clipSeconds: number[], photos = 0) => ({
+    renderPayload: {
+      mediaMode: "local-first",
+      localMedia: [
+        ...clipSeconds.map((seconds, index) => ({
+          localId: `clip-${index}`,
+          fileName: `clip-${index}.mp4`,
+          mimeType: "video/mp4",
+          fileSizeBytes: 1000,
+          durationSeconds: seconds,
+        })),
+        ...Array.from({ length: photos }, (_, index) => ({
+          localId: `photo-${index}`,
+          fileName: `photo-${index}.jpg`,
+          mimeType: "image/jpeg",
+          fileSizeBytes: 1000,
+          durationSeconds: null,
+        })),
+      ],
+    },
+  });
+
+  beforeEach(() => {
+    jest
+      .spyOn(VideoGenerationService.prototype as any, "_runSceneDesignGeneration")
+      .mockResolvedValue(undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("refuses a voice longer than the material minus the allowance", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    // 10 s + 8 s of clips + 1 photo (3 s) = 21 s; allowance 2 s → voice ≤ 19 s.
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval, {
+      voiceDurationSeconds: 19.5,
+      ...media([10, 8], 1),
+    });
+    await expect(service.approveVoiceConversionByRequester(job.id, USER_ID)).rejects.toMatchObject({
+      code: "voice_too_long_for_material",
+      materialSeconds: 21,
+      maxVoiceSeconds: 19,
+    });
+    expect((await mockJobRepo.findById(job.id))?.currentStep).toBe(
+      VideoGenerationStep.AwaitingVoiceApproval
+    );
+  });
+
+  it("accepts a voice that fits", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval, {
+      voiceDurationSeconds: 18.9,
+      ...media([10, 8], 1),
+    });
+    const updated = await service.approveVoiceConversionByRequester(job.id, USER_ID);
+    expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingSceneDesign);
+  });
+});
+
+describe("Making the voice again from an edited script (studio, 26 Sep)", () => {
+  beforeEach(() => {
+    jest
+      .spyOn(VideoGenerationService.prototype as any, "_runIAppTtsGeneration")
+      .mockResolvedValue(undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it("replaces the approved script and drops the old translations", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval, {
+      approvedScriptEnglish: "Hello",
+      scriptEnglish: "Hello",
+    });
+    const updated = await service.regenerateVoice(job.id, USER_ID, undefined, "สวัสดีครับ ใหม่");
+    expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingVoice);
+    expect(updated.approvedScriptThai).toBe("สวัสดีครับ ใหม่");
+    expect(updated.approvedScriptEnglish ?? null).toBeNull();
+    expect(updated.scriptEnglish ?? null).toBeNull();
+  });
+
+  it("keeps everything when the script is unchanged", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval, {
+      approvedScriptEnglish: "Hello",
+    });
+    const updated = await service.regenerateVoice(job.id, USER_ID, undefined, "สวัสดี");
+    expect(updated.approvedScriptThai).toBe("สวัสดี");
+    expect(updated.approvedScriptEnglish).toBe("Hello");
+  });
+});
+
+describe("Per-request limits (2026-09-27)", () => {
+  async function addVoiceMakes(requestId: string, count: number) {
+    for (let n = 0; n < count; n++) {
+      await mockAssetRepo.create({
+        requestId,
+        userId: USER_ID,
+        fileName: ELEVENLABS_VOICE_FILE_NAME,
+        assetType: AssetType.StaffVoiceRecording,
+        fileSizeBytes: 1000,
+        mimeType: "audio/mpeg",
+        storageKey: `voice_recordings/${USER_ID}/${requestId}/${n}.mp3`,
+        storageUrl: `https://example.test/${n}.mp3`,
+        thumbnailKey: "",
+        thumbnailUrl: "",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        scheduledDeletionAt: new Date(Date.now() + 86_400_000),
+      } as never);
+    }
+  }
+
+  it("counts only the voices ElevenLabs made for this request", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    await addVoiceMakes(request.id, 2);
+    expect(await service.voiceMakesFor(request.id)).toEqual({
+      used: 2,
+      limit: MAX_VOICE_MAKES_PER_REQUEST,
+    });
+  });
+
+  it("allows the voice to be made again below the limit", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    await addVoiceMakes(request.id, MAX_VOICE_MAKES_PER_REQUEST - 1);
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval);
+    const updated = await service.regenerateVoice(job.id, USER_ID);
+    expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingVoice);
+  });
+
+  it("refuses a sixth voice make and leaves the job where it was", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    await addVoiceMakes(request.id, MAX_VOICE_MAKES_PER_REQUEST);
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval);
+    await expect(service.regenerateVoice(job.id, USER_ID)).rejects.toBeInstanceOf(
+      VoiceMakeLimitError
+    );
+    expect((await mockJobRepo.findById(job.id))!.currentStep).toBe(
+      VideoGenerationStep.AwaitingVoiceApproval
+    );
+  });
+
+  it("refuses to remake an approved voice from the scene-design step", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingSceneDesignApproval);
+    await expect(service.regenerateVoice(job.id, USER_ID)).rejects.toBeInstanceOf(
+      StepLockedAfterApprovalError
+    );
+  });
+
+  it("refuses to re-caption an approved phone video", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingOverlayApproval);
+    await expect(service.regenerateOverlayByRequester(job.id, USER_ID)).rejects.toBeInstanceOf(
+      StepLockedAfterApprovalError
+    );
+  });
+
+  it("leaves a server-pipeline request's revision gates alone", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("server");
+    await addVoiceMakes(request.id, MAX_VOICE_MAKES_PER_REQUEST + 2);
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval);
+    const updated = await service.regenerateVoice(job.id, USER_ID);
+    expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingVoice);
   });
 });
