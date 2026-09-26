@@ -1,4 +1,3 @@
-import { isAppLocale, type AppLocale } from "@/i18n/config";
 import { messages, translate, type MessageKey } from "@/i18n/messages";
 
 /**
@@ -19,24 +18,4 @@ export function pipelineStepText(t: StudioT, step: string | null | undefined): s
 }
 
 /** The first of the phone's languages the app has a catalogue for. */
-export function localeFromLanguages(languages: readonly string[]): AppLocale | null {
-  for (const tag of languages) {
-    const base = tag.trim().toLowerCase().split(/[-_]/)[0];
-    if (isAppLocale(base)) return base;
-  }
-  return null;
-}
-
-/**
- * The hamburger menu's choice wins; else the phone's language; else English.
- * With nothing known about the phone (server render), the app's locale.
- */
-export function resolveStudioLocale(input: {
-  appLocale: AppLocale;
-  chosen: boolean;
-  deviceLanguages: readonly string[] | null;
-}): AppLocale {
-  if (input.chosen) return input.appLocale;
-  if (!input.deviceLanguages || input.deviceLanguages.length === 0) return input.appLocale;
-  return localeFromLanguages(input.deviceLanguages) ?? "en";
-}
+export { localeFromLanguageList as localeFromLanguages } from "@/i18n/config";

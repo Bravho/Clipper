@@ -3,7 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
-import { ROUTES, requestDetailPath } from "@/config/routes";
+import { ROUTES, requestDetailPath, studioPath } from "@/config/routes";
+import { headers } from "next/headers";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
+import { isStudioOnly } from "@/config/studioRollout";
 import { clipRequestService } from "@/services/ClipRequestService";
 import { uploadedAssetRepository } from "@/repositories";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
@@ -33,6 +36,14 @@ export default async function NewRequestPage({
 
   const user = await timed("auth", () => requireRole(Role.Requester));
   const { edit: editId } = await searchParams;
+
+  // The studio is the way to make a video: inside the app (any build) it opens
+  // the studio, where the video is made on the phone. Once STUDIO_ONLY is on a
+  // browser goes there too and is asked to download the app. A Draft opened
+  // with ?edit= resumes in the studio with its brief.
+  if (isStudioOnly() || isAppUserAgent(headers().get("user-agent"))) {
+    redirect(studioPath(editId ?? null));
+  }
   // Nothing on this page is priced in credits any more — only the quota gates
   // submission — so the balance is not fetched here.
   const quota = await timed("quota", () => clipRequestService.getQuota(user.id));

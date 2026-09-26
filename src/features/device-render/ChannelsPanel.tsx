@@ -10,6 +10,7 @@ import { RenderFailureLog } from "./RenderFailureLog";
 import type { StudioChain, StudioOutput } from "./studioPipeline";
 import { DownloadVideoButton, ResumeCallout, type ResumeControls } from "./DownloadVideoButton";
 import { useStudioT } from "./studioI18n";
+import { ChannelHandover, type StudioManagement } from "./ChannelHandover";
 
 const STAGES: ("montage" | "master" | "final")[] = ["montage", "master", "final"];
 
@@ -51,6 +52,7 @@ export function ChannelsPanel({
   progress = null,
   elapsed = null,
   failure = null,
+  management = null,
 }: {
   requestId: string | null;
   /** Present while the shapes' render is paused (app was closed, Stop, or a failure). */
@@ -72,6 +74,8 @@ export function ChannelsPanel({
   elapsed?: string | null;
   /** Why the phone's last try at a shape stopped, with its step-by-step log. */
   failure?: { summary: string; log: string[] } | null;
+  /** Channel Management for this account; the finished videos are handed to it. */
+  management?: StudioManagement | null;
 }) {
   const t = useStudioT();
   const shapes = useMemo(() => channelShapes(platforms), [platforms]);
@@ -211,6 +215,17 @@ export function ChannelsPanel({
           </p>
         )}
       </section>
+
+      {done && requestId && management?.enabled && (
+        <ChannelHandover
+          requestId={requestId}
+          outputs={outputs}
+          labelFor={(ratio) =>
+            shapes.find((shape) => shape.ratio === ratio)?.channels.join(", ") ?? ""
+          }
+          management={management}
+        />
+      )}
     </>
   );
 }

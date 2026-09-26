@@ -30,6 +30,15 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * PC on the LAN is a debugging convenience that only works while that PC is on
  * the same Wi-Fi and running `npm run dev`.
  */
+/**
+ * The render-plugin version this build ships, announced in the user agent as
+ * `RClipperRender/<n>`. Keep equal to SOURCE_EDIT_PLUGIN_VERSION in
+ * src/lib/mobile/deviceRenderPluginVersion.ts and to `nativePluginVersion` in
+ * DeviceVideoRenderPlugin (Java + Swift). A literal, not an import: the
+ * Capacitor CLI loads this file on its own and should not reach into src/.
+ */
+const RENDER_PLUGIN_UA_VERSION = 6;
+
 export const PRODUCTION_SERVER_URL = "https://app.rclipper.com";
 
 const serverUrl = (process.env.CAP_SERVER_URL ?? PRODUCTION_SERVER_URL).trim();
@@ -110,12 +119,15 @@ const config: CapacitorConfig = {
   },
   ios: {
     contentInset: "always",
-    appendUserAgent: " RClipperNative/ios",
+    // `RClipperRender/<n>` names the phone-render plugin this build carries,
+    // so the server can tell an app that cannot make videos (an older store
+    // build) before any page script runs. See src/lib/mobile/appUserAgent.ts.
+    appendUserAgent: ` RClipperNative/ios RClipperRender/${RENDER_PLUGIN_UA_VERSION}`,
   },
   android: {
     // Mixed content only on a cleartext dev build, for the same reason as above.
     allowMixedContent: isCleartext,
-    appendUserAgent: " RClipperNative/android",
+    appendUserAgent: ` RClipperNative/android RClipperRender/${RENDER_PLUGIN_UA_VERSION}`,
   },
   plugins: {
     // Pipeline notices tell the requester it is their turn to act, so they are

@@ -65,6 +65,7 @@ import { RENDER_TUNING } from "@/config/renderTuning";
 import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
 import { isAutoApprovedGate } from "@/config/pipelinePresentation";
+import { isStudioOnly } from "@/config/studioRollout";
 import {
   firstDeviceRatioLink,
   nextDeviceRatioLink,
@@ -920,12 +921,20 @@ export class VideoGenerationService {
       await this._refundAllowance(job.requestId);
     };
 
-    if (RENDER_QUEUE.enabled) {
+    // STUDIO_ONLY: this process never renders video itself. New requests are
+    // all phone-rendered (the submit route refuses anything else); a request
+    // still on the server pipeline from before the switch is queued for the
+    // Mac Mini even while its worker is down, and waits there rather than
+    // falling back to an inline render on this machine.
+    const noInlineRender = isStudioOnly();
+
+    if (RENDER_QUEUE.enabled || noInlineRender) {
       try {
         if (
-          await videoGenerationJobRepository.isRenderWorkerAlive(
+          noInlineRender ||
+          (await videoGenerationJobRepository.isRenderWorkerAlive(
             RENDER_QUEUE.workerFreshSeconds
-          )
+          ))
         ) {
           // Enqueue this step onto the render-task line. requesterId is
           // denormalised so the worker log can name whose step it is; it is never
@@ -951,6 +960,13 @@ export class VideoGenerationService {
           return;
         }
       } catch (err) {
+        if (noInlineRender) {
+          // No inline fallback to fall through to: fail the step (and refund
+          // the allowance) so the requester sees it and can retry.
+          console.error(`[render:${renderStep}] enqueue failed (studio-only, no inline render):`, err);
+          await onFail(err);
+          return;
+        }
         // Never strand a job: if the liveness check or enqueue write fails,
         // fall through and run the step inline.
         console.error(`[render:${renderStep}] enqueue failed, running inline:`, err);

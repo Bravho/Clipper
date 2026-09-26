@@ -19,7 +19,7 @@ const roleBadgeVariant: Record<Role, "blue" | "green" | "red"> = {
   [Role.Admin]: "red",
 };
 
-export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: boolean }) {
+export function Navbar({ showStudio = false }: { showStudio?: boolean }) {
   const { t } = useI18n();
   const { data: session, status } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -56,9 +56,9 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
           {/* Desktop nav — only from lg up, because the tablet width still needs
               the drawer to reach the section links. */}
           <div className="hidden items-center gap-4 lg:flex">
-            {showDeviceRenderLab && (
-              <Link href="/device-render-lab" className="text-sm font-medium text-blue-700 hover:text-blue-900">
-                {t("nav.renderTest")}
+            {showStudio && (
+              <Link href={ROUTES.STUDIO} className="text-sm font-medium text-blue-700 hover:text-blue-900">
+                {t("nav.newVideo")}
               </Link>
             )}
             {isLoading ? null : user ? (
@@ -119,13 +119,13 @@ export function Navbar({ showDeviceRenderLab = false }: { showDeviceRenderLab?: 
       </div>
 
       <MobileNavDrawer open={mobileOpen} onClose={closeDrawer} sections={portalSections}>
-        {showDeviceRenderLab && (
+        {showStudio && (
           <Link
-            href="/device-render-lab"
+            href={ROUTES.STUDIO}
             className="rounded-md px-3 py-2.5 text-sm font-medium text-blue-700 hover:bg-slate-100 hover:text-blue-900"
             onClick={closeDrawer}
           >
-            {t("nav.renderTest")}
+            {t("nav.newVideo")}
           </Link>
         )}
         {user ? (

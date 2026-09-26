@@ -1,0 +1,314 @@
+import Link from "next/link";
+import Image from "next/image";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth/authOptions";
+import { redirect } from "next/navigation";
+import { getRoleHomePath } from "@/config/routes";
+import { ROUTES } from "@/config/routes";
+import { Role } from "@/domain/enums/Role";
+import { Button } from "@/components/ui/Button";
+import { getServerI18n } from "@/i18n/server";
+import {
+  FREE_REQUESTS_PER_WINDOW,
+  FREE_WINDOW_DAYS,
+  REQUESTS_PER_PAID_MONTH,
+  VIDEO_PACKAGES,
+} from "@/config/videoPackages";
+
+export default async function HomePage() {
+  const session = await getServerSession(authOptions);
+  const { t } = getServerI18n();
+
+  if (session?.user) {
+    redirect(getRoleHomePath(session.user.role as Role));
+  }
+
+  // The quota ladder is the acquisition pitch, so it is stated on the marketing
+  // page in the same words the dashboard uses after signup.
+  const entryPrice = Math.min(...VIDEO_PACKAGES.map((p) => p.priceCredits));
+  const ladderVars = {
+    freeTotal: FREE_REQUESTS_PER_WINDOW,
+    days: FREE_WINDOW_DAYS,
+    paidTotal: REQUESTS_PER_PAID_MONTH,
+    price: entryPrice,
+  };
+
+  return (
+    <div className="flex flex-col">
+      {/* Hero */}
+      <section className="relative overflow-hidden bg-gradient-to-b from-blue-50 to-white py-24 px-4 text-center text-slate-900">
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 1px 1px, #1d4ed8 1px, transparent 0)",
+            backgroundSize: "32px 32px",
+          }}
+        />
+        <div className="relative mx-auto max-w-4xl">
+          <div className="mb-6 flex items-center justify-center gap-3">
+            <Image src="/logo.png" alt="RClipper logo" width={56} height={56} className="rounded-xl" />
+            <span className="text-3xl font-bold tracking-tight text-slate-900">RClipper</span>
+          </div>
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-blue-100 px-4 py-1.5 text-sm font-medium text-blue-800 ring-1 ring-blue-200">
+            <span className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+            {t("home.audience")}
+          </div>
+          <h1 className="mb-6 text-4xl font-bold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
+            {t("home.headline")}<br />
+            <span className="text-blue-600">{t("home.headlineAccent")}</span>
+          </h1>
+          <p className="mx-auto mb-3 max-w-2xl text-lg text-slate-700">
+            <span className="font-semibold text-slate-900">{t("home.aiPromise")}</span>
+          </p>
+          <p className="mx-auto mb-10 max-w-xl text-base text-slate-600">
+            {t("home.export")}
+          </p>
+          <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
+            <Link href={ROUTES.SIGNUP}>
+              <Button size="lg" className="min-w-[200px]">
+                {t("nav.getStarted")}
+              </Button>
+            </Link>
+            <Link href={ROUTES.LOGIN}>
+              <Button
+                variant="outline"
+                size="lg"
+                className="min-w-[140px] border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+              >
+                {t("nav.signIn")}
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Stats bar */}
+      <section className="bg-white py-5 px-4 border-y border-slate-200">
+        <div className="mx-auto max-w-5xl grid grid-cols-2 gap-4 sm:grid-cols-4 text-center">
+          {[
+            { value: t("home.statSpeedValue"), label: t("home.statSpeed") },
+            { value: t("home.statLanguagesValue"), label: t("home.statLanguages") },
+            { value: "Travy", label: t("home.statTravy") },
+            { value: `฿${entryPrice}`, label: t("home.statPrice") },
+          ].map((s) => (
+            <div key={s.label} className="flex flex-col gap-0.5">
+              <span className="text-xl font-bold text-slate-900">{s.value}</span>
+              <span className="text-xs text-slate-500">{s.label}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Two tracks */}
+      <section className="py-20 px-4 bg-white">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="mb-3 text-center text-3xl font-bold text-slate-900">
+            {t("home.chooseTitle")}
+          </h2>
+          <p className="mb-12 text-center text-slate-500">
+            {t("home.chooseBody")}
+          </p>
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* AI track */}
+            <div className="rounded-2xl border-2 border-blue-100 bg-blue-50 p-8 flex flex-col">
+              <div className="mb-4 inline-block self-start rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white uppercase tracking-wider">
+                AI Track
+              </div>
+              <h3 className="mb-3 text-2xl font-bold text-slate-900">
+                {t("request.aiHeadline")}
+              </h3>
+              <p className="mb-6 text-slate-600 leading-relaxed flex-1">
+                {t("request.aiDescription")}
+              </p>
+              <ul className="mb-8 space-y-2.5 text-sm text-slate-700">
+                {[
+                  t("request.aiFeatureSubtitles"),
+                  t("request.aiFeatureRatios"),
+                  t("request.aiFeatureReady"),
+                  t("request.aiTurnaround"),
+                ].map((f) => (
+                  <li key={f} className="flex items-start gap-2.5">
+                    <span className="mt-0.5 h-4 w-4 flex-shrink-0 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold">
+                      ✓
+                    </span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <Link href={ROUTES.SIGNUP} className="block w-full rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-4 text-center text-sm transition-colors">
+                {t("request.startAi")}
+              </Link>
+            </div>
+
+            {/* Editor track */}
+            <div className="rounded-2xl border-2 border-amber-100 bg-amber-50 p-8 flex flex-col">
+              <div className="mb-4 inline-block self-start rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white uppercase tracking-wider">
+                Editor Track
+              </div>
+              <h3 className="mb-3 text-2xl font-bold text-slate-900">
+                เจาะลึก · เข้าใจตลาด · เพิ่ม Reach
+              </h3>
+              <p className="mb-6 text-slate-600 leading-relaxed flex-1">
+                เลือก Editor ที่เชี่ยวชาญ TikTok / YouTube algorithm และเข้าใจ
+                พฤติกรรมนักท่องเที่ยวต่างชาติ เหมาะสำหรับธุรกิจที่ต้องการ
+                engagement สูง เจาะกลุ่มจีน เกาหลี ญี่ปุ่น และ Western
+              </p>
+              <ul className="mb-8 space-y-2.5 text-sm text-slate-700">
+                {[
+                  "Editor รู้จัก algorithm ของแต่ละ platform",
+                  "สคริปต์และ hook เฉพาะตลาดต่างชาติ",
+                  "Voice-over และ narration หลายภาษา",
+                  "ปรึกษา strategy ก่อนผลิต",
+                ].map((f) => (
+                  <li key={f} className="flex items-start gap-2.5">
+                    <span className="mt-0.5 h-4 w-4 flex-shrink-0 rounded-full bg-amber-500 flex items-center justify-center text-white text-[10px] font-bold">
+                      ✓
+                    </span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <Link href={ROUTES.SIGNUP} className="block w-full rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2.5 px-4 text-center text-sm transition-colors">
+                เลือก Editor
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* For who */}
+      <section className="border-t border-slate-200 bg-slate-50 py-16 px-4 text-center">
+        <div className="mx-auto max-w-4xl">
+          <h2 className="mb-3 text-2xl font-bold text-slate-900">
+            RClipper สำหรับใคร?
+          </h2>
+          <p className="mb-10 text-slate-500">
+            ออกแบบมาสำหรับธุรกิจในไทยที่ต้องการดึงดูดลูกค้าทั้งไทยและต่างชาติ
+          </p>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {[
+              { icon: "🏨", label: "โรงแรม & ที่พัก", sub: "Hostel · Resort · Villa" },
+              { icon: "🍜", label: "ร้านอาหาร & Café", sub: "Street food · Fine dining" },
+              { icon: "🛶", label: "Tour & Activity", sub: "Kayak · Dive · Safari" },
+              { icon: "🛍️", label: "ร้านค้า & Local Brand", sub: "ของที่ระลึก · Craft" },
+            ].map((a) => (
+              <div
+                key={a.label}
+                className="rounded-xl bg-white p-6 shadow-sm border border-slate-100"
+              >
+                <div className="mb-3 text-3xl">{a.icon}</div>
+                <div className="font-semibold text-slate-900 text-sm">{a.label}</div>
+                <div className="text-xs text-slate-500 mt-1">{a.sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* How it works */}
+      <section className="py-20 px-4 bg-white">
+        <div className="mx-auto max-w-5xl">
+          <h2 className="mb-12 text-center text-3xl font-bold text-slate-900">
+            ง่ายมาก — แค่ 4 ขั้น
+          </h2>
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              {
+                step: "1",
+                title: "สมัครฟรี — สร้างได้ทันที 3 คลิป",
+                desc: "สมัครด้วย Google หรืออีเมล ไม่ต้องเติมเครดิตเพื่อเริ่ม บัญชีฟรีสร้างวิดีโอได้ 3 คลิปต่อ 30 วัน ไฟล์สมบูรณ์ไม่มีลายน้ำ",
+              },
+              {
+                step: "2",
+                title: "ส่ง brief + ไฟล์",
+                desc: "กรอกรายละเอียด บอกสไตล์และกลุ่มเป้าหมาย อัพโหลดวิดีโอหรือรูปสูงสุด 5 ไฟล์",
+              },
+              {
+                step: "3",
+                title: "AI หรือ Editor ลงมือ",
+                desc: "ทีมผลิตคลิปภายใน 2 วันทำการ AI track เร็วกว่า Editor track ปรึกษาก่อนผลิต",
+              },
+              {
+                step: "4",
+                title: "รับคลิปพร้อมโพสต์",
+                desc: "ดาวน์โหลดคลิปทุกอัตราส่วน พร้อมนำไปโพสต์บนช่องทางของคุณได้ทันที",
+              },
+            ].map((item) => (
+              <div key={item.step} className="flex flex-col gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-700 text-white font-bold text-sm">
+                  {item.step}
+                </div>
+                <h3 className="font-semibold text-slate-900">{item.title}</h3>
+                <p className="text-sm text-slate-600 leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Distribution — Travy highlight */}
+      <section className="bg-slate-50 py-16 px-4 text-center text-slate-900 border-t border-slate-200">
+        <div className="mx-auto max-w-3xl">
+          <div className="mb-4 inline-block rounded-full bg-blue-100 px-4 py-1.5 text-sm font-medium text-blue-800 ring-1 ring-blue-200">
+            พร้อมสำหรับทุกช่องทาง
+          </div>
+          <h2 className="mb-4 text-2xl font-bold">
+            ไฟล์พร้อมโพสต์ทุกช่องทาง รวมถึงแอป Travy และเว็บไซต์ Travy.buzz
+          </h2>
+          <p className="mb-8 text-slate-600 max-w-xl mx-auto">
+            Travy คือแอปวิดีโอท่องเที่ยวของไทย พร้อมเว็บไซต์ Travy.buzz ที่นักท่องเที่ยวต่างชาติใช้
+            ค้นหาประสบการณ์ในไทย — เราส่งออกไฟล์ในอัตราส่วนที่เหมาะกับแต่ละช่องทางให้พร้อมโพสต์
+            และคลิปที่คัดเลือกอาจได้รับการนำไปเผยแพร่บนช่องทางของ RClipper
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            {[
+              { name: "Travy", highlight: true },
+              { name: "TikTok" },
+              { name: "Instagram" },
+              { name: "Facebook" },
+              { name: "YouTube" },
+              { name: "CDN / Direct Link" },
+            ].map((ch) => (
+              <span
+                key={ch.name}
+                className={`rounded-full px-4 py-1.5 text-sm font-medium ${
+                  ch.highlight
+                    ? "bg-blue-600 text-white ring-2 ring-blue-300"
+                    : "border border-slate-200 bg-white text-slate-700"
+                }`}
+              >
+                {ch.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="py-20 px-4 text-center bg-white">
+        <div className="mx-auto max-w-xl">
+          <h2 className="mb-4 text-3xl font-bold text-slate-900">
+            พร้อมทำคลิปแรกหรือยัง?
+          </h2>
+          <p className="mb-2 text-slate-600">
+            สมัครฟรี เริ่มต้นที่ 0 เครดิต — ไม่ต้องใส่บัตรเครดิต
+          </p>
+          {/* The full ladder, so the offer is unambiguous before signup: what is
+              free, what is watermarked, and where the paywall starts. */}
+          <p className="mb-2 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
+            {t("quota.ladder", ladderVars)}
+          </p>
+          <p className="mb-8 text-sm text-slate-400">
+            เติมเครดิตผ่าน PromptPay หรือ Credit card เมื่อพร้อมเริ่มทำคลิป
+          </p>
+          <Link href={ROUTES.SIGNUP}>
+            <Button size="lg" className="min-w-[220px]">
+              สร้างบัญชีฟรี — เริ่มเลย
+            </Button>
+          </Link>
+        </div>
+      </section>
+    </div>
+  );
+}

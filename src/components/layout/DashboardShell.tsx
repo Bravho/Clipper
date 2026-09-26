@@ -37,6 +37,8 @@ export function DashboardShell({
 
   const navLinks = [
     { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
+    // The studio is the one way to make a video (rendered on the phone).
+    { href: ROUTES.STUDIO, label: t("sidebar.newVideo"), icon: "✚" },
     { href: ROUTES.REQUESTS, label: t("sidebar.requests"), icon: "◫" },
     { href: ROUTES.CREDITS, label: t("sidebar.credits"), icon: "◈" },
     // Pricing sits directly under Credits because they answer consecutive

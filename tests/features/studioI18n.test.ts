@@ -1,9 +1,10 @@
 /**
- * The studio's language: the menu's choice, else the phone's, else English —
- * and every studio sentence present, with the same placeholders, in th/en/vi.
+ * The app's language before a menu choice (the phone's, from Accept-Language),
+ * which the studio follows exactly — and every studio sentence present, with the same placeholders, in th/en/vi.
  */
 
-import { localeFromLanguages, resolveStudioLocale } from "@/features/device-render/studioText";
+import { localeFromLanguages } from "@/features/device-render/studioText";
+import { localeFromAcceptLanguage } from "@/i18n/config";
 import { buildRenderTimeline } from "@/features/device-render/renderTimeline";
 import { briefProblems } from "@/features/device-render/editorState";
 import { explainRefusal } from "@/lib/mobile/deviceRenderClient";
@@ -11,8 +12,8 @@ import { messages, translate, type MessageKey } from "@/i18n/messages";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { Platform } from "@/domain/enums/Platform";
 
-describe("studio language", () => {
-  it("reads the first supported language from the phone's list", () => {
+describe("app language before anyone picks one (Accept-Language)", () => {
+  it("reads the first supported language from a list of tags", () => {
     expect(localeFromLanguages(["en-US", "th-TH"])).toBe("en");
     expect(localeFromLanguages(["th-TH"])).toBe("th");
     expect(localeFromLanguages(["vi_VN"])).toBe("vi");
@@ -20,28 +21,17 @@ describe("studio language", () => {
     expect(localeFromLanguages(["ja-JP"])).toBeNull();
   });
 
-  it("follows the menu once a language was picked there", () => {
-    expect(
-      resolveStudioLocale({ appLocale: "th", chosen: true, deviceLanguages: ["en-US"] })
-    ).toBe("th");
+  it("follows the phone's language from the header, by preference", () => {
+    expect(localeFromAcceptLanguage("en-US,en;q=0.9")).toBe("en");
+    expect(localeFromAcceptLanguage("th-TH,th;q=0.9,en;q=0.8")).toBe("th");
+    expect(localeFromAcceptLanguage("en;q=0.5, vi-VN")).toBe("vi");
+    expect(localeFromAcceptLanguage("ja-JP,th;q=0.4")).toBe("th");
   });
 
-  it("otherwise follows the phone, and English for a language with no catalogue", () => {
-    expect(
-      resolveStudioLocale({ appLocale: "th", chosen: false, deviceLanguages: ["en-GB"] })
-    ).toBe("en");
-    expect(
-      resolveStudioLocale({ appLocale: "en", chosen: false, deviceLanguages: ["th-TH"] })
-    ).toBe("th");
-    expect(
-      resolveStudioLocale({ appLocale: "th", chosen: false, deviceLanguages: ["ja-JP"] })
-    ).toBe("en");
-  });
-
-  it("keeps the app's locale when nothing is known about the phone (server render)", () => {
-    expect(resolveStudioLocale({ appLocale: "th", chosen: false, deviceLanguages: null })).toBe(
-      "th"
-    );
+  it("uses English for a language with no catalogue, and Thai with no header", () => {
+    expect(localeFromAcceptLanguage("ja-JP,ja;q=0.9")).toBe("en");
+    expect(localeFromAcceptLanguage(null)).toBe("th");
+    expect(localeFromAcceptLanguage("")).toBe("th");
   });
 });
 

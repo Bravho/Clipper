@@ -28,8 +28,15 @@ export const ROUTES = {
   FORGOT_PASSWORD: "/forgot-password",
   RESET_PASSWORD: "/reset-password",
 
+  // Public marketing pages (the browser site; the app lives inside the shells)
+  PUBLIC_PRICING: "/plans",
+  DOWNLOAD: "/download",
+  GET_THE_APP: "/get-the-app",
+
   // Authenticated (role-specific)
   DASHBOARD: "/dashboard",
+  // The phone studio — the one way to make a video. Requester-only (middleware).
+  STUDIO: "/studio",
   ADMIN: "/admin",
   ACCOUNT: "/account",
 
@@ -64,6 +71,13 @@ export const ROUTES = {
   MANAGEMENT_CALENDAR: "/dashboard/management/calendar",
   MANAGEMENT_PAYMENTS: "/dashboard/management/payments",
 } as const;
+
+/** The studio, optionally opened on one request (resumes it at its step). */
+export function studioPath(requestId?: string | null): string {
+  return requestId
+    ? `${ROUTES.STUDIO}?${new URLSearchParams({ request: requestId }).toString()}`
+    : ROUTES.STUDIO;
+}
 
 /** Build a request detail URL. */
 export function requestDetailPath(requestId: string): string {

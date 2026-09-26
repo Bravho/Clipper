@@ -36,6 +36,9 @@ struct ManifestRenderer {
         let durationSeconds: Double
         /// Temporary segment files to delete once the export finishes.
         let temporaryFiles: [URL]
+        /// What AVFoundation's own validation said about the composition, for
+        /// the error log.
+        var validationNotes: [String] = []
     }
 
     /// Where a shot's bytes are, keyed by the manifest's assetId.
@@ -45,35 +48,67 @@ struct ManifestRenderer {
 
     /// The silent intermediate: every approved shot in order, cover-cropped to
     /// the canvas, stills animated, clips trimmed and muted, dissolves applied.
+    ///
+    /// ONE INTEGER TIMELINE. Every boundary is computed once, in 1/600 s ticks,
+    /// from the running total of the shot lengths, and every insert, scale and
+    /// instruction is cut from those same numbers. AVFoundation refuses a video
+    /// composition whose instructions overlap or leave a gap by even one tick
+    /// ("Operation Stopped" at export) — which is what the first iOS build did:
+    /// the shot before a dissolve kept its instruction up to the next shot's
+    /// start while the dissolve instruction already covered its last
+    /// `dissolve` seconds, and separately-rounded CMTimes could also miss by a
+    /// tick. Now, around a dissolve into shot i:
+    ///
+    ///   solo(i-1): [B(i-1), B(i) - D(i))
+    ///   dissolve:  [B(i) - D(i), B(i))     both layers, shot i ramping in
+    ///   solo(i):   [B(i), B(i+1) - D(i+1))
+    ///
+    /// and the last instruction ends exactly at the composition's end.
+    ///
+    /// `hardCuts` drops every dissolve (and entrance flourish): the fallback
+    /// when a device will not export the dissolving composition.
     func buildMontage(
         resolve: SourceResolver,
         isCancelled: @escaping () -> Bool,
+        hardCuts: Bool = false,
         onSegmentProgress: (Double) -> Void
     ) throws -> Built {
         let shots = manifest.flattenedShots
         guard !shots.isEmpty else { throw RenderError.manifest("The montage manifest has no shots") }
 
         let canvas = manifest.canvasSize
-
-        // Slot starts and the dissolve going into each shot. A dissolve borrows
-        // from the previous shot's tail rather than extending the timeline, so
-        // the scene's total length is unchanged — exactly as `MontageScene`
-        // keeps it unchanged.
-        var starts: [Double] = []
-        var dissolves: [Double] = []
-        var cursor: Double = 0
-        for (index, shot) in shots.enumerated() {
-            var dissolve = manifest.dissolve(beforeFlatIndex: index)
-            if index > 0 {
-                // Never dissolve longer than half of either neighbouring shot.
-                let maxFade = min(shot.durationSeconds, shots[index - 1].durationSeconds) / 2
-                dissolve = min(dissolve, maxFade)
-            }
-            dissolves.append(max(0, dissolve))
-            starts.append(cursor)
-            cursor += shot.durationSeconds
+        let scale: CMTimeScale = 600
+        func ticks(_ seconds: Double) -> CMTimeValue {
+            CMTimeValue((seconds * Double(scale)).rounded())
         }
-        let total = cursor
+        func time(_ value: CMTimeValue) -> CMTime { CMTime(value: value, timescale: scale) }
+
+        // Slot boundaries: B(0) = 0, B(i+1) = B(i) + shot i. A dissolve borrows
+        // from the previous shot's tail rather than extending the timeline, so
+        // the total is unchanged — exactly as `MontageScene` keeps it.
+        var boundaries: [CMTimeValue] = [0]
+        var runningSeconds: Double = 0
+        for shot in shots {
+            runningSeconds += shot.durationSeconds
+            boundaries.append(ticks(runningSeconds))
+        }
+        for index in shots.indices where boundaries[index + 1] <= boundaries[index] {
+            throw RenderError.manifest("Shot \(index + 1) has no length")
+        }
+        // The dissolve INTO each shot, never longer than half of either
+        // neighbouring shot, so every solo stretch keeps a positive length.
+        var fades: [CMTimeValue] = []
+        for index in shots.indices {
+            guard index > 0, !hardCuts else {
+                fades.append(0)
+                continue
+            }
+            let slot = boundaries[index + 1] - boundaries[index]
+            let previous = boundaries[index] - boundaries[index - 1]
+            let wanted = ticks(max(0, manifest.dissolve(beforeFlatIndex: index)))
+            fades.append(max(0, min(wanted, slot / 2, previous / 2)))
+        }
+        let total = boundaries[shots.count]
 
         let composition = AVMutableComposition()
         // Two tracks so consecutive shots can overlap; a single track cannot
@@ -88,9 +123,7 @@ struct ManifestRenderer {
         let tracks = [trackA, trackB]
 
         var temporaryFiles: [URL] = []
-        var instructions: [AVMutableVideoCompositionInstruction] = []
-        var placements: [(track: AVMutableCompositionTrack, start: CMTime, duration: CMTime,
-                          transform: CGAffineTransform, index: Int)] = []
+        var placements: [(track: AVMutableCompositionTrack, transform: CGAffineTransform)] = []
 
         for (index, shot) in shots.enumerated() {
             if isCancelled() { throw RenderError.cancelled }
@@ -98,18 +131,15 @@ struct ManifestRenderer {
             let source = try manifest.source(for: shot)
             let url = try resolve(source.assetId)
             let scene = manifest.scene(forFlatIndex: index)
-            let transition = scene?.transitionIn ?? .fade
-            let dissolve = dissolves[index]
+            let transition: RenderManifest.Transition = hardCuts ? .cut : (scene?.transitionIn ?? .fade)
+            let fade = fades[index]
 
-            // The incoming shot mounts `dissolve` early so it overlaps the
-            // outgoing shot's tail, and keeps its own end, so the timeline is
-            // unchanged.
-            let itemStart = max(0, starts[index] - dissolve)
-            let itemDuration = starts[index] + shot.durationSeconds - itemStart
-
-            let lane = index % 2
-            let track = tracks[lane]
-            let insertAt = CMTime(seconds: itemStart, preferredTimescale: 600)
+            // The incoming shot mounts `fade` early so it overlaps the outgoing
+            // shot's tail, and keeps its own end, so the timeline is unchanged.
+            let itemStart = boundaries[index] - fade
+            let insertAt = time(itemStart)
+            let slot = time(boundaries[index + 1] - itemStart)
+            let track = tracks[index % 2]
 
             if source.isImage {
                 guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
@@ -124,40 +154,44 @@ struct ManifestRenderer {
                     frameZoom: CGFloat(shot.zoom),
                     canvas: canvas,
                     fps: manifest.fps,
-                    durationSeconds: itemDuration,
+                    durationSeconds: CMTimeGetSeconds(slot),
                     entranceTransition: transition,
-                    dissolveSeconds: dissolve,
+                    dissolveSeconds: CMTimeGetSeconds(time(fade)),
                     output: segment,
                     isCancelled: isCancelled
                 )
                 temporaryFiles.append(segment)
 
                 let asset = AVURLAsset(url: segment)
-                guard let videoTrack = asset.tracks(withMediaType: .video).first else {
+                guard let videoTrack = asset.tracks(withMediaType: .video).first,
+                      CMTimeCompare(asset.duration, .zero) > 0 else {
                     throw RenderError.export("A rendered still has no video track")
                 }
-                let duration = CMTime(seconds: itemDuration, preferredTimescale: 600)
+                // The segment is whole frames long, so it can miss the slot by
+                // a fraction of a frame; stretch it to the exact slot so the
+                // track has no gap for the instructions to fall into.
+                let take = CMTimeMinimum(slot, asset.duration)
                 try track.insertTimeRange(
-                    CMTimeRange(start: .zero, duration: min(duration, asset.duration)),
-                    of: videoTrack, at: insertAt)
-                // The segment is already at canvas size and already animated, so
-                // it needs no further transform.
-                placements.append((track, insertAt, duration, .identity, index))
+                    CMTimeRange(start: .zero, duration: take), of: videoTrack, at: insertAt)
+                if CMTimeCompare(take, slot) != 0 {
+                    track.scaleTimeRange(CMTimeRange(start: insertAt, duration: take), toDuration: slot)
+                }
+                // Already at canvas size and already animated: no transform.
+                placements.append((track, .identity))
             } else {
                 let asset = AVURLAsset(url: url)
                 guard let videoTrack = asset.tracks(withMediaType: .video).first else {
                     throw RenderError.export("A source clip has no video track")
                 }
 
-                let trimStart = CMTime(seconds: shot.trimStartSeconds ?? 0, preferredTimescale: 600)
+                let trimStart = CMTime(seconds: shot.trimStartSeconds ?? 0, preferredTimescale: scale)
                 let available = CMTimeSubtract(videoTrack.timeRange.end, trimStart)
                 let windowEnd = shot.trimEndSeconds.map {
-                    CMTime(seconds: $0, preferredTimescale: 600)
+                    CMTime(seconds: $0, preferredTimescale: scale)
                 }
                 var footage = windowEnd.map { CMTimeSubtract($0, trimStart) } ?? available
                 footage = CMTimeMinimum(footage, available)
 
-                let slot = CMTime(seconds: itemDuration, preferredTimescale: 600)
                 guard CMTimeCompare(footage, CMTime(value: 1, timescale: CMTimeScale(manifest.fps))) >= 0
                 else {
                     throw RenderError.export("A clip trim starts past the end of its video")
@@ -166,25 +200,19 @@ struct ManifestRenderer {
                 let take = CMTimeMinimum(footage, slot)
                 try track.insertTimeRange(
                     CMTimeRange(start: trimStart, duration: take), of: videoTrack, at: insertAt)
-
                 // Slow the clip to fill a slot longer than its footage, rather
-                // than freezing the last frame.
-                let rate = MotionMath.playbackRate(
-                    footageSeconds: take.seconds, slotSeconds: itemDuration)
-                if rate < 0.999 {
-                    track.scaleTimeRange(
-                        CMTimeRange(start: insertAt, duration: take), toDuration: slot)
+                // than freezing the last frame — and fill it EXACTLY.
+                if CMTimeCompare(take, slot) != 0 {
+                    track.scaleTimeRange(CMTimeRange(start: insertAt, duration: take), toDuration: slot)
                 }
 
                 // `preferredTransform` carries the camera's portrait rotation;
-                // then cover-fit fills the canvas without flattening anything.
+                // then the storyboard's framing places it on the canvas.
                 let oriented = CGRect(origin: .zero, size: videoTrack.naturalSize)
                     .applying(videoTrack.preferredTransform).standardized
                 guard oriented.width > 0, oriented.height > 0 else {
                     throw RenderError.export("A source clip has an empty video frame")
                 }
-                // Framed as the storyboard set it: from the whole clip (bars
-                // either side) to filling the frame, kept on its focus point.
                 let fit = MotionMath.frameFit(
                     source: oriented.size, canvas: canvas,
                     frameZoom: CGFloat(shot.zoom),
@@ -196,83 +224,75 @@ struct ManifestRenderer {
                     .concatenating(CGAffineTransform(
                         translationX: fit.offset.x, y: fit.offset.y))
 
-                if dissolve > 0, transition == .slide || transition == .zoom {
+                if fade > 0, transition == .slide || transition == .zoom {
                     // A clip cannot be animated per frame through a layer
                     // instruction, so the flourish is applied at its midpoint —
-                    // visible as a static offset rather than a movement. This is
-                    // the one place iOS approximates the Remotion entrance, and
-                    // it only affects `slide` and `zoom`.
+                    // a static offset rather than a movement. The one place iOS
+                    // approximates the Remotion entrance (`slide`, `zoom` only).
                     transform = transform.concatenating(
                         MotionMath.entrance(transition, fade: 0.5, canvas: canvas))
                 }
-                placements.append((track, insertAt, slot, transform, index))
+                placements.append((track, transform))
             }
         }
 
-        // One instruction per shot, covering its own slot; during a dissolve the
-        // instruction carries BOTH layers, with the incoming one ramping in.
-        for (position, placement) in placements.enumerated() {
-            let dissolve = dissolves[placement.index]
-            let slotStart = CMTime(seconds: starts[placement.index], preferredTimescale: 600)
-            let slotDuration = CMTime(
-                seconds: shots[placement.index].durationSeconds, preferredTimescale: 600)
-
-            let incoming = AVMutableVideoCompositionLayerInstruction(assetTrack: placement.track)
-            incoming.setTransform(placement.transform, at: placement.start)
-
-            let instruction = AVMutableVideoCompositionInstruction()
-
-            if dissolve > 0, position > 0 {
-                let previous = placements[position - 1]
-                let fadeStart = CMTimeSubtract(slotStart,
-                                               CMTime(seconds: dissolve, preferredTimescale: 600))
+        // Contiguous instructions over the integer timeline (see above).
+        func layer(_ placement: (track: AVMutableCompositionTrack, transform: CGAffineTransform))
+            -> AVMutableVideoCompositionLayerInstruction {
+            let instruction = AVMutableVideoCompositionLayerInstruction(assetTrack: placement.track)
+            instruction.setTransform(placement.transform, at: .zero)
+            return instruction
+        }
+        var instructions: [AVMutableVideoCompositionInstruction] = []
+        for index in shots.indices {
+            let fade = fades[index]
+            if fade > 0, index > 0 {
                 let fadeRange = CMTimeRange(
-                    start: fadeStart, duration: CMTime(seconds: dissolve, preferredTimescale: 600))
-
+                    start: time(boundaries[index] - fade), duration: time(fade))
+                let incoming = layer(placements[index])
                 incoming.setOpacityRamp(fromStartOpacity: 0, toEndOpacity: 1, timeRange: fadeRange)
-
-                let outgoing = AVMutableVideoCompositionLayerInstruction(
-                    assetTrack: previous.track)
-                outgoing.setTransform(previous.transform, at: previous.start)
-
-                let dissolveInstruction = AVMutableVideoCompositionInstruction()
-                dissolveInstruction.timeRange = fadeRange
-                // The incoming layer is listed FIRST: AVFoundation composites
-                // layer instructions front-to-back, so the one fading in has to
-                // be on top of the one it replaces.
-                dissolveInstruction.layerInstructions = [incoming, outgoing]
-                instructions.append(dissolveInstruction)
-
-                instruction.timeRange = CMTimeRange(start: slotStart, duration: slotDuration)
-            } else {
-                instruction.timeRange = CMTimeRange(
-                    start: placement.start,
-                    duration: CMTimeSubtract(
-                        CMTimeAdd(slotStart, slotDuration), placement.start))
+                let dissolve = AVMutableVideoCompositionInstruction()
+                dissolve.timeRange = fadeRange
+                // The incoming layer is listed FIRST: layer instructions are
+                // composited front to back, so the one fading in is on top.
+                dissolve.layerInstructions = [incoming, layer(placements[index - 1])]
+                instructions.append(dissolve)
             }
-
-            let solo = AVMutableVideoCompositionLayerInstruction(assetTrack: placement.track)
-            solo.setTransform(placement.transform, at: placement.start)
-            instruction.layerInstructions = [solo]
-            instructions.append(instruction)
-
-            onSegmentProgress(Double(position + 1) / Double(placements.count))
+            let soloStart = boundaries[index]
+            let soloEnd = boundaries[index + 1] - (index + 1 < shots.count ? fades[index + 1] : 0)
+            if soloEnd > soloStart {
+                let solo = AVMutableVideoCompositionInstruction()
+                solo.timeRange = CMTimeRange(start: time(soloStart), end: time(soloEnd))
+                solo.layerInstructions = [layer(placements[index])]
+                instructions.append(solo)
+            }
+            onSegmentProgress(Double(index + 1) / Double(shots.count))
         }
-
-        instructions.sort { $0.timeRange.start < $1.timeRange.start }
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = canvas
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(manifest.fps))
         videoComposition.instructions = instructions
 
+        // Ask AVFoundation itself before exporting, and keep what it says for
+        // the error log: a refusal at export only says "Operation Stopped".
+        let check = CompositionCheck()
+        _ = videoComposition.isValid(
+            for: composition,
+            timeRange: CMTimeRange(start: .zero, duration: time(total)),
+            validationDelegate: check)
+
         return Built(
             asset: composition,
             videoComposition: videoComposition,
             audioMix: nil,
             animationTool: nil,
-            durationSeconds: total,
-            temporaryFiles: temporaryFiles
+            durationSeconds: CMTimeGetSeconds(time(total)),
+            temporaryFiles: temporaryFiles,
+            validationNotes: check.problems
+                + ["Montage: \(shots.count) shots, \(instructions.count) instructions, "
+                   + "\(hardCuts ? "hard cuts" : "dissolves"), "
+                   + String(format: "%.3f s", CMTimeGetSeconds(time(total)))]
         )
     }
 
@@ -415,7 +435,10 @@ struct ManifestRenderer {
         try audioTrack.insertTimeRange(
             CMTimeRange(start: .zero, duration: audioAsset.duration), of: sourceAudio, at: .zero)
 
-        let pictureEnd = CMTime(seconds: picture.durationSeconds, preferredTimescale: 600)
+        // The picture ends where its last instruction ends — the exact tick,
+        // not a re-rounded double, or the tail would overlap or leave a gap.
+        let pictureEnd = picture.videoComposition?.instructions.last?.timeRange.end
+            ?? CMTime(seconds: picture.durationSeconds, preferredTimescale: 600)
         let end = CMTimeMaximum(pictureEnd, audioAsset.duration)
         if let videoComposition = picture.videoComposition,
            CMTimeCompare(end, pictureEnd) > 0 {
@@ -432,7 +455,8 @@ struct ManifestRenderer {
             audioMix: nil,
             animationTool: nil,
             durationSeconds: CMTimeGetSeconds(end),
-            temporaryFiles: picture.temporaryFiles
+            temporaryFiles: picture.temporaryFiles,
+            validationNotes: picture.validationNotes
         )
     }
 
@@ -445,7 +469,8 @@ struct ManifestRenderer {
             animationTool: buildOverlayLayers(
                 canvas: manifest.canvasSize, includeTemplate: includeTemplate),
             durationSeconds: master.durationSeconds,
-            temporaryFiles: master.temporaryFiles
+            temporaryFiles: master.temporaryFiles,
+            validationNotes: master.validationNotes
         )
     }
 
@@ -527,5 +552,49 @@ struct ManifestRenderer {
 
         return AVVideoCompositionCoreAnimationTool(
             postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+    }
+}
+
+/// Collects what `AVVideoComposition.isValid` objects to, in words.
+final class CompositionCheck: NSObject, AVVideoCompositionValidationHandling {
+    private(set) var problems: [String] = []
+
+    func videoComposition(
+        _ videoComposition: AVVideoComposition,
+        shouldContinueValidatingAfterFindingInvalidValueForKey key: String
+    ) -> Bool {
+        problems.append("Composition check: invalid value for \(key)")
+        return true
+    }
+
+    func videoComposition(
+        _ videoComposition: AVVideoComposition,
+        shouldContinueValidatingAfterFindingEmptyTimeRange timeRange: CMTimeRange
+    ) -> Bool {
+        problems.append(String(
+            format: "Composition check: no instruction covers %.3f–%.3f s",
+            CMTimeGetSeconds(timeRange.start), CMTimeGetSeconds(timeRange.end)))
+        return true
+    }
+
+    func videoComposition(
+        _ videoComposition: AVVideoComposition,
+        shouldContinueValidatingAfterFindingInvalidTimeRangeIn videoCompositionInstruction: AVVideoCompositionInstructionProtocol
+    ) -> Bool {
+        let range = videoCompositionInstruction.timeRange
+        problems.append(String(
+            format: "Composition check: instruction %.3f–%.3f s overlaps or is out of order",
+            CMTimeGetSeconds(range.start), CMTimeGetSeconds(range.end)))
+        return true
+    }
+
+    func videoComposition(
+        _ videoComposition: AVVideoComposition,
+        shouldContinueValidatingAfterFindingInvalidTrackIDIn videoCompositionInstruction: AVVideoCompositionInstructionProtocol,
+        layerInstruction: AVVideoCompositionLayerInstruction,
+        asset: AVAsset
+    ) -> Bool {
+        problems.append("Composition check: a layer refers to track \(layerInstruction.trackID), which the asset does not have")
+        return true
     }
 }

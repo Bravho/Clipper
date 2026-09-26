@@ -271,3 +271,52 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
     });
   });
 });
+
+describe("POST /api/requests/[id]/submit — STUDIO_ONLY", () => {
+  const original = process.env.STUDIO_ONLY;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.STUDIO_ONLY = "true";
+    sessionMock.mockResolvedValue({ user: { id: "user-1", role: "requester" } });
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env.STUDIO_ONLY;
+    else process.env.STUDIO_ONLY = original;
+  });
+
+  const body = {
+    creditConfirmed: true,
+    rightsConfirmed: true,
+    aiProcessingConfirmed: true,
+  };
+  const call = () =>
+    POST(
+      new Request("http://localhost/api/requests/req-1/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ id: "req-1" }) }
+    );
+
+  it("refuses a Draft that would be rendered on the server, before charging anything", async () => {
+    getOwnedRequestMock.mockResolvedValue({ ...submittedRequest, status: RequestStatus.Draft });
+
+    const response = await call();
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "app_update_required" });
+    expect(submitRequestMock).not.toHaveBeenCalled();
+    expect(initializePipelineMock).not.toHaveBeenCalled();
+  });
+
+  it("still recovers a request that was already Submitted before the switch", async () => {
+    getOwnedRequestMock.mockResolvedValue(submittedRequest);
+    getCurrentJobMock.mockResolvedValue({ id: "job-1" });
+
+    const response = await call();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ jobId: "job-1", resumed: true });
+  });
+});

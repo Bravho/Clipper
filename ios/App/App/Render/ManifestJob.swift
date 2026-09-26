@@ -164,49 +164,55 @@ final class ManifestJob {
                 downloaded.append(mixURL)
                 try throwIfCancelled()
 
-                let picture = try renderer.buildMontage(
-                    resolve: resolve,
-                    isCancelled: { [weak self] in self?.isCancelled ?? true },
-                    onSegmentProgress: { [weak self] fraction in
-                        self?.report(Self.downloadShare * 100 + fraction * 10)
-                    }
-                )
-                let master = try renderer.addingAudio(to: picture, mixedAudio: mixURL)
+                let montageFor: (Bool) throws -> ManifestRenderer.Built = { hardCuts in
+                    try renderer.buildMontage(
+                        resolve: resolve,
+                        isCancelled: { [weak self] in self?.isCancelled ?? true },
+                        hardCuts: hardCuts,
+                        onSegmentProgress: { [weak self] fraction in
+                            self?.report(Self.downloadShare * 100 + fraction * 10)
+                        }
+                    )
+                }
                 if manifest.stage == .master {
-                    built = master
+                    built = try exportWithHardCutFallback(to: outputURL) { hardCuts in
+                        try renderer.addingAudio(to: try montageFor(hardCuts), mixedAudio: mixURL)
+                    }
+                    exported = true
                 } else {
                     // The template is decoration and the captions are content:
                     // if this device will not export both, it drops the template.
-                    let decorated = renderer.decorated(master, includeTemplate: true)
                     do {
-                        try export(decorated, to: outputURL)
-                        built = decorated
+                        built = try exportWithHardCutFallback(to: outputURL) { hardCuts in
+                            renderer.decorated(
+                                try renderer.addingAudio(to: try montageFor(hardCuts), mixedAudio: mixURL),
+                                includeTemplate: true)
+                        }
                         exported = true
                     } catch RenderError.cancelled {
                         throw RenderError.cancelled
                     } catch {
                         note("Attempt with the look (template) FAILED — \(Self.chain(error))")
                         try? FileManager.default.removeItem(at: outputURL)
-                        let plain = try renderer.buildMontage(
-                            resolve: resolve,
-                            isCancelled: { [weak self] in self?.isCancelled ?? true },
-                            onSegmentProgress: { _ in }
-                        )
+                        try throwIfCancelled()
                         built = renderer.decorated(
-                            try renderer.addingAudio(to: plain, mixedAudio: mixURL),
+                            try renderer.addingAudio(to: try montageFor(true), mixedAudio: mixURL),
                             includeTemplate: false)
-                        cleanup(picture.temporaryFiles)
                     }
                 }
 
             case .montage:
-                built = try renderer.buildMontage(
-                    resolve: resolve,
-                    isCancelled: { [weak self] in self?.isCancelled ?? true },
-                    onSegmentProgress: { [weak self] fraction in
-                        self?.report(Self.downloadShare * 100 + fraction * 10)
-                    }
-                )
+                built = try exportWithHardCutFallback(to: outputURL) { hardCuts in
+                    try renderer.buildMontage(
+                        resolve: resolve,
+                        isCancelled: { [weak self] in self?.isCancelled ?? true },
+                        hardCuts: hardCuts,
+                        onSegmentProgress: { [weak self] fraction in
+                            self?.report(Self.downloadShare * 100 + fraction * 10)
+                        }
+                    )
+                }
+                exported = true
 
             case .master:
                 let montage = try require(inputs, "input", "the approved montage")
@@ -389,6 +395,32 @@ final class ManifestJob {
 
     // ── export ──────────────────────────────────────────────────────────────
 
+    /// Export what `build` makes; if that export fails, say why in the log and
+    /// try once more with hard cuts (no dissolves) — the same fallback Android
+    /// takes, so a composition this device will not dissolve still becomes a
+    /// video instead of a failed part.
+    private func exportWithHardCutFallback(
+        to output: URL,
+        build: (_ hardCuts: Bool) throws -> ManifestRenderer.Built
+    ) throws -> ManifestRenderer.Built {
+        let first = try build(false)
+        do {
+            try export(first, to: output)
+            return first
+        } catch RenderError.cancelled {
+            cleanup(first.temporaryFiles)
+            throw RenderError.cancelled
+        } catch {
+            note("Attempt with dissolves FAILED — \(Self.chain(error)); trying hard cuts")
+            cleanup(first.temporaryFiles)
+            try? FileManager.default.removeItem(at: output)
+            try throwIfCancelled()
+            let second = try build(true)
+            try export(second, to: output)
+            return second
+        }
+    }
+
     private func export(_ built: ManifestRenderer.Built, to output: URL) throws {
         // `AVAssetExportPresetHighestQuality` keeps the source's resolution;
         // the video composition already pins the canvas, so quality is the only
@@ -397,6 +429,7 @@ final class ManifestJob {
             asset: built.asset, presetName: AVAssetExportPresetHighestQuality) else {
             throw RenderError.export("This device cannot export this composition")
         }
+        for line in built.validationNotes { note(line) }
         session.outputURL = output
         session.outputFileType = .mp4
         session.shouldOptimizeForNetworkUse = true

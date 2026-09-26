@@ -18,6 +18,7 @@ import { MANIFEST_RENDER_PLUGIN_VERSION } from "@/lib/mobile/deviceRenderPluginV
 import { LOCAL_FIRST_MEDIA_ENABLED } from "@/config/localMedia";
 import { PIPELINE_STEP_COSTS } from "@/config/credits";
 import { storeLocalMediaDerivatives } from "@/services/LocalMediaDerivativeService";
+import { isStudioOnly } from "@/config/studioRollout";
 
 const submitBodySchema = z.object({
   creditConfirmed: z.literal(true),
@@ -94,6 +95,27 @@ export async function POST(
   const rendersOnDevice =
     keepsClipsLocally ||
     (parsed.data.localMedia?.renderOnDevice === true && deviceCanRender);
+
+  // STUDIO_ONLY: every new video is rendered on the phone, so a submission
+  // that is not (an older app build, the retired web form, a browser) is
+  // refused before anything is stored or charged. The app shows its update
+  // screen for this code. Requests already Submitted before the switch fall
+  // through to the idempotent recovery below and are not affected.
+  if (isStudioOnly() && !rendersOnDevice) {
+    const current = await clipRequestService
+      .getOwnedRequest(id, session.user.id)
+      .catch(() => null);
+    if (!current || current.status === RequestStatus.Draft) {
+      return NextResponse.json(
+        {
+          error:
+            "Videos are now made in the RClipper app on your phone. Update the app from the App Store or Google Play, then make this video in the studio. Nothing has been charged.",
+          code: "app_update_required",
+        },
+        { status: 409 }
+      );
+    }
+  }
 
   if (keepsClipsLocally && !deviceCanRender) {
     return NextResponse.json(

@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import dynamicImport from "next/dynamic";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
-import { ROUTES } from "@/config/routes";
+import { ROUTES, studioPath } from "@/config/routes";
 import { clipRequestService } from "@/services/ClipRequestService";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 import { requestPresentationService } from "@/services/RequestPresentationService";
@@ -133,6 +135,14 @@ export default async function RequestDetailPage({
     // Avoid leaving rejected supporting reads unobserved on a not-found path.
     await supportingDataPromise.catch(() => undefined);
     notFound();
+  }
+
+  // A studio request (rendered on the phone) is worked on in the studio: inside
+  // the app, opening it from the list, a notification or a link goes straight
+  // back to the studio at its step. In a browser this page still shows it.
+  if (request.renderLocation === "device" && isAppUserAgent(headers().get("user-agent"))) {
+    await supportingDataPromise.catch(() => undefined);
+    redirect(studioPath(request.id));
   }
 
   const [assets, publishingLinks, statusHistory, rawPipelineJob] = await supportingDataPromise;

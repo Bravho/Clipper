@@ -28,10 +28,6 @@ export function I18nProvider({
       localStorage.setItem("rclipper-locale", nextLocale);
       document.cookie = `${LOCALE_COOKIE}=${nextLocale}; Path=/; Max-Age=31536000; SameSite=Lax`;
       document.documentElement.lang = nextLocale;
-      // The studio follows the phone's language until one is picked here, and
-      // must hear about the pick even when it is the locale already in use
-      // (see LOCALE_CHOSEN_EVENT in features/device-render/studioI18n.tsx).
-      window.dispatchEvent(new Event("rclipper-locale-chosen"));
     },
     t: (key, values) => translate(locale, key, values),
   }), [locale]);

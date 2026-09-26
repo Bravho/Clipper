@@ -65,6 +65,9 @@ export function AudioPanel({
   voiceSeconds,
   onApproveVoice,
   onRegenerateVoice,
+  onRemakeVoice,
+  remakeBlocker = null,
+  remakeDiscardsVideo = false,
   voiceBusy,
   voiceError,
   onLanguages,
@@ -91,6 +94,12 @@ export function AudioPanel({
   voiceSeconds: number | null;
   onApproveVoice: () => void;
   onRegenerateVoice: () => void;
+  /** Make the voice again after it was approved (null: not offered). */
+  onRemakeVoice?: (() => void) | null;
+  /** Why the approved voice cannot be made again right now, or null. */
+  remakeBlocker?: string | null;
+  /** Remaking the voice sets the finished main video aside. */
+  remakeDiscardsVideo?: boolean;
   voiceBusy: boolean;
   voiceError: string | null;
   onLanguages: (languages: CaptionLanguage[]) => void;
@@ -351,6 +360,46 @@ export function AudioPanel({
             <p className="studio-note studio-note-positive" style={{ marginTop: 10 }}>
               {t("studio.audio.voiceApproved")}
             </p>
+          )}
+
+          {/* An approved voice can still be made again — a different speaker,
+              or the same one read afresh. It goes back to review, so it is
+              listened to and approved again before anything is rendered. */}
+          {voiceStatus === "approved" && onRemakeVoice && (
+            <>
+              <span className="studio-label" style={{ marginTop: 14 }}>
+                {t("studio.audio.speaker")}
+              </span>
+              <div className="studio-chip-row" role="group" aria-label={t("studio.audio.speaker")}>
+                {ELEVENLABS_VOICES.map((voice) => (
+                  <button
+                    key={voice.id}
+                    type="button"
+                    className="studio-chip"
+                    aria-pressed={voiceId === voice.id}
+                    disabled={disabled || voiceBusy || remakeBlocker !== null}
+                    onClick={() => onVoice(voice.id)}
+                  >
+                    <strong>{voiceName(voice)}</strong>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="studio-button studio-button-ghost"
+                style={{ marginTop: 10 }}
+                disabled={disabled || voiceBusy || remakeBlocker !== null}
+                onClick={onRemakeVoice}
+              >
+                {voiceBusy ? t("studio.audio.working") : t("studio.audio.remake")}
+              </button>
+              <p className="studio-counter" style={{ textAlign: "left" }}>
+                {remakeBlocker ??
+                  (remakeDiscardsVideo
+                    ? t("studio.audio.remakeHintVideo")
+                    : t("studio.audio.remakeHint"))}
+              </p>
+            </>
           )}
 
           {voiceError && (

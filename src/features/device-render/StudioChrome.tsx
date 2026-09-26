@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Capacitor } from "@capacitor/core";
+import { isNativeMobile } from "@/lib/mobile/platform";
 import { MANIFEST_RENDER_PLUGIN_VERSION } from "@/lib/mobile/deviceRenderPluginVersion";
 import { useStudioT } from "./studioI18n";
 
@@ -42,6 +42,10 @@ export function ServerBadge() {
   const isLocal =
     /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
     origin.startsWith("http://");
+
+  // The live server needs no badge now that the studio is the product; only a
+  // LAN/debug build is worth pointing out.
+  if (!isLocal) return null;
 
   return (
     <span
@@ -114,28 +118,33 @@ export function CapabilityNotice({ capability }: { capability: StudioCapability 
       </summary>
       <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
         <p style={{ margin: 0 }}>{t("studio.chrome.privacy")}</p>
-        <p style={{ margin: 0, color: "var(--s-text)", fontWeight: 650 }}>
-          {t("studio.chrome.notIdentical")}
-        </p>
-        <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
-          <li>{t("studio.chrome.diff1")}</li>
-          <li>{t("studio.chrome.diff2")}</li>
-          <li>{t("studio.chrome.diff3")}</li>
-          <li>{t("studio.chrome.diff4")}</li>
-        </ul>
       </div>
     </details>
   );
 }
 
-/** Read the native capability once, for the whole screen. */
+/** How long to wait for the native bridge before trusting a "no plugin" answer. */
+const BRIDGE_WAIT_MS = 4_000;
+const BRIDGE_POLL_MS = 250;
+
+/**
+ * Read the native capability once, for the whole screen.
+ *
+ * The app loads this page from the server, and the page can hydrate BEFORE
+ * Capacitor's bridge has finished reporting the platform and its plugins. Asked
+ * too early, `Capacitor.isNativePlatform()` says "web" and the render plugin
+ * looks missing — which showed "get the app" inside the installed app (26 Sep).
+ * So "is this the app?" also accepts the shell's immutable user-agent marker
+ * (`isNativeMobile`), and inside the app the plugin is asked again for a few
+ * seconds before a missing plugin is believed.
+ */
 export function useStudioCapability(): StudioCapability | null {
   const [capability, setCapability] = useState<StudioCapability | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const isNative = Capacitor.isNativePlatform();
+      const isNative = isNativeMobile();
       if (!isNative) {
         if (!cancelled) {
           setCapability({ isNative: false, pluginVersion: null, canRender: false, freeBytes: null });
@@ -146,8 +155,13 @@ export function useStudioCapability(): StudioCapability | null {
         import("@/lib/mobile/deviceVideoRender"),
         import("@/lib/mobile/deviceRenderBridge"),
       ]);
-      const native = await getNativeRenderCapabilities();
-      const canRender = await supportsManifestRender();
+      let native = await getNativeRenderCapabilities();
+      const deadline = Date.now() + BRIDGE_WAIT_MS;
+      while (!native && !cancelled && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, BRIDGE_POLL_MS));
+        native = await getNativeRenderCapabilities();
+      }
+      const canRender = native ? await supportsManifestRender() : false;
       if (cancelled) return;
       setCapability({
         isNative: true,

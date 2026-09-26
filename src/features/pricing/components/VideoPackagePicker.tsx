@@ -58,7 +58,13 @@ function newToken(): string {
 function safeReturnPath(value: string | null): string | null {
   if (!value) return null;
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
-  if (!value.startsWith("/device-render-lab") && !value.startsWith("/dashboard/")) return null;
+  if (
+    !value.startsWith("/studio") &&
+    !value.startsWith("/device-render-lab") &&
+    !value.startsWith("/dashboard/")
+  ) {
+    return null;
+  }
   return value;
 }
 

@@ -19,6 +19,12 @@ export function Footer() {
             </span>
           </div>
           <nav className="flex flex-wrap justify-center gap-4 text-sm text-slate-500">
+            <Link href={ROUTES.PUBLIC_PRICING} className="hover:text-slate-900">
+              {t("mkt.footer.plans")}
+            </Link>
+            <Link href={ROUTES.DOWNLOAD} className="hover:text-slate-900">
+              {t("mkt.footer.download")}
+            </Link>
             <Link href={ROUTES.SUPPORT} className="hover:text-slate-900">
               {t("footer.support")}
             </Link>

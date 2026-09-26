@@ -14,7 +14,9 @@ import { NativePushRegistration } from "@/components/mobile/NativePushRegistrati
 import { NativeStatusBar } from "@/components/mobile/NativeStatusBar";
 import { initEditorSeedData } from "@/seed/editorSeedData";
 import { getServerLocale } from "@/i18n/server";
-import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
+import { headers } from "next/headers";
+import { Role } from "@/domain/enums/Role";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import "./globals.css";
 
 // Seed editor profiles into the in-memory mock store on first server render
@@ -60,7 +62,11 @@ export default async function RootLayout({
 }) {
   const session = await getServerSession(authOptions);
   const locale = getServerLocale();
-  const showDeviceRenderLab = canAccessDeviceRenderLab(session?.user?.email);
+  // "New video" (the studio) is an app feature: offered to requesters inside
+  // the app shell, and in `next dev` so the editor can be reached at a desk.
+  const showStudio =
+    session?.user?.role === Role.Requester &&
+    (process.env.NODE_ENV === "development" || isAppUserAgent(headers().get("user-agent")));
 
   return (
     <html lang={locale}>
@@ -81,7 +87,7 @@ export default async function RootLayout({
             <AppleReturnRecovery />
             <NativePushRegistration />
             <NativeStatusBar />
-            <Navbar showDeviceRenderLab={showDeviceRenderLab} />
+            <Navbar showStudio={showStudio} />
             {/* min-w-0 lets flex children shrink below their content width,
                 which is what stops wide cards/tables forcing a page-level
                 horizontal scroll on phones. */}

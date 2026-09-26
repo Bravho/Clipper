@@ -7,7 +7,6 @@ import {
   clipRequestFormSchema,
   studioClipRequestFormSchema,
 } from "@/features/requests/validation/clipRequestSchema";
-import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
 import { cookies } from "next/headers";
 import { DEFAULT_LOCALE, isAppLocale, LOCALE_COOKIE } from "@/i18n/config";
 
@@ -41,9 +40,7 @@ export async function POST(request: Request) {
 
   // Validate form data. The phone studio (which renders on the phone) may ask
   // for a longer video; everything else keeps the server's limits.
-  const studio =
-    (body as { studio?: unknown } | null)?.studio === true &&
-    canAccessDeviceRenderLab(session.user.email);
+  const studio = (body as { studio?: unknown } | null)?.studio === true;
   const parsed = (studio ? studioClipRequestFormSchema : clipRequestFormSchema).safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

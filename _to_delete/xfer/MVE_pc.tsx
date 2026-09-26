@@ -71,7 +71,6 @@ import { AudioPanel, type ScriptStatus, type VoiceStatus } from "./AudioPanel";
 import { StylePanel } from "./StylePanel";
 import { RenderPanel, type MainVideoControls } from "./RenderPanel";
 import { ChannelsPanel, channelShapes } from "./ChannelsPanel";
-import type { StudioManagement } from "./ChannelHandover";
 import {
   pipelineStepText,
   StudioI18nProvider,
@@ -125,11 +124,6 @@ export interface MobileVideoEditorProps {
   initialBrief?: EditorBrief | null;
   /** The account's video allowance, read by the page; null when unknown. */
   quota?: StudioQuota | null;
-  /**
-   * Channel Management for this account, read by the page: whether it is on,
-   * and which of this request's finished videos are already in it.
-   */
-  management?: StudioManagement | null;
 }
 
 type Step = "brief" | "source" | "scenes" | "audio" | "style" | "render" | "channels";
@@ -200,7 +194,6 @@ function StudioEditor({
   requestLabel,
   initialBrief,
   quota: initialQuota = null,
-  management = null,
 }: MobileVideoEditorProps) {
   const t = useStudioT();
   // The allowance as the page read it, updated when Submit is refused for it.
@@ -1006,36 +999,6 @@ function StudioEditor({
   }, [content?.jobId, refreshContent, requestId, t, voiceId]);
 
   /**
-   * Make the voice again AFTER it was approved.
-   *
-   * The server takes a new voice from two resting points: the scene-design
-   * gate (approved, nothing rendered yet) directly, and — for a phone request —
-   * the finished-video review, once the video is reopened back to that gate
-   * (the same reopen "Regenerate the video" uses). Either way the new voice
-   * comes back for review, is approved again, and Render makes the video with
-   * it. While a video is being made, or once Channels has started, it is final.
-   */
-  const remakeApprovedVoice = useCallback(async () => {
-    if (!requestId || !content?.jobId) return;
-    const jobId = content.jobId;
-    setVoiceBusy(true);
-    setVoiceError(null);
-    try {
-      if (content.currentStep === VideoGenerationStep.AwaitingOverlayApproval) {
-        await reopenStudioProduction({ requestId, jobId, t });
-      }
-      await regenerateStudioVoice({ requestId, jobId, voiceId, t });
-      setSoundConfirmed(false);
-      await refreshContent();
-      setMessage(t("studio.msg.voiceAgain"));
-    } catch (failure) {
-      setVoiceError(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setVoiceBusy(false);
-    }
-  }, [content?.currentStep, content?.jobId, refreshContent, requestId, t, voiceId]);
-
-  /**
    * Send the storyboard — every shot, trim, move and transition — as the
    * production plan. Only possible at the scene-design gate, which is the one
    * point in the pipeline that takes a shot-level plan.
@@ -1702,18 +1665,6 @@ function StudioEditor({
             voiceSeconds={voiceSeconds}
             onApproveVoice={() => void approveVoice()}
             onRegenerateVoice={() => void regenerateVoice()}
-            onRemakeVoice={() => void remakeApprovedVoice()}
-            remakeBlocker={
-              busy || sendingProduction
-                ? t("studio.audio.remakeWhileMaking")
-                : step_ === VideoGenerationStep.AwaitingSceneDesignApproval ||
-                    step_ === VideoGenerationStep.AwaitingOverlayApproval
-                  ? null
-                  : step_ !== null && AFTER_MAIN_APPROVAL.includes(step_)
-                    ? t("studio.audio.remakeFinal")
-                    : t("studio.audio.remakeWhileMaking")
-            }
-            remakeDiscardsVideo={step_ === VideoGenerationStep.AwaitingOverlayApproval}
             voiceBusy={voiceBusy}
             voiceError={voiceError}
             onLanguages={(languages: CaptionLanguage[]) => {
@@ -1805,7 +1756,6 @@ function StudioEditor({
             progress={progress}
             elapsed={elapsedAny}
             failure={shapeFailure}
-            management={management}
           />
         )}
 

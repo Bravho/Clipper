@@ -3,11 +3,10 @@ import { RenderStep } from "@/domain/enums/RenderStep";
 /**
  * Server-side knobs for phone rendering.
  *
- * The feature ships dark. `DEVICE_RENDER_ENABLED` is what admits real
- * production jobs onto phones; until it is on, the editor is reachable only
- * through the tester gate (`DEVICE_RENDER_LAB_TEST_EMAIL`) and every claim is
- * refused. Turning it on is the last step of the release checklist in
- * `docs/on-device-rendering.md`, not the first.
+ * `DEVICE_RENDER_ENABLED` is what admits real production jobs onto phones;
+ * while it is off every claim is refused. The studio (/studio) is now the video
+ * pipeline for every requester (the tester-only gate is retired), so this must
+ * be "true" on the server wherever the studio is live.
  */
 export const DEVICE_RENDER = {
   /**

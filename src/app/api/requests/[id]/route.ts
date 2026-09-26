@@ -7,7 +7,6 @@ import {
   draftClipRequestSchema,
   studioDraftClipRequestSchema,
 } from "@/features/requests/validation/clipRequestSchema";
-import { canAccessDeviceRenderLab } from "@/lib/mobile/deviceRenderLabAccess";
 
 /**
  * PUT /api/requests/[id]
@@ -37,9 +36,7 @@ export async function PUT(
   }
 
   // The phone studio may ask for a longer video (it renders on the phone).
-  const studio =
-    (body as { studio?: unknown } | null)?.studio === true &&
-    canAccessDeviceRenderLab(session.user.email);
+  const studio = (body as { studio?: unknown } | null)?.studio === true;
   const parsed = (studio ? studioDraftClipRequestSchema : draftClipRequestSchema).safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
