@@ -18,6 +18,7 @@ import { findManagementProduct, isManagementEnabledFor } from "@/config/manageme
 import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { ManagementPurchaseStatus } from "@/domain/models/ManagementPurchase";
 import { PackageTiers } from "@/features/pricing/components/PackageTiers";
+import { PlanComparison } from "@/features/pricing/components/PlanLimits";
 import { EntitlementSummary } from "@/features/pricing/components/EntitlementSummary";
 import {
   PurchaseHistory,
@@ -238,6 +239,12 @@ export default async function PricingPage() {
         }}
         management={managementStatus}
       />
+
+      {/* What each plan includes and the limits every video has, before any
+          price is asked for — so nobody buys a package and then finds a limit. */}
+      <div className="mb-10">
+        <PlanComparison t={t} />
+      </div>
 
       {/* The packages: Starter, then Pro. Hidden only for a user Channel
           Management is not enabled for (it is on for everyone in production),

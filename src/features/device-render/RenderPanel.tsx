@@ -8,6 +8,7 @@ import {
 } from "@/lib/mobile/deviceRenderClient";
 import type { LocalDraftResult } from "./localDraft";
 import { DownloadVideoButton, ResumeCallout, type ResumeControls } from "./DownloadVideoButton";
+import { StudioVideo } from "./StudioVideo";
 import type { RenderTimeline } from "./renderTimeline";
 import { RenderFailureLog } from "./RenderFailureLog";
 import { useStudioT } from "./studioI18n";
@@ -275,14 +276,7 @@ export function RenderPanel({
           <h2 className="studio-panel-title">
             {t("studio.render.mainVideo", { ratio: main.video.ratio })}
           </h2>
-          <video
-            key={main.video.url}
-            src={main.video.url}
-            controls
-            playsInline
-            preload="metadata"
-            className="studio-player"
-          />
+          <StudioVideo assetId={main.video.assetId} url={main.video.url} />
           {main.video.madeOn === "server" && (
             <p className="studio-note" role="alert" style={{ marginTop: 10 }}>
               <strong>{t("studio.render.serverMadeTitle")}</strong>{" "}

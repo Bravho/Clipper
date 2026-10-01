@@ -13,6 +13,7 @@ import * as montageService from "@/lib/ai/montageService";
 import * as elevenLabsTtsService from "@/lib/ai/elevenLabsTtsService";
 import { ELEVENLABS_VOICE_FILE_NAME } from "@/lib/ai/elevenLabsTtsService";
 import { LOCK_AFTER_APPROVAL, MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
+import { ORIGINALS_KEPT_DAYS, originalsExpireAt } from "@/config/localMedia";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
 // Phase 7: subtitle + motion-graphic overlay rendering (Remotion) composited on
@@ -254,6 +255,21 @@ export class VoiceMakeLimitError extends Error {
       `This video has used all ${limit} voice makes. Approve one of the voices you have, or start a new video.`
     );
     this.name = "VoiceMakeLimitError";
+  }
+}
+
+/**
+ * A phone-made request whose originals are past the keep window
+ * (ORIGINALS_KEPT_DAYS): nothing can be rendered from it any more, and picking
+ * the files again is not offered — the person starts a new video.
+ */
+export class OriginalsExpiredError extends Error {
+  readonly code = "originals_expired";
+  constructor(readonly keptDays: number) {
+    super(
+      `The photos and clips for this video are kept in the app for ${keptDays} days, and that time has passed. Start a new video to make more.`
+    );
+    this.name = "OriginalsExpiredError";
   }
 }
 
@@ -1713,6 +1729,20 @@ export class VideoGenerationService {
    * Server-pipeline requests (still finishing on the Mac Mini) keep their old
    * revision gates.
    */
+  /**
+   * Refuse to start a render of a phone-made request whose originals the app
+   * no longer keeps. The phone deletes them ORIGINALS_KEPT_DAYS after they were
+   * picked; the request was submitted after that, so timing from submission
+   * never refuses a render the phone could still make. A backstop: the studio
+   * already disables the buttons.
+   */
+  private _assertOriginalsKept(request: { submittedAt: Date | null; createdAt: Date }, now = new Date()): void {
+    const since = request.submittedAt ?? request.createdAt;
+    if (now.getTime() > originalsExpireAt(since).getTime()) {
+      throw new OriginalsExpiredError(ORIGINALS_KEPT_DAYS);
+    }
+  }
+
   private async _assertRevisable(job: VideoGenerationJob, what: string): Promise<void> {
     if (LOCK_AFTER_APPROVAL && (await this._isDeviceRendered(job.requestId))) {
       throw new StepLockedAfterApprovalError(what);
@@ -2286,6 +2316,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingSceneDesignApproval);
     const job = await this._getJob(jobId);
+    {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const request = await clipRequestRepository.findById(job.requestId);
+      if (request?.renderLocation === "device") this._assertOriginalsKept(request);
+    }
     const durationSeconds = clampPipelineDurationSeconds(
       job.voiceDurationSeconds ?? approved.durationSeconds,
       (await this._isDeviceRendered(job.requestId))
@@ -3471,6 +3506,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const { clipRequestRepository } = await import("@/repositories/index");
       const request = await clipRequestRepository.findById(gated.requestId);
       if (request?.renderLocation === "device") {
+        this._assertOriginalsKept(request);
         const platforms = request.targetPlatforms ?? [];
         const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TravyApp);
         const remaining = this._userRatios(platforms).filter(

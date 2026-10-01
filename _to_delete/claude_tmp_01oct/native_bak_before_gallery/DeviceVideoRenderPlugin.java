@@ -1,14 +1,6 @@
 package com.rclipper.app;
 
-import android.Manifest;
-import android.content.ContentResolver;
-import android.content.ContentValues;
-import android.database.Cursor;
 import android.media.MediaCodecInfo;
-import android.media.MediaScannerConnection;
-import android.os.Build;
-import android.os.Environment;
-import android.provider.MediaStore;
 import android.media.MediaCodecList;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
@@ -38,16 +30,11 @@ import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
-import com.getcapacitor.PermissionState;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.getcapacitor.annotation.Permission;
-import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.OutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -69,19 +56,9 @@ import com.rclipper.app.render.Transfers;
 
 /** First native rendering primitive: download a completed master and encode it locally. */
 @OptIn(markerClass = UnstableApi.class)
-@CapacitorPlugin(
-    name = "DeviceVideoRender",
-    permissions = {
-        // Only asked on Android 9 and older (API < 29), where saving into the
-        // public Movies folder needs it. Android 10+ saves through MediaStore
-        // with no permission at all.
-        @Permission(alias = "storage", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE })
-    }
-)
+@CapacitorPlugin(name = "DeviceVideoRender")
 public class DeviceVideoRenderPlugin extends Plugin {
     private final ExecutorService transfers = Executors.newSingleThreadExecutor();
-    /** Gallery saves run here, so a save never waits behind an upload. */
-    private final ExecutorService gallerySaves = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Transformer activeTransformer;
     private PluginCall activeCall;
@@ -751,133 +728,5 @@ public class DeviceVideoRenderPlugin extends Plugin {
         } catch (Exception error) {
             call.reject("Could not remove output file", error);
         }
-    }
-
-    // ── Save a finished video into the phone's gallery (1 Oct 2026) ─────────
-    // The studio's Download button used to hand the file to the share sheet,
-    // which reads as "open with…" rather than a download. This writes the video
-    // straight into the gallery — Movies/RClipper, visible in Google Photos /
-    // the Gallery app and in Files — and says where it went. Only files inside
-    // the app's own storage (the kept finished videos, or a fresh download in
-    // the cache) can be saved.
-    @PluginMethod
-    public void saveVideoToGallery(PluginCall call) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
-                && getPermissionState("storage") != PermissionState.GRANTED) {
-            requestPermissionForAlias("storage", call, "galleryPermissionCallback");
-            return;
-        }
-        startGallerySave(call);
-    }
-
-    @PermissionCallback
-    private void galleryPermissionCallback(PluginCall call) {
-        if (getPermissionState("storage") != PermissionState.GRANTED) {
-            call.reject("Permission to save to the gallery was denied", "PERMISSION_DENIED");
-            return;
-        }
-        startGallerySave(call);
-    }
-
-    private void startGallerySave(PluginCall call) {
-        String raw = call.getString("path");
-        if (raw == null) { call.reject("Missing video path"); return; }
-        final File source;
-        try {
-            source = appOwnedFile(raw);
-        } catch (Exception error) {
-            call.reject("Invalid video path", error);
-            return;
-        }
-        final String fileName = safeVideoName(call.getString("fileName", "RClipper.mp4"));
-        gallerySaves.execute(() -> {
-            try {
-                String location = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-                    ? saveThroughMediaStore(source, fileName)
-                    : saveToPublicMovies(source, fileName);
-                JSObject result = new JSObject();
-                result.put("location", location);
-                result.put("platform", "android");
-                call.resolve(result);
-            } catch (Exception error) {
-                call.reject("Could not save the video to the gallery", error);
-            }
-        });
-    }
-
-    /** Android 10+: MediaStore, no permission needed. */
-    private String saveThroughMediaStore(File source, String fileName) throws Exception {
-        ContentResolver resolver = getContext().getContentResolver();
-        String folder = Environment.DIRECTORY_MOVIES + "/RClipper";
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Video.Media.DISPLAY_NAME, fileName);
-        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-        values.put(MediaStore.Video.Media.RELATIVE_PATH, folder);
-        values.put(MediaStore.Video.Media.IS_PENDING, 1);
-        Uri collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
-        Uri item = resolver.insert(collection, values);
-        if (item == null) throw new Exception("The gallery refused the new video");
-        try (InputStream in = new FileInputStream(source);
-             OutputStream out = resolver.openOutputStream(item)) {
-            if (out == null) throw new Exception("Cannot write into the gallery");
-            byte[] buffer = new byte[1024 * 1024];
-            int read;
-            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
-        } catch (Exception error) {
-            resolver.delete(item, null, null);
-            throw error;
-        }
-        ContentValues done = new ContentValues();
-        done.put(MediaStore.Video.Media.IS_PENDING, 0);
-        resolver.update(item, done, null, null);
-        // The gallery renames on a clash ("name (1).mp4"): report the real name.
-        String savedName = fileName;
-        try (Cursor cursor = resolver.query(
-                item, new String[] { MediaStore.Video.Media.DISPLAY_NAME }, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) savedName = cursor.getString(0);
-        } catch (Exception ignored) {
-            // Keep the requested name.
-        }
-        return folder + "/" + savedName;
-    }
-
-    /** Android 9 and older: the public Movies folder, then a media scan. */
-    private String saveToPublicMovies(File source, String fileName) throws Exception {
-        File dir = new File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "RClipper");
-        if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create Movies/RClipper");
-        File target = new File(dir, fileName);
-        String base = fileName.endsWith(".mp4") ? fileName.substring(0, fileName.length() - 4) : fileName;
-        for (int n = 1; target.exists(); n++) target = new File(dir, base + " (" + n + ").mp4");
-        try (InputStream in = new FileInputStream(source);
-             OutputStream out = new FileOutputStream(target)) {
-            byte[] buffer = new byte[1024 * 1024];
-            int read;
-            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
-        }
-        MediaScannerConnection.scanFile(
-            getContext(), new String[] { target.getAbsolutePath() }, new String[] { "video/mp4" }, null);
-        return Environment.DIRECTORY_MOVIES + "/RClipper/" + target.getName();
-    }
-
-    /** A file inside the app's own storage (Data or Cache), never anywhere else. */
-    private File appOwnedFile(String raw) throws Exception {
-        String path = raw.startsWith("file://") ? Uri.parse(raw).getPath() : raw;
-        if (path == null) throw new Exception("No path");
-        File file = new File(path).getCanonicalFile();
-        String filePath = file.getPath();
-        String data = getContext().getFilesDir().getCanonicalPath();
-        String cache = getContext().getCacheDir().getCanonicalPath();
-        boolean inside = filePath.startsWith(data + File.separator) || filePath.startsWith(cache + File.separator);
-        if (!inside || !file.isFile() || file.length() == 0) throw new Exception("Not an app video");
-        return file;
-    }
-
-    private static String safeVideoName(String requested) {
-        String name = requested == null ? "" : requested.replaceAll("[\\\\/:*?\"<>|\\r\\n]+", "").trim();
-        if (name.isEmpty()) name = "RClipper";
-        if (!name.toLowerCase().endsWith(".mp4")) name = name + ".mp4";
-        if (name.length() > 120) name = name.substring(0, 116) + ".mp4";
-        return name;
     }
 }

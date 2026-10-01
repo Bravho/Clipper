@@ -16,7 +16,11 @@ import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import { DEFAULT_ELEVENLABS_VOICE_ID, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
-import { loadLocalMediaIndex } from "@/features/requests/localMediaStore";
+import {
+  loadLocalMediaIndex,
+  sweepExpiredLocalMaterial,
+} from "@/features/requests/localMediaStore";
+import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
 import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
 import { cancelDeviceRender } from "@/lib/mobile/deviceRenderBridge";
 import {
@@ -799,23 +803,12 @@ function StudioEditor({
       });
   }, [content, document.sources.length, t]);
 
-  /** After originals were picked again: bring the material back in full. */
-  const afterOriginalsRestored = useCallback(
-    async () => {
-      if (!content) return;
-      const { sources, missingMedia } = await restoreStudioSources(content.localMedia);
-      // The storyboard was built without the lost items; build it again now
-      // that they are back.
-      storyboardApplied.current = false;
-      setDocument((current) => ({ ...current, sources }));
-      setMissingOriginals(missingMedia);
-      if (missingMedia.length === 0) {
-        setError(null);
-        setMessage(t("studio.originals.allBack"));
-      }
-    },
-    [content, t]
-  );
+  // Originals are kept ORIGINALS_KEPT_DAYS days (config/localMedia.ts). Give
+  // the storage of expired ones back when the studio opens, for every request,
+  // including ones the person never reopens.
+  useEffect(() => {
+    void sweepExpiredLocalMaterial();
+  }, []);
 
   // When the pipeline's storyboard arrives, it becomes the timeline — once.
   // Once production has been started, the plan it was started with is the
@@ -1091,6 +1084,13 @@ function StudioEditor({
   const requiredSeconds = voiceSeconds != null ? minMontageTotalSeconds(voiceSeconds) : null;
   const storyboardSeconds = scenesPlaySeconds(document.scenes);
   const covered = requiredSeconds == null || storyboardSeconds + 1 / 30 >= requiredSeconds;
+  // The voice against the storyboard's combined scene length, for the Sound
+  // step's over-length notice — the same rule as Render's checklist, so Sound
+  // never says "fine" while Render then refuses.
+  const storyboardFit =
+    requiredSeconds != null && document.scenes.some((scene) => scene.shots.length > 0)
+      ? { scenes: storyboardSeconds, need: requiredSeconds, fits: covered }
+      : null;
   const storyboardApproved = approvedScenes !== null && approvedScenes === document.scenes;
   const hasShots = document.scenes.some((scene) => scene.shots.length > 0);
 
@@ -1375,7 +1375,16 @@ function StudioEditor({
     [content?.currentStep, content?.jobId, refreshContent, requestId, t]
   );
 
+  // The photos and clips the video is made from must still be in the app
+  // (kept ORIGINALS_KEPT_DAYS days). Without them nothing can be rendered, so
+  // Render, Resume and the extra channel shapes are all disabled.
+  const originalsGone = missingOriginals.length > 0;
+
   const renderChecklist = [
+    {
+      label: t("studio.check.originals", { days: ORIGINALS_KEPT_DAYS }),
+      done: !originalsGone,
+    },
     { label: t("studio.check.storyboard"), done: storyboardApproved },
     {
       // The picture has to run at least as long as the voice-over plus the
@@ -1666,7 +1675,7 @@ function StudioEditor({
   const resumeControls = canResume
     ? {
         waitSeconds: availability?.available ? null : availability?.resumeInSeconds ?? null,
-        disabled: !nativeReady,
+        disabled: !nativeReady || originalsGone,
         onResume: () => void resumeRender(),
       }
     : null;
@@ -1780,7 +1789,7 @@ function StudioEditor({
         )}
 
         {/* First, above every step: nothing can be rendered until they are back. */}
-        <MissingOriginals missing={missingOriginals} onRestored={afterOriginalsRestored} />
+        <MissingOriginals missing={missingOriginals} />
 
         {step === "brief" && (
           <BriefPanel
@@ -1875,6 +1884,8 @@ function StudioEditor({
             materialSeconds={materialTotal}
             maxVoiceSeconds={maxVoiceSeconds}
             voiceTooLong={voiceTooLong}
+            storyboardFit={storyboardFit}
+            onOpenStoryboard={editLocked ? null : () => setStep("scenes")}
             voiceId={voiceId}
             onVoice={setVoiceId}
             onApprove={() => void approveScript()}
@@ -1993,6 +2004,7 @@ function StudioEditor({
             failure={shapeFailure}
             management={management}
             delivered={content?.delivered === true}
+            originalsGone={originalsGone}
           />
         )}
 

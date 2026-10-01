@@ -54,6 +54,33 @@ export async function saveVideoToDevice(
   });
 }
 
+/**
+ * Download a video into the app's cache and return its file URI — the first
+ * half of a gallery save (see downloadVideo.ts). Falls back to the bridge on a
+ * build whose Filesystem plugin has no `downloadFile`.
+ */
+export async function downloadVideoToAppCache(
+  url: string,
+  fileName: string,
+  onProgress?: (fraction: number) => void
+): Promise<string> {
+  const safeName = sanitizeFileName(fileName);
+  try {
+    return await downloadToCache(url, safeName, onProgress);
+  } catch (error) {
+    if (!isUnimplemented(error)) throw error;
+  }
+  return downloadThroughBridge(url, safeName);
+}
+
+/** Remove a cache copy made by `downloadVideoToAppCache` once it is saved. */
+export async function removeAppCacheCopy(fileName: string): Promise<void> {
+  await Filesystem.deleteFile({
+    path: sanitizeFileName(fileName),
+    directory: Directory.Cache,
+  }).catch(() => undefined);
+}
+
 async function downloadToCache(
   url: string,
   safeName: string,

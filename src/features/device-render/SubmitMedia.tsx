@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
+
 import { useStudioT } from "./studioI18n";
 import { QuotaStatus, type StudioQuota } from "./QuotaPrompt";
+import { TermsDialog } from "./TermsDialog";
 
 /**
  * The submit step, under the media grid.
@@ -46,6 +49,7 @@ export function SubmitMedia({
   quota?: StudioQuota | null;
 }) {
   const t = useStudioT();
+  const [termsOpen, setTermsOpen] = useState(false);
   if (submitted) return null;
 
   return (
@@ -84,6 +88,11 @@ export function SubmitMedia({
               {t("studio.submit.consent")}
             </span>
           </label>
+          {/* Outside the label, so opening the terms never ticks the box. */}
+          <button type="button" className="studio-terms-link" onClick={() => setTermsOpen(true)}>
+            {t("studio.terms.open")}
+          </button>
+          <TermsDialog open={termsOpen} onClose={() => setTermsOpen(false)} />
 
           <button
             type="button"

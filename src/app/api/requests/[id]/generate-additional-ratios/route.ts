@@ -58,6 +58,10 @@ export async function POST(
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
+    // The originals' keep window has passed (config/localMedia.ts).
+    if (err instanceof Error && (err as { code?: unknown }).code === "originals_expired") {
+      return NextResponse.json({ error: err.message, code: "originals_expired" }, { status: 409 });
+    }
     const message = err instanceof Error ? err.message : "Failed to generate additional ratios.";
     return NextResponse.json({ error: message }, { status: 500 });
   }

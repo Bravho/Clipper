@@ -11,6 +11,7 @@ import type { StudioChain, StudioOutput } from "./studioPipeline";
 import { DownloadVideoButton, ResumeCallout, type ResumeControls } from "./DownloadVideoButton";
 import { useStudioT } from "./studioI18n";
 import { ChannelHandover, type StudioManagement } from "./ChannelHandover";
+import { StudioVideo } from "./StudioVideo";
 
 const STAGES: ("montage" | "master" | "final")[] = ["montage", "master", "final"];
 
@@ -54,6 +55,7 @@ export function ChannelsPanel({
   failure = null,
   management = null,
   delivered = false,
+  originalsGone = false,
 }: {
   requestId: string | null;
   /** Present while the shapes' render is paused (app was closed, Stop, or a failure). */
@@ -80,6 +82,12 @@ export function ChannelsPanel({
   management?: StudioManagement | null;
   /** Delivered once already: finished videos may be handed over now. */
   delivered?: boolean;
+  /**
+   * The photos and clips are no longer in the app (kept ORIGINALS_KEPT_DAYS
+   * days): no shape can be made, so choosing and making are disabled. The
+   * videos already made can still be downloaded and migrated.
+   */
+  originalsGone?: boolean;
 }) {
   const t = useStudioT();
   const shapes = useMemo(() => channelShapes(platforms), [platforms]);
@@ -118,6 +126,11 @@ export function ChannelsPanel({
         {rendering && resume && !busy && (
           <ResumeCallout resume={resume} what={t("studio.channels.pausedWhat")} />
         )}
+        {originalsGone && (choosing || rendering || addingLater) && (
+          <p className="studio-note studio-note-danger" role="status">
+            {t("studio.channels.originalsGone")}
+          </p>
+        )}
         {rendering && !(resume && !busy) && (
           <p className="studio-note studio-note-accent" aria-live="polite">
             <span className="studio-live-dot" aria-hidden /> {t("studio.channels.rendering")}
@@ -140,7 +153,7 @@ export function ChannelsPanel({
                       type="button"
                       className="studio-chip"
                       aria-pressed={chosen}
-                      disabled={starting || busy}
+                      disabled={starting || busy || originalsGone}
                       onClick={() => onToggle(shape.ratio)}
                     >
                       <strong>{shape.ratio}</strong>
@@ -176,12 +189,9 @@ export function ChannelsPanel({
                   />
                 )}
                 {output && (
-                  <video
-                    src={output.url}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    className="studio-player"
+                  <StudioVideo
+                    assetId={output.assetId}
+                    url={output.url}
                     style={{ marginTop: 8 }}
                   />
                 )}
@@ -204,7 +214,7 @@ export function ChannelsPanel({
               <button
                 type="button"
                 className="studio-button studio-button-primary"
-                disabled={starting || busy || toMake.length === 0}
+                disabled={starting || busy || toMake.length === 0 || originalsGone}
                 onClick={() => onStart(toMake)}
               >
                 {starting
@@ -231,7 +241,7 @@ export function ChannelsPanel({
             <button
               type="button"
               className="studio-button studio-button-primary"
-              disabled={starting || busy || toMake.length === 0}
+              disabled={starting || busy || toMake.length === 0 || originalsGone}
               onClick={() => onStart(toMake)}
             >
               {starting

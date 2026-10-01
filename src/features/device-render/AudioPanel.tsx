@@ -4,10 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { MusicTrack } from "@/config/backgroundMusic";
 import { ELEVENLABS_VOICES, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
-import {
-  DEVICE_MUSIC_BED_VOLUME,
-  DEVICE_MUSIC_LEAD_IN_SECONDS,
-} from "@/lib/mobile/deviceRenderAudio";
 import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
 import type { EditorDocument } from "./editorState";
 import type { StudioScript } from "./studioPipeline";
@@ -44,8 +40,14 @@ const MAX_CAPTION_LANGUAGES = 2;
  * it, and it starts the ElevenLabs voice. There is no second approval anywhere
  * else to keep in step with this one.
  *
- * The mix numbers are shown rather than hidden because someone listening for
- * "is the bed ducking properly" needs to know what correct sounds like.
+ * THE VOICE MUST FIT THE STORYBOARD. Two lengths are checked against the
+ * voice: the picked material (what the server enforces at approve-voice), and
+ * the scenes as arranged in Storyboard right now — the video's pictures have to
+ * run at least as long as the voice plus the music intro and ending, or the end
+ * of the voice plays over black. Either one being short shows the over-length
+ * notice. Only the material check holds "Approve the voice" (the server
+ * refuses it too); a storyboard that is short is fixed in Storyboard, where
+ * "Fit to the voice" lengthens the scenes in one tap, so the notice links there.
  */
 export function AudioPanel({
   document,
@@ -59,6 +61,8 @@ export function AudioPanel({
   materialSeconds = 0,
   maxVoiceSeconds = 0,
   voiceTooLong = false,
+  storyboardFit = null,
+  onOpenStoryboard = null,
   voiceId,
   onVoice,
   onApprove,
@@ -97,6 +101,14 @@ export function AudioPanel({
   maxVoiceSeconds?: number;
   /** The voice is longer than `maxVoiceSeconds`. */
   voiceTooLong?: boolean;
+  /**
+   * The voice against the storyboard's combined scene length: null before
+   * there is a voice and a storyboard with shots. `need` is the voice plus
+   * the music intro and ending; `fits` is false when the scenes are shorter.
+   */
+  storyboardFit?: { scenes: number; need: number; fits: boolean } | null;
+  /** Open the Storyboard step, where the scenes can be lengthened. */
+  onOpenStoryboard?: (() => void) | null;
   voiceId: ElevenLabsVoiceId;
   onVoice: (voiceId: ElevenLabsVoiceId) => void;
   onApprove: () => void;
@@ -364,6 +376,38 @@ export function AudioPanel({
               {voiceSeconds != null && (
                 <p className="studio-counter" style={{ textAlign: "left" }}>
                   {t("studio.audio.voiceLength", { seconds: voiceSeconds.toFixed(1) })}
+                  {storyboardFit
+                    ? ` · ${t("studio.audio.storyboardLength", {
+                        scenes: storyboardFit.scenes.toFixed(1),
+                        need: storyboardFit.need.toFixed(1),
+                      })}`
+                    : ""}
+                </p>
+              )}
+              {/* Shown whatever the voice's state: a storyboard trimmed after
+                  the voice was approved is just as short. */}
+              {voiceSeconds != null && storyboardFit && !storyboardFit.fits && (
+                <p className="studio-note studio-note-danger" role="alert" style={{ marginTop: 8 }}>
+                  {t(
+                    voiceStatus === "approved"
+                      ? "studio.audio.voiceOverStoryboardApproved"
+                      : "studio.audio.voiceOverStoryboard",
+                    {
+                      voice: voiceSeconds.toFixed(1),
+                      scenes: storyboardFit.scenes.toFixed(1),
+                      need: storyboardFit.need.toFixed(1),
+                    }
+                  )}
+                  {onOpenStoryboard && (
+                    <button
+                      type="button"
+                      className="studio-button studio-button-ghost"
+                      style={{ display: "block", marginTop: 10 }}
+                      onClick={onOpenStoryboard}
+                    >
+                      {t("studio.audio.openStoryboard")}
+                    </button>
+                  )}
                 </p>
               )}
             </>
@@ -573,15 +617,6 @@ export function AudioPanel({
         )}
       </section>
 
-      <section className="studio-panel">
-        <h2 className="studio-panel-title">{t("studio.audio.mixTitle")}</h2>
-        <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6, fontSize: 13, color: "var(--s-text-muted)" }}>
-          <li>{t("studio.audio.mix1", { seconds: DEVICE_MUSIC_LEAD_IN_SECONDS })}</li>
-          <li>{t("studio.audio.mix2")}</li>
-          <li>{t("studio.audio.mix3", { percent: Math.round(DEVICE_MUSIC_BED_VOLUME * 100) })}</li>
-          <li>{t("studio.audio.mix4")}</li>
-        </ul>
-      </section>
 
       <section className="studio-panel">
         <div className="studio-approve" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>

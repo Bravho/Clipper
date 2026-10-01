@@ -1,5 +1,6 @@
 "use client";
 
+import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
 import type { ReactNode } from "react";
 
 import type { EditorRatio, EditorSource } from "./editorState";
@@ -105,6 +106,11 @@ export function SourcePicker({
       <section className="studio-panel">
         <h2 className="studio-panel-title">{t("studio.source.footageTitle")}</h2>
         <p className="studio-panel-hint">{t("studio.source.footageHint")}</p>
+        {/* Said where the files are picked: the app keeps them only
+            ORIGINALS_KEPT_DAYS days, and every shape is rendered from them. */}
+        <p className="studio-note studio-note-warning" style={{ margin: "0 0 10px" }}>
+          {t("studio.source.keptDays", { days: ORIGINALS_KEPT_DAYS })}
+        </p>
 
         {locked ? (
           <p className="studio-note" style={{ marginBottom: 14 }}>

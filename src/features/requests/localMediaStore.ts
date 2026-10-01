@@ -6,6 +6,8 @@ import {
   type LocalMediaDescriptor,
 } from "@/lib/mobile/localMediaContract";
 
+import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
+
 const LOCAL_MEDIA_DIR = "rclipper-local-materials";
 const COPY_CHUNK_BYTES = 8 * 1024 * 1024;
 
@@ -231,13 +233,72 @@ async function writeRetainedAs(
   return descriptor;
 }
 
+/** An original the app kept past ORIGINALS_KEPT_DAYS; it has been deleted. */
+export class LocalMaterialExpiredError extends Error {
+  readonly code = "originals_expired";
+  constructor(fileName: string) {
+    super(`The app no longer keeps ${fileName}: originals are kept ${ORIGINALS_KEPT_DAYS} days.`);
+    this.name = "LocalMaterialExpiredError";
+  }
+}
+
+/**
+ * Has a stored original passed its keep window? Timed from the copy's own
+ * write time (OPFS stamps `lastModified` when the copy is written, which is
+ * when it was picked). A file without a usable time is treated as fresh.
+ */
+export function isLocalMaterialExpired(stored: { lastModified: number }, now: number = Date.now()): boolean {
+  const keptAt = stored.lastModified;
+  if (!Number.isFinite(keptAt) || keptAt <= 0) return false;
+  return now - keptAt > ORIGINALS_KEPT_DAYS * 86_400_000;
+}
+
 export async function readLocalMaterial(
   descriptor: LocalMediaDescriptor
 ): Promise<File> {
   const dir = await materialDir();
   const handle = await dir.getFileHandle(descriptor.localId);
   const stored = await handle.getFile();
+  // Past the keep window the original is gone for good, even if the sweep has
+  // not run yet: delete it now so no render can start from it.
+  if (isLocalMaterialExpired(stored)) {
+    await deleteLocalMaterial(descriptor.localId);
+    throw new LocalMaterialExpiredError(descriptor.fileName);
+  }
   return new File([stored], descriptor.fileName, { type: descriptor.mimeType });
+}
+
+/**
+ * Delete every kept original older than ORIGINALS_KEPT_DAYS, and its index
+ * entry. Run when the studio opens, so the phone's storage is given back even
+ * for requests the person never reopens. Best-effort: a failure leaves the
+ * files for the next run, and `readLocalMaterial` still refuses them.
+ */
+export async function sweepExpiredLocalMaterial(now: number = Date.now()): Promise<number> {
+  if (!snapshotsSupported()) return 0;
+  let removed = 0;
+  try {
+    const dir = await materialDir();
+    const expired: string[] = [];
+    // `values()` is the async iterator of an OPFS directory.
+    const entries = (dir as unknown as { values(): AsyncIterable<FileSystemHandle> }).values();
+    for await (const entry of entries) {
+      if (entry.kind !== "file" || entry.name === INDEX_FILE) continue;
+      try {
+        const file = await (entry as FileSystemFileHandle).getFile();
+        if (isLocalMaterialExpired(file, now)) expired.push(entry.name);
+      } catch {
+        /* unreadable: leave it */
+      }
+    }
+    for (const localId of expired) {
+      await deleteLocalMaterial(localId);
+      removed += 1;
+    }
+  } catch {
+    /* storage unavailable: nothing to sweep */
+  }
+  return removed;
 }
 
 async function imageAnalysisData(source: Blob): Promise<{ mimeType: "image/jpeg"; dataBase64: string }> {

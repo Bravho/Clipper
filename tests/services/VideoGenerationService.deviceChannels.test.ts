@@ -59,9 +59,11 @@ const {
 
 import {
   VideoGenerationService,
+  OriginalsExpiredError,
   StepLockedAfterApprovalError,
   VoiceMakeLimitError,
 } from "@/services/VideoGenerationService";
+import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
 import { MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
 import { ELEVENLABS_VOICE_FILE_NAME } from "@/lib/ai/elevenLabsTtsService";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
@@ -538,5 +540,63 @@ describe("Per-request limits (2026-09-27)", () => {
     const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval);
     const updated = await service.regenerateVoice(job.id, USER_ID);
     expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingVoice);
+  });
+});
+
+describe("Originals kept ORIGINALS_KEPT_DAYS days (27 Sep)", () => {
+  const DAY = 86_400_000;
+  let service: VideoGenerationService;
+  beforeEach(() => {
+    service = new VideoGenerationService();
+    jest
+      .spyOn(VideoGenerationService.prototype as any, "_generatePublishingDrafts")
+      .mockResolvedValue({});
+    jest
+      .spyOn(VideoGenerationService.prototype as any, "_attachChannelPreviews")
+      .mockImplementation(async (...args: unknown[]) => args[2]);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  async function submittedDaysAgo(renderLocation: "device" | "server", days: number) {
+    const request = await createRequest(renderLocation);
+    await mockClipRepo.update(request.id, {
+      submittedAt: new Date(Date.now() - days * DAY),
+    } as never);
+    return request;
+  }
+
+  it("refuses to make another shape once the originals are past the keep window", async () => {
+    const request = await submittedDaysAgo("device", ORIGINALS_KEPT_DAYS + 1);
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingDistributionReview, {
+      captionedExport_9_16_assetId: "captioned_9x16",
+    });
+    await expect(
+      service.generateAdditionalRatiosByRequester(job.id, USER_ID, ["4:5"])
+    ).rejects.toBeInstanceOf(OriginalsExpiredError);
+    expect((await mockJobRepo.findById(job.id))?.currentStep).toBe(
+      VideoGenerationStep.AwaitingDistributionReview
+    );
+  });
+
+  it("still makes a shape inside the keep window", async () => {
+    const request = await submittedDaysAgo("device", ORIGINALS_KEPT_DAYS - 1);
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingDistributionReview, {
+      captionedExport_9_16_assetId: "captioned_9x16",
+    });
+    await service.generateAdditionalRatiosByRequester(job.id, USER_ID, ["4:5"]);
+    expect((await mockJobRepo.findById(job.id))?.currentStep).toBe(
+      VideoGenerationStep.GeneratingAdditionalRatios
+    );
+  });
+
+  it("refuses to start production once the originals are past the keep window", async () => {
+    const request = await submittedDaysAgo("device", ORIGINALS_KEPT_DAYS + 2);
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingSceneDesignApproval);
+    await expect(
+      service.approveSceneDesignByRequester(job.id, USER_ID, {
+        scenePlan: "[]",
+        durationSeconds: 12,
+      })
+    ).rejects.toBeInstanceOf(OriginalsExpiredError);
   });
 });

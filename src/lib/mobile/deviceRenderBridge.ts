@@ -76,6 +76,11 @@ interface DeviceManifestRenderPlugin {
   }): Promise<{ parts: NativeUploadPart[] }>;
   cancel(): Promise<void>;
   releaseOutput(input: { path: string }): Promise<void>;
+  /** Builds from 1 Oct 2026: copy an app-owned video into the phone's gallery. */
+  saveVideoToGallery(input: { path: string; fileName: string }): Promise<{
+    location: string;
+    platform: "android" | "ios";
+  }>;
   addListener(
     eventName: "renderProgress" | "uploadProgress",
     listener: (event: { percent: number }) => void
@@ -156,7 +161,7 @@ export async function stageManifestSources(
         (await descriptorForLocalId(source.localId));
       if (!descriptor) {
         throw new Error(
-          `This phone no longer has the original for ${source.localId}. Pick your photos and clips again in the studio (the red box at the top) to render here.`
+          `This phone no longer has the original for ${source.localId}. The app keeps picked photos and clips for a limited time (or they were removed by reinstalling or clearing the app), so this video can't be rendered again. Start a new video in the studio.`
         );
       }
       const file = await readLocalMaterial(descriptor);
@@ -277,4 +282,33 @@ export async function observeManifestProgress(listeners: {
   return async () => {
     await Promise.allSettled(handles.map((handle) => handle.remove()));
   };
+}
+
+/** Where a video saved to the phone's gallery went. */
+export interface GallerySaveResult {
+  /** "Photos" on iOS; the folder and file name on Android ("Movies/RClipper/x.mp4"). */
+  location: string;
+  platform: "android" | "ios";
+}
+
+/**
+ * Save an app-owned video (a kept finished video, or a fresh download in the
+ * cache) into the phone's gallery: Photos on iOS, Movies/RClipper on Android.
+ * Returns null on an app build from before this existed, so the caller can fall
+ * back to the share sheet. A refused permission is thrown with code
+ * "PERMISSION_DENIED".
+ */
+export async function saveVideoToPhoneGallery(
+  path: string,
+  fileName: string
+): Promise<GallerySaveResult | null> {
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    return await NativeRenderer.saveVideoToGallery({ path, fileName });
+  } catch (error) {
+    const code = (error as { code?: string } | null)?.code;
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    if (code === "UNIMPLEMENTED" || /not implemented|unimplemented/i.test(message)) return null;
+    throw error;
+  }
 }

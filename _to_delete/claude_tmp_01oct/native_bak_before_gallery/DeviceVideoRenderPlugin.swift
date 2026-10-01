@@ -1,7 +1,6 @@
 import AVFoundation
 import Capacitor
 import Foundation
-import Photos
 
 /// First native rendering primitive: download a completed master and encode it locally.
 @objc(DeviceVideoRenderPlugin)
@@ -22,8 +21,7 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "renderManifest", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "uploadOutput", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancel", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "releaseOutput", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "saveVideoToGallery", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "releaseOutput", returnType: CAPPluginReturnPromise)
     ]
 
     private var exportSession: AVAssetExportSession?
@@ -769,68 +767,5 @@ public class DeviceVideoRenderPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             call.reject("Could not remove output file", nil, error)
         }
-    }
-
-    // MARK: - Save a finished video into Photos (1 Oct 2026)
-
-    /// The studio's Download button used to hand the file to the share sheet,
-    /// which reads as "open with…" rather than a download. This saves the video
-    /// straight into the Photos library (add-only access, asked once; the
-    /// reason is NSPhotoLibraryAddUsageDescription) and says where it went.
-    /// Only files inside the app's own storage can be saved.
-    @objc public func saveVideoToGallery(_ call: CAPPluginCall) {
-        guard let raw = call.getString("path"), let fileURL = appOwnedVideoURL(raw) else {
-            call.reject("Invalid video path")
-            return
-        }
-        let fileName = call.getString("fileName")
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-            guard status == .authorized || status == .limited else {
-                call.reject("Permission to save to Photos was denied", "PERMISSION_DENIED")
-                return
-            }
-            PHPhotoLibrary.shared().performChanges({
-                let request = PHAssetCreationRequest.forAsset()
-                let options = PHAssetResourceCreationOptions()
-                if let fileName = fileName, !fileName.isEmpty {
-                    options.originalFilename = fileName
-                }
-                request.addResource(with: .video, fileURL: fileURL, options: options)
-            }) { success, error in
-                if success {
-                    call.resolve(["location": "Photos", "platform": "ios"])
-                } else {
-                    call.reject("Could not save the video to Photos", nil, error)
-                }
-            }
-        }
-    }
-
-    /// A file inside the app's Documents, Library, Caches or tmp — nowhere else.
-    private func appOwnedVideoURL(_ raw: String) -> URL? {
-        let candidate: URL?
-        if raw.hasPrefix("file://") {
-            candidate = URL(string: raw)
-        } else {
-            candidate = URL(fileURLWithPath: raw)
-        }
-        guard let url = candidate, url.isFileURL else { return nil }
-        let resolved = url.standardizedFileURL.resolvingSymlinksInPath().path
-        let manager = FileManager.default
-        var roots: [URL] = [manager.temporaryDirectory]
-        for directory in [FileManager.SearchPathDirectory.documentDirectory, .libraryDirectory, .cachesDirectory] {
-            if let root = manager.urls(for: directory, in: .userDomainMask).first {
-                roots.append(root)
-            }
-        }
-        let inside = roots.contains { root in
-            let base = root.standardizedFileURL.resolvingSymlinksInPath().path
-            return resolved.hasPrefix(base.hasSuffix("/") ? base : base + "/")
-        }
-        var isDirectory: ObjCBool = false
-        guard inside, manager.fileExists(atPath: resolved, isDirectory: &isDirectory), !isDirectory.boolValue else {
-            return nil
-        }
-        return URL(fileURLWithPath: resolved)
     }
 }

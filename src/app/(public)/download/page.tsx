@@ -1,12 +1,25 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { getServerSession } from "next-auth";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { authOptions } from "@/lib/auth/authOptions";
+import { getRoleHomePath, ROUTES } from "@/config/routes";
+import type { Role } from "@/domain/enums/Role";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import { getServerI18n } from "@/i18n/server";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
 
 export const metadata: Metadata = { title: "Download the app" };
 
 /** The store links, on their own page (linked from the site and from emails). */
-export default function DownloadPage() {
+export default async function DownloadPage() {
+  // Inside the app there is nothing to download: go home (or to sign-in).
+  if (isAppUserAgent(headers().get("user-agent"))) {
+    const session = await getServerSession(authOptions);
+    redirect(session?.user ? getRoleHomePath(session.user.role as Role) : ROUTES.LOGIN);
+  }
+
   const { t } = getServerI18n();
   return (
     <section className="px-4 py-20 text-center">

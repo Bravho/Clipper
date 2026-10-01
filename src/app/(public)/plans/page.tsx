@@ -5,6 +5,7 @@ import { FREE_REQUESTS_PER_WINDOW, FREE_WINDOW_DAYS } from "@/config/videoPackag
 import { MANAGEMENT_PACKAGES_ON_SALE, managementPriceCredits } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS, PACKAGE_TIERS } from "@/config/packageTiers";
 import { tierPackageOptions } from "@/features/pricing/tierOptions";
+import { PerVideoLimits } from "@/features/pricing/components/PlanLimits";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
 
 export const metadata: Metadata = { title: "Plans and pricing" };
@@ -96,6 +97,10 @@ export default function PlansPage() {
             </div>
           </section>
         ))}
+
+        <section className="mb-12">
+          <PerVideoLimits t={t} />
+        </section>
 
         <p className="mb-10 text-center text-sm text-slate-500">{t("mkt.plans.credits")}</p>
         <StoreButtons t={t} />

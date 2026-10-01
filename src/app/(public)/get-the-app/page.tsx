@@ -1,8 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getServerSession } from "next-auth";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth/authOptions";
-import { ROUTES } from "@/config/routes";
+import { getRoleHomePath, ROUTES } from "@/config/routes";
+import type { Role } from "@/domain/enums/Role";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import { getServerI18n } from "@/i18n/server";
 import type { MessageKey } from "@/i18n/messages";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
@@ -18,6 +22,12 @@ export const dynamic = "force-dynamic";
  */
 export default async function GetTheAppPage() {
   const session = await getServerSession(authOptions);
+
+  // Inside the app there is nothing to download: go home (or to sign-in).
+  if (isAppUserAgent(headers().get("user-agent"))) {
+    redirect(session?.user ? getRoleHomePath(session.user.role as Role) : ROUTES.LOGIN);
+  }
+
   const { t } = getServerI18n();
 
   const links: { href: string; label: MessageKey }[] = [

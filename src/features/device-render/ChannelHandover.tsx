@@ -15,8 +15,8 @@ export interface StudioManagement {
 }
 
 /**
- * The studio's last stage: one button that takes the finished videos to
- * Channel Management.
+ * The studio's last stage: one button, "Migrate to Channel Management", that
+ * takes the finished videos not yet there to Channel Management.
  *
  * Tho, 26 Sep: the studio no longer runs its own "Publish to your channels"
  * block with Connected accounts / Posts and schedule links — publishing lives
@@ -70,19 +70,34 @@ export function ChannelHandover({
         ))}
       </ul>
 
+      {/* Tho, 27 Sep: ONE button, "Migrate to Channel Management". It moves the
+          videos not there yet, so it can be pressed again after a skipped
+          shape is made later, and that shape follows the others. With nothing
+          left to move it is disabled — also when the originals are gone and
+          every video made is already there. */}
       <div className="studio-approve">
         {pending.length > 0 ? (
           <Link href={transferPath} className="studio-button studio-button-primary">
-            {t("studio.handover.send", { count: pending.length })}
+            {t("studio.handover.migrate")}
           </Link>
         ) : (
-          <Link href={managementArrivalPath(sentIds)} className="studio-button studio-button-primary">
+          <button type="button" className="studio-button studio-button-primary" disabled>
+            {t("studio.handover.migrate")}
+          </button>
+        )}
+        <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
+          {t("studio.handover.migrateHint")}
+        </p>
+        <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
+          {pending.length > 0
+            ? t("studio.handover.migrateCount", { count: pending.length })
+            : t("studio.handover.allMigrated")}
+        </p>
+        {sentIds.length > 0 && (
+          <Link href={managementArrivalPath(sentIds)} className="studio-button studio-button-ghost">
             {t("studio.handover.open")}
           </Link>
         )}
-        <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
-          {pending.length > 0 ? t("studio.handover.sendHint") : t("studio.handover.sent")}
-        </p>
       </div>
     </section>
   );

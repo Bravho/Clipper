@@ -19,6 +19,7 @@ import { findManagementProduct } from "@/config/management";
 import type { PackageTier } from "@/config/packageTiers";
 import type { PackageOption } from "@/features/management/components/PackagePicker";
 import { managementPackageCopy } from "@/features/pricing/packageCopy";
+import { perVideoLimitsSummary } from "@/config/planLimits";
 import type { MessageKey } from "@/i18n/messages";
 
 type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
@@ -57,6 +58,7 @@ export function tierPackageOptions(
     .filter((row) => tierOfProduct(row.code) === tier)
     .sort((a, b) => (a.durationMonths ?? 0) - (b.durationMonths ?? 0));
   const monthly = tierRows.find((row) => row.durationMonths === 1)?.priceCredits ?? null;
+  const limits = perVideoLimitsSummary(t);
 
   return tierRows.map((row) => {
     const copy = managementPackageCopy(t, {
@@ -83,6 +85,7 @@ export function tierPackageOptions(
       badge: saving > 0 ? t("pricing.bundleSaving", { amount: saving.toLocaleString() }) : null,
       priceCredits: row.priceCredits,
       fullPriceCredits: row.fullPriceCredits,
+      limits,
     };
   });
 }

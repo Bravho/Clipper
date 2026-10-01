@@ -19,25 +19,48 @@ export function DownloadVideoButton({
 }) {
   const t = useStudioT();
   const [downloading, setDownloading] = useState(false);
+  const [stage, setStage] = useState<"downloading" | "saving" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [percent, setPercent] = useState<number | null>(null);
+  const [savedNote, setSavedNote] = useState<string | null>(null);
 
   const download = async () => {
     setDownloading(true);
+    setStage(null);
     setPercent(null);
     setError(null);
+    setSavedNote(null);
     try {
-      await downloadStudioVideo({
+      const result = await downloadStudioVideo({
         requestId,
         assetId,
         channel,
         failedMessage: t("studio.download.failed"),
         onProgress: (fraction) => setPercent(Math.round(fraction * 100)),
+        onStage: setStage,
       });
+      // Say where the video went, so nobody has to go looking for it.
+      if (result.gallery?.platform === "ios") {
+        setSavedNote(t("studio.download.savedIos"));
+      } else if (result.gallery) {
+        setSavedNote(t("studio.download.savedAndroid", { location: result.gallery.location }));
+      } else if (result.browser) {
+        setSavedNote(t("studio.download.savedBrowser"));
+      } else if (result.shared) {
+        setSavedNote(t("studio.download.sharedOldApp"));
+      }
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      const code = (failure as { code?: string } | null)?.code;
+      setError(
+        code === "PERMISSION_DENIED"
+          ? t("studio.download.permissionDenied")
+          : failure instanceof Error
+            ? failure.message
+            : String(failure)
+      );
     } finally {
       setDownloading(false);
+      setStage(null);
     }
   };
 
@@ -50,11 +73,18 @@ export function DownloadVideoButton({
         onClick={() => void download()}
       >
         {downloading
-          ? percent != null && percent < 100
-            ? t("studio.download.progress", { percent })
-            : t("studio.download.preparing")
+          ? stage === "saving"
+            ? t("studio.download.saving")
+            : percent != null && percent < 100
+              ? t("studio.download.progress", { percent })
+              : t("studio.download.preparing")
           : (label ?? t("studio.download.default"))}
       </button>
+      {savedNote && (
+        <p className="studio-note studio-note-positive" role="status" style={{ marginTop: 8 }}>
+          {savedNote}
+        </p>
+      )}
       {error && (
         <p className="studio-note studio-note-danger" style={{ marginTop: 8 }}>
           {error}
