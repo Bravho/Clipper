@@ -1,5 +1,5 @@
-RClipper update 1.0.8
+RClipper update 1.0.9
 
-- Improved video processing performance and reliability.
-- Refined free and paid plan behavior.
-- Fixed upload handling issues.
+- Improved mobile video processing and reliability.
+- Updated the Studio experience and pricing plans.
+- Improved upload handling and quota checks.
