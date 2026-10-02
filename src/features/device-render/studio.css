@@ -1665,3 +1665,13 @@ a.studio-button {
   -webkit-text-fill-color: #374151;
   text-decoration-color: #374151;
 }
+/* Same rule without JavaScript: `-webkit-touch-callout` exists only in iOS
+   WebKit (the iOS app's WKWebView), so this applies from the very first paint
+   even before the app's platform check has run, and never on Android. */
+@supports (-webkit-touch-callout: none) {
+  .studio .studio-terms-link {
+    color: #374151;
+    -webkit-text-fill-color: #374151;
+    text-decoration-color: #374151;
+  }
+}
