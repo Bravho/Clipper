@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { MontageTransition, MotionPreset } from "@/config/montage";
 import { ClipTrimBar, type ClipTrimLabels } from "@/features/requests/components/ClipTrimBar";
+import { useIsIosApp } from "@/lib/mobile/platform";
 import { aspectOfRatio, fillCoverage, framePlacement, subjectCentre } from "@/lib/mobile/shotFraming";
 import {
   findSource,
@@ -538,6 +539,9 @@ function FramingControl({
   onChange: (change: Partial<EditorShot>) => void;
 }) {
   const t = useStudioT();
+  // iOS app: no "Frame it automatically" / "Back to the centre" buttons — the
+  // tap-to-focus picture and the zoom slider are the only framing controls.
+  const isIosApp = useIsIosApp();
   const zoom = shotFrameZoom(shot, source, ratio);
   const automatic = shot.frameZoom == null;
   const sameShape =
@@ -621,7 +625,7 @@ function FramingControl({
               <span>{t("studio.framing.fillShort")}</span>
             </span>
           </label>
-          {!automatic && (
+          {!automatic && !isIosApp && (
             <button
               type="button"
               className="studio-button studio-button-ghost"
@@ -639,7 +643,7 @@ function FramingControl({
           )}
         </>
       )}
-      {(Math.abs(shot.focusX - 0.5) > 0.01 || Math.abs(shot.focusY - 0.5) > 0.01) && (
+      {!isIosApp && (Math.abs(shot.focusX - 0.5) > 0.01 || Math.abs(shot.focusY - 0.5) > 0.01) && (
         <button
           type="button"
           className="studio-button studio-button-ghost"

@@ -10,15 +10,23 @@
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
-		A15C00040000000000000001 /* DeviceVideoRenderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C00050000000000000001 /* DeviceVideoRenderPlugin.swift */; };
-		A15C00060000000000000001 /* RClipperViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C00070000000000000001 /* RClipperViewController.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		8422080D3066081800851CE3 /* StillSegmentWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8422080A3066081800851CE3 /* StillSegmentWriter.swift */; };
+		8422080E3066081800851CE3 /* OverlayPainter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842208083066081800851CE3 /* OverlayPainter.swift */; };
+		8422080F3066081800851CE3 /* Uploads.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8422080B3066081800851CE3 /* Uploads.swift */; };
+		842208103066081800851CE3 /* MotionMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842208073066081800851CE3 /* MotionMath.swift */; };
+		842208113066081800851CE3 /* ManifestJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842208053066081800851CE3 /* ManifestJob.swift */; };
+		842208123066081800851CE3 /* AudioMixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842208043066081800851CE3 /* AudioMixer.swift */; };
+		842208133066081800851CE3 /* RenderManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842208093066081800851CE3 /* RenderManifest.swift */; };
+		842208143066081800851CE3 /* ManifestRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 842208063066081800851CE3 /* ManifestRenderer.swift */; };
 		844E2C99300D32810006460F /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 844E2C98300D32810006460F /* StoreKit.framework */; };
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
 		A15C00010000000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A15C00020000000000000001 /* PrivacyInfo.xcprivacy */; };
+		A15C00040000000000000001 /* DeviceVideoRenderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C00050000000000000001 /* DeviceVideoRenderPlugin.swift */; };
+		A15C00060000000000000001 /* RClipperViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15C00070000000000000001 /* RClipperViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,16 +34,24 @@
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		A15C00050000000000000001 /* DeviceVideoRenderPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceVideoRenderPlugin.swift; sourceTree = "<group>"; };
-		A15C00070000000000000001 /* RClipperViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RClipperViewController.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		842208043066081800851CE3 /* AudioMixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioMixer.swift; sourceTree = "<group>"; };
+		842208053066081800851CE3 /* ManifestJob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestJob.swift; sourceTree = "<group>"; };
+		842208063066081800851CE3 /* ManifestRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManifestRenderer.swift; sourceTree = "<group>"; };
+		842208073066081800851CE3 /* MotionMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MotionMath.swift; sourceTree = "<group>"; };
+		842208083066081800851CE3 /* OverlayPainter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayPainter.swift; sourceTree = "<group>"; };
+		842208093066081800851CE3 /* RenderManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderManifest.swift; sourceTree = "<group>"; };
+		8422080A3066081800851CE3 /* StillSegmentWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillSegmentWriter.swift; sourceTree = "<group>"; };
+		8422080B3066081800851CE3 /* Uploads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Uploads.swift; sourceTree = "<group>"; };
 		844E2C98300D32810006460F /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		A15C00020000000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A15C00030000000000000001 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		A15C00050000000000000001 /* DeviceVideoRenderPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceVideoRenderPlugin.swift; sourceTree = "<group>"; };
+		A15C00070000000000000001 /* RClipperViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RClipperViewController.swift; sourceTree = "<group>"; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.release.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.release.xcconfig"; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
@@ -84,6 +100,7 @@
 		504EC3061FED79650016851F /* App */ = {
 			isa = PBXGroup;
 			children = (
+				8422080C3066081800851CE3 /* Render */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				A15C00050000000000000001 /* DeviceVideoRenderPlugin.swift */,
@@ -107,6 +124,21 @@
 				AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */,
 			);
 			name = Pods;
+			sourceTree = "<group>";
+		};
+		8422080C3066081800851CE3 /* Render */ = {
+			isa = PBXGroup;
+			children = (
+				842208043066081800851CE3 /* AudioMixer.swift */,
+				842208053066081800851CE3 /* ManifestJob.swift */,
+				842208063066081800851CE3 /* ManifestRenderer.swift */,
+				842208073066081800851CE3 /* MotionMath.swift */,
+				842208083066081800851CE3 /* OverlayPainter.swift */,
+				842208093066081800851CE3 /* RenderManifest.swift */,
+				8422080A3066081800851CE3 /* StillSegmentWriter.swift */,
+				8422080B3066081800851CE3 /* Uploads.swift */,
+			);
+			path = Render;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -228,6 +260,14 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				A15C00040000000000000001 /* DeviceVideoRenderPlugin.swift in Sources */,
 				A15C00060000000000000001 /* RClipperViewController.swift in Sources */,
+				8422080D3066081800851CE3 /* StillSegmentWriter.swift in Sources */,
+				8422080E3066081800851CE3 /* OverlayPainter.swift in Sources */,
+				8422080F3066081800851CE3 /* Uploads.swift in Sources */,
+				842208103066081800851CE3 /* MotionMath.swift in Sources */,
+				842208113066081800851CE3 /* ManifestJob.swift in Sources */,
+				842208123066081800851CE3 /* AudioMixer.swift in Sources */,
+				842208133066081800851CE3 /* RenderManifest.swift in Sources */,
+				842208143066081800851CE3 /* ManifestRenderer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -364,8 +404,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				APS_ENVIRONMENT = development;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 13;
@@ -391,8 +431,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				APS_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 13;

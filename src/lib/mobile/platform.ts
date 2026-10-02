@@ -1,6 +1,7 @@
 "use client";
 
 import { Capacitor } from "@capacitor/core";
+import { useEffect, useState } from "react";
 
 export type MobilePlatform = "ios" | "android" | "web";
 
@@ -24,4 +25,17 @@ export function isNativeMobile(): boolean {
   // available immediately and prevents the first OAuth attempt from falling
   // back to an unsafe in-WKWebView redirect.
   return Capacitor.isNativePlatform() || nativeUserAgentPlatform() !== "web";
+}
+
+/**
+ * True inside the iOS app, for iOS-only UI tweaks. Starts false and flips after
+ * mount, so the server render and the first client render agree (no hydration
+ * mismatch); the user-agent suffix makes the flip immediate on first paint.
+ */
+export function useIsIosApp(): boolean {
+  const [isIos, setIsIos] = useState(false);
+  useEffect(() => {
+    setIsIos(getMobilePlatform() === "ios");
+  }, []);
+  return isIos;
 }

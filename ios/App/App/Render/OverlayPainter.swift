@@ -204,21 +204,33 @@ enum OverlayPainter {
                     height: line.textSize.height
                 )
 
-                // `paint-order: stroke fill`: the outline is drawn under the
-                // glyph fill so the stroke never eats into the letterforms. On
-                // iOS a NEGATIVE stroke width means "stroke and fill", which is
-                // exactly that ordering in one pass.
+                // `paint-order: stroke fill`, done as TWO passes. A negative
+                // stroke width ("stroke and fill" in one pass) draws the fill
+                // FIRST and the outline ON TOP, so half the outline ate into
+                // the letters — fatal for Thai's thin loops and small heads —
+                // and the per-glyph shadow fell across neighbouring glyphs.
+                //
+                // Pass 1: outline only (positive width), carrying the shadow.
+                // CSS strokes 6px centred on the outline and the fill hides
+                // the inner half, so the stroke is drawn at full width here.
+                context.cgContext.saveGState()
                 context.cgContext.setShadow(
                     offset: shadowOffset,
                     blur: shadowBlur,
                     color: UIColor.black.withAlphaComponent(0.9).cgColor
                 )
-                let stroked = NSMutableAttributedString(attributedString: line.attributed)
-                stroked.addAttributes([
+                let outline = NSMutableAttributedString(attributedString: line.attributed)
+                outline.addAttributes([
                     .strokeColor: UIColor.black,
-                    .strokeWidth: -(strokeWidth * s) / (fontSizeOf(line.attributed) / 100),
-                ], range: NSRange(location: 0, length: stroked.length))
-                stroked.draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
+                    .strokeWidth: (2 * strokeWidth * s) / (fontSizeOf(line.attributed) / 100),
+                ], range: NSRange(location: 0, length: outline.length))
+                outline.draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
+                context.cgContext.restoreGState()
+
+                // Pass 2: the plain fill on top, no stroke and no shadow, so
+                // every letterform keeps its full shape and colour.
+                context.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
+                line.attributed.draw(with: textRect, options: [.usesLineFragmentOrigin], context: nil)
 
                 y += plateHeight + gap
             }
@@ -733,6 +745,13 @@ enum OverlayPainter {
         let format = UIGraphicsImageRendererFormat.default()
         format.opaque = false
         format.scale = 1
+        // ROOT CAUSE of the unreadable captions: on wide-colour iPhones/iPads
+        // `.default()` picks the EXTENDED range — a 16-bit half-float bitmap.
+        // `AVVideoCompositionCoreAnimationTool`'s offscreen renderer does not
+        // read that layer content correctly, so solid white glyphs came out
+        // near-black and only the anti-aliased edges showed, as a grey fringe.
+        // Force a plain 8-bit sRGB bitmap, which the export reads exactly.
+        format.preferredRange = .standard
         return format
     }
 }

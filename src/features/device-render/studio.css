@@ -1657,3 +1657,11 @@ a.studio-button {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* iOS app: the terms link is dark grey, not the brand amber/brown — Safari
+   would otherwise also tint a bare <button> with its own tint colour. */
+.studio-terms-link.studio-terms-link-ios {
+  color: #374151;
+  -webkit-text-fill-color: #374151;
+  text-decoration-color: #374151;
+}

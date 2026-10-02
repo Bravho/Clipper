@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { useIsIosApp } from "@/lib/mobile/platform";
+
 import { useStudioT } from "./studioI18n";
 import { QuotaStatus, type StudioQuota } from "./QuotaPrompt";
 import { TermsDialog } from "./TermsDialog";
@@ -50,6 +52,7 @@ export function SubmitMedia({
 }) {
   const t = useStudioT();
   const [termsOpen, setTermsOpen] = useState(false);
+  const isIosApp = useIsIosApp();
   if (submitted) return null;
 
   return (
@@ -89,7 +92,11 @@ export function SubmitMedia({
             </span>
           </label>
           {/* Outside the label, so opening the terms never ticks the box. */}
-          <button type="button" className="studio-terms-link" onClick={() => setTermsOpen(true)}>
+          <button
+            type="button"
+            className={isIosApp ? "studio-terms-link studio-terms-link-ios" : "studio-terms-link"}
+            onClick={() => setTermsOpen(true)}
+          >
             {t("studio.terms.open")}
           </button>
           <TermsDialog open={termsOpen} onClose={() => setTermsOpen(false)} />
