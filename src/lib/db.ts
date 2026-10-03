@@ -28,7 +28,9 @@ const poolConfig = {
   // instances that do not offer SSL can opt out with PGSSLMODE=disable.
   ssl: pgSsl,
   // Keep connection pool small — Next.js runs many serverless-like workers
-  max: 5,
+  // PG_POOL_MAX lets a small local/hosted dev database use fewer connections
+  // without shrinking the production pool the render pipeline relies on.
+  max: Number(process.env.PG_POOL_MAX ?? 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS ?? 12_000),
   keepAlive: true,

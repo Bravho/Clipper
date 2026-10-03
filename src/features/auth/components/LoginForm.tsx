@@ -14,7 +14,7 @@ import { getRoleHomePath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 
-export function LoginForm({ studioMode = false }: { studioMode?: boolean }) {
+export function LoginForm({ adLabMode = false }: { adLabMode?: boolean }) {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -56,8 +56,8 @@ export function LoginForm({ studioMode = false }: { studioMode?: boolean }) {
         // Fetch session to get role for redirect
         const session = await getSession();
         const role = session?.user?.role as Role | undefined;
-        const destination = studioMode
-          ? ROUTES.STUDIO
+        const destination = adLabMode
+          ? ROUTES.AD_LAB
           : role
             ? getRoleHomePath(role)
             : ROUTES.DASHBOARD;
@@ -111,9 +111,9 @@ export function LoginForm({ studioMode = false }: { studioMode?: boolean }) {
         เข้าสู่ระบบ
       </Button>
 
-      {studioMode ? (
+      {adLabMode ? (
         <p className="rounded-md bg-amber-50 px-3 py-2 text-center text-xs text-amber-800">
-          Private Studio Lab — ใช้บัญชี local ที่กำหนดไว้สำหรับ worktree นี้
+          Private Ad Lab — ใช้บัญชี local ที่กำหนดไว้สำหรับ worktree นี้
         </p>
       ) : (
         <SocialSignInButtons
@@ -124,13 +124,13 @@ export function LoginForm({ studioMode = false }: { studioMode?: boolean }) {
         />
       )}
 
-      {!studioMode && <div className="relative flex items-center gap-3">
+      {!adLabMode && <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-slate-200" />
         <span className="text-xs text-slate-400">ยังไม่มีบัญชี?</span>
         <div className="flex-1 border-t border-slate-200" />
       </div>}
 
-      {!studioMode && <Link href={ROUTES.SIGNUP} className="w-full">
+      {!adLabMode && <Link href={ROUTES.SIGNUP} className="w-full">
         <Button variant="outline" fullWidth>
           สร้างบัญชีฟรี
         </Button>

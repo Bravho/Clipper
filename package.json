@@ -12,7 +12,7 @@
     "test:coverage": "jest --coverage",
     "worker": "tsx scripts/render-worker.ts",
     "worker:once": "tsx scripts/render-worker.ts --once",
-    "studio:sync": "node --no-warnings scripts/sync-studio-workspaces.js",
+    "adlab:sync": "node --no-warnings scripts/sync-ad-lab-workspaces.js",
     "cap:sync": "cap sync",
     "cap:add:ios": "cap add ios",
     "cap:add:android": "cap add android",

@@ -15,7 +15,7 @@ export function requireGeminiApiKey(): string {
   return key;
 }
 
-/** Server-only OpenAI key used by the private Studio script writer. */
+/** Server-only OpenAI key used by the private Ad Lab script writer. */
 export function requireOpenAiApiKey(): string {
   const key = AI_CONFIG.openai.apiKey;
   if (!key) {
@@ -29,7 +29,7 @@ export function requireOpenAiApiKey(): string {
 export const AI_CONFIG = {
   openai: {
     apiKey: (process.env.OPENAI_API_KEY ?? "").trim(),
-    /** Cost-effective text model for grounded, structured Studio scripts. */
+    /** Cost-effective text model for grounded, structured Ad Lab scripts. */
     scriptModel: (process.env.OPENAI_SCRIPT_MODEL ?? "gpt-5.6-luna").trim(),
   },
   gemini: {

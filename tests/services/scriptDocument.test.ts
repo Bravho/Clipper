@@ -1,4 +1,4 @@
-import { formatScriptDocument, parseScriptDocument } from "@/services/studio/scriptDocument";
+import { formatScriptDocument, parseScriptDocument } from "@/services/ad-lab/scriptDocument";
 
 const script = {
   title: "คลิปทดสอบ",

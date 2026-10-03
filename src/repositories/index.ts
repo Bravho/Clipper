@@ -33,14 +33,22 @@ export const emailVerificationTokenRepository = new PostgresEmailVerificationTok
 // "ลืมรหัสผ่าน" reset links. Requires migration 029.
 export const passwordResetTokenRepository = new PostgresPasswordResetTokenRepository();
 
-// ── Private Studio Lab — durable persistence ────────────────────────────────
-// Use the configured PostgreSQL database (migration 035) when all credentials
-// exist. Otherwise use an embedded SQLite database for zero-configuration local
-// development. Both keep the full workspace durable across server restarts.
-import { LocalStudioWorkspaceRepository } from "./local/LocalStudioWorkspaceRepository";
-import { HybridStudioWorkspaceRepository } from "./HybridStudioWorkspaceRepository";
+// ── Private Ad Lab — durable persistence ────────────────────────────────────
+// Channel-marketing lab (owner-only, see config/adLab.ts). Store selection:
+//   production (or RCLIPPER_AD_LAB_STORE=postgres) → PostgreSQL directly, table
+//     studio_workspaces (migration 038). Works on the droplet's Node 20.
+//   development with PostgreSQL configured → hybrid: local SQLite first,
+//     uploaded explicitly with `npm run adlab:sync`.
+//   no PostgreSQL → embedded SQLite only.
+// The SQLite repositories load node:sqlite lazily, so nothing here touches it
+// unless that store is chosen.
+import { AD_LAB_CONFIG } from "@/config/adLab";
+import { LocalAdLabWorkspaceRepository } from "./local/LocalAdLabWorkspaceRepository";
+import { HybridAdLabWorkspaceRepository } from "./HybridAdLabWorkspaceRepository";
+import { PostgresAdLabWorkspaceRepository } from "./postgres/PostgresAdLabWorkspaceRepository";
+import type { IAdLabWorkspaceRepository } from "./interfaces/IAdLabWorkspaceRepository";
 
-const studioHasPostgres = Boolean(
+const adLabHasPostgres = Boolean(
   process.env.DATABASE_URL?.trim()
   || (
     process.env.PGHOST
@@ -50,9 +58,17 @@ const studioHasPostgres = Boolean(
   )
 );
 
-export const studioWorkspaceRepository = studioHasPostgres
-  ? new HybridStudioWorkspaceRepository()
-  : new LocalStudioWorkspaceRepository();
+function createAdLabWorkspaceRepository(): IAdLabWorkspaceRepository {
+  const store = AD_LAB_CONFIG.store
+    ?? (process.env.NODE_ENV === "production"
+      ? "postgres"
+      : adLabHasPostgres ? "hybrid" : "sqlite");
+  if (store === "postgres") return new PostgresAdLabWorkspaceRepository();
+  if (store === "hybrid") return new HybridAdLabWorkspaceRepository();
+  return new LocalAdLabWorkspaceRepository();
+}
+
+export const adLabWorkspaceRepository = createAdLabWorkspaceRepository();
 
 // ── New Repositories — PostgreSQL ────────────────────────────────────────────
 import { PostgresDeletedAccountRegistryRepository } from "./postgres/PostgresDeletedAccountRegistryRepository";

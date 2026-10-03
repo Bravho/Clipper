@@ -71,13 +71,14 @@ export const ROUTES = {
   MANAGEMENT_CALENDAR: "/dashboard/management/calendar",
   MANAGEMENT_PAYMENTS: "/dashboard/management/payments",
 
-  // Private owner-only web lab. Server-side allowlisting is enforced by its
-  // nested layout; keeping it under /dashboard also reuses Requester auth.
-  STUDIO: "/dashboard/studio",
-  STUDIO_BRANDS: "/dashboard/studio/brands",
-  STUDIO_CREATE: "/dashboard/studio/create",
-  STUDIO_PUBLISHING: "/dashboard/studio/publishing",
-  STUDIO_ANALYZE: "/dashboard/studio/analyze",
+  // Private owner-only Ad Lab (channel marketing: scripts, publishing, ad
+  // analysis). NOT the phone studio above. Gated server-side by
+  // config/adLab.ts; keeping it under /dashboard reuses Requester auth.
+  AD_LAB: "/dashboard/ad-lab",
+  AD_LAB_BRANDS: "/dashboard/ad-lab/brands",
+  AD_LAB_CREATE: "/dashboard/ad-lab/create",
+  AD_LAB_PUBLISHING: "/dashboard/ad-lab/publishing",
+  AD_LAB_ANALYZE: "/dashboard/ad-lab/analyze",
 } as const;
 
 /** The studio, optionally opened on one request (resumes it at its step). */

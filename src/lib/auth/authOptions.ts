@@ -11,11 +11,11 @@ import { verifyGoogleIdToken } from "@/lib/auth/googleIdToken";
 import { verifyAppleIdToken } from "@/lib/auth/appleIdToken";
 import { loginEventService } from "@/services/analytics/LoginEventService";
 import {
-  isStudioLocalAuthEnabled,
-  isStudioLocalUserId,
-  STUDIO_LOCAL_AUTH_PROVIDER,
-  verifyStudioLocalCredentials,
-} from "@/lib/auth/studioLocalCredentials";
+  isAdLabLocalAuthEnabled,
+  isAdLabLocalUserId,
+  AD_LAB_LOCAL_AUTH_PROVIDER,
+  verifyAdLabLocalCredentials,
+} from "@/lib/auth/adLabLocalCredentials";
 
 /**
  * Provider ids used by the native in-app sign-in flows (Android Credential
@@ -240,14 +240,14 @@ export const authOptions: NextAuthOptions = {
 
         // The private worktree can authenticate one explicit local owner
         // without PostgreSQL. It is impossible to enable in production.
-        if (isStudioLocalAuthEnabled()) {
-          const localUser = verifyStudioLocalCredentials(
+        if (isAdLabLocalAuthEnabled()) {
+          const localUser = verifyAdLabLocalCredentials(
             credentials.email,
             credentials.password
           );
           if (!localUser) {
             logAuthEvent("credentials_rejected", {
-              reason: "invalid_local_studio_credentials",
+              reason: "invalid_local_ad_lab_credentials",
             });
             return null;
           }
@@ -256,7 +256,7 @@ export const authOptions: NextAuthOptions = {
             email: localUser.email,
             name: localUser.name,
             role: localUser.role,
-            provider: STUDIO_LOCAL_AUTH_PROVIDER,
+            provider: AD_LAB_LOCAL_AUTH_PROVIDER,
           };
         }
 
@@ -352,9 +352,9 @@ export const authOptions: NextAuthOptions = {
         provider: providerId,
       });
 
-      // The isolated Studio identity intentionally has no production database
+      // The isolated Ad Lab identity intentionally has no production database
       // row, so do not attempt to append a foreign-keyed login analytics row.
-      if (isStudioLocalUserId(user.id)) return true;
+      if (isAdLabLocalUserId(user.id)) return true;
 
       // The native providers run findOrCreateOAuthUser in authorize() and carry
       // the account's age back on `user.createdAt` (see authorizeNativeIdToken),

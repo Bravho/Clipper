@@ -6,9 +6,9 @@ import { getRoleHomePath, ROUTES } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { LoginForm } from "@/features/auth/components/LoginForm";
 import {
-  isStudioLocalAuthEnabled,
-  isStudioLocalUserId,
-} from "@/lib/auth/studioLocalCredentials";
+  isAdLabLocalAuthEnabled,
+  isAdLabLocalUserId,
+} from "@/lib/auth/adLabLocalCredentials";
 
 export const metadata: Metadata = {
   title: "เข้าสู่ระบบ",
@@ -32,15 +32,15 @@ export default async function LoginPage({
   const session = await getServerSession(authOptions);
   if (session?.user) {
     redirect(
-      isStudioLocalUserId(session.user.id)
-        ? ROUTES.STUDIO
+      isAdLabLocalUserId(session.user.id)
+        ? ROUTES.AD_LAB
         : getRoleHomePath(session.user.role as Role)
     );
   }
 
-  const studioMode = isStudioLocalAuthEnabled();
+  const adLabMode = isAdLabLocalAuthEnabled();
 
-  const authError = !studioMode && searchParams?.error
+  const authError = !adLabMode && searchParams?.error
     ? AUTH_ERROR_MESSAGES[searchParams.error] ??
       "เกิดข้อผิดพลาดในการเข้าสู่ระบบ กรุณาลองอีกครั้ง"
     : null;
@@ -70,7 +70,7 @@ export default async function LoginPage({
           </div>
         )}
 
-        <LoginForm studioMode={studioMode} />
+        <LoginForm adLabMode={adLabMode} />
 
         <div className="mt-6 border-t border-slate-200 pt-4">
           <p className="text-center text-xs text-slate-400">

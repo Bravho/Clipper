@@ -27,15 +27,22 @@ import { useI18n } from "@/i18n/client";
 export function DashboardShell({
   children,
   showManagement = false,
+  showAdLab = false,
+  adLabOnly = false,
 }: {
   children: React.ReactNode;
   /** Server-evaluated: is RClipper Management enabled for this user? */
   showManagement?: boolean;
+  /** Server-evaluated: is the private Ad Lab enabled for this user (web only)? */
+  showAdLab?: boolean;
+  /** Local Ad Lab login (dev only) has no production DB row; keep it in the lab. */
+  adLabOnly?: boolean;
 }) {
   const { t } = useI18n();
   const pathname = usePathname();
 
-  const navLinks = useRequesterNavLinks(showManagement);
+  const portalLinks = useRequesterNavLinks(showManagement, showAdLab);
+  const navLinks = adLabOnly ? [AD_LAB_NAV_LINK] : portalLinks;
 
   // Mirror these links into the navbar hamburger for small screens.
   useRegisterPortalNav({ id: "requester-portal", title: "RClipper Portal", links: navLinks });
@@ -97,7 +104,7 @@ export function DashboardShell({
  * on a phone. Shared so a page outside the dashboard layout (the studio)
  * offers exactly the same menu instead of a shorter one.
  */
-export function useRequesterNavLinks(showManagement: boolean) {
+export function useRequesterNavLinks(showManagement: boolean, showAdLab = false) {
   const { t } = useI18n();
   return [
     { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
@@ -117,8 +124,13 @@ export function useRequesterNavLinks(showManagement: boolean) {
           { href: ROUTES.MANAGEMENT_POSTS, label: t("sidebar.posts"), icon: "▤" },
         ]
       : []),
+    // Private, allowlisted, web-only (see config/adLab.ts). Last, so the
+    // normal menu order is unchanged for the owner.
+    ...(showAdLab ? [AD_LAB_NAV_LINK] : []),
   ];
 }
+
+const AD_LAB_NAV_LINK = { href: ROUTES.AD_LAB, label: "Ad Lab", icon: "✦" };
 
 /**
  * Registers the requester menu in the navbar hamburger without drawing the

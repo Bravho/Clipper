@@ -1,9 +1,11 @@
+import { headers } from "next/headers";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { isManagementEnabledFor } from "@/config/management";
-import { isStudioEnabledFor } from "@/config/studio";
+import { isAdLabEnabledFor } from "@/config/adLab";
 import { DashboardShell } from "@/components/layout/DashboardShell";
-import { isStudioLocalUserId } from "@/lib/auth/studioLocalCredentials";
+import { isAdLabLocalUserId } from "@/lib/auth/adLabLocalCredentials";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 
 /**
  * Requester dashboard layout.
@@ -32,21 +34,24 @@ export default async function DashboardLayout({
       })
     : false;
 
-  const showStudio = session?.user
-    ? isStudioEnabledFor({
+  // The private Ad Lab is a web-only owner tool: never list it inside the
+  // store apps (their WebView loads this same server), even for the owner.
+  const inApp = isAppUserAgent(headers().get("user-agent"));
+  const showAdLab = session?.user && !inApp
+    ? isAdLabEnabledFor({
         id: session.user.id,
         email: session.user.email,
       })
     : false;
-  const studioOnly = session?.user
-    ? isStudioLocalUserId(session.user.id)
+  const adLabOnly = session?.user
+    ? isAdLabLocalUserId(session.user.id)
     : false;
 
   return (
     <DashboardShell
       showManagement={showManagement}
-      showStudio={showStudio}
-      studioOnly={studioOnly}
+      showAdLab={showAdLab}
+      adLabOnly={adLabOnly}
     >
       {children}
     </DashboardShell>

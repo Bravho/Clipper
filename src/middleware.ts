@@ -5,6 +5,7 @@ import { ROUTES } from "@/config/routes";
 import { logAuthEvent } from "@/lib/auth/diagnostics";
 import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import { isBrowserMarketingOnly } from "@/config/studioRollout";
+import { isAdLabEnabledFor, isAdLabPath } from "@/config/adLab";
 
 /**
  * Requester pages a WEB BROWSER may still open once the browser is the
@@ -41,6 +42,8 @@ function browserMayOpen(pathname: string): boolean {
  * Route mapping:
  *   /dashboard  → Requester only
  *   /studio     → Requester only (the phone studio)
+ *   /dashboard/ad-lab → Requester + Ad Lab allowlist (checked in its layout);
+ *                 exempt from BROWSER_MARKETING_ONLY for allowlisted owners
  *   /admin      → Admin only
  *   /account    → Any authenticated user
  *
@@ -87,12 +90,23 @@ export default withAuth(
       }
     }
 
+    // The private Ad Lab is a web tool: an allowlisted owner may open it in a
+    // browser even when the browser is otherwise the marketing site. Everyone
+    // else falls through to the normal rules (and gets a 404 from the lab).
+    const adLabOwnerInBrowser =
+      isAdLabPath(pathname) &&
+      isAdLabEnabledFor({
+        id: req.nextauth.token?.id as string | undefined,
+        email: req.nextauth.token?.email,
+      });
+
     // The browser is the marketing site: requester work happens in the app.
     if (
       role === Role.Requester &&
       isBrowserMarketingOnly() &&
       !isAppUserAgent(req.headers.get("user-agent")) &&
-      !browserMayOpen(pathname)
+      !browserMayOpen(pathname) &&
+      !adLabOwnerInBrowser
     ) {
       logAuthEvent("middleware_redirect", {
         path: pathname,

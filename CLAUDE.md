@@ -82,6 +82,18 @@ cannot drift. Delivery is FCM v1 / APNs over HTTP/2 / Web Push VAPID from
 `PushNotificationService`, deduped by a unique `(job_id, event_key)`. Setup and
 store-console steps: `docs/PUSH_NOTIFICATIONS_SETUP.md`.
 
+### Private Ad Lab (channel marketing) — owner-only
+
+`/dashboard/ad-lab` + `/api/ad-lab/*` is an unfinished channel-marketing tool
+(ad scripts, publishing to added channels, ad-efficiency analysis). It is NOT
+the phone studio (`/studio`, `features/device-render`), NOT Channel Management,
+and NOT the public marketing site (`features/marketing`). It is hidden from
+everyone unless `RCLIPPER_AD_LAB_ENABLED=true` AND the user is in
+`RCLIPPER_AD_LAB_ALLOWED_EMAILS` / `_USER_IDS` (`src/config/adLab.ts`); pages and
+APIs return 404 otherwise, and its menu link never appears inside the store
+apps. Production storage is PostgreSQL (`studio_workspaces`, migration 038);
+development uses local SQLite + `npm run adlab:sync`. See `docs/AD_LAB.md`.
+
 ### AI video pipeline
 
 Staff triggers the pipeline on a `ClipRequest`. The pipeline is orchestrated by `VideoGenerationService` and tracked on a `VideoGenerationJob` record.
