@@ -42,6 +42,12 @@ export interface ManagementProduct {
    * rule as the video packages, so a bundle month == a video-package month.
    */
   videoMonths: number | null;
+  /**
+   * Packages only: video requests each month is worth (Starter 5, Pro 10).
+   * Optional and null on a row from before migration 037 — callers fall back
+   * to the catalogue, then to REQUESTS_PER_PAID_MONTH.
+   */
+  videoRequestsPerMonth?: number | null;
   /** Effective charge, in credits (= ฿). */
   priceCredits: number;
   /** Undiscounted list price, for "was ฿X" display. */

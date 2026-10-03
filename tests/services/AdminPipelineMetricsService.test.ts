@@ -67,6 +67,10 @@ function task(overrides: Partial<RenderTask> = {}): RenderTask {
     requesterId: "user-1",
     step: RenderStep.FfmpegComposition,
     payload: null,
+    // The default for every task: the Mac Mini worker may claim it. A
+    // device-only task is the exception, and it belongs to a request whose
+    // footage never left the requester's phone.
+    deviceOnly: false,
     state: "queued",
     attempts: 0,
     priority: 0,

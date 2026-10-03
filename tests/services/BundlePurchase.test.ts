@@ -12,6 +12,7 @@
 
 import { ManagementPurchaseService } from "@/services/management/ManagementPurchaseService";
 import { findManagementProduct } from "@/config/management";
+import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { REQUESTS_PER_PAID_MONTH } from "@/config/videoPackages";
 import { ManagementPurchaseStatus } from "@/domain/models/ManagementPurchase";
 import type { ManagementProductCode } from "@/domain/enums/ManagementProductCode";
@@ -46,9 +47,17 @@ function productRow(code: ManagementProductCode) {
   };
 }
 
-function build(code: ManagementProductCode, opts: { balance?: number } = {}) {
+function build(
+  code: ManagementProductCode,
+  opts: {
+    balance?: number;
+    /** Video months already running: their last expiry and their monthly allowance. */
+    liveVideo?: { expiresAt: Date; allowance: number };
+  } = {}
+) {
   const log: Recorded[] = [];
   const balance = opts.balance ?? 100_000;
+  const live = opts.liveVideo;
 
   const client = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -63,6 +72,12 @@ function build(code: ManagementProductCode, opts: { balance?: number } = {}) {
         return { rows: [{ id: "pass-1" }] };
       if (sql.includes("INSERT INTO management_upload_bundles"))
         return { rows: [{ id: "bundle-1" }] };
+      if (live && sql.includes("MAX(total_allowance)"))
+        return { rows: [{ max_allowance: live.allowance }] };
+      if (live && sql.includes("FROM video_allowance_windows") && sql.includes("ORDER BY expires_at DESC"))
+        return { rows: [{ expires_at: live.expiresAt.toISOString() }] };
+      if (live && sql.includes("SELECT 1 FROM video_allowance_windows"))
+        return { rows: [{ "?column?": 1 }] };
       // Both "current expiry" reads return empty: no live time to stack onto.
       return { rows: [] };
     }),
@@ -196,5 +211,40 @@ describe("bundle purchase", () => {
     expect(videoInserts(log)).toHaveLength(0);
     expect(log.filter((e) => e.sql.includes("INSERT INTO management_access_passes"))).toHaveLength(0);
     expect(log.some((e) => e.sql.includes("ROLLBACK"))).toBe(true);
+  });
+
+  it("gives a Starter month 5 requests and a Pro month 10 (2026-09-27)", async () => {
+    const starter = build("management_starter_3_months");
+    await starter.service.purchase({ userId: USER, productCode: "management_starter_3_months" });
+    const starterInserts = videoInserts(starter.log);
+    expect(starterInserts).toHaveLength(3);
+    for (const insert of starterInserts) expect(insert.params[5]).toBe(PACKAGE_TIER_REQUESTS.starter);
+
+    const pro = build("management_bundle_1_month");
+    await pro.service.purchase({ userId: USER, productCode: "management_bundle_1_month" });
+    expect(videoInserts(pro.log)[0].params[5]).toBe(PACKAGE_TIER_REQUESTS.pro);
+  });
+
+  it("stacks a same-tier purchase after the months already running", async () => {
+    const expiresAt = new Date(Date.now() + 10 * 86_400_000);
+    const { service, log } = build("management_starter_1_month", {
+      liveVideo: { expiresAt, allowance: PACKAGE_TIER_REQUESTS.starter },
+    });
+    await service.purchase({ userId: USER, productCode: "management_starter_1_month" });
+    const [first] = videoInserts(log);
+    expect((first.params[6] as Date).getTime()).toBe(expiresAt.getTime());
+  });
+
+  it("starts an upgrade to Pro now instead of after the running Starter months", async () => {
+    const expiresAt = new Date(Date.now() + 10 * 86_400_000);
+    const before = Date.now();
+    const { service, log } = build("management_bundle_1_month", {
+      liveVideo: { expiresAt, allowance: PACKAGE_TIER_REQUESTS.starter },
+    });
+    await service.purchase({ userId: USER, productCode: "management_bundle_1_month" });
+    const [first] = videoInserts(log);
+    const startsAt = (first.params[6] as Date).getTime();
+    expect(startsAt).toBeGreaterThanOrEqual(before);
+    expect(startsAt).toBeLessThan(expiresAt.getTime());
   });
 });

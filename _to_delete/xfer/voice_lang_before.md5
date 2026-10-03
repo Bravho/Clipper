@@ -1,0 +1,9 @@
+ed77b018deaf80935a5da3884618df29  src/features/device-render/MobileVideoEditor.tsx
+ecc62c4d0a594c7e3f40e6dd325dede7  src/i18n/messages.ts
+ff43970795959a182fbd6893d679a7da  src/i18n/client.tsx
+b6e43b9cdba582922202ff19e684fb46  tests/features/studioI18n.test.ts
+9890128a5460db7e0b83850fd4861ba0  src/i18n/server.ts
+d91892d22c30558b9843fb4b725d6d37  src/i18n/config.ts
+d0762c2698e98892e159267c9c9ef3a4  src/features/device-render/studioI18n.tsx
+22d20ccf04f0eaac3726774f01e49bd3  src/features/device-render/studioText.ts
+4c629bd840e947dcad34a83895f0c6e9  src/features/device-render/AudioPanel.tsx

@@ -29,6 +29,11 @@ export interface PackageOption {
   videoMonths?: number | null;
   /** Optional flag shown top-right of the card, e.g. a saving. */
   badge?: string | null;
+  /**
+   * The limits every video made with this package has (length, voice makes,
+   * shapes), already localised. Shown on the card and in the confirmation.
+   */
+  limits?: string | null;
   priceCredits: number;
   fullPriceCredits: number;
 }
@@ -205,6 +210,9 @@ export function PackagePicker({
               <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700">
                 {p.terms}
               </p>
+              {p.limits && (
+                <p className="mt-2 text-[11px] leading-snug text-slate-500">{p.limits}</p>
+              )}
               <p className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 {t("pricing.picker.cost")}
               </p>
@@ -280,6 +288,8 @@ export function PackagePicker({
         packageName={pending?.product.name ?? ""}
         priceCredits={pending?.product.priceCredits ?? 0}
         balanceCredits={balanceCredits}
+        terms={pending?.product.terms ?? null}
+        limits={pending?.product.limits ?? null}
         busy={busy}
         onConfirm={() => void activateWithCredits()}
         onCancel={() => setPending(null)}

@@ -71,6 +71,25 @@ export interface UploadedAsset {
    */
   sourceAssetId?: string | null;
 
+  /**
+   * Opaque handle into the app's private storage on the requester's device.
+   *
+   * Non-null means the ORIGINAL BYTES WERE NEVER UPLOADED. `storageUrl` then
+   * points at a small poster derivative — enough for Gemini, the scene
+   * designer and every thumbnail — and any render that needs the real frames
+   * has to run on the device that holds them.
+   *
+   * This is the field that makes "edit your own footage without uploading it"
+   * possible, and the field every URL-resolving code path has to branch on. A
+   * renderer that ignores it will happily animate the poster and produce a
+   * still where a moving clip belongs, which is why `orderSourceAssets` carries
+   * it through and the render manifest refuses to name both a URL and a handle.
+   *
+   * Null for everything uploaded the normal way, including every asset that
+   * existed before migration 036 — so the Mac Mini path is untouched.
+   */
+  deviceLocalId?: string | null;
+
   /** Date when this raw upload will be deleted per the 90-day retention policy. */
   scheduledDeletionAt: Date;
 

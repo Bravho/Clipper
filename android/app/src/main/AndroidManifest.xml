@@ -123,4 +123,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="com.android.vending.BILLING" />
+    <!-- Saving a finished video to Movies/RClipper. Android 10+ uses MediaStore
+         and needs nothing; only Android 9 and older (API 28) ask for this. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 </manifest>

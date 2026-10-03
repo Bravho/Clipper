@@ -58,8 +58,8 @@ export function LanguageSelector() {
           }}
           className={`rounded border p-1.5 transition ${
             selected === locale
-              ? "border-blue-400 bg-blue-500/20 ring-1 ring-blue-400"
-              : "border-slate-600 bg-slate-800 hover:border-slate-400 hover:bg-slate-700"
+              ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
+              : "border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-100"
           }`}
           aria-label={label}
           title={label}

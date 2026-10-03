@@ -1,0 +1,26 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "incremental": false, "skipLibCheck": true },
+  "include": [
+    "src/types/next-auth.d.ts",
+    "src/services/VideoGenerationService.ts",
+    "src/services/UploadService.ts",
+    "src/repositories/index.ts",
+    "src/repositories/mock/MockRenderTaskRepository.ts",
+    "src/repositories/postgres/PostgresRenderTaskRepository.ts",
+    "src/lib/mobile/deviceRenderContract.ts",
+    "src/lib/mobile/deviceRenderAudio.ts",
+    "src/lib/mobile/deviceRenderCaptions.ts",
+    "src/lib/mobile/deviceRenderManifestBuilder.ts",
+    "src/services/DeviceRenderService.ts",
+    "src/config/deviceRender.ts",
+    "src/repositories/mock/MockDeviceRenderAttemptRepository.ts",
+    "src/repositories/postgres/PostgresDeviceRenderAttemptRepository.ts",
+    "src/app/api/device-render/**/*.ts",
+    "src/app/device-render-lab/**/*.tsx",
+    "src/features/device-render/**/*.ts",
+    "src/features/device-render/**/*.tsx",
+    "src/lib/mobile/deviceRenderBridge.ts",
+    "src/lib/mobile/deviceRenderClient.ts"
+  ]
+}

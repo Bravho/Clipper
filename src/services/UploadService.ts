@@ -546,6 +546,51 @@ export class UploadService {
   }
 
   /**
+   * Multipart initiate for a key the SERVER already chose.
+   *
+   * `createMultipartUpload` above is the requester-upload path: it mints a
+   * `tmp/` key and creates a Pending source asset to go with it. The device
+   * render path needs neither — the output key was minted when the render
+   * attempt was created (so a phone cannot choose where its export lands), and
+   * the asset is only created once the uploaded object has been verified.
+   * Sharing the asset-creating method would have meant a Pending *source* asset
+   * for every render, which then counts against the requester's upload quota.
+   */
+  async createMultipartUploadForKey(input: {
+    key: string;
+    mimeType: string;
+  }): Promise<{ uploadId: string; partSize: number }> {
+    const created = await spacesClient.send(
+      new CreateMultipartUploadCommand({
+        Bucket: SPACES_BUCKET,
+        Key: input.key,
+        ContentType: input.mimeType,
+      })
+    );
+    if (!created.UploadId) {
+      throw new Error("Spaces did not return an UploadId for the multipart upload.");
+    }
+    return { uploadId: created.UploadId, partSize: MULTIPART_PART_SIZE };
+  }
+
+  /**
+   * A single presigned PUT for a key the server chose — used for the small
+   * JPEG cover a device extracts from its finished export. A multipart upload
+   * for a sub-megabyte file would be three round trips to save nothing.
+   */
+  async signPutUrl(input: { key: string; mimeType: string }): Promise<string> {
+    return getSignedUrl(
+      spacesClient,
+      new PutObjectCommand({
+        Bucket: SPACES_BUCKET,
+        Key: input.key,
+        ContentType: input.mimeType,
+      }),
+      { expiresIn: PRESIGNED_URL_TTL }
+    );
+  }
+
+  /**
    * Step 3 of the upload flow.
    *
    * Called after the client has successfully PUT the file to the presigned URL.

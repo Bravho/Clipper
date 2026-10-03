@@ -3,6 +3,31 @@ import { NextResponse } from "next/server";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 import { logAuthEvent } from "@/lib/auth/diagnostics";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
+import { isBrowserMarketingOnly } from "@/config/studioRollout";
+
+/**
+ * Requester pages a WEB BROWSER may still open once the browser is the
+ * marketing site (BROWSER_MARKETING_ONLY): the account, credits and pricing
+ * (Stripe top-ups and packages stay available on the web), the legal page,
+ * and the two Channel Management pages a browser can land on by itself — the
+ * social-account OAuth return and the publishing-package purchase.
+ * Everything else a requester does happens in the app.
+ */
+const BROWSER_REQUESTER_PATHS = [
+  ROUTES.ACCOUNT,
+  ROUTES.CREDITS,
+  ROUTES.PRICING,
+  ROUTES.LEGAL,
+  ROUTES.MANAGEMENT_CONNECTIONS,
+  ROUTES.MANAGEMENT_PAYMENTS,
+];
+
+function browserMayOpen(pathname: string): boolean {
+  return BROWSER_REQUESTER_PATHS.some(
+    (allowed) => pathname === allowed || pathname.startsWith(`${allowed}/`)
+  );
+}
 
 /**
  * Clipper route protection middleware.
@@ -15,8 +40,14 @@ import { logAuthEvent } from "@/lib/auth/diagnostics";
  *
  * Route mapping:
  *   /dashboard  → Requester only
+ *   /studio     → Requester only (the phone studio)
  *   /admin      → Admin only
  *   /account    → Any authenticated user
+ *
+ * Browser vs app: the app shells append `RClipperNative/<platform>` to the
+ * user agent. With BROWSER_MARKETING_ONLY on, a requester in a web browser is
+ * sent to "get the app" for everything but BROWSER_REQUESTER_PATHS. Admin
+ * pages are never affected — admins work in a browser.
  */
 export default withAuth(
   function middleware(req: NextRequestWithAuth) {
@@ -44,8 +75,8 @@ export default withAuth(
       }
     }
 
-    // /dashboard — Requester only
-    if (pathname.startsWith(ROUTES.DASHBOARD)) {
+    // /dashboard and /studio — Requester only
+    if (pathname.startsWith(ROUTES.DASHBOARD) || pathname.startsWith(ROUTES.STUDIO)) {
       if (role !== Role.Requester) {
         logAuthEvent("middleware_redirect", {
           path: pathname,
@@ -54,6 +85,21 @@ export default withAuth(
         });
         return NextResponse.redirect(new URL(ROUTES.ADMIN, req.url));
       }
+    }
+
+    // The browser is the marketing site: requester work happens in the app.
+    if (
+      role === Role.Requester &&
+      isBrowserMarketingOnly() &&
+      !isAppUserAgent(req.headers.get("user-agent")) &&
+      !browserMayOpen(pathname)
+    ) {
+      logAuthEvent("middleware_redirect", {
+        path: pathname,
+        role,
+        reason: "browser_marketing_only",
+      });
+      return NextResponse.redirect(new URL(ROUTES.GET_THE_APP, req.url));
     }
 
     // /account — any authenticated role (no additional check needed)
@@ -70,6 +116,7 @@ export default withAuth(
 export const config = {
   matcher: [
     "/dashboard/:path*",
+    "/studio/:path*",
     "/admin/:path*",
     "/account/:path*",
   ],

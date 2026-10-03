@@ -31,9 +31,9 @@
     /* Respect device safe areas (notch / home indicator) when installed as a
        PWA or run inside the Capacitor WebView with viewport-fit=cover.
        The TOP inset is deliberately NOT applied here — the navbar handles it
-       itself (see .app-safe-top) so the dark bar bleeds into the status-bar
-       area rather than leaving a pale strip above it, which is what
-       `statusBarStyle: "black-translucent"` expects. */
+       itself (see .app-safe-top) so the app bar's white runs up under the
+       status bar instead of leaving a strip of page grey above it. The
+       status-bar text is set dark to match (NativeStatusBar, layout.tsx). */
     padding-bottom: env(safe-area-inset-bottom);
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);

@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/types/**/*.d.ts",
+    "src/features/device-render/**/*",
+    "src/features/requests/localMediaStore.ts",
+    "src/features/requests/components/ClipTrimBar.tsx",
+    "src/features/requests/components/GoogleMapLocationPicker.tsx",
+    "src/lib/mobile/**/*.ts",
+    "src/app/api/device-render/**/*.ts",
+    "src/app/device-render-lab/page.tsx",
+    "tests/features/deviceStudioBrief.test.ts",
+    "src/app/api/requests/[[]id]/submit/route.ts",
+    "src/app/api/requests/**/submit/route.ts"
+  ]
+}

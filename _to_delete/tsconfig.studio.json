@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/features/device-render/**/*.ts",
+    "src/features/device-render/**/*.tsx",
+    "src/lib/mobile/**/*.ts",
+    "src/app/api/device-render/**/*.ts",
+    "next-env.d.ts",
+    "src/types/**/*.d.ts",
+    "src/features/requests/validation/**/*.ts",
+    "tests/features/deviceStudioBrief.test.ts",
+    "src/domain/enums/**/*.ts",
+    "src/config/**/*.ts"
+  ]
+}

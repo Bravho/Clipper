@@ -41,7 +41,7 @@ PODS:
     - Alamofire (~> 5.10.2)
     - Capacitor
     - GoogleSignIn (~> 9.0.0)
-  - CapgoNativePurchases (8.6.4):
+  - CapgoNativePurchases (8.8.0):
     - Capacitor
   - GoogleSignIn (9.0.0):
     - AppAuth (~> 2.0)
@@ -147,7 +147,7 @@ SPEC CHECKSUMS:
   CapacitorSplashScreen: 7bf61c2001557ff9e195e601c6b87344480d3c65
   CapacitorStatusBar: eca7bc2b58d9f886f1ef9edb66e57a9b29c121af
   CapgoCapacitorSocialLogin: 00382bf1c343972d9ae5aa6fd051e663f79c3995
-  CapgoNativePurchases: dc3a1624ce42b90f5781b0e4a68121330952d3eb
+  CapgoNativePurchases: 57547df906ffe5d3c7e9aad80da5dc8c31e604fb
   GoogleSignIn: c7f09cfbc85a1abf69187be091997c317cc33b77
   GoogleUtilities: 766ace00c6b10d8148408f329d10c4f051931850
   GTMAppAuth: 217a876b249c3c585a54fd6f73e6b58c4f5c4238

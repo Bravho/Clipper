@@ -93,7 +93,59 @@ export interface ClipTrimBarProps {
    *  matches how the clip will appear in the final channel-shaped video. */
   aspectRatio?: string | null;
   onChange: (trim: { start: number; end: number }) => void;
+  /** Screen words. Defaults are the request page's Thai; the English studio
+   *  passes `CLIP_TRIM_LABELS_EN`. */
+  labels?: Partial<ClipTrimLabels>;
 }
+
+export interface ClipTrimLabels {
+  clip: string;
+  playFailed: string;
+  loadFailed: string;
+  playClip: string;
+  pauseClip: string;
+  loading: (percent: number) => string;
+  loadingClip: string;
+  startHandle: string;
+  endHandle: string;
+  pause: string;
+  playWindow: string;
+  /** Everything before the kept length, which is shown in bold after it. */
+  windowPrefix: (start: number, end: number) => string;
+  lengthUnit: string;
+}
+
+const CLIP_TRIM_LABELS_TH: ClipTrimLabels = {
+  clip: "คลิป",
+  playFailed: "เล่นคลิปนี้ไม่ได้ ลองกดใหม่อีกครั้ง",
+  loadFailed: "โหลดคลิปไม่สำเร็จ",
+  playClip: "เล่นคลิป",
+  pauseClip: "หยุดคลิป",
+  loading: (percent) => `กำลังโหลด ${percent}%`,
+  loadingClip: "กำลังโหลดคลิป…",
+  startHandle: "จุดเริ่มคลิป",
+  endHandle: "จุดจบคลิป",
+  pause: "⏸ หยุด",
+  playWindow: "▶ เล่นช่วงที่เลือก",
+  windowPrefix: (start, end) => `เริ่ม ${start} วิ · จบ ${end} วิ · ยาว `,
+  lengthUnit: " วิ",
+};
+
+export const CLIP_TRIM_LABELS_EN: ClipTrimLabels = {
+  clip: "Clip",
+  playFailed: "This clip would not play. Tap to try again.",
+  loadFailed: "The clip could not be loaded.",
+  playClip: "Play clip",
+  pauseClip: "Pause clip",
+  loading: (percent) => `Loading ${percent}%`,
+  loadingClip: "Loading the clip…",
+  startHandle: "Clip start",
+  endHandle: "Clip end",
+  pause: "⏸ Pause",
+  playWindow: "▶ Play the kept part",
+  windowPrefix: (start, end) => `Start ${start}s · end ${end}s · keeps `,
+  lengthUnit: "s",
+};
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -111,7 +163,9 @@ export function ClipTrimBar({
   trimEndSeconds,
   aspectRatio,
   onChange,
+  labels,
 }: ClipTrimBarProps) {
+  const words: ClipTrimLabels = { ...CLIP_TRIM_LABELS_TH, ...labels };
   const previewRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
@@ -326,7 +380,7 @@ export function ClipTrimBar({
           if (cancelled) return;
           setWantPlay(false);
           setIsPlaying(false);
-          setMediaError("เล่นคลิปนี้ไม่ได้ ลองกดใหม่อีกครั้ง");
+          setMediaError(words.playFailed);
         });
     };
 
@@ -338,7 +392,7 @@ export function ClipTrimBar({
       el.removeEventListener("loadedmetadata", attempt);
       el.removeEventListener("canplay", attempt);
     };
-  }, [wantPlay, armed]);
+  }, [wantPlay, armed, words.playFailed]);
 
   const togglePlay = () => {
     if (isPlaying || wantPlay) {
@@ -585,7 +639,7 @@ export function ClipTrimBar({
             onError={() => {
               setWantPlay(false);
               setIsPlaying(false);
-              setMediaError("โหลดคลิปไม่สำเร็จ");
+              setMediaError(words.loadFailed);
             }}
             onEnded={() => {
               const el = previewRef.current;
@@ -601,7 +655,7 @@ export function ClipTrimBar({
               no poster (grey placeholder) with something readable. */}
           {showPoster && !posterUrl && (
             <div className="absolute inset-0 flex items-center justify-center bg-slate-800 text-xs text-slate-300">
-              คลิป
+              {words.clip}
             </div>
           )}
 
@@ -610,14 +664,14 @@ export function ClipTrimBar({
           <button
             type="button"
             onClick={togglePlay}
-            aria-label={isPlaying ? "หยุดคลิป" : "เล่นคลิป"}
+            aria-label={isPlaying ? words.pauseClip : words.playClip}
             className="absolute inset-0 flex items-center justify-center focus:outline-none"
           >
             {waiting ? (
               <span className="flex flex-col items-center gap-2 rounded-lg bg-black/60 px-4 py-3">
                 <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                 <span className="text-[11px] font-medium tabular-nums text-white">
-                  กำลังโหลด {loadPct}%
+                  {words.loading(loadPct)}
                 </span>
               </span>
             ) : !isPlaying ? (
@@ -641,7 +695,7 @@ export function ClipTrimBar({
       )}
 
       {duration == null ? (
-        <p className="text-[11px] text-slate-400">กำลังโหลดคลิป…</p>
+        <p className="text-[11px] text-slate-400">{words.loadingClip}</p>
       ) : (
         <>
           <div
@@ -679,7 +733,7 @@ export function ClipTrimBar({
             {/* Start handle */}
             <div
               role="slider"
-              aria-label="จุดเริ่มคลิป"
+              aria-label={words.startHandle}
               aria-valuenow={round2(start)}
               tabIndex={0}
               onPointerDown={(e) => {
@@ -704,7 +758,7 @@ export function ClipTrimBar({
             {/* End handle */}
             <div
               role="slider"
-              aria-label="จุดจบคลิป"
+              aria-label={words.endHandle}
               aria-valuenow={round2(end)}
               tabIndex={0}
               onPointerDown={(e) => {
@@ -734,11 +788,12 @@ export function ClipTrimBar({
               onClick={togglePlay}
               className="rounded border border-slate-200 bg-white px-2 py-0.5 font-medium text-slate-600 hover:bg-slate-50"
             >
-              {isPlaying ? "⏸ หยุด" : waiting ? `⏳ กำลังโหลด ${loadPct}%` : "▶ เล่นช่วงที่เลือก"}
+              {isPlaying ? words.pause : waiting ? `⏳ ${words.loading(loadPct)}` : words.playWindow}
             </button>
             <span className="tabular-nums">
-              เริ่ม {round2(start)} วิ · จบ {round2(end)} วิ · ยาว{" "}
-              <span className="font-semibold text-slate-700">{round2(windowSeconds)}</span> วิ
+              {words.windowPrefix(round2(start), round2(end))}
+              <span className="font-semibold text-slate-700">{round2(windowSeconds)}</span>
+              {words.lengthUnit}
             </span>
           </div>
         </>

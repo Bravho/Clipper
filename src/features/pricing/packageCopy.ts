@@ -61,7 +61,7 @@ export function managementPackageCopy(
   product: Pick<
     ManagementProduct,
     "code" | "productType" | "durationMonths" | "uploadAllowance" | "accessWindowDays"
-  > & { videoMonths?: number | null }
+  > & { videoMonths?: number | null; videoRequestsPerMonth?: number | null }
 ): PackageCopy {
   // The catalogue holds the i18n keys; the DB row holds the price and the
   // entitlement terms. Falling back to the DB row's own shape (rather than
@@ -70,6 +70,13 @@ export function managementPackageCopy(
   const definition: ManagementProductDefinition | null = findManagementProduct(
     product.code
   );
+
+  // Videos a month for a package: Starter 5, Pro 10 (config/packageTiers.ts).
+  // Retired video-only products and anything unknown say the historical 10.
+  const videosPerMonth =
+    product.videoRequestsPerMonth ??
+    definition?.videoRequestsPerMonth ??
+    REQUESTS_PER_PAID_MONTH;
 
   const uploads = product.uploadAllowance ?? 4;
   const days = product.accessWindowDays ?? 30;
@@ -81,7 +88,7 @@ export function managementPackageCopy(
   const name = definition ? t(definition.nameKey as MessageKey) : product.code;
   const description = definition
     ? t(definition.descriptionKey as MessageKey, {
-        paidTotal: REQUESTS_PER_PAID_MONTH,
+        paidTotal: videosPerMonth,
         months: product.durationMonths ?? 0,
         uploads,
         days,
@@ -93,7 +100,7 @@ export function managementPackageCopy(
       ? t("pricing.terms.uploadBundle", { uploads, days })
       : product.videoMonths
         ? t("pricing.terms.bundle", {
-            paidTotal: REQUESTS_PER_PAID_MONTH,
+            paidTotal: videosPerMonth,
             duration,
           })
         : t("pricing.terms.publishing", { duration });

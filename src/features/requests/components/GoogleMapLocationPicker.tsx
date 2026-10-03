@@ -125,6 +125,31 @@ function normalizeMarkerPosition(
   return null;
 }
 
+/**
+ * Look a place name up on Google Maps without opening the picker.
+ *
+ * The same Geocoder call the picker makes when it opens, pulled out so a caller
+ * that only needs coordinates — the phone studio saving its brief — gets the
+ * identical answer the map would have shown, from the identical script load.
+ * Resolves null when Google has no match; rejects only when Maps itself could
+ * not be loaded, because those are different problems for the person to fix.
+ */
+export async function geocodePlaceName(placeName: string): Promise<Coordinates | null> {
+  const address = placeName.trim();
+  if (!address) return null;
+  const maps = await loadGoogleMaps();
+  return new Promise<Coordinates | null>((resolve) => {
+    new maps.Geocoder().geocode({ address, region: "TH" }, (results, status) => {
+      const location = results?.[0]?.geometry.location;
+      resolve(
+        status === "OK" && location
+          ? { latitude: location.lat(), longitude: location.lng() }
+          : null
+      );
+    });
+  });
+}
+
 const BANGKOK = { latitude: 13.756331, longitude: 100.501762 };
 
 export function GoogleMapLocationPicker({

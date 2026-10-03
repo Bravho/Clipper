@@ -11,8 +11,12 @@ import { WebPushRegistration } from "@/components/pwa/WebPushRegistration";
 import { NativeDeepLinkHandler } from "@/components/mobile/NativeDeepLinkHandler";
 import { AppleReturnRecovery } from "@/components/mobile/AppleReturnRecovery";
 import { NativePushRegistration } from "@/components/mobile/NativePushRegistration";
+import { NativeStatusBar } from "@/components/mobile/NativeStatusBar";
 import { initEditorSeedData } from "@/seed/editorSeedData";
 import { getServerLocale } from "@/i18n/server";
+import { headers } from "next/headers";
+import { Role } from "@/domain/enums/Role";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import "./globals.css";
 
 // Seed editor profiles into the in-memory mock store on first server render
@@ -30,7 +34,8 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "RClipper",
-    statusBarStyle: "black-translucent",
+    // Light app bar: dark status-bar text on a light background.
+    statusBarStyle: "default",
   },
   icons: {
     icon: [
@@ -44,7 +49,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0f172a",
+  themeColor: "#ffffff",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -57,6 +62,11 @@ export default async function RootLayout({
 }) {
   const session = await getServerSession(authOptions);
   const locale = getServerLocale();
+  // "New video" (the studio) is an app feature: offered to requesters inside
+  // the app shell, and in `next dev` so the editor can be reached at a desk.
+  const showStudio =
+    session?.user?.role === Role.Requester &&
+    (process.env.NODE_ENV === "development" || isAppUserAgent(headers().get("user-agent")));
 
   return (
     <html lang={locale}>
@@ -76,7 +86,8 @@ export default async function RootLayout({
                 Apple sign-in that would have created one was interrupted. */}
             <AppleReturnRecovery />
             <NativePushRegistration />
-            <Navbar />
+            <NativeStatusBar />
+            <Navbar showStudio={showStudio} />
             {/* min-w-0 lets flex children shrink below their content width,
                 which is what stops wide cards/tables forcing a page-level
                 horizontal scroll on phones. */}

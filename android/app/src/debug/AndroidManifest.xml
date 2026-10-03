@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Local device-render lab uses an HTTP server on the development LAN.
+         This applies only to debug APKs; release builds retain Android's
+         default cleartext denial. -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

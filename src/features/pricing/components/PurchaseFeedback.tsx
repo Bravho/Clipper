@@ -27,6 +27,10 @@ interface ConfirmProps {
   packageName: string;
   priceCredits: number;
   balanceCredits: number;
+  /** What the package includes ("5 videos/month · unlimited publishing · 1 month"). */
+  terms?: string | null;
+  /** The limits every video has on it, so they are read before paying. */
+  limits?: string | null;
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -37,6 +41,8 @@ export function ConfirmPurchaseDialog({
   packageName,
   priceCredits,
   balanceCredits,
+  terms = null,
+  limits = null,
   busy = false,
   onConfirm,
   onCancel,
@@ -101,6 +107,21 @@ export function ConfirmPurchaseDialog({
             </dd>
           </div>
         </dl>
+
+        {(terms || limits) && (
+          <div className="mt-3 space-y-1 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            {terms && (
+              <p>
+                <span className="font-semibold">{t("pricing.confirm.includes")}</span> {terms}
+              </p>
+            )}
+            {limits && (
+              <p>
+                <span className="font-semibold">{t("pricing.confirm.limits")}</span> {limits}
+              </p>
+            )}
+          </div>
+        )}
 
         <p className="mt-3 text-xs text-slate-400">{t("pricing.confirm.note")}</p>
 

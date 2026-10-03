@@ -32,9 +32,13 @@ import {
   isManagementEnabledFor,
   managementRetainedExpiryFrom,
   managementRetainedDays,
+  MANAGEMENT_PACKAGES_ON_SALE,
+  ENTRY_PACKAGE,
+  isManagementProductOnSale,
+  packagesForTier,
 } from "@/config/management";
+import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { isManagementProductCode } from "@/domain/enums/ManagementProductCode";
-import { VIDEO_PACKAGES } from "@/config/videoPackages";
 
 // The feature flag is read from the environment on each call, so setting it here
 // is enough — no module re-import needed.
@@ -116,19 +120,37 @@ function serviceWith(stubs: Stubs) {
 }
 
 describe("product catalogue", () => {
-  it("defines exactly the nine one-time products", () => {
-    expect(MANAGEMENT_PRODUCTS).toHaveLength(9);
+  it("defines the thirteen one-time products: five retired, eight on sale", () => {
     expect(MANAGEMENT_PRODUCTS.map((p) => p.code)).toEqual([
       "management_single_video",
       "management_access_1_month",
       "management_access_3_months",
       "management_access_6_months",
       "management_access_1_year",
+      "management_starter_1_month",
+      "management_starter_3_months",
+      "management_starter_6_months",
+      "management_starter_1_year",
       "management_bundle_1_month",
       "management_bundle_3_months",
       "management_bundle_6_months",
       "management_bundle_1_year",
     ]);
+    // Only the Starter and Pro packages are sold (2026-09-27).
+    expect(MANAGEMENT_PACKAGES_ON_SALE.map((p) => p.code)).toEqual([
+      "management_starter_1_month",
+      "management_starter_3_months",
+      "management_starter_6_months",
+      "management_starter_1_year",
+      "management_bundle_1_month",
+      "management_bundle_3_months",
+      "management_bundle_6_months",
+      "management_bundle_1_year",
+    ]);
+    expect(isManagementProductOnSale("management_access_1_month")).toBe(false);
+    expect(isManagementProductOnSale("management_single_video")).toBe(false);
+    expect(isManagementProductOnSale("management_starter_1_month")).toBe(true);
+    expect(ENTRY_PACKAGE.code).toBe("management_starter_1_month");
   });
 
   it("gives the single-video unlock no duration and each pass the right one", () => {
@@ -154,36 +176,45 @@ describe("product catalogue", () => {
     expect(managementPriceCredits(findManagementProduct("management_access_1_year")!)).toBe(2000);
   });
 
-  it("prices the bundles as agreed, and each undercuts buying the halves apart", () => {
-    const bundle = {
-      management_bundle_1_month: 350,
-      management_bundle_3_months: 1000,
-      management_bundle_6_months: 1900,
-      management_bundle_1_year: 3500,
+  it("prices the two tiers as agreed, with longer terms cheaper per month", () => {
+    const ladder = {
+      starter: { 1: 190, 3: 540, 6: 1030, 12: 1890 },
+      pro: { 1: 350, 3: 990, 6: 1890, 12: 3490 },
     } as const;
 
-    for (const [code, price] of Object.entries(bundle)) {
-      const product = findManagementProduct(code)!;
-      expect(managementPriceCredits(product)).toBe(price);
-
-      // A bundle grants the same months of BOTH halves.
-      expect(product.videoMonths).toBe(product.durationMonths);
-
-      // And it must actually be a saving, or the section calling it "best value"
-      // is lying. Compare against the pass + video package of the same term.
-      const pass = MANAGEMENT_PRODUCTS.find(
-        (p) => p.videoMonths == null && p.durationMonths === product.durationMonths
-      )!;
-      const videoPkg = VIDEO_PACKAGES.find((v) => v.months === product.durationMonths)!;
-      const apart = managementPriceCredits(pass) + videoPkg.priceCredits;
-      expect(price).toBeLessThan(apart);
+    for (const tier of ["starter", "pro"] as const) {
+      const products = packagesForTier(tier);
+      expect(products.map((p) => p.durationMonths)).toEqual([1, 3, 6, 12]);
+      let previousPerMonth = Number.POSITIVE_INFINITY;
+      for (const product of products) {
+        const months = product.durationMonths as 1 | 3 | 6 | 12;
+        expect(managementPriceCredits(product)).toBe(ladder[tier][months]);
+        // A package grants the same months of BOTH halves.
+        expect(product.videoMonths).toBe(product.durationMonths);
+        expect(product.videoRequestsPerMonth).toBe(PACKAGE_TIER_REQUESTS[tier]);
+        const perMonth = managementPriceCredits(product) / months;
+        expect(perMonth).toBeLessThan(previousPerMonth);
+        previousPerMonth = perMonth;
+      }
     }
   });
 
-  it("marks only the bundles as granting video months", () => {
+  it("prices every Starter term a little above half of the same Pro term", () => {
+    for (const starter of packagesForTier("starter")) {
+      const pro = packagesForTier("pro").find((p) => p.durationMonths === starter.durationMonths)!;
+      const ratio = managementPriceCredits(starter) / managementPriceCredits(pro);
+      expect(ratio).toBeGreaterThan(0.5);
+      expect(ratio).toBeLessThan(0.6);
+    }
+  });
+
+  it("marks only the packages as granting video months", () => {
     for (const product of MANAGEMENT_PRODUCTS) {
-      const isBundle = product.code.startsWith("management_bundle_");
-      expect(product.videoMonths != null).toBe(isBundle);
+      const isPackage =
+        product.code.startsWith("management_bundle_") ||
+        product.code.startsWith("management_starter_");
+      expect(product.videoMonths != null).toBe(isPackage);
+      expect(product.onSale).toBe(isPackage);
     }
   });
 

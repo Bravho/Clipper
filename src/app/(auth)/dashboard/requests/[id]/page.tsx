@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import dynamicImport from "next/dynamic";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { headers } from "next/headers";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
-import { ROUTES } from "@/config/routes";
+import { ROUTES, studioPath } from "@/config/routes";
 import { clipRequestService } from "@/services/ClipRequestService";
 import { videoGenerationService } from "@/services/VideoGenerationService";
 import { requestPresentationService } from "@/services/RequestPresentationService";
@@ -57,6 +59,15 @@ const DistributionReviewPanel = dynamicImport(() =>
 const PipelineFailurePanel = dynamicImport(() =>
   import("@/features/requests/components/PipelineFailurePanel").then(
     (module) => module.PipelineFailurePanel
+  )
+);
+// No `ssr: false` here: this page is a Server Component, where that option is
+// rejected. The component is safe to render on the server anyway — it decides
+// nothing until an effect has asked the native layer what this device can do,
+// and renders nothing at all until that answer arrives.
+const DeviceRenderRunner = dynamicImport(() =>
+  import("@/features/requests/components/DeviceRenderRunner").then(
+    (module) => module.DeviceRenderRunner
   )
 );
 const PipelineSection = dynamicImport(() =>
@@ -124,6 +135,14 @@ export default async function RequestDetailPage({
     // Avoid leaving rejected supporting reads unobserved on a not-found path.
     await supportingDataPromise.catch(() => undefined);
     notFound();
+  }
+
+  // A studio request (rendered on the phone) is worked on in the studio: inside
+  // the app, opening it from the list, a notification or a link goes straight
+  // back to the studio at its step. In a browser this page still shows it.
+  if (request.renderLocation === "device" && isAppUserAgent(headers().get("user-agent"))) {
+    await supportingDataPromise.catch(() => undefined);
+    redirect(studioPath(request.id));
   }
 
   const [assets, publishingLinks, statusHistory, rawPipelineJob] = await supportingDataPromise;
@@ -480,6 +499,19 @@ export default async function RequestDetailPage({
           </div>
         )}
       </Card>
+
+      {/*
+        This request's originals never left the requester's phone, so its render
+        steps are device_only and no worker will ever claim them. The renderer
+        below is what makes them happen; it is inert on any other device, and
+        absent entirely for the server-rendered requests that are still the
+        default.
+      */}
+      {request.renderLocation === "device" &&
+        pipelineJob &&
+        pipelineJob.currentStep !== VideoGenerationStep.Complete && (
+          <DeviceRenderRunner requestId={id} />
+        )}
 
       {/* Re-analyze prompt — shown when request is submitted but no pipeline job exists yet */}
       {request.status === RequestStatus.Submitted && !pipelineJob && (

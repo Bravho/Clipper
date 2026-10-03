@@ -44,6 +44,7 @@ import { ManagementEntitlementType } from "@/domain/enums/ManagementStatus";
 import { hasUsableMedia } from "@/domain/models/ManagementContent";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
+import { RequestStatus } from "@/domain/enums/RequestStatus";
 import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import { isManagementEnabledFor } from "@/config/management";
 
@@ -172,7 +173,12 @@ export class ManagementEntitlementService {
     if (!job) return no("generation_incomplete");
     const finished =
       job.status === VideoGenerationJobStatus.Complete ||
-      COMPLETED_STEPS.includes(job.currentStep);
+      COMPLETED_STEPS.includes(job.currentStep) ||
+      // Already delivered once, and now making a channel shape that was
+      // skipped (the studio's Channels step). The videos that were delivered
+      // stay transferable while the new one renders.
+      (request.status === RequestStatus.Delivered &&
+        job.currentStep === VideoGenerationStep.GeneratingAdditionalRatios);
     if (!finished) return no("generation_incomplete");
 
     const videoCount = eligibleExportAssetIds(job).length;

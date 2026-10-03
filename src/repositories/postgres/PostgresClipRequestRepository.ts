@@ -60,6 +60,9 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     amountPaidBaht: parseFloat((row.amount_paid_baht as string) ?? "0"),
     revisionCount: (row.revision_count as number) ?? 0,
     downloadUnlocked: (row.download_unlocked as boolean) ?? false,
+    // Absent on every row created before migration 036, which is exactly the
+    // set of requests that must keep rendering on the Mac Mini.
+    renderLocation: ((row.render_location as string) === "device" ? "device" : "server"),
     isTrialRequest: (row.is_trial_request as boolean) ?? false,
     pricingTier: (row.pricing_tier as RequestPricingTier) ?? RequestPricingTier.Free,
     videoAllowanceWindowId: (row.video_allowance_window_id as string) ?? null,
@@ -113,6 +116,7 @@ const STATUS_EXTRA_COLS: Record<string, string> = {
   amountPaidBaht: "amount_paid_baht",
   revisionCount: "revision_count",
   downloadUnlocked: "download_unlocked",
+  renderLocation: "render_location",
   isTrialRequest: "is_trial_request",
   pricingTier: "pricing_tier",
   videoAllowanceWindowId: "video_allowance_window_id",
@@ -363,6 +367,7 @@ export class PostgresClipRequestRepository
         | "amountPaidBaht"
         | "revisionCount"
         | "downloadUnlocked"
+        | "renderLocation"
         | "isTrialRequest"
         | "pricingTier"
         | "videoAllowanceWindowId"

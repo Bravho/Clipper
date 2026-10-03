@@ -7,8 +7,17 @@ import { ScenePlan, StoryboardScene } from "@/domain/models/VideoGenerationJob";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { sanitizeStoryboard } from "@/lib/ai/storyboard";
+import {
+  countScriptUnits,
+  maxScriptUnits,
+  scriptLanguageOf,
+  scriptUnitName,
+  trimScriptToFit,
+  type ScriptLanguage,
+} from "@/lib/ai/scriptLength";
 import { extractVideoFrames } from "@/lib/ai/videoFrames";
 import type { AppLocale } from "@/i18n/config";
+import type { LocalAnalysisFrame } from "@/lib/mobile/localMediaContract";
 
 export interface ChatGptContentOutput {
   scenePlan: ScenePlan[];
@@ -43,6 +52,8 @@ export interface SceneDesignOutput {
 
 export interface GenerateContentParams {
   imageUrls: string[];
+  /** Transient phone-generated frames. Never persisted by the server. */
+  inlineFrames?: LocalAnalysisFrame[];
   /** Exact requester-entered place/business name. Never rewrite or split it. */
   placeName?: string;
   /** UI-selected content language captured when the request was created. */
@@ -114,7 +125,7 @@ Your task is to review the requester brief, uploaded images, target platforms, p
 
 Requirements:
 - Fit the script comfortably within the requested Duration in the user prompt. Reserve roughly 20% for the hook and 15% for a gentle call-to-action; use the remainder for the main content.
-- Thai script: natural spoken Thai, approximately 2.5-3 spoken words per second of requested duration. Prefer a slightly short script over one that risks exceeding the video.
+- LENGTH IS A HARD LIMIT: the user prompt gives a "HARD LENGTH LIMIT" for the script. The script MUST stay within it — the voice made from it has to finish before the picked scenes end. Write short, simple sentences. When in doubt, cut a sentence; a script that is too short is fine, one that is too long is not.
 - TTS-safe text only: use clear standard Thai words and spelling suitable for AI text-to-speech. Avoid English loanwords, abbreviations, slang, ambiguous spellings, numerals/symbols, and uncommon words that an AI voice could mispronounce. Write numbers and units as Thai words.
 - Natural, non-forceful tone (IMPORTANT for the voice-over): write the way a friendly local person actually speaks — warm, relaxed, sincere, and conversational. Do NOT use hard-sell or over-convincing advertising language, hype words, exaggerated superlatives ("ที่สุด", "ดีที่สุดในโลก", "ห้ามพลาด"), or pushy, insistent, commanding phrasing. Over-convincing, salesy wording makes the AI voice sound unnatural and forceful. Let the food and the place speak for themselves, and keep the call-to-action a soft, gentle invitation rather than a forceful command.
 - Place name (IMPORTANT): If the requester provided a specific place, shop, restaurant, cafe, or venue name in the clip title (ชื่อคลิป) or clip description (รายละเอียดคลิป), you MUST naturally include that place name in the spoken script — for example in the hook or the call-to-action — so the voice-over actually says the name. Keep it natural, and make sure it stays TTS-safe (spell it in clear Thai). If no place name was provided by the requester, do NOT invent one.
@@ -321,7 +332,26 @@ async function generateWithImages<T>(params: GenerateContentParams, prompt: stri
   // sampled frames (i.e. more image parts than assets).
   const contents: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [];
 
-  for (let index = 0; index < params.imageUrls.length; index++) {
+  if (params.inlineFrames?.length) {
+    const byIndex = new Map<number, LocalAnalysisFrame[]>();
+    for (const frame of params.inlineFrames) {
+      const frames = byIndex.get(frame.assetIndex) ?? [];
+      frames.push(frame);
+      byIndex.set(frame.assetIndex, frames);
+    }
+    for (let index = 0; index < params.imageUrls.length; index++) {
+      const frames = byIndex.get(index) ?? [];
+      if (frames.length === 0) continue;
+      contents.push({
+        text: `Device-local asset index ${index} (${frames.length} derived analysis frame(s); original remains on the phone):`,
+      });
+      for (const frame of frames) {
+        contents.push({
+          inlineData: { data: frame.dataBase64, mimeType: frame.mimeType },
+        });
+      }
+    }
+  } else for (let index = 0; index < params.imageUrls.length; index++) {
     const url = params.imageUrls[index];
     const { buffer, mimeType } = await downloadObjectBuffer(url);
 
@@ -366,13 +396,25 @@ async function generateWithImages<T>(params: GenerateContentParams, prompt: stri
 export async function generateSpeakingScript(
   params: GenerateContentParams
 ): Promise<SpeakingScriptOutput> {
+  const seconds = params.videoDurationSeconds ?? 15;
+  const language = scriptLanguageOf(params.contentLanguage);
+  const maxUnits = maxScriptUnits(seconds, language);
+  const lengthRule = [
+    `HARD LENGTH LIMIT for "scriptThai": at most ${maxUnits} ${scriptUnitName(language)} in total.`,
+    `That is what an AI voice can say in about ${Math.round(seconds)} seconds, the length of the picked scenes. Aim for about ${Math.floor(maxUnits * 0.85)}; never exceed ${maxUnits}.`,
+  ].join("\n");
   const output = await generateWithImages<SpeakingScriptOutput & { storyboard?: unknown }>(
     params,
-    `${SCRIPT_ONLY_SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}`
+    `${SCRIPT_ONLY_SYSTEM_PROMPT}\n\n${buildUserPrompt(params)}\n${lengthRule}`
+  );
+  const script = await fitScriptToLength(
+    sanitizeThaiVoiceScript(output.scriptThai ?? ""),
+    seconds,
+    language
   );
   return {
     ...output,
-    scriptThai: sanitizeThaiVoiceScript(output.scriptThai),
+    scriptThai: script,
     // Always return a usable storyboard — repair the model output or fall back.
     storyboard: sanitizeStoryboard(output.storyboard, params.imageUrls.length),
   };
@@ -393,4 +435,49 @@ export async function generateSceneDesignFromScript(
     ...output,
     scenePlan: sanitizeScenePlanDescriptions(output.scenePlan),
   };
+}
+
+/**
+ * Hold the speaking script to its length budget (see `scriptLength.ts`): one
+ * text-only "shorten it" pass when the model overshot, then — only if that is
+ * still too long or fails — a trim at a sentence/phrase boundary.
+ */
+async function fitScriptToLength(
+  script: string,
+  seconds: number,
+  language: ScriptLanguage
+): Promise<string> {
+  const max = maxScriptUnits(seconds, language);
+  const count = countScriptUnits(script, language);
+  if (count <= max) return script;
+  console.warn(`[Script length] ${count} units > ${max} for ${seconds}s (${language}); shortening`);
+
+  let shortened = script;
+  try {
+    const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+    const response = await ai.models.generateContent({
+      model: AI_CONFIG.gemini.visionModel,
+      contents: [
+        {
+          text: [
+            "Shorten this voice-over script so an AI voice can say it within the time limit.",
+            `HARD LIMIT: at most ${max} ${scriptUnitName(language)}; aim for about ${Math.floor(max * 0.85)}. It is currently ${count}.`,
+            "Keep the same language, the opening hook, any place/shop name exactly as written, and a short gentle closing line. Remove the least important sentences and simplify the rest. Keep it natural and TTS-safe (no numerals, symbols, or abbreviations).",
+            'Respond with ONLY a JSON object: {"script": "string"}',
+            "",
+            "Script:",
+            script,
+          ].join("\n"),
+        },
+      ],
+      config: { responseMimeType: "application/json", temperature: 0.3 },
+    });
+    const parsed = JSON.parse(response.text ?? "{}") as { script?: unknown };
+    if (typeof parsed.script === "string" && parsed.script.trim()) {
+      shortened = sanitizeThaiVoiceScript(parsed.script);
+    }
+  } catch (err) {
+    console.error("[Script length] shorten pass failed:", err);
+  }
+  return trimScriptToFit(shortened, seconds, language);
 }

@@ -587,6 +587,117 @@ export async function probeMediaDurationSeconds(input: string): Promise<number> 
   return probeDurationSeconds(input);
 }
 
+/**
+ * What a rendered file actually IS, as ffprobe sees it.
+ *
+ * The device render path needs this: an export that a phone uploads has to be
+ * checked before it becomes a `FinalClip`, and the checks that matter are
+ * exactly the ones a human would make by opening the file — is there a picture,
+ * is there sound, is it the right shape, is it about the right length. The
+ * single most valuable field is `hasAudio`: a silent export is the specific
+ * failure the draft phone renderer kept producing, and it is invisible in a
+ * thumbnail.
+ *
+ * Accepts a local path or a remote URL (ffprobe reads the header only). Never
+ * throws — a probe that fails returns zeros/nulls so the caller decides what an
+ * unreadable file means, rather than a 500 escaping from an inspection.
+ */
+export interface MediaSummary {
+  durationSeconds: number;
+  hasVideo: boolean;
+  hasAudio: boolean;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  /** The frame size as STORED (coded). */
+  width: number | null;
+  height: number | null;
+  /**
+   * The rotation the file asks players to apply (0, 90, 180 or 270). Phone
+   * encoders often store a portrait video as landscape frames plus a 90°
+   * rotation tag — every player shows it upright, but the stored size is
+   * sideways.
+   */
+  rotation: number;
+  /** The frame size as SHOWN, i.e. after that rotation. */
+  displayWidth: number | null;
+  displayHeight: number | null;
+}
+
+/** Normalise ffprobe's rotation (a `rotate` tag, or display-matrix side data) to 0/90/180/270. */
+export function normaliseRotation(raw: unknown): number {
+  const value = typeof raw === "string" ? parseFloat(raw) : typeof raw === "number" ? raw : NaN;
+  if (!Number.isFinite(value)) return 0;
+  const quarter = Math.round(value / 90) * 90;
+  return ((quarter % 360) + 360) % 360;
+}
+
+export async function probeMediaSummary(input: string): Promise<MediaSummary> {
+  const empty: MediaSummary = {
+    durationSeconds: 0,
+    hasVideo: false,
+    hasAudio: false,
+    videoCodec: null,
+    audioCodec: null,
+    width: null,
+    height: null,
+    rotation: 0,
+    displayWidth: null,
+    displayHeight: null,
+  };
+
+  const ffmpeg = AI_CONFIG.ffmpeg.path ?? "ffmpeg";
+  const ffprobe = ffmpeg.replace(/ffmpeg(\.exe)?$/i, (m) =>
+    m.toLowerCase().endsWith(".exe") ? "ffprobe.exe" : "ffprobe"
+  );
+
+  try {
+    const { stdout } = await execFileAsync(ffprobe, [
+      "-v", "error",
+      "-show_entries",
+      "format=duration:stream=codec_type,codec_name,width,height:stream_tags=rotate:stream_side_data=rotation",
+      "-of", "json",
+      input,
+    ]);
+    const parsed = JSON.parse(stdout) as {
+      format?: { duration?: string };
+      streams?: {
+        codec_type?: string;
+        codec_name?: string;
+        width?: number;
+        height?: number;
+        tags?: { rotate?: string };
+        side_data_list?: { rotation?: number | string }[];
+      }[];
+    };
+
+    const duration = parseFloat(parsed.format?.duration ?? "");
+    const video = (parsed.streams ?? []).find((s) => s.codec_type === "video");
+    const audio = (parsed.streams ?? []).find((s) => s.codec_type === "audio");
+
+    const sideRotation = video?.side_data_list?.find((entry) => entry.rotation != null)?.rotation;
+    const rotation = normaliseRotation(sideRotation ?? video?.tags?.rotate);
+    const width = video?.width ?? null;
+    const height = video?.height ?? null;
+    const sideways = rotation === 90 || rotation === 270;
+
+    return {
+      durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : 0,
+      hasVideo: Boolean(video),
+      hasAudio: Boolean(audio),
+      videoCodec: video?.codec_name ?? null,
+      audioCodec: audio?.codec_name ?? null,
+      width,
+      height,
+      rotation,
+      displayWidth: sideways ? height : width,
+      displayHeight: sideways ? width : height,
+    };
+  } catch (err) {
+    console.error("[probe] could not inspect media:", describeExecError(err));
+    return empty;
+  }
+}
+
 /** Probe a local media file's duration (seconds) via ffprobe. 0 on failure. */
 async function probeDurationSeconds(filePath: string): Promise<number> {
   const ffmpeg = AI_CONFIG.ffmpeg.path ?? "ffmpeg";

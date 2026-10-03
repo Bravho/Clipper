@@ -116,7 +116,12 @@ async function hasRoomFor(totalBytes: number): Promise<boolean> {
  * the original error so the caller can tell the user at selection time, when
  * re-picking still costs them nothing, instead of after a long upload.
  */
-export async function createSnapshot(key: string, file: File): Promise<FileSnapshot | null> {
+export async function createSnapshot(
+  key: string,
+  file: File,
+  /** Called after each chunk with the share copied so far, 0..1. */
+  onProgress?: (fraction: number) => void
+): Promise<FileSnapshot | null> {
   if (!snapshotsSupported()) return null;
   if (!(await hasRoomFor(file.size))) {
     diagLog("SNAPSHOT-SKIP", `${file.name} (insufficient origin quota)`);
@@ -137,6 +142,7 @@ export async function createSnapshot(key: string, file: File): Promise<FileSnaps
       // this throws here, at selection, which is exactly where we want it.
       const chunk = await file.slice(offset, end).arrayBuffer();
       await writable.write(chunk);
+      onProgress?.(file.size > 0 ? end / file.size : 1);
     }
 
     await writable.close();

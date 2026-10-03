@@ -56,6 +56,13 @@ export class PostgresVideoAllowanceWindowRepository
       return { windows: existing.rows.map(rowToWindow), created: false };
     }
 
+    // A lookup-only call (the purchase service's replay check passes no
+    // windows) must stop here: an INSERT with an empty VALUES list is a SQL
+    // syntax error, which made every package checkout 500 "Purchase failed".
+    if (input.windows.length === 0) {
+      return { windows: [], created: false };
+    }
+
     const values: unknown[] = [];
     const tuples = input.windows.map((w, i) => {
       const base = i * 8;

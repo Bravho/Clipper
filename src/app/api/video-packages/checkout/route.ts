@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { isVideoProductCode } from "@/domain/enums/VideoProductCode";
+import { findVideoPackage } from "@/config/videoPackages";
 import {
   videoPackagePurchaseService,
   InsufficientCreditsForPackageError,
@@ -57,6 +58,15 @@ export async function POST(request: Request) {
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success || !isVideoProductCode(parsed.data.productCode)) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+  }
+  // The video-only packages are retired (2026-09-27): every package now
+  // includes Channel Management and is bought through /api/management/checkout.
+  // Months already bought are honoured until they expire.
+  if (!findVideoPackage(parsed.data.productCode)?.onSale) {
+    return NextResponse.json(
+      { error: "This package is no longer sold.", code: "product_retired" },
+      { status: 410 }
+    );
   }
 
   try {

@@ -399,6 +399,11 @@ export interface MontageSceneAsset {
   trimEndSeconds?: number;
   focusX?: number;
   focusY?: number;
+  /**
+   * Device renders only: 0 shows the whole picture, 1 fills the frame (the
+   * default). See `src/lib/mobile/shotFraming.ts`.
+   */
+  frameZoom?: number;
 }
 
 /**

@@ -61,6 +61,7 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
         // Must precede super.onCreate: BridgeActivity builds its Bridge there,
         // and only plugins registered by that point are in it.
         registerPlugin(PushSupportPlugin.class);
+        registerPlugin(DeviceVideoRenderPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

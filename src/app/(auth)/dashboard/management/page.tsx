@@ -277,10 +277,15 @@ const PACKAGE_NAMES: Record<ManagementProductCode, string> = {
   management_access_1_year: "1-Year Publishing Access",
   // Bundles grant the same publishing pass plus a video allowance, so they
   // appear in this list too — a buyer must be able to see what they hold.
-  management_bundle_1_month: "Complete — 1 Month",
-  management_bundle_3_months: "Complete — 3 Months",
-  management_bundle_6_months: "Complete — 6 Months",
-  management_bundle_1_year: "Complete — 1 Year",
+  // Since 2026-09-27 the bundles are sold as "Pro", next to "Starter".
+  management_bundle_1_month: "Pro — 1 Month",
+  management_bundle_3_months: "Pro — 3 Months",
+  management_bundle_6_months: "Pro — 6 Months",
+  management_bundle_1_year: "Pro — 1 Year",
+  management_starter_1_month: "Starter — 1 Month",
+  management_starter_3_months: "Starter — 3 Months",
+  management_starter_6_months: "Starter — 6 Months",
+  management_starter_1_year: "Starter — 1 Year",
 };
 
 function uploadBundleDisplayStatus(

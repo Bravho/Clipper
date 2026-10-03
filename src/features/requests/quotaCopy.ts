@@ -2,8 +2,9 @@ import {
   FREE_REQUESTS_PER_WINDOW,
   FREE_WINDOW_DAYS,
   REQUESTS_PER_PAID_MONTH,
-  VIDEO_PACKAGES,
 } from "@/config/videoPackages";
+import { ENTRY_PACKAGE, managementPriceCredits } from "@/config/management";
+import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 import type { VideoQuota } from "@/services/VideoQuotaService";
 import type { MessageKey } from "@/i18n/messages";
@@ -26,10 +27,8 @@ type Translate = (
   values?: Record<string, string | number>
 ) => string;
 
-/** The cheapest package, quoted wherever we invite an upgrade. */
-const ENTRY_PACKAGE = VIDEO_PACKAGES.reduce((cheapest, p) =>
-  p.priceCredits < cheapest.priceCredits ? p : cheapest
-);
+/** The cheapest package on sale (Starter, 1 month), quoted wherever we invite an upgrade. */
+const ENTRY_PRICE = managementPriceCredits(ENTRY_PACKAGE);
 
 function formatDate(date: Date | null, locale: AppLocale): string {
   if (!date) return "";
@@ -46,7 +45,9 @@ export function quotaCopyVars(quota: VideoQuota, locale: AppLocale) {
     days: FREE_WINDOW_DAYS,
     freeTotal: FREE_REQUESTS_PER_WINDOW,
     paidTotal: REQUESTS_PER_PAID_MONTH,
-    price: ENTRY_PACKAGE.priceCredits,
+    starterTotal: PACKAGE_TIER_REQUESTS.starter,
+    proTotal: PACKAGE_TIER_REQUESTS.pro,
+    price: ENTRY_PRICE,
     renews: formatDate(quota.renewsAt, locale),
   };
 }

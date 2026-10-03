@@ -27,6 +27,7 @@ function rowToAsset(row: Record<string, unknown>): UploadedAsset {
     durationSeconds: row.duration_seconds != null ? Number(row.duration_seconds) : null,
     videoRatio: (row.video_ratio as UploadedAsset["videoRatio"]) ?? null,
     sourceAssetId: (row.source_asset_id as string) ?? null,
+    deviceLocalId: (row.device_local_id as string) ?? null,
     scheduledDeletionAt: new Date(row.scheduled_deletion_at as string),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
@@ -74,8 +75,8 @@ export class PostgresUploadedAssetRepository
          file_size_bytes, mime_type, storage_key, storage_url,
          thumbnail_key, thumbnail_url, upload_status,
          video_ratio, duration_seconds, scheduled_deletion_at,
-         source_asset_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         source_asset_id, device_local_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        RETURNING *`,
       [
         input.requestId,
@@ -93,6 +94,7 @@ export class PostgresUploadedAssetRepository
         input.durationSeconds ?? null,
         input.scheduledDeletionAt,
         input.sourceAssetId ?? null,
+        input.deviceLocalId ?? null,
       ]
     );
     return rowToAsset(rows[0]);
@@ -110,6 +112,7 @@ export class PostgresUploadedAssetRepository
       uploadStatus: "upload_status",
       videoRatio: "video_ratio",
       durationSeconds: "duration_seconds",
+      deviceLocalId: "device_local_id",
     };
 
     const sets: string[] = [];

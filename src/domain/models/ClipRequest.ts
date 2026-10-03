@@ -118,6 +118,25 @@ export interface ClipRequest {
    * the type only so legacy object literals compile; repositories always
    * populate it. Read it as `!!request.downloadUnlocked`.
    */
+  /**
+   * Where this request's heavy render steps may run.
+   *
+   * `"server"` — the default and every request made before migration 036 — is
+   * today's behaviour unchanged: originals are uploaded, heavy steps go into
+   * the render queue, the Mac Mini worker does them.
+   *
+   * `"device"` means the requester kept their originals on their phone, so the
+   * montage, the merged master and the final export can only be produced there.
+   * Decided at submission, because that is the moment we know whether the
+   * originals were retained locally, and never changed afterwards — a request
+   * whose footage is on one phone cannot become a server render later without
+   * the upload it was created to avoid.
+   *
+   * AI analysis, voice generation, approvals, credits and publishing are
+   * server-side either way; none of them needs the original frames.
+   */
+  renderLocation?: "server" | "device";
+
   downloadUnlocked?: boolean;
 
   /**

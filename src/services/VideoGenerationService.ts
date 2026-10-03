@@ -11,6 +11,9 @@ import { spacesClient } from "@/lib/spaces";
 import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
 import * as montageService from "@/lib/ai/montageService";
 import * as elevenLabsTtsService from "@/lib/ai/elevenLabsTtsService";
+import { ELEVENLABS_VOICE_FILE_NAME } from "@/lib/ai/elevenLabsTtsService";
+import { LOCK_AFTER_APPROVAL, MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
+import { ORIGINALS_KEPT_DAYS, originalsExpireAt } from "@/config/localMedia";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
 // Phase 7: subtitle + motion-graphic overlay rendering (Remotion) composited on
@@ -43,6 +46,8 @@ import type { JobUpdateActor } from "@/repositories/interfaces/IVideoGenerationJ
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import { DEFAULT_LOCALE, type AppLocale } from "@/i18n/config";
 import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
+import type { LocalAnalysisFrame, LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
+import { localMediaDescriptorSchema } from "@/lib/mobile/localMediaContract";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeSceneDescription, sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -57,13 +62,26 @@ import {
   resolveElevenLabsVoiceId,
   type ElevenLabsVoiceId,
 } from "@/config/elevenLabsVoices";
-import { PIPELINE_STEP_COSTS } from "@/config/credits";
+import { PIPELINE_STEP_COSTS, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import { RenderStep, RENDER_STEP_FAILED_AT, isRenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE, renderPriorityForRequest } from "@/config/renderQueue";
 import { RENDER_TUNING } from "@/config/renderTuning";
 import { ensureAssetPoster } from "@/services/AssetPosterService";
 import { STALLABLE_STEPS, isJobStalled } from "@/config/stallThresholds";
 import { isAutoApprovedGate } from "@/config/pipelinePresentation";
+import { isStudioOnly } from "@/config/studioRollout";
+import {
+  materialSeconds,
+  maxVoiceSecondsForMaterial,
+  scriptTargetSeconds,
+  voiceFitsMaterial,
+} from "@/config/materialLength";
+import {
+  firstDeviceRatioLink,
+  nextDeviceRatioLink,
+  readDeviceRatioLink,
+  type DeviceRatioLink,
+} from "@/lib/mobile/deviceRatioChain";
 import {
   extractInlineHashtags,
   normalizeHashtags,
@@ -80,6 +98,16 @@ const execFileAsync = promisify(execFile);
  * "the pipeline moved itself along" from "the lane approved on your behalf".
  */
 const SYSTEM_ACTOR: JobUpdateActor = { source: "system" };
+
+/**
+ * The "inline fallback" for a step only a phone can run. `_dispatchHeavy`
+ * always queues a phone-rendered request's step for the phone and never calls
+ * this; it exists so a wiring mistake fails loudly instead of rendering
+ * something from media this process does not have.
+ */
+async function deviceOnlyStep(): Promise<void> {
+  throw new Error("This step renders on the requester's phone; there is no server fallback.");
+}
 
 /**
  * The creative choices the requester makes on the scene-plan approval screen
@@ -156,10 +184,112 @@ function businessProfileMatchesPlace(
   return normalize(profileBusinessName) === normalize(requested);
 }
 
-function clampPipelineDurationSeconds(value: number): number {
+/**
+ * The length the speaking script is written for.
+ *
+ * A studio request carries its material (`localMedia`): the script is sized
+ * to the picked clips and photos minus the allowance (`config/materialLength`),
+ * so the voice made from it fits the pictures. Any other request keeps the
+ * brief's target length.
+ */
+export function speakingScriptSeconds(
+  request: { durationSeconds?: number | null } | null | undefined,
+  localMedia: readonly LocalMediaDescriptor[] | null | undefined
+): number {
+  if (localMedia && localMedia.length > 0) {
+    return scriptTargetSeconds(
+      materialSecondsOfDescriptors(localMedia),
+      STUDIO_MAX_DURATION_SECONDS
+    );
+  }
+  const target = request?.durationSeconds;
+  return typeof target === "number" && Number.isFinite(target) && target > 0 ? target : 15;
+}
+
+/** Total material length of the submitted originals (see `config/materialLength`). */
+export function materialSecondsOfDescriptors(
+  localMedia: readonly Pick<LocalMediaDescriptor, "mimeType" | "durationSeconds">[]
+): number {
+  return materialSeconds(
+    localMedia.map((item) => ({
+      isClip: item.mimeType.startsWith("video/"),
+      durationSeconds: item.durationSeconds,
+    }))
+  );
+}
+
+/** The originals a studio request kept on the phone, as the job recorded them. */
+function readLocalMediaDescriptors(
+  payload: Record<string, unknown> | null | undefined
+): LocalMediaDescriptor[] {
+  const list = payload?.localMedia;
+  if (!Array.isArray(list)) return [];
+  const descriptors: LocalMediaDescriptor[] = [];
+  for (const entry of list) {
+    const parsed = localMediaDescriptorSchema.safeParse(entry);
+    if (parsed.success) descriptors.push(parsed.data);
+  }
+  return descriptors;
+}
+
+/** The voice is longer than the picked material can cover. */
+export class VoiceTooLongForMaterialError extends Error {
+  readonly code = "voice_too_long_for_material";
+  constructor(
+    readonly voiceSeconds: number,
+    readonly materialSeconds: number,
+    readonly maxVoiceSeconds: number
+  ) {
+    super(
+      `The voice is ${voiceSeconds.toFixed(1)} s but your clips and photos total ${materialSeconds.toFixed(1)} s, so the voice can be at most ${maxVoiceSeconds.toFixed(1)} s. Shorten the script or add clips, then make the voice again.`
+    );
+    this.name = "VoiceTooLongForMaterialError";
+  }
+}
+
+/** A phone-made request has used all its voice makes (see config/requestLimits). */
+export class VoiceMakeLimitError extends Error {
+  readonly code = "voice_make_limit_reached";
+  constructor(readonly used: number, readonly limit: number) {
+    super(
+      `This video has used all ${limit} voice makes. Approve one of the voices you have, or start a new video.`
+    );
+    this.name = "VoiceMakeLimitError";
+  }
+}
+
+/**
+ * A phone-made request whose originals are past the keep window
+ * (ORIGINALS_KEPT_DAYS): nothing can be rendered from it any more, and picking
+ * the files again is not offered — the person starts a new video.
+ */
+export class OriginalsExpiredError extends Error {
+  readonly code = "originals_expired";
+  constructor(readonly keptDays: number) {
+    super(
+      `The photos and clips for this video are kept in the app for ${keptDays} days, and that time has passed. Start a new video to make more.`
+    );
+    this.name = "OriginalsExpiredError";
+  }
+}
+
+/** A phone-made request's step was approved and can no longer be reopened or remade. */
+export class StepLockedAfterApprovalError extends Error {
+  readonly code = "locked_after_approval";
+  constructor(what: string) {
+    super(`${what} was approved and can no longer be changed or made again.`);
+    this.name = "StepLockedAfterApprovalError";
+  }
+}
+
+function clampPipelineDurationSeconds(
+  value: number,
+  /** STUDIO_MAX_DURATION_SECONDS for a phone-rendered request; the server's cap otherwise. */
+  maximum: number = PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
+): number {
   if (!Number.isFinite(value)) return PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS;
   return Math.min(
-    PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS,
+    maximum,
     Math.max(PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS, Math.round(value))
   );
 }
@@ -313,6 +443,8 @@ export class VideoGenerationService {
     staffId: string,
     params: {
       imageUrls: string[];
+      inlineFrames?: LocalAnalysisFrame[];
+      localMedia?: LocalMediaDescriptor[];
       title?: string;
       description: string;
       targetAudience: string;
@@ -380,6 +512,17 @@ export class VideoGenerationService {
       finalApprovedBy: null,
     });
 
+    if (params.localMedia?.length) {
+      // The server keeps only opaque descriptors. localId is meaningful solely
+      // inside the requester's app storage and cannot be dereferenced here.
+      await videoGenerationJobRepository.update(job.id, {
+        renderPayload: {
+          mediaMode: "local-first",
+          localMedia: params.localMedia,
+        },
+      });
+    }
+
     // Run Gemini analysis and update job when complete
     this._runChatGptAnalysis(job.id, requestId, params).catch(async (err) => {
       console.error("Gemini analysis failed:", err);
@@ -396,7 +539,10 @@ export class VideoGenerationService {
   private async _runChatGptAnalysis(
     jobId: string,
     requestId: string,
-    params: Omit<GenerateContentParams, "videoDurationSeconds">
+    params: Omit<GenerateContentParams, "videoDurationSeconds"> & {
+      /** A studio request's originals: the script is sized to them. */
+      localMedia?: LocalMediaDescriptor[];
+    }
   ): Promise<void> {
     await this.requireAiProcessingConsent(requestId);
     const { clipRequestRepository } = await import("@/repositories/index");
@@ -422,17 +568,15 @@ export class VideoGenerationService {
       }
     }
 
+    const { localMedia, ...scriptParams } = params;
     const output = await chatGptVisionService.generateSpeakingScript({
-      ...params,
+      ...scriptParams,
       placeName: req?.placeName,
       contentLanguage:
         req?.preferredLanguage === "en" || req?.preferredLanguage === "vi"
           ? req.preferredLanguage
           : "th",
-      videoDurationSeconds:
-        req && Number.isFinite(req.durationSeconds) && req.durationSeconds > 0
-          ? req.durationSeconds
-          : 15,
+      videoDurationSeconds: speakingScriptSeconds(req, localMedia),
       businessProfileContext,
     });
 
@@ -886,12 +1030,20 @@ export class VideoGenerationService {
       await this._refundAllowance(job.requestId);
     };
 
-    if (RENDER_QUEUE.enabled) {
+    // STUDIO_ONLY: this process never renders video itself. New requests are
+    // all phone-rendered (the submit route refuses anything else); a request
+    // still on the server pipeline from before the switch is queued for the
+    // Mac Mini even while its worker is down, and waits there rather than
+    // falling back to an inline render on this machine.
+    const noInlineRender = isStudioOnly();
+
+    if (RENDER_QUEUE.enabled || noInlineRender) {
       try {
         if (
-          await videoGenerationJobRepository.isRenderWorkerAlive(
+          noInlineRender ||
+          (await videoGenerationJobRepository.isRenderWorkerAlive(
             RENDER_QUEUE.workerFreshSeconds
-          )
+          ))
         ) {
           // Enqueue this step onto the render-task line. requesterId is
           // denormalised so the worker log can name whose step it is; it is never
@@ -907,14 +1059,48 @@ export class VideoGenerationService {
             step: renderStep,
             payload: payload ?? null,
             priority: renderPriorityForRequest(request ?? {}),
+            // A request whose originals stayed on the requester's phone has no
+            // footage on this machine or on the Mac Mini, so the task is marked
+            // device-only and the worker's claim scan skips it. Without this the
+            // worker would claim it, fail for want of media, and burn the
+            // requester's allowance on a render that was never possible.
+            deviceOnly: request?.renderLocation === "device",
           });
           return;
         }
       } catch (err) {
+        if (noInlineRender) {
+          // No inline fallback to fall through to: fail the step (and refund
+          // the allowance) so the requester sees it and can retry.
+          console.error(`[render:${renderStep}] enqueue failed (studio-only, no inline render):`, err);
+          await onFail(err);
+          return;
+        }
         // Never strand a job: if the liveness check or enqueue write fails,
         // fall through and run the step inline.
         console.error(`[render:${renderStep}] enqueue failed, running inline:`, err);
       }
+    }
+
+    // A device-rendered request has no inline fallback: this process has no
+    // copy of the footage either. Queue it unconditionally and let the phone
+    // claim it — the requester's own device is the worker for this job.
+    const requestForFallback = await clipRequestRepository
+      .findById(job.requestId)
+      .catch(() => null);
+    if (requestForFallback?.renderLocation === "device") {
+      await renderTaskRepository
+        .enqueue({
+          jobId: job.id,
+          requestId: job.requestId,
+          requesterId: requestForFallback.userId,
+          step: renderStep,
+          payload: payload ?? null,
+          priority: renderPriorityForRequest(requestForFallback),
+          deviceOnly: true,
+        })
+        .catch(onFail);
+      return;
     }
 
     // Inline path: the step owns no queue row, so the express lane can advance
@@ -937,6 +1123,163 @@ export class VideoGenerationService {
    */
   async afterRenderStepCompleted(jobId: string): Promise<void> {
     await this._autoAdvanceIfEnabled(jobId);
+  }
+
+  /**
+   * Record a render a DEVICE produced, as if the worker had produced it.
+   *
+   * `DeviceRenderService` has already verified the uploaded object and created
+   * the asset; what is left is the job bookkeeping each heavy step does at its
+   * end — write the asset into the right field and move to that step's review
+   * gate. That bookkeeping lives here, next to the inline implementations it
+   * mirrors, so the two cannot drift: a change to where
+   * `_runOverlayComposition` parks the job is a change a reader makes with this
+   * method on screen.
+   *
+   * Deliberately does NOT call `afterRenderStepCompleted` — the caller does
+   * that after closing the render-task claim, because a job may hold only one
+   * active task and advancing while the current one is still claimed would
+   * replace the claimed row in place.
+   *
+   * Idempotent: writing the same asset id into the same field twice is a no-op,
+   * and the step transition is a set, not an increment.
+   */
+  async applyDeviceRenderResult(input: {
+    jobId: string;
+    step: string;
+    ratio: VideoRatio;
+    assetId: string;
+    /** The parity stage the device rendered (`montage` / `master` / `final`). */
+    stage?: string;
+    /** The claimed task's payload — carries the extra-shape chain link, if any. */
+    payload?: Record<string, unknown> | null;
+  }): Promise<{ nextStep: string | null; chain?: DeviceRatioLink | "finalize" }> {
+    const job = await this._getJob(input.jobId);
+    const updates: UpdateVideoGenerationJobInput = {
+      renderProgress: null,
+      renderProgressDetail: null,
+    };
+    let nextStep: VideoGenerationStep | null = null;
+    let chain: DeviceRatioLink | "finalize" | undefined;
+
+    switch (input.step) {
+      case RenderStep.OverlayComposition: {
+        // Mirrors the tail of `_runOverlayComposition`.
+        updates[this._captionedFieldForRatio(input.ratio)] = input.assetId;
+        nextStep = VideoGenerationStep.AwaitingOverlayApproval;
+        // A phone-rendered request stops HERE, express lane or not: the studio
+        // shows the finished video and asks which other channel shapes to make,
+        // since each one is a full render on the requester's phone. Turning the
+        // lane off (rather than special-casing the gate) also hands the request
+        // page its approval buttons back and lets the "ready to review" notice
+        // fire. Server-path requests are untouched.
+        if (job.autoApproveRemaining && (await this._isDeviceRendered(job.requestId))) {
+          updates.autoApproveRemaining = false;
+        }
+        break;
+      }
+      case RenderStep.AdditionalRatios: {
+        const queued = readDeviceRatioLink(input.payload);
+        // The stage the phone was actually handed. A build that composes from
+        // the originals is given a shape's MASTER for its montage link (the
+        // silent intermediate would only be thrown away), so the attempt's
+        // stage — not the queued link's — says what came back.
+        const link =
+          queued &&
+          (input.stage === "montage" || input.stage === "master" || input.stage === "final")
+            ? { ...queued, stage: input.stage as DeviceRatioLink["stage"] }
+            : queued;
+        if (link) {
+          // A phone-rendered request's extra shape, one stage at a time (see
+          // `deviceRatioChain`). The montage is only an input to this shape's
+          // master, so it is carried in the next link rather than written to
+          // the job; the master becomes this shape's finalExport, exactly as
+          // `_runFFmpegComposition` would have written it; the final becomes
+          // its captioned export.
+          if (link.stage === "master") {
+            updates[this._finalExportFieldForRatio(input.ratio)] = input.assetId;
+          } else if (link.stage === "final") {
+            updates[this._captionedFieldForRatio(input.ratio)] = input.assetId;
+          }
+          chain = nextDeviceRatioLink(link, input.assetId);
+          break;
+        }
+        // One ratio of the batch. The step only advances once every required
+        // ratio has landed, so the gate is left to the batch's own completion.
+        updates[this._captionedFieldForRatio(input.ratio)] = input.assetId;
+        break;
+      }
+      case RenderStep.FfmpegComposition: {
+        // Mirrors the tail of `_runFFmpegComposition` for one ratio.
+        updates[this._finalExportFieldForRatio(input.ratio)] = input.assetId;
+        nextStep = VideoGenerationStep.AwaitingFinalApproval;
+        break;
+      }
+      case RenderStep.MontageAllSegments:
+      case RenderStep.MontageSceneSegment:
+      case RenderStep.MontageMerge: {
+        // A phone renders the WHOLE montage in one pass — every scene, with its
+        // dissolves — from the approved plan (`DeviceRenderService._planFor`
+        // does not split by scene). So whichever montage step it was handed,
+        // what comes back is already the merged base video. There are no
+        // per-scene segments to keep; the review gate shows the whole thing.
+        updates.baseVideoAssetId = input.assetId;
+        updates.sceneVideoAssetIds = null;
+        nextStep = VideoGenerationStep.AwaitingVideoApproval;
+        break;
+      }
+      default:
+        // A step a device should never have been allowed to claim. Leave the
+        // job untouched rather than guessing which field this asset belongs in.
+        console.error(
+          `[device-render] job ${job.id}: no result handler for step ${input.step}; asset ${input.assetId} left unattached`
+        );
+        return { nextStep: null };
+    }
+
+    if (nextStep) updates.currentStep = nextStep;
+    await videoGenerationJobRepository.update(job.id, updates, SYSTEM_ACTOR);
+
+    console.log(
+      `[device-render] job ${job.id}: ${input.step} ${input.ratio} → asset ${input.assetId}` +
+        (nextStep ? ` → ${nextStep}` : "") +
+        (chain ? ` → chain ${chain === "finalize" ? "finalize" : `${chain.ratio}/${chain.stage}`}` : "")
+    );
+    return { nextStep, ...(chain ? { chain } : {}) };
+  }
+
+  /**
+   * Continue a phone-rendered request's extra-shape chain: queue the next link
+   * for the phone, or — after the last shape's final — finish the job exactly
+   * as `_runAdditionalRatiosOverlay` does.
+   *
+   * Must be called AFTER the finished link's task is closed: a job may hold one
+   * active render task, and enqueuing while the old one is still claimed would
+   * replace the claimed row in place.
+   */
+  async advanceDeviceRatioChain(
+    jobId: string,
+    next: DeviceRatioLink | "finalize"
+  ): Promise<void> {
+    const job = await this._getJob(jobId);
+    if (job.currentStep !== VideoGenerationStep.GeneratingAdditionalRatios) {
+      console.warn(
+        `[device-render] job ${jobId}: chain link finished on ${job.currentStep}, not continuing`
+      );
+      return;
+    }
+    if (next === "finalize") {
+      await this._finalizeAndStartTravy(job, job.finalApprovedBy ?? "", { actor: SYSTEM_ACTOR });
+      return;
+    }
+    await this._dispatchHeavy(job, RenderStep.AdditionalRatios, deviceOnlyStep, { ...next });
+  }
+
+  /** True when the request's originals live only on the requester's phone. */
+  private async _isDeviceRendered(requestId: string): Promise<boolean> {
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const request = await clipRequestRepository.findById(requestId).catch(() => null);
+    return request?.renderLocation === "device";
   }
 
   /** `jobId:step` gates this process is currently auto-approving. See `_autoAdvanceIfEnabled`. */
@@ -1360,6 +1703,52 @@ export class VideoGenerationService {
     return this._getJob(jobId);
   }
 
+  // ── Per-request limits (config/requestLimits.ts) ─────────────────────────────
+
+  /**
+   * How many voices ElevenLabs has made for this request. Every successful make
+   * stores one `StaffVoiceRecording` asset named by `synthesizeAndStore`; a
+   * failed make stores nothing and so is not counted (it cost nothing).
+   */
+  async countVoiceMakes(requestId: string): Promise<number> {
+    const assets = await uploadedAssetRepository.findByRequestId(requestId);
+    return assets.filter(
+      (asset) =>
+        asset.assetType === AssetType.StaffVoiceRecording &&
+        asset.fileName === ELEVENLABS_VOICE_FILE_NAME
+    ).length;
+  }
+
+  /** The voice-make allowance of one request, for the studio to show. */
+  async voiceMakesFor(requestId: string): Promise<{ used: number; limit: number }> {
+    return { used: await this.countVoiceMakes(requestId), limit: MAX_VOICE_MAKES_PER_REQUEST };
+  }
+
+  /**
+   * Refuse to reopen or remake an approved step of a phone-made request.
+   * Server-pipeline requests (still finishing on the Mac Mini) keep their old
+   * revision gates.
+   */
+  /**
+   * Refuse to start a render of a phone-made request whose originals the app
+   * no longer keeps. The phone deletes them ORIGINALS_KEPT_DAYS after they were
+   * picked; the request was submitted after that, so timing from submission
+   * never refuses a render the phone could still make. A backstop: the studio
+   * already disables the buttons.
+   */
+  private _assertOriginalsKept(request: { submittedAt: Date | null; createdAt: Date }, now = new Date()): void {
+    const since = request.submittedAt ?? request.createdAt;
+    if (now.getTime() > originalsExpireAt(since).getTime()) {
+      throw new OriginalsExpiredError(ORIGINALS_KEPT_DAYS);
+    }
+  }
+
+  private async _assertRevisable(job: VideoGenerationJob, what: string): Promise<void> {
+    if (LOCK_AFTER_APPROVAL && (await this._isDeviceRendered(job.requestId))) {
+      throw new StepLockedAfterApprovalError(what);
+    }
+  }
+
   // ── TTS voice generation (ElevenLabs) ────────────────────────────────────────
 
   /**
@@ -1497,10 +1886,19 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   async regenerateVoice(
     jobId: string,
     _userId: string,
-    requestedVoiceId?: ElevenLabsVoiceId
+    requestedVoiceId?: ElevenLabsVoiceId,
+    /**
+     * The speaking script as edited since it was approved. When it differs
+     * from the approved one it replaces it, and the subtitle translations made
+     * from the old script are dropped so they are made again from this one.
+     */
+    editedScript?: string | null
   ): Promise<VideoGenerationJob> {
     void _userId; // retained for caller-identity parity; not yet persisted
     const job = await this._getJob(jobId);
+    const newScript = editedScript?.trim() ?? "";
+    const scriptChanged =
+      newScript.length > 0 && newScript !== (job.approvedScriptThai ?? job.scriptThai ?? "").trim();
     const isFailedPipeline = job.currentStep === VideoGenerationStep.Failed;
     // The requester can also redo the voice from the later scene-design gate
     // (e.g. after editing the script). That steps the pipeline back to the voice
@@ -1518,6 +1916,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       );
     }
 
+    // Phone-made requests: the voice is locked once approved, and a request
+    // gets MAX_VOICE_MAKES_PER_REQUEST makes in all. Checked BEFORE the job
+    // moves, so a refused remake leaves the voices the requester already has.
+    if (LOCK_AFTER_APPROVAL && (await this._isDeviceRendered(job.requestId))) {
+      if (fromSceneDesign) throw new StepLockedAfterApprovalError("The voice");
+      const used = await this.countVoiceMakes(job.requestId);
+      if (used >= MAX_VOICE_MAKES_PER_REQUEST) {
+        throw new VoiceMakeLimitError(used, MAX_VOICE_MAKES_PER_REQUEST);
+      }
+    }
+
     const selectedVoiceId = requestedVoiceId ?? resolveElevenLabsVoiceId(job.rvcVoiceModel);
     const updated = await videoGenerationJobRepository.update(jobId, {
       status: VideoGenerationJobStatus.Active,
@@ -1527,6 +1936,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       processedVoiceAssetId: null,
       ttsTaskId: null,
       rvcVoiceModel: selectedVoiceId,
+      ...(scriptChanged
+        ? {
+            approvedScriptThai: newScript,
+            scriptEnglish: null,
+            approvedScriptEnglish: null,
+            scriptChinese: null,
+            approvedScriptChinese: null,
+            voiceTimestamps: null,
+            subtitleTimeline: null,
+          }
+        : {}),
       // Coming back from scene-design: drop the stale plan + rendered segments so
       // a fresh scene design is generated once the new voice is approved.
       ...(fromSceneDesign
@@ -1637,7 +2057,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     // Not written to an *_approvedBy column (nothing was approved), but it is
     // the actor for the gate-event row this transition closes.
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
+    const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
+    await this._assertRevisable(lockedJob, "The video");
 
     const updated = await videoGenerationJobRepository.update(
       jobId,
@@ -1831,12 +2252,30 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (!Number.isFinite(job.voiceDurationSeconds) || (job.voiceDurationSeconds as number) <= 0) {
       throw new Error("Voice duration is not ready yet. Please wait for audio processing to finish.");
     }
-    const maximumVoiceSeconds =
-      PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS - minMontageTotalSeconds(0);
+    // A phone-rendered request may run to the studio's longer limit; every
+    // other request keeps the server's.
+    const deviceRendered = await this._isDeviceRendered(job.requestId);
+    const videoLimitSeconds = deviceRendered
+      ? STUDIO_MAX_DURATION_SECONDS
+      : PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS;
+    const maximumVoiceSeconds = videoLimitSeconds - minMontageTotalSeconds(0);
     if ((job.voiceDurationSeconds as number) > maximumVoiceSeconds + 1e-6) {
       throw new Error(
-        `Voiceover is too long for the ${PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS}-second video limit. Shorten it to ${Math.floor(maximumVoiceSeconds)} seconds or less and regenerate the voice.`
+        `Voiceover is too long for the ${videoLimitSeconds}-second video limit. Shorten it to ${Math.floor(maximumVoiceSeconds)} seconds or less and regenerate the voice.`
       );
+    }
+    // A studio request must also fit its own pictures: the voice may run no
+    // longer than the picked material minus the allowance (the same rule the
+    // studio's "Approve the voice" button applies).
+    if (deviceRendered) {
+      const material = materialSecondsOfDescriptors(readLocalMediaDescriptors(job.renderPayload));
+      if (material > 0 && !voiceFitsMaterial(job.voiceDurationSeconds as number, material)) {
+        throw new VoiceTooLongForMaterialError(
+          job.voiceDurationSeconds as number,
+          material,
+          maxVoiceSecondsForMaterial(material)
+        );
+      }
     }
 
     // The chosen channels set the distribution set; the primary (first) sets the
@@ -1877,8 +2316,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingSceneDesignApproval);
     const job = await this._getJob(jobId);
+    {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const request = await clipRequestRepository.findById(job.requestId);
+      if (request?.renderLocation === "device") this._assertOriginalsKept(request);
+    }
     const durationSeconds = clampPipelineDurationSeconds(
-      job.voiceDurationSeconds ?? approved.durationSeconds
+      job.voiceDurationSeconds ?? approved.durationSeconds,
+      (await this._isDeviceRendered(job.requestId))
+        ? STUDIO_MAX_DURATION_SECONDS
+        : PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
     );
     const parsedScenePlan = sanitizeScenePlanDescriptions(
       JSON.parse(approved.scenePlan) as ScenePlan[]
@@ -2099,6 +2546,30 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
     }
 
+    // A phone-rendered request's montage arrives ALREADY MERGED (see
+    // `applyDeviceRenderResult`). Dispatching a merge here would clear that
+    // video and queue the phone to render the same montage again, which lands
+    // back on this gate — on the express lane, forever. So the merge is skipped
+    // and the job goes where a finished merge goes. Every other request takes
+    // the worker path below, unchanged.
+    {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const request = await clipRequestRepository.findById(job.requestId);
+      if (request?.renderLocation === "device" && job.baseVideoAssetId) {
+        const merged = await videoGenerationJobRepository.update(
+          jobId,
+          {
+            currentStep: VideoGenerationStep.GeneratingAnimations,
+            videoApprovedBy: userId,
+          },
+          this._actorFor(jobId, userId)
+        );
+        await this._runAnimationGeneration(merged);
+        await this._autoAdvanceIfEnabled(jobId);
+        return this._getJob(jobId);
+      }
+    }
+
     // Merging every approved scene segment into the single base video is a heavy
     // FFmpeg concat/crossfade. It used to run inline+awaited here — the ONE heavy
     // step still executed on the web server — which is why the merge failed on the
@@ -2168,7 +2639,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     jobId: string,
     userId: string
   ): Promise<VideoGenerationJob> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+    const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+    await this._assertRevisable(lockedJob, "The scene design");
     return videoGenerationJobRepository.update(
       jobId,
       {
@@ -2180,6 +2652,60 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         baseVideoAssetId: null,
         // Back at the screen where the express lane is chosen, so drop it rather
         // than silently re-applying a choice made last time round.
+        autoApproveRemaining: false,
+      },
+      { ...this._actorFor(jobId, userId), resolution: "reopened" }
+    );
+  }
+
+  /**
+   * Remake a phone-rendered main video from the studio's CURRENT choices.
+   *
+   * The studio's Render step offers "Regenerate the video" while the finished
+   * main video waits at the overlay gate, instead of an Approve button. This
+   * puts the job back at the scene-design gate — the one place the storyboard,
+   * music, caption languages and look are all accepted together — so the
+   * studio can re-send them (`scene-design/approve`) and the phone renders the
+   * whole video again. The approved script and voice are kept.
+   *
+   * Device requests only: a server-rendered job has its own revision paths,
+   * and nothing here may change how those behave. Refused while a part is
+   * still being made, so a stale result can never land on the new plan.
+   */
+  async reopenDeviceProductionByRequester(
+    jobId: string,
+    userId: string
+  ): Promise<VideoGenerationJob> {
+    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    if (!(await this._isDeviceRendered(job.requestId))) {
+      throw new Error("Only a video made on the phone can be remade from the studio.");
+    }
+    // 2026-09-27: the scene design was approved, so the video is not remade.
+    if (LOCK_AFTER_APPROVAL) throw new StepLockedAfterApprovalError("The video");
+    const active = await renderTaskRepository.findActiveByJob(jobId).catch(() => null);
+    if (active) {
+      throw new Error("This video is still being made. Wait for it to finish, then remake it.");
+    }
+    return videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
+        currentSceneIndex: 0,
+        videoGenStatus: null,
+        sceneVideoAssetIds: null,
+        baseVideoAssetId: null,
+        // The old video must not be shown as the result while the new one is
+        // being made. The assets themselves are kept (scheduled deletion
+        // handles them); only the job's pointers are cleared.
+        finalExport_9_16_assetId: null,
+        finalExport_16_9_assetId: null,
+        finalExport_1_1_assetId: null,
+        finalExport_4_5_assetId: null,
+        captionedExport_9_16_assetId: null,
+        captionedExport_16_9_assetId: null,
+        captionedExport_1_1_assetId: null,
+        captionedExport_4_5_assetId: null,
+        // The studio re-sends its express-lane choice with the new plan.
         autoApproveRemaining: false,
       },
       { ...this._actorFor(jobId, userId), resolution: "reopened" }
@@ -2204,7 +2730,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     // Not written to an *_approvedBy column (nothing was approved), but it is
     // the actor for the gate-event row this transition closes.
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
+    const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
+    await this._assertRevisable(lockedJob, "The video");
     return videoGenerationJobRepository.update(
       jobId,
       {
@@ -2236,6 +2763,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     sceneIndex?: number
   ): Promise<VideoGenerationJob> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
+    await this._assertRevisable(job, "The video");
     const idx = Number.isInteger(sceneIndex) ? (sceneIndex as number) : job.currentSceneIndex ?? 0;
     await this._persistSceneEdits(jobId, edits, idx);
 
@@ -2547,6 +3075,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     return { timeline, durationSeconds: voiceDur + leadIn, palette };
   }
 
+  /**
+   * The styled render's palette for a job — what a phone draws a template's
+   * accents in, so they match the colours the Mac would have used.
+   */
+  async deriveOverlayPaletteForJob(job: VideoGenerationJob): Promise<Palette> {
+    return this._deriveOverlayPalette(job);
+  }
+
   /** Derive the decorative palette from the business profile + approved script. */
   private async _deriveOverlayPalette(job: VideoGenerationJob): Promise<Palette> {
     try {
@@ -2838,7 +3374,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     userId: string,
     subtitleLanguages?: ("th" | "en" | "zh")[]
   ): Promise<VideoGenerationJob> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    await this._assertRevisable(lockedJob, "The video");
 
     const updated = await videoGenerationJobRepository.update(
       jobId,
@@ -2870,7 +3407,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     // Not written to an *_approvedBy column (nothing was approved), but it is
     // the actor for the gate-event row this transition closes.
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
+    await this._assertRevisable(lockedJob, "The video");
     return videoGenerationJobRepository.update(
       jobId,
       {
@@ -2942,9 +3480,66 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    */
   async generateAdditionalRatiosByRequester(
     jobId: string,
-    userId: string
+    userId: string,
+    /**
+     * Phone-rendered requests only: which of the remaining shapes to make.
+     * Omitted means all of them, which is what the server path always does.
+     */
+    ratios?: VideoRatio[]
   ): Promise<VideoGenerationJob> {
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAdditionalRatios);
+    // A phone-rendered request may also make a shape it skipped AFTER the
+    // others were delivered: the Channels step keeps every unmade shape
+    // clickable, so choosing TikTok first never rules out Instagram later.
+    const current = await this._getJob(jobId);
+    const afterDelivery =
+      current.currentStep === VideoGenerationStep.AwaitingDistributionReview ||
+      current.currentStep === VideoGenerationStep.Complete;
+    const gated =
+      afterDelivery && (await this._isDeviceRendered(current.requestId))
+        ? current
+        : await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAdditionalRatios);
+
+    // A phone-rendered request builds each extra shape from its own originals
+    // on the phone — montage, master, final — one link at a time (see
+    // `deviceRatioChain`). The server path below is unchanged.
+    {
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const request = await clipRequestRepository.findById(gated.requestId);
+      if (request?.renderLocation === "device") {
+        this._assertOriginalsKept(request);
+        const platforms = request.targetPlatforms ?? [];
+        const primaryRatio = this._montageCanvasRatio(platforms[0] ?? Platform.TravyApp);
+        const remaining = this._userRatios(platforms).filter(
+          (r) =>
+            r !== primaryRatio &&
+            // After delivery, only the shapes not made yet.
+            !(afterDelivery && this._captionedAssetIdForRatio(gated, r))
+        );
+        const chosen = ratios ? remaining.filter((r) => ratios.includes(r)) : remaining;
+        const first = firstDeviceRatioLink(chosen);
+        if (!first && afterDelivery) {
+          throw new Error("Those channel videos are already made.");
+        }
+        if (!first) {
+          // Nothing more to render: the primary video is the delivery.
+          return this._finalizeAndStartTravy(gated, userId, {
+            actor: this._actorFor(jobId, userId),
+          });
+        }
+        const started = await videoGenerationJobRepository.update(
+          jobId,
+          {
+            currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
+            ...(userId ? { finalApprovedBy: userId } : {}),
+          },
+          this._actorFor(jobId, userId)
+        );
+        await this._dispatchHeavy(started, RenderStep.AdditionalRatios, deviceOnlyStep, {
+          ...first,
+        });
+        return started;
+      }
+    }
 
     const updated = await videoGenerationJobRepository.update(
       jobId,
@@ -3069,7 +3664,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const { clipRequestRepository } = await import("@/repositories/index");
     const request = await clipRequestRepository.findById(job.requestId);
     const platforms = request?.targetPlatforms ?? [];
-    const needsTravy = platforms.includes(Platform.TravyApp);
+    // A phone-rendered request has no Travy export: the Travy clip is rendered
+    // from server-held masters, and this request has none. (The studio does
+    // not offer Travy; this covers a request that listed it anyway.)
+    const needsTravy =
+      platforms.includes(Platform.TravyApp) && request?.renderLocation !== "device";
     // Travy always renders at its own fixed ratio (16:9 — uploaded to YouTube
     // for the Travy web app), independent of the primary channel's ratio.
     const travyRatio = this._montageCanvasRatio(Platform.TravyApp);
@@ -4039,7 +4638,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     // Not written to an *_approvedBy column (nothing was approved), but it is
     // the actor for the gate-event row this transition closes.
-    await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
+    const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
+    await this._assertRevisable(lockedJob, "The sound");
     return videoGenerationJobRepository.update(
       jobId,
       {
@@ -4326,6 +4926,8 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           targetAudience: req.targetAudience,
           targetPlatforms: req.targetPlatforms,
           preferredStyle: req.preferredStyle,
+          // A studio request's script is sized to its material on a retry too.
+          localMedia: readLocalMediaDescriptors(job.renderPayload),
         }).catch(async (err) => {
           console.error("Gemini analysis failed on retry:", err);
           await videoGenerationJobRepository.update(jobId, {

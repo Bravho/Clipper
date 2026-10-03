@@ -71,6 +71,16 @@ import {
   sweepStaleSnapshots,
   type FileSnapshot,
 } from "@/features/requests/fileSnapshot";
+import {
+  createLocalAnalysisFrame,
+  retainLocalMaterial,
+} from "@/features/requests/localMediaStore";
+import type { LocalAnalysisFrame, LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
+import { canUseLocalMediaOnThisDevice } from "@/lib/mobile/localMediaPolicy";
+import {
+  describeDeviceRenderCapability,
+  supportsManifestRender,
+} from "@/lib/mobile/deviceRenderBridge";
 
 const GoogleMapLocationPicker = dynamic(() =>
   import("@/features/requests/components/GoogleMapLocationPicker").then(
@@ -98,6 +108,7 @@ interface PendingFile {
    * Surfaced so an eventual server rejection is not a surprise.
    */
   durationUnverified?: boolean;
+  durationSeconds?: number | null;
   /**
    * The SERVER rejected this file on a business rule (e.g. over the length cap).
    * Distinct from a network failure: re-uploading identical bytes will be
@@ -1123,6 +1134,11 @@ export function NewRequestForm({ quota, imageOnly = false, onCreditParamsChange,
         }
 
         const tooLong = validateClipDuration(durationSeconds);
+        if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+          setPendingFiles((prev) =>
+            prev.map((f) => (f.id === item.id ? { ...f, durationSeconds } : f))
+          );
+        }
         if (tooLong) {
           setPendingFiles((prev) =>
             prev.map((f) =>
@@ -1703,7 +1719,96 @@ export function NewRequestForm({ quota, imageOnly = false, onCreditParamsChange,
     const uploadItems = pendingFiles
       .filter((f) => !f.error && !f.rejected)
       .map((f) => (f.snapshot ? f : { ...f, snapshot: snapshotById.get(f.id) ?? null }));
-    diagLog("SUBMIT", `${uploadItems.length} file(s) queued for upload`);
+    const useLocalMedia =
+      uploadItems.every((item) => Boolean(item.snapshot)) &&
+      await canUseLocalMediaOnThisDevice(
+        (uploadedAssets ?? []).some((asset) => !asset.fileName.startsWith("local-preview-")),
+        Object.keys(loadMpuMap(requestId)).length > 0
+      );
+    diagLog(
+      "SUBMIT",
+      `${uploadItems.length} file(s) queued for ${useLocalMedia ? "device retention" : "upload"}`
+    );
+
+    if (useLocalMedia) {
+      if (uploadItems.length === 0) {
+        throw new Error("กรุณาเลือกภาพหรือวิดีโออย่างน้อยหนึ่งไฟล์");
+      }
+      // A clip can stay on this phone only if this phone can render it: its
+      // moving frames exist nowhere else, and the small frame the server keeps
+      // is a still. An older app build falls through to the upload path and
+      // renders on the Mac Mini exactly as it always has.
+      const keepsClips = uploadItems.some((item) => item.file.type.startsWith("video/"));
+      if (keepsClips && !(await supportsManifestRender())) {
+        throw new Error(
+          "แอปเวอร์ชันนี้ยังตัดต่อวิดีโอบนโทรศัพท์ไม่ได้ จึงเก็บคลิปต้นฉบับไว้ในเครื่องไม่ได้ กรุณาอัปเดตแอป หรือเลือกเฉพาะรูปภาพ ไฟล์ของคุณยังอยู่บนโทรศัพท์"
+        );
+      }
+      if (uploadItems.some((item) => !item.snapshot)) {
+        throw new Error(
+          "ไม่สามารถเก็บไฟล์ต้นฉบับไว้ในพื้นที่ส่วนตัวของแอปได้ กรุณาตรวจสอบพื้นที่ว่างแล้วเลือกไฟล์ใหม่"
+        );
+      }
+
+      setUploadProgress(
+        Object.fromEntries(
+          uploadItems.map((item) => [item.id, { pct: 0, stage: "uploading" as UploadStage }])
+        )
+      );
+
+      const materials: LocalMediaDescriptor[] = [];
+      const analysisFrames: LocalAnalysisFrame[] = [];
+      for (let index = 0; index < uploadItems.length; index++) {
+        const item = uploadItems[index];
+        const descriptor = await retainLocalMaterial(
+          requestId,
+          item.id,
+          item.snapshot!,
+          item.durationSeconds ?? null
+        );
+        materials.push(descriptor);
+        const frame = await createLocalAnalysisFrame(descriptor, index, previews[item.id]);
+        if (frame) analysisFrames.push(frame);
+        setItemProgress(item.id, { pct: 100, stage: "done" });
+      }
+      if (analysisFrames.length === 0) {
+        throw new Error(
+          "ไม่สามารถสร้างภาพตัวอย่างขนาดเล็กสำหรับการวิเคราะห์ได้ กรุณาเพิ่มรูปภาพอย่างน้อยหนึ่งรูป"
+        );
+      }
+
+      const submitRes = await netFetch("ส่งคำขอ", `/api/requests/${requestId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          creditConfirmed: confirmations.creditConfirmed,
+          rightsConfirmed: confirmations.rightsConfirmed,
+          aiProcessingConfirmed: confirmations.aiProcessingConfirmed,
+          localMedia: {
+            mode: "local-first",
+            materials,
+            analysisFrames,
+            // Declared so the server can refuse a clip from a build that could
+            // not render it, instead of accepting a request no renderer on
+            // earth could finish.
+            deviceRender: await describeDeviceRenderCapability(),
+          },
+        }),
+      });
+      if (!submitRes.ok) {
+        const body = await submitRes.json().catch(() => ({}));
+        throw new Error(body.error ?? "ไม่สามารถส่งคำขอได้");
+      }
+
+      clearDraftPersistence(requestId);
+      draftIdRef.current = null;
+      // Remove only the picker snapshots. Durable originals remain in the
+      // local-materials directory and are referenced by the job manifest.
+      for (const key of snapshotTasksRef.current.keys()) void deleteSnapshot(key);
+      snapshotTasksRef.current.clear();
+      router.push(requestDetailPath(requestId));
+      return;
+    }
 
     // Reconcile with the server: skip any file whose name+size is already an
     // uploaded asset on this request (resume after reload/return).

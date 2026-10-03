@@ -6,8 +6,7 @@ import { isManagementEnabledFor } from "@/config/management";
 import { safeManagementReturnPath } from "@/config/routes";
 import { managementProductRepository } from "@/repositories";
 import { creditService } from "@/services/CreditService";
-import { PackagePicker } from "@/features/management/components/PackagePicker";
-import { managementPackageCopy } from "@/features/pricing/packageCopy";
+import { PackageTiers } from "@/features/pricing/components/PackageTiers";
 import { getServerI18n } from "@/i18n/server";
 
 export const dynamic = "force-dynamic";
@@ -54,31 +53,20 @@ export default async function ManagementPaymentsPage({
         >
           ← Channel Management
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">Publishing packages</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Use credits from your balance to activate publishing access. No
-          separate payment and no automatic renewal.
-        </p>
+        <h1 className="mt-2 text-2xl font-bold text-slate-900">{t("mgmt.payments.title")}</h1>
+        <p className="mt-1 text-sm text-slate-500">{t("mgmt.payments.body")}</p>
       </header>
 
+      {/* The same Starter / Pro packages the pricing page sells: since
+          2026-09-27 every package includes video making AND publishing, and
+          the publishing-only passes are retired. */}
       <div className="mb-8">
-        <PackagePicker
+        <PackageTiers
+          t={t}
+          rows={products}
           balanceCredits={balanceCredits}
           returnTo={returnTo}
-          // Copy comes from the shared i18n helper, the same one the pricing
-          // page uses, so both screens name a package identically and both
-          // follow the header's language.
-          products={products.map((p) => ({
-            code: p.code,
-            ...managementPackageCopy(t, p),
-            productType: p.productType,
-            durationMonths: p.durationMonths,
-            uploadAllowance: p.uploadAllowance,
-            accessWindowDays: p.accessWindowDays,
-            videoMonths: p.videoMonths,
-            priceCredits: p.priceCredits,
-            fullPriceCredits: p.fullPriceCredits,
-          }))}
+          chrome
         />
       </div>
     </div>

@@ -1,20 +1,9 @@
-/**
- * Transpile-only variant of jest.config.js.
- *
- * ts-jest type-checks every file it loads, which on a slow filesystem dominates
- * the run. Types are verified separately by `tsc --noEmit`, so for a behavioural
- * run that work is pure duplication. Scratch config — not part of the repo's
- * normal workflow; `npm test` still runs the type-checking configuration.
- */
-const base = require("./jest.config.js");
-
+// Scratch config: same as jest.config.js but ts-jest skips type-checking
+// (isolatedModules) so single suites fit a short shell time limit.
+const base = require("../jest.config.js");
+const fastTs = ["ts-jest", { isolatedModules: true, tsconfig: { noEmit: false } }];
 module.exports = {
   ...base,
-  transform: {
-    ...base.transform,
-    "^.+\\.tsx?$": [
-      "ts-jest",
-      { tsconfig: { noEmit: false }, isolatedModules: true },
-    ],
-  },
+  rootDir: "..",
+  transform: { ...base.transform, "^.+\\.tsx?$": fastTs },
 };

@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/features/device-render/**/*.ts",
+    "src/features/device-render/**/*.tsx",
+    "src/features/requests/components/ClipTrimBar.tsx",
+    "src/lib/mobile/deviceRatioChain.ts",
+    "src/services/DeviceRenderService.ts",
+    "src/services/VideoGenerationService.ts",
+    "src/app/api/device-render/content/route.ts",
+    "src/app/api/requests/[[]id]/generate-additional-ratios/route.ts",
+    "next-env.d.ts",
+    "src/types/**/*.d.ts"
+  ]
+}

@@ -21,6 +21,17 @@ export interface OrderedSourceAsset {
   fileName: string;
   /** Real clip length (seconds) probed at upload; null for images / unknown. */
   durationSeconds?: number | null;
+  /**
+   * Set when the ORIGINAL bytes live on the requester's device and were never
+   * uploaded. `url` is then a small poster derivative — fine for Gemini, the
+   * scene designer and thumbnails, and wrong for a render.
+   *
+   * Anything that turns an ordered asset into something a renderer reads must
+   * branch here: hand a renderer the poster and it will animate a still where a
+   * moving clip belongs, and the result looks almost right, which is the worst
+   * kind of wrong.
+   */
+  localId?: string | null;
 }
 
 /**
@@ -35,6 +46,8 @@ export function orderSourceAssets(assets: UploadedAsset[]): OrderedSourceAsset[]
       (a) =>
         (a.assetType === AssetType.Image || a.assetType === AssetType.Video) &&
         a.uploadStatus === AssetUploadStatus.Uploaded &&
+        // A device-held asset has a poster in `storageUrl`, so this stays the
+        // single "is this usable source material" test for both paths.
         !!a.storageUrl
     )
     .slice()
@@ -52,6 +65,7 @@ export function orderSourceAssets(assets: UploadedAsset[]): OrderedSourceAsset[]
       kind: a.assetType === AssetType.Video ? "clip" : "image",
       fileName: a.fileName,
       durationSeconds: a.durationSeconds ?? null,
+      localId: a.deviceLocalId ?? null,
     }));
 }
 
