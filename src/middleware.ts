@@ -108,6 +108,19 @@ export default withAuth(
       !browserMayOpen(pathname) &&
       !adLabOwnerInBrowser
     ) {
+      // An Ad Lab owner landing on the dashboard home in a browser (e.g. right
+      // after signing in) is sent to the Ad Lab — the one requester tool they
+      // can use in a browser — instead of the "get the app" page.
+      if (
+        pathname === ROUTES.DASHBOARD &&
+        isAdLabEnabledFor({
+          id: req.nextauth.token?.id as string | undefined,
+          email: req.nextauth.token?.email,
+        })
+      ) {
+        logAuthEvent("middleware_redirect", { path: pathname, role, reason: "browser_ad_lab_home" });
+        return NextResponse.redirect(new URL(ROUTES.AD_LAB, req.url));
+      }
       logAuthEvent("middleware_redirect", {
         path: pathname,
         role,
