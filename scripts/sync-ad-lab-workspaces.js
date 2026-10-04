@@ -87,7 +87,13 @@ async function main() {
   const sqlitePath = configuredPath
     ? path.resolve(projectRoot, configuredPath)
     : path.join(projectRoot, "data", "studio.sqlite");
-  if (!fs.existsSync(sqlitePath)) throw new Error(`Local Ad Lab database does not exist: ${sqlitePath}`);
+  if (!fs.existsSync(sqlitePath)) {
+    // Nothing has been saved in Ad Lab on this computer yet (the file is
+    // created on the first save while the dev server runs). Not an error.
+    log("INFO", `No local Ad Lab data yet (${sqlitePath} not created). Nothing to sync.`);
+    log("INFO", "Open /dashboard/ad-lab with `npm run dev`, save something, then run this again.");
+    return;
+  }
 
   const { DatabaseSync } = require("node:sqlite");
   const local = new DatabaseSync(sqlitePath);
