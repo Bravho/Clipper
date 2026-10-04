@@ -1,11 +1,12 @@
 import { withAuth, NextRequestWithAuth } from "next-auth/middleware";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextFetchEvent } from "next/server";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 import { logAuthEvent } from "@/lib/auth/diagnostics";
 import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import { isBrowserMarketingOnly } from "@/config/studioRollout";
 import { isAdLabEnabledFor, isAdLabPath } from "@/config/adLab";
+import { sessionCookieName } from "@/lib/auth/sessionCookie";
 
 /**
  * Requester pages a WEB BROWSER may still open once the browser is the
@@ -52,8 +53,7 @@ function browserMayOpen(pathname: string): boolean {
  * sent to "get the app" for everything but BROWSER_REQUESTER_PATHS. Admin
  * pages are never affected — admins work in a browser.
  */
-export default withAuth(
-  function middleware(req: NextRequestWithAuth) {
+function routeGuard(req: NextRequestWithAuth) {
     const { pathname } = req.nextUrl;
     const role = req.nextauth.token?.role as Role | undefined;
 
@@ -132,13 +132,28 @@ export default withAuth(
     // /account — any authenticated role (no additional check needed)
     logAuthEvent("middleware_allowed", { path: pathname, role });
     return NextResponse.next();
-  },
-  {
-    callbacks: {
-      authorized: ({ token }) => !!token,
-    },
+}
+
+const guards = new Map<string, ReturnType<typeof withAuth>>();
+
+function guardFor(cookieName: string) {
+  let guard = guards.get(cookieName);
+  if (!guard) {
+    guard = withAuth(routeGuard, {
+      callbacks: {
+        authorized: ({ token }) => !!token,
+      },
+      cookies: { sessionToken: { name: cookieName } },
+    });
+    guards.set(cookieName, guard);
   }
-);
+  return guard;
+}
+
+export default function middleware(req: NextRequestWithAuth, event: NextFetchEvent) {
+  const proto = req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(/:$/, "");
+  return guardFor(sessionCookieName(proto))(req, event);
+}
 
 export const config = {
   matcher: [
