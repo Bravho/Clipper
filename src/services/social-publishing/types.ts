@@ -94,6 +94,12 @@ export interface CreateAccountConnectionInput {
    * projects — Quickstart uses the provider's own configured redirect.
    */
   redirectUrlOverride?: string;
+  /**
+   * Scopes to request. Defaults to publishing only (["posts"]). "feeds" adds
+   * read access to the account's posts and their metrics — requested only by
+   * the Ad Lab, whose results analysis needs it.
+   */
+  permissions?: Array<"posts" | "feeds">;
 }
 
 export interface AccountConnectionResult {
@@ -206,3 +212,27 @@ export type SocialWebhookEventType =
   | "social.account.created"
   | "social.account.updated"
   | "unknown";
+
+/**
+ * One published post as the platform reports it, with its lifetime metrics.
+ * Metrics are kept as the provider's raw, platform-specific object; callers
+ * normalise them (see services/ad-lab/adLabInsights.ts).
+ */
+export interface SocialPostInsight {
+  externalAccountId: string;
+  platform: string;
+  platformPostId: string | null;
+  platformUrl: string | null;
+  externalPostId: string | null;
+  postedAt: string | null;
+  metrics: Record<string, unknown> | null;
+}
+
+export interface GetPostInsightsInput {
+  /** The provider's account id (social_connections.provider_account_id). */
+  externalAccountId: string;
+  /** Limit to posts we created (the provider's post ids). */
+  externalPostIds?: string[];
+  /** Or to the platform's own post ids. */
+  platformPostIds?: string[];
+}

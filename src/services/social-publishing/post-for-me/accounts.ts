@@ -43,7 +43,8 @@ export async function createAuthUrl(
       // "posts" is all publishing needs. "feeds" additionally grants read access
       // to everything the account has ever posted, which we do not use and
       // should not ask users to consent to.
-      permissions: ["posts"],
+      // The Ad Lab passes ["posts", "feeds"] explicitly for its analysis.
+      permissions: input.permissions?.length ? input.permissions : ["posts"],
       ...(isWhiteLabel && input.redirectUrlOverride
         ? { redirect_url_override: input.redirectUrlOverride }
         : {}),

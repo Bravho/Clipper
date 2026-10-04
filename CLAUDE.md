@@ -92,7 +92,10 @@ everyone unless `RCLIPPER_AD_LAB_ENABLED=true` AND the user is in
 `RCLIPPER_AD_LAB_ALLOWED_EMAILS` / `_USER_IDS` (`src/config/adLab.ts`); pages and
 APIs return 404 otherwise, and its menu link never appears inside the store
 apps. Production storage is PostgreSQL (`studio_workspaces`, migration 038);
-development uses local SQLite + `npm run adlab:sync`. See `docs/AD_LAB.md`.
+development uses local SQLite + `npm run adlab:sync`. Real publishing and
+results (migration 039, `AdLabPublishingService`, Post for Me feeds) need a
+real account — the dev-only local login cannot publish. See `docs/AD_LAB.md`
+and the rollout runbook `docs/AD_LAB_GO_LIVE.md`.
 
 ### AI video pipeline
 

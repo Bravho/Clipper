@@ -17,6 +17,9 @@ import { useAdLabStore } from "./useAdLabStore";
 import { saveAdLabPublishingVideo } from "./adLabVideoStorage";
 import { SocialAccountsDialog } from "./SocialAccountsDialog";
 import { CHANNEL_ACCENT, CHANNEL_LABELS } from "./socialAccountChannels";
+import { publishAdLabVideo, uploadAdLabVideo } from "./adLabPublishingClient";
+import type { AdLabPublication } from "@/domain/models/AdLabPublication";
+import { ROUTES } from "@/config/routes";
 
 type ChannelSettingsMap = Record<AdLabChannel, AdLabChannelPublishingSettings>;
 
@@ -70,6 +73,11 @@ export function PublishingWorkspace() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [validationError, setValidationError] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [publishError, setPublishError] = useState("");
+  const [published, setPublished] = useState<AdLabPublication | null>(null);
+  const [confirmPublish, setConfirmPublish] = useState(false);
 
   // Switching brand (or approving a new plan) must always leave a valid plan
   // selected, so the video and channel settings below stay in step with it.
@@ -155,19 +163,70 @@ export function PublishingWorkspace() {
   const activeChannels = selectedDraft?.channels.filter((channel) => channelSettings[channel].publish) ?? [];
   const channelsMissingAccount = activeChannels.filter((channel) => channelSettings[channel].accountIds.length === 0);
 
-  async function savePublishingPlan(event: FormEvent) {
-    event.preventDefault();
-    if (!selectedDraft || !video) return;
+  /** Shared by "save plan" and "publish now": both need a complete plan. */
+  function validatePlan(): boolean {
+    if (!selectedDraft || !video) return false;
     if (activeChannels.length === 0) {
       setValidationError("เลือกอย่างน้อย 1 ช่องทางที่จะเผยแพร่");
-      return;
+      return false;
     }
     if (channelsMissingAccount.length > 0) {
       setValidationError(
         `เลือกบัญชีอย่างน้อย 1 บัญชีสำหรับ ${channelsMissingAccount.map((channel) => CHANNEL_LABELS[channel]).join(", ")}`
       );
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Publish for real: upload the video to storage, then send one post to every
+   * selected account through the connected-accounts provider. Asks for a
+   * second click first — a published post cannot be taken back from here.
+   */
+  async function publishNow() {
+    if (!validatePlan() || !selectedDraft || !video) return;
+    if (!confirmPublish) {
+      setConfirmPublish(true);
       return;
     }
+    setConfirmPublish(false);
+    setPublishing(true);
+    setPublishError("");
+    setPublished(null);
+    try {
+      setUploadProgress(0);
+      const videoKey = await uploadAdLabVideo(video, setUploadProgress);
+      const targets = activeChannels.flatMap((channel) => {
+        const settings = channelSettings[channel];
+        return settings.accountIds.map((connectionId) => ({
+          channel,
+          connectionId,
+          plannedBudget: settings.advertisingEnabled ? settings.budget : 0,
+        }));
+      });
+      const publication = await publishAdLabVideo({
+        brandId: selectedDraft.brandId,
+        draftId: selectedDraft.id,
+        campaignName: selectedDraft.title,
+        title: selectedDraft.title,
+        caption: caption.trim(),
+        videoKey,
+        videoName: video.name,
+        targets,
+      });
+      setPublished(publication);
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "เผยแพร่ไม่สำเร็จ");
+    } finally {
+      setPublishing(false);
+      setUploadProgress(null);
+    }
+  }
+
+  async function savePublishingPlan(event: FormEvent) {
+    event.preventDefault();
+    if (!validatePlan() || !selectedDraft || !video) return;
 
     const id = crypto.randomUUID();
     const plan: AdLabPublishingPlan = {
@@ -452,7 +511,51 @@ export function PublishingWorkspace() {
               </div>
               {validationError && <p className="mt-3 text-sm text-red-600" role="alert">{validationError}</p>}
               {saveError && <p className="mt-3 text-sm text-red-600" role="alert">{saveError}</p>}
-              <p className="mt-3 text-xs text-amber-700">Private Lab เก็บแผนและไฟล์วิดีโอไว้ใน browser เครื่องนี้ การส่งขึ้นบัญชีจริงจะพร้อมเมื่อเชื่อมต่อช่องทาง production</p>
+              <p className="mt-3 text-xs text-slate-500">“บันทึกแผน” เก็บแผนและไฟล์ไว้ใน browser เครื่องนี้เท่านั้น ยังไม่โพสต์ขึ้นบัญชีจริง</p>
+            </Card>
+
+            <Card className="border-emerald-200">
+              <CardHeader>
+                <CardTitle>4. เผยแพร่จริง</CardTitle>
+                <CardDescription>
+                  อัปโหลดวิดีโอแล้วโพสต์ไปยังทุกบัญชีที่เลือกไว้ด้านบนทันที จากนั้นติดตามผลและความคุ้มค่าได้ที่แท็บ Analyze
+                </CardDescription>
+              </CardHeader>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant={confirmPublish ? "danger" : "primary"}
+                  loading={publishing}
+                  disabled={!selectedDraft || !video || publishing}
+                  onClick={() => void publishNow()}
+                >
+                  {confirmPublish
+                    ? `ยืนยัน: โพสต์ไป ${activeChannels.reduce((n, c) => n + channelSettings[c].accountIds.length, 0)} บัญชีตอนนี้`
+                    : "เผยแพร่ตอนนี้"}
+                </Button>
+                {confirmPublish && !publishing && (
+                  <Button type="button" variant="ghost" onClick={() => setConfirmPublish(false)}>ยกเลิก</Button>
+                )}
+                {uploadProgress !== null && (
+                  <span className="text-sm text-slate-600">กำลังอัปโหลดวิดีโอ {uploadProgress}%</span>
+                )}
+              </div>
+              {confirmPublish && (
+                <p className="mt-3 text-sm text-amber-700">
+                  โพสต์ที่ขึ้นแพลตฟอร์มแล้วลบจากที่นี่ไม่ได้ ตรวจ caption และบัญชีให้ถูกต้องก่อนยืนยัน
+                </p>
+              )}
+              {publishError && <p className="mt-3 text-sm text-red-600" role="alert">{publishError}</p>}
+              {published && (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                  <p className="font-semibold">ส่งโพสต์ไปยัง {published.targets.length} บัญชีแล้ว — แพลตฟอร์มกำลังประมวลผล</p>
+                  <p className="mt-1">
+                    ดูสถานะและผลลัพธ์ได้ที่{" "}
+                    <a href={ROUTES.AD_LAB_ANALYZE} className="font-medium underline">แท็บ Analyze</a>
+                    {" "}(กด “อัปเดตผลล่าสุด” หลังโพสต์ขึ้นแล้ว)
+                  </p>
+                </div>
+              )}
             </Card>
           </>
         )}

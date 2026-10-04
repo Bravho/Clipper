@@ -104,7 +104,9 @@ export function SocialAccountsDialog({
       const response = await fetch("/api/management/social-accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform }),
+        // Ad Lab also asks for read access to the account's posts ("feeds"), so
+        // the Analyze tab can pull each post's views, engagement and clicks.
+        body: JSON.stringify({ platform, withAnalytics: true }),
       });
       const data = await response.json().catch(() => ({})) as { authorizationUrl?: string };
       if (!response.ok || !data.authorizationUrl) {
@@ -188,6 +190,10 @@ export function SocialAccountsDialog({
             <h3 className="text-sm font-semibold text-slate-900">เชื่อมต่อบัญชีใหม่</h3>
             <p className="mt-1 text-xs text-slate-500">
               คุณจะอนุญาตบนเว็บไซต์ของแพลตฟอร์มเอง RClipper ไม่เคยเห็นรหัสผ่านของคุณ
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Ad Lab ขอสิทธิ์โพสต์และอ่านผลโพสต์ (ยอดดู การมีส่วนร่วม คลิก) เพื่อใช้วิเคราะห์ความคุ้มค่า —
+              บัญชีที่เคยเชื่อมจาก Channel Management ให้กดเชื่อมต่อใหม่อีกครั้งเพื่อเปิดการอ่านผล
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {platforms.length === 0 && !loading ? (

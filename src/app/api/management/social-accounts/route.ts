@@ -12,11 +12,18 @@ import {
 import { managementConnectablePlatforms } from "@/config/management";
 import { requireManagementUser, managementErrorResponse } from "../_guard";
 import { appUrl } from "@/lib/appOrigin";
+import { isAdLabEnabledFor } from "@/config/adLab";
 
 export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
   platform: z.string().min(1).max(50),
+  /**
+   * Ad Lab only: also request read access to the account's posts and metrics
+   * ("feeds"), which its results analysis needs. Ignored for anyone outside the
+   * Ad Lab allowlist, so Channel Management's consent screen is unchanged.
+   */
+  withAnalytics: z.boolean().optional(),
 });
 
 /** Where the provider should send the user back to. */
@@ -100,6 +107,9 @@ export async function POST(request: Request) {
       // code and left even White Label projects depending entirely on the
       // provider dashboard's configured redirect.
       redirectUrl: appUrl(request, CALLBACK_PATH).toString(),
+      ...(parsed.data.withAnalytics && isAdLabEnabledFor(guard.user)
+        ? { permissions: ["posts", "feeds"] as Array<"posts" | "feeds"> }
+        : {}),
     });
     return NextResponse.json({
       authorizationUrl: result.authorizationUrl,

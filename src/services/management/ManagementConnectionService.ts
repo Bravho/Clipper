@@ -151,6 +151,8 @@ export class ManagementConnectionService {
     user: { id: string; email?: string | null; role?: string | null };
     platform: SocialPlatform;
     redirectUrl?: string;
+    /** Extra scopes; the Ad Lab asks for ["posts", "feeds"] (results analysis). */
+    permissions?: Array<"posts" | "feeds">;
   }): Promise<StartConnectionResult> {
     if (!isManagementEnabledFor(params.user)) {
       throw new ManagementConnectionError("feature_disabled", "Not available.");
@@ -199,6 +201,7 @@ export class ManagementConnectionService {
         platform: params.platform,
         externalId: params.user.id,
         redirectUrlOverride,
+        ...(params.permissions ? { permissions: params.permissions } : {}),
       });
 
       return { authorizationUrl: result.authorizationUrl, connectionId: pending.id };

@@ -1,4 +1,4 @@
-import { AD_LAB_CONFIG, isAdLabEnabledFor, isAdLabPath } from "@/config/adLab";
+import { AD_LAB_CONFIG, adLabRolloutBucket, isAdLabEnabledFor, isAdLabPath } from "@/config/adLab";
 
 const original = { ...process.env };
 
@@ -71,5 +71,31 @@ describe("Ad Lab access", () => {
     expect(AD_LAB_CONFIG.store).toBe("postgres");
     process.env.RCLIPPER_AD_LAB_STORE = "mongo";
     expect(AD_LAB_CONFIG.store).toBeNull();
+  });
+
+  it("opens to an email domain and to a stable rollout percentage", () => {
+    process.env.RCLIPPER_AD_LAB_ENABLED = "true";
+    process.env.RCLIPPER_AD_LAB_ALLOWED_EMAIL_DOMAINS = "client.co.th";
+    expect(isAdLabEnabledFor({ id: "u1", email: "staff@client.co.th" })).toBe(true);
+    expect(isAdLabEnabledFor({ id: "u1", email: "staff@other.com" })).toBe(false);
+
+    delete process.env.RCLIPPER_AD_LAB_ALLOWED_EMAIL_DOMAINS;
+    process.env.RCLIPPER_AD_LAB_ROLLOUT_PERCENT = "100";
+    expect(isAdLabEnabledFor({ id: "anyone", email: "x@y.com" })).toBe(true);
+    process.env.RCLIPPER_AD_LAB_ROLLOUT_PERCENT = "0";
+    expect(isAdLabEnabledFor({ id: "anyone", email: "x@y.com" })).toBe(false);
+  });
+
+  it("keeps everyone out when the master switch is off, whatever the rollout", () => {
+    process.env.RCLIPPER_AD_LAB_ENABLED = "false";
+    process.env.RCLIPPER_AD_LAB_ROLLOUT_PERCENT = "100";
+    expect(isAdLabEnabledFor({ id: "anyone", email: "x@y.com" })).toBe(false);
+  });
+
+  it("buckets users stably into 0–99", () => {
+    const bucket = adLabRolloutBucket("user-123");
+    expect(bucket).toBe(adLabRolloutBucket("user-123"));
+    expect(bucket).toBeGreaterThanOrEqual(0);
+    expect(bucket).toBeLessThan(100);
   });
 });

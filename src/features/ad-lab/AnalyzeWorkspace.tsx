@@ -8,6 +8,7 @@ import { Select } from "@/components/ui/Select";
 import { AD_LAB_CHANNELS, type AdLabAdResult, type AdLabChannel } from "@/domain/models/AdLab";
 import { useAdLabStore } from "./useAdLabStore";
 import { calculateAdLabMetrics, diagnoseAdLabMetrics } from "@/services/ad-lab/AdLabPrototypeService";
+import { PublishedResults } from "./PublishedResults";
 
 const labels: Record<AdLabChannel, string> = { tiktok: "TikTok", instagram: "Instagram", facebook: "Facebook", youtube: "YouTube" };
 const n = (value: string) => Math.max(0, Number(value) || 0);
@@ -40,6 +41,13 @@ export function AnalyzeWorkspace() {
       <div>
         <h2 className="text-2xl font-bold text-slate-950">Ad Analysis</h2>
         <p className="mt-1 text-sm text-slate-500">รวมผลจากหลายช่องทางให้อยู่ใน funnel เดียว และแปลงตัวเลขเป็นสิ่งที่ควรแก้ในคลิปถัดไป</p>
+      </div>
+
+      <PublishedResults brandId={brandId} />
+
+      <div className="border-t border-slate-200 pt-6">
+        <h3 className="text-lg font-semibold text-slate-950">ผลที่กรอกเอง</h3>
+        <p className="text-sm text-slate-500">สำหรับแคมเปญที่ไม่ได้โพสต์ผ่าน Ad Lab หรือข้อมูลจาก Ads Manager (impressions, 3s views, conversions)</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">

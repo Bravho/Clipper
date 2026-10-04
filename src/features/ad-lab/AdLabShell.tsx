@@ -31,7 +31,7 @@ export function AdLabShell({ children }: { children: React.ReactNode }) {
                 วางแผนสคริปต์ เผยแพร่ และเรียนรู้จากผลโฆษณาใน workflow เดียว
               </p>
             </div>
-            <span className="text-xs text-slate-400">ข้อมูล MVP เก็บใน browser เครื่องนี้</span>
+            <span className="text-xs text-slate-400">เฉพาะบัญชีที่ได้รับอนุญาต · โพสต์จริงผ่านบัญชีที่เชื่อมต่อ</span>
           </div>
           <nav className="mt-5 flex gap-2 overflow-x-auto" aria-label="Ad Lab navigation">
             {links.map((link) => {

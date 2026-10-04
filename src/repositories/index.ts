@@ -183,3 +183,10 @@ import { PostgresManagementJobRepository } from "./postgres/PostgresManagementJo
 export const managementPublicationRepository =
   new PostgresManagementPublicationRepository();
 export const managementJobRepository = new PostgresManagementJobRepository();
+
+// ── Private Ad Lab — real publishing + results (migration 039) ──────────────
+// PostgreSQL only: publishing needs a real account and the provider, so there
+// is no SQLite fallback for this part.
+import { PostgresAdLabPublicationRepository } from "./postgres/PostgresAdLabPublicationRepository";
+
+export const adLabPublicationRepository = new PostgresAdLabPublicationRepository();

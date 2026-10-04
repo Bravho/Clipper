@@ -67,8 +67,13 @@ export async function POST(request: Request) {
   // Post events carry our publication id in external_id. Enqueue a reconcile so
   // the worker pulls the real status. Account events are recorded but need no
   // reconcile here.
-  const publicationId = event.type.startsWith("social.post")
+  const externalId = event.type.startsWith("social.post")
     ? extractPublicationId(event.payload)
+    : null;
+  // Ad Lab posts (external_id "adlab_…") are not Management publications; the
+  // Ad Lab refreshes its own status on demand, so no reconcile job is queued.
+  const publicationId = externalId && !externalId.startsWith(AD_LAB_EXTERNAL_ID_PREFIX)
+    ? externalId
     : null;
 
   if (publicationId) {
@@ -108,6 +113,9 @@ export async function POST(request: Request) {
  * in which case the publish-time reconcile job (which polls until terminal)
  * still catches the result; the webhook is only an accelerator.
  */
+/** Must match AdLabPublishingService. */
+const AD_LAB_EXTERNAL_ID_PREFIX = "adlab_";
+
 function extractPublicationId(payload: Record<string, unknown>): string | null {
   const readExternalId = (obj: unknown): string | null => {
     if (!obj || typeof obj !== "object") return null;

@@ -26,6 +26,41 @@ not change any Capacitor / Android / iOS code.
 - Gate: `src/config/adLab.ts`; dev-only login `src/lib/auth/adLabLocalCredentials.ts`
 - Sync: `scripts/sync-ad-lab-workspaces.js` (`npm run adlab:sync`)
 
+## Signing in
+
+Use your **real RClipper account** (the cloud PostgreSQL `users` table), in
+development as well as in production. Ad Lab data is keyed by your user id, and
+publishing uses your real Channel Management social connections, so the
+optional dev-only local login (`RCLIPPER_AD_LAB_LOCAL_AUTH_*`) is only good for
+offline script writing: it cannot publish (refused with `local_account`), and
+it is impossible to enable in production (`NODE_ENV=production`). When Ad Lab
+is merged into main, the same real-account login is all there is.
+
+## Real publishing and results (Phase 3)
+
+- **Publishing tab → "4. เผยแพร่จริง"**: uploads the video straight to DO Spaces
+  (`ad_lab/<userId>/…`, presigned PUT) and sends ONE Post for Me post to every
+  selected account. Asks for a second click first. Never retried.
+- **Analyze tab → "ผลจากโพสต์จริง"**: per post and per account — status, link,
+  views, engagement, engagement rate, clicks; the owner types ad spend, revenue
+  and customers (conversions); Ad Lab computes CPV, CPE, CPM, CPA and ROAS, a
+  channel comparison (bars + table, best channel marked) and plain-language
+  takeaways. "อัปเดตผลล่าสุด" re-reads status + metrics; every read is kept as
+  a snapshot.
+- Metrics come from Post for Me *social account feeds*, which need the account
+  to be connected with the **"feeds"** permission. Ad Lab's connect dialog asks
+  for it (`withAnalytics`, honoured only for Ad Lab users); accounts connected
+  earlier from Channel Management must be reconnected once from Ad Lab.
+  Instagram metrics can take up to 48 h; TikTok's consumer API reports only
+  views/likes/comments/shares (TikTok Business reports reach, clicks, watch time).
+- Data: migration `039_ad_lab_publications.sql` (`ad_lab_publications`,
+  `ad_lab_publication_targets`, `ad_lab_metric_snapshots`). PostgreSQL only.
+- Code: `services/ad-lab/AdLabPublishingService.ts`, `services/ad-lab/adLabInsights.ts`
+  (pure normalisation + cost-effectiveness), `services/social-publishing/post-for-me/feeds.ts`,
+  `app/api/ad-lab/{uploads,publications,targets}`, `features/ad-lab/PublishedResults.tsx`.
+- Ad Lab posts carry `external_id = adlab_<id>`; the Management webhook ignores
+  them, so no Management reconcile jobs are created.
+
 ## Who can see it
 
 Visible only when BOTH are set, otherwise every page and API returns 404 and
@@ -40,6 +75,10 @@ Enforced in four places: the page layout (404), each API route (404), the
 dashboard menu (link only for allowlisted users, never inside the store apps),
 and the middleware (an allowlisted owner may open it in a browser even when
 `BROWSER_MARKETING_ONLY=true`). The older `RCLIPPER_STUDIO_*` names still work.
+
+Phase 4 widening (both off by default, master switch still required):
+`RCLIPPER_AD_LAB_ALLOWED_EMAIL_DOMAINS` and `RCLIPPER_AD_LAB_ROLLOUT_PERCENT`
+(stable per-user bucket). Pricing is not decided, so nothing charges credits.
 
 The account must be a **Requester** (the lab lives under `/dashboard`). The
 Publishing screen reuses Channel Management's connected accounts
@@ -71,7 +110,9 @@ Optional dev-only login (ignored when `NODE_ENV=production`):
 workspace is stored under the id `studio-local-owner`; use `--as-email` when
 syncing to move it onto your real account.
 
-## Going live (owner only)
+## Going live
+
+Step-by-step commands: `docs/AD_LAB_GO_LIVE.md`. Summary:
 
 1. Merge `feature/studio-lab` into `main` with the Ad Lab variables unset on
    the droplet. Normal users see nothing.
@@ -85,11 +126,10 @@ syncing to move it onto your real account.
 
 ## Before widening beyond the owner
 
-- Store publishing videos in DO Spaces instead of the browser (IndexedDB).
 - Split the single JSON workspace into tables; add creative-version lineage.
 - Rate-limit and cost-cap `generate-script`; add an audit log.
 - Move UI strings into `src/i18n/messages`.
-- Read-only platform insight connectors (TikTok, Meta, YouTube) for Analyze.
+- Paid-ads spend/conversions straight from the ad platforms (today they are typed in).
 - Decide whether it ever appears inside the store apps (store review).
 
 ## Boundaries

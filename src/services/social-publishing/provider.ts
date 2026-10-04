@@ -21,6 +21,8 @@ import type {
   SocialPostStatus,
   SocialWebhookEvent,
   UpdateSocialPostInput,
+  GetPostInsightsInput,
+  SocialPostInsight,
 } from "./types";
 
 export interface SocialPublishingProvider {
@@ -94,4 +96,11 @@ export interface SocialPublishingProvider {
     headers: Headers,
     rawBody: string
   ): SocialWebhookEvent | null;
+
+  /**
+   * Lifetime metrics of posts on one account. Optional: needs the account to
+   * have been connected with the "feeds" permission, and not every provider
+   * offers it. Used by the Ad Lab results analysis only.
+   */
+  getPostInsights?(input: GetPostInsightsInput): Promise<SocialPostInsight[]>;
 }

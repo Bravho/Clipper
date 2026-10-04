@@ -11,6 +11,7 @@ import * as accounts from "./post-for-me/accounts";
 import * as media from "./post-for-me/media";
 import * as posts from "./post-for-me/posts";
 import { verifyAndParseWebhook } from "./post-for-me/webhooks";
+import * as feeds from "./post-for-me/feeds";
 
 /** Provider key persisted on `social_connections.provider`. */
 export const POST_FOR_ME_PROVIDER_KEY = "post_for_me";
@@ -31,6 +32,8 @@ const postForMeProvider: SocialPublishingProvider = {
   cancelPost: posts.cancelPost,
 
   verifyAndParseWebhook,
+
+  getPostInsights: feeds.getPostInsights,
 };
 
 /**
