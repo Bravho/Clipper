@@ -13,6 +13,7 @@ const channelSettingsSchema = z.object({
   advertisingEnabled: z.boolean(),
   budgetType: z.enum(["daily", "total"]),
   budget: z.number(),
+  durationDays: z.number().int().min(1).max(365).optional(),
   targetAudience: z.string(),
 });
 const workspaceSchema = z.object({
@@ -45,7 +46,7 @@ const workspaceSchema = z.object({
       facebook: channelSettingsSchema,
       youtube: channelSettingsSchema,
     }),
-    status: z.literal("ready"), updatedAt: z.string(),
+    status: z.enum(["draft", "ready"]), updatedAt: z.string(),
   })),
   socialAccounts: z.array(z.object({
     id: z.string(), brandId: z.string(), channel: channelSchema, platform: z.string(),

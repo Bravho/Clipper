@@ -1,4 +1,5 @@
 import type { AdLabChannel } from "./AdLab";
+import type { AdLabAdsLink } from "./AdLabAdTargeting";
 
 /**
  * Ad Lab real publishing — one video sent to several connected accounts, and
@@ -56,6 +57,8 @@ export interface AdLabPublicationTarget {
   conversions: number;
   metrics: AdLabNormalizedMetrics | null;
   metricsFetchedAt: string | null;
+  /** TikTok Ads Manager / Marketing API link (draft/paused only from RClipper). */
+  ads: AdLabAdsLink | null;
 }
 
 export interface AdLabPublication {

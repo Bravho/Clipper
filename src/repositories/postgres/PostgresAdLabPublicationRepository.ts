@@ -1,6 +1,7 @@
 import { pool } from "@/lib/db";
 import type { Pool, PoolClient } from "pg";
 import type { AdLabChannel } from "@/domain/models/AdLab";
+import type { AdLabAdsLink } from "@/domain/models/AdLabAdTargeting";
 import type {
   AdLabNormalizedMetrics,
   AdLabPublication,
@@ -14,7 +15,7 @@ import type {
   UpdateAdLabTargetOutcome,
 } from "@/repositories/interfaces/IAdLabPublicationRepository";
 
-/** Tables from migration 039_ad_lab_publications.sql. */
+/** Tables from migration 039 + ads columns from 040_ad_lab_ads_outcomes.sql. */
 
 interface PublicationRow {
   id: string;
@@ -52,9 +53,35 @@ interface TargetRow {
   conversions: number;
   metrics: AdLabNormalizedMetrics | null;
   metrics_fetched_at: Date | null;
+  ads_advertiser_id?: string | null;
+  ads_campaign_id?: string | null;
+  ads_adgroup_id?: string | null;
+  ads_ad_id?: string | null;
+  ads_spark_code?: string | null;
+  ads_status?: string | null;
+  ads_targeting?: AdLabAdsLink["targeting"] | null;
+  ads_stub?: boolean | null;
+  ads_last_synced_at?: Date | null;
+  ads_last_error?: string | null;
 }
 
 const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
+
+function toAds(row: TargetRow): AdLabAdsLink | null {
+  if (!(row.ads_ad_id || row.ads_campaign_id || row.ads_status)) return null;
+  return {
+    advertiserId: row.ads_advertiser_id || "",
+    campaignId: row.ads_campaign_id ?? null,
+    adgroupId: row.ads_adgroup_id ?? null,
+    adId: row.ads_ad_id ?? null,
+    sparkCode: row.ads_spark_code ?? null,
+    status: (row.ads_status as AdLabAdsLink["status"]) || "none",
+    targeting: row.ads_targeting ?? null,
+    lastSyncedAt: iso(row.ads_last_synced_at ?? null),
+    lastError: row.ads_last_error ?? null,
+    stub: Boolean(row.ads_stub),
+  };
+}
 
 function toTarget(row: TargetRow): AdLabPublicationTarget {
   return {
@@ -76,6 +103,7 @@ function toTarget(row: TargetRow): AdLabPublicationTarget {
     conversions: Number(row.conversions) || 0,
     metrics: row.metrics,
     metricsFetchedAt: iso(row.metrics_fetched_at),
+    ads: toAds(row),
   };
 }
 
@@ -99,14 +127,39 @@ function toPublication(row: PublicationRow, targets: AdLabPublicationTarget[]): 
   };
 }
 
-const TARGET_COLUMNS = `id, publication_id, channel, connection_id, provider_account_id, platform,
+/** Base columns always present (migration 039). */
+const TARGET_COLUMNS_BASE = `id, publication_id, channel, connection_id, provider_account_id, platform,
   account_label, status, platform_post_id, platform_url, error, published_at, planned_budget,
   spend, revenue, conversions, metrics, metrics_fetched_at`;
+
+/** Extended columns from migration 040 — selected when available. */
+const TARGET_COLUMNS_ADS = `, ads_advertiser_id, ads_campaign_id, ads_adgroup_id, ads_ad_id, ads_spark_code, ads_status,
+  ads_targeting, ads_stub, ads_last_synced_at, ads_last_error`;
 
 export class PostgresAdLabPublicationRepository implements IAdLabPublicationRepository {
   constructor(private db: Pool = pool) {}
 
+  private adsColumnsReady: boolean | null = null;
+
+  private async targetColumns(): Promise<string> {
+    if (this.adsColumnsReady === null) {
+      try {
+        const { rows } = await this.db.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM information_schema.columns
+              WHERE table_name = 'ad_lab_publication_targets' AND column_name = 'ads_ad_id'
+           ) AS exists`
+        );
+        this.adsColumnsReady = Boolean(rows[0]?.exists);
+      } catch {
+        this.adsColumnsReady = false;
+      }
+    }
+    return this.adsColumnsReady ? TARGET_COLUMNS_BASE + TARGET_COLUMNS_ADS : TARGET_COLUMNS_BASE;
+  }
+
   async create(input: CreateAdLabPublicationInput): Promise<AdLabPublication> {
+    const cols = await this.targetColumns();
     const client: PoolClient = await this.db.connect();
     try {
       await client.query("BEGIN");
@@ -127,7 +180,7 @@ export class PostgresAdLabPublicationRepository implements IAdLabPublicationRepo
           `INSERT INTO ad_lab_publication_targets
              (publication_id, channel, connection_id, provider_account_id, platform, account_label, planned_budget)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING ${TARGET_COLUMNS}`,
+           RETURNING ${cols}`,
           [publication.id, t.channel, t.connectionId, t.providerAccountId, t.platform, t.accountLabel, t.plannedBudget]
         );
         targets.push(toTarget(result.rows[0]));
@@ -145,8 +198,9 @@ export class PostgresAdLabPublicationRepository implements IAdLabPublicationRepo
   private async targetsFor(publicationIds: string[]): Promise<Map<string, AdLabPublicationTarget[]>> {
     const map = new Map<string, AdLabPublicationTarget[]>();
     if (publicationIds.length === 0) return map;
+    const cols = await this.targetColumns();
     const { rows } = await this.db.query<TargetRow>(
-      `SELECT ${TARGET_COLUMNS} FROM ad_lab_publication_targets
+      `SELECT ${cols} FROM ad_lab_publication_targets
         WHERE publication_id = ANY($1::uuid[])
         ORDER BY created_at ASC`,
       [publicationIds]
@@ -180,8 +234,15 @@ export class PostgresAdLabPublicationRepository implements IAdLabPublicationRepo
   }
 
   async findTargetById(targetId: string) {
+    const cols = await this.targetColumns();
+    const selectList = cols
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .map((c) => `t.${c}`)
+      .join(", ");
     const { rows } = await this.db.query<TargetRow & { owner_id: string }>(
-      `SELECT t.${TARGET_COLUMNS.split(",").map((c) => c.trim()).join(", t.")}, p.owner_id
+      `SELECT ${selectList}, p.owner_id
          FROM ad_lab_publication_targets t
          JOIN ad_lab_publications p ON p.id = t.publication_id
         WHERE t.id = $1`,
@@ -203,6 +264,10 @@ export class PostgresAdLabPublicationRepository implements IAdLabPublicationRepo
         WHERE id = $1`,
       [id, providerPostId, status, error]
     );
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.db.query("DELETE FROM ad_lab_publications WHERE id = $1", [id]);
   }
 
   async setStatus(id: string, status: AdLabPublicationStatus, error: string | null = null): Promise<void> {
@@ -262,6 +327,54 @@ export class PostgresAdLabPublicationRepository implements IAdLabPublicationRepo
               updated_at = NOW()
         WHERE id = $1`,
       [targetId, values.spend ?? null, values.revenue ?? null, values.conversions ?? null]
+    );
+  }
+
+  async updateTargetAdsLink(targetId: string, link: AdLabAdsLink): Promise<void> {
+    const cols = await this.targetColumns();
+    if (!cols.includes("ads_ad_id")) {
+      throw new Error(
+        "Ads columns missing — apply migration 040_ad_lab_ads_outcomes.sql before linking Ads Manager drafts."
+      );
+    }
+    await this.db.query(
+      `UPDATE ad_lab_publication_targets
+          SET ads_advertiser_id = $2,
+              ads_campaign_id = $3,
+              ads_adgroup_id = $4,
+              ads_ad_id = $5,
+              ads_spark_code = $6,
+              ads_status = $7,
+              ads_targeting = $8::jsonb,
+              ads_stub = $9,
+              ads_last_synced_at = $10,
+              ads_last_error = $11,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [
+        targetId,
+        link.advertiserId || null,
+        link.campaignId,
+        link.adgroupId,
+        link.adId,
+        link.sparkCode,
+        link.status,
+        link.targeting ? JSON.stringify(link.targeting) : null,
+        link.stub,
+        link.lastSyncedAt,
+        link.lastError,
+      ]
+    );
+  }
+
+  async updateTargetAdsMetrics(targetId: string, metrics: Record<string, unknown>): Promise<void> {
+    const cols = await this.targetColumns();
+    if (!cols.includes("ads_ad_id")) return;
+    await this.db.query(
+      `UPDATE ad_lab_publication_targets
+          SET ads_metrics = $2::jsonb, ads_last_synced_at = NOW(), updated_at = NOW()
+        WHERE id = $1`,
+      [targetId, JSON.stringify(metrics)]
     );
   }
 }

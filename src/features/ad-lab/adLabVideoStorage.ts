@@ -31,3 +31,32 @@ export async function saveAdLabPublishingVideo(key: string, video: File): Promis
     database.close();
   }
 }
+
+/** The video kept for an auto-saved publishing plan, or null when it is gone. */
+export async function loadAdLabPublishingVideo(key: string): Promise<File | null> {
+  const database = await openDatabase();
+  try {
+    return await new Promise<File | null>((resolve, reject) => {
+      const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(key);
+      request.onsuccess = () => resolve(request.result instanceof Blob ? (request.result as File) : null);
+      request.onerror = () => reject(request.error ?? new Error("อ่านวิดีโอไม่สำเร็จ"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+/** Remove a plan's video from this browser (no-op when it is not there). */
+export async function deleteAdLabPublishingVideo(key: string): Promise<void> {
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).delete(key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("ลบวิดีโอไม่สำเร็จ"));
+    });
+  } finally {
+    database.close();
+  }
+}

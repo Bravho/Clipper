@@ -19,7 +19,7 @@
  *      refresh(), not by re-sending.
  */
 
-import { HeadObjectCommand, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { spacesClient, SPACES_BUCKET, spacesSignedUrl } from "@/lib/spaces";
 import { adLabPublicationRepository, socialConnectionRepository } from "@/repositories";
@@ -63,11 +63,13 @@ export class AdLabPublishingError extends Error {
       | "empty_file"
       | "video_not_found"
       | "no_targets"
+      | "missing_caption"
       | "duplicate_target"
       | "unknown_connection"
       | "connection_not_connected"
       | "channel_mismatch"
       | "not_found"
+      | "not_deletable"
       | "provider_error"
       | "insights_unavailable",
     message: string
@@ -172,6 +174,12 @@ export class AdLabPublishingService {
       throw new AdLabPublishingError("video_not_found", "อัปโหลดวิดีโอยังไม่เสร็จ หรือไฟล์หายไป");
     }
 
+    // Post for Me rejects a post without a caption ("caption is required"), so
+    // catch it here with a clear message instead of a provider 400.
+    if (!input.caption.trim()) {
+      throw new AdLabPublishingError("missing_caption", "ใส่ Caption ก่อนเผยแพร่");
+    }
+
     if (input.targets.length === 0) {
       throw new AdLabPublishingError("no_targets", "เลือกบัญชีปลายทางอย่างน้อย 1 บัญชี");
     }
@@ -218,7 +226,7 @@ export class AdLabPublishingService {
       draftId: input.draftId,
       planId: input.planId ?? null,
       campaignName: input.campaignName.trim() || "Ad Lab campaign",
-      caption: input.caption,
+      caption: input.caption.trim(),
       videoKey: input.videoKey,
       videoName: input.videoName,
       targets: resolved,
@@ -229,7 +237,7 @@ export class AdLabPublishingService {
       const media = await this.provider.prepareMedia({ sourceUrl: await this.signUrl(input.videoKey) });
       const title = input.title?.trim().slice(0, 100);
       const result = await this.provider.createPost({
-        caption: input.caption,
+        caption: input.caption.trim(),
         media: [media],
         targets: resolved.map((t) => ({
           externalAccountId: t.providerAccountId,
@@ -341,6 +349,33 @@ export class AdLabPublishingService {
     }
 
     return { publication: await this.owned(userId, publicationId), warnings };
+  }
+
+  /**
+   * Delete a publication that never reached any platform, together with its
+   * targets, metric snapshots (cascade) and the uploaded video in storage.
+   *
+   * Only FAILED publications qualify: once anything is live — or may still go
+   * live (sending / processing) — the record is the only audit trail of a real
+   * post, and deleting it here would not remove the post from the platform.
+   */
+  async deleteFailed(userId: string, publicationId: string): Promise<void> {
+    const publication = await this.owned(userId, publicationId);
+    const anyLive = publication.targets.some((t) => t.status === "published");
+    if (publication.status !== "failed" || anyLive) {
+      throw new AdLabPublishingError(
+        "not_deletable",
+        "ลบได้เฉพาะโพสต์ที่เผยแพร่ไม่สำเร็จ — โพสต์ที่ขึ้นแพลตฟอร์มแล้วหรือกำลังประมวลผลต้องจัดการที่แพลตฟอร์ม"
+      );
+    }
+    await this.publications.delete(publication.id);
+    // Only ever touch keys under this owner's prefix. Best effort: a leftover
+    // object is harmless, a half-deleted record is not.
+    if (publication.videoKey.startsWith(adLabVideoKeyPrefix(userId))) {
+      await this.s3
+        .send(new DeleteObjectCommand({ Bucket: SPACES_BUCKET, Key: publication.videoKey }))
+        .catch((err) => console.warn("[ad-lab] video delete failed", publication.videoKey, err));
+    }
   }
 
   /** The money side of one destination, entered by the owner. */

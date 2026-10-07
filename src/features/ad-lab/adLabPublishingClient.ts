@@ -2,6 +2,7 @@
 
 import type { AdLabChannel } from "@/domain/models/AdLab";
 import type { AdLabPublication } from "@/domain/models/AdLabPublication";
+import type { AdLabAdTargeting, AdLabAdsLink } from "@/domain/models/AdLabAdTargeting";
 
 /** Browser-side calls for Ad Lab real publishing and results. */
 
@@ -91,6 +92,39 @@ export async function updateAdLabTargetEconomics(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(values),
+    })
+  );
+  return data.publication;
+}
+
+/** Delete a failed publication (and its uploaded video) for good. */
+export async function deleteAdLabPublication(id: string): Promise<void> {
+  const response = await fetch(`/api/ad-lab/publications/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok) await readJson(response);
+}
+
+/** Create a paused/stub TikTok Ads Manager draft for a published TikTok target. Never enables spend. */
+export async function createAdLabAdsDraft(input: {
+  targetId: string;
+  targeting: AdLabAdTargeting;
+  dailyBudgetBaht?: number;
+  campaignName?: string;
+}): Promise<{ publication: AdLabPublication; link: AdLabAdsLink }> {
+  return readJson(
+    await fetch("/api/ad-lab/ads/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+}
+
+export async function syncAdLabAdsReport(targetId: string): Promise<AdLabPublication> {
+  const data = await readJson<{ publication: AdLabPublication }>(
+    await fetch("/api/ad-lab/ads/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetId }),
     })
   );
   return data.publication;

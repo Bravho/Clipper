@@ -40,7 +40,26 @@ is merged into main, the same real-account login is all there is.
 
 - **Publishing tab → "4. เผยแพร่จริง"**: uploads the video straight to DO Spaces
   (`ad_lab/<userId>/…`, presigned PUT) and sends ONE Post for Me post to every
-  selected account. Asks for a second click first. Never retried.
+  selected account. Never retried. A caption is required (Post for Me rejects
+  posts without one). The button opens a confirm dialog listing every
+  destination; if paid promotion is planned it shows the real total and the
+  owner must tick an acknowledgement before publishing.
+- **Publishing tab is auto-saved**: one working plan per script plan
+  (`publishingPlans`, debounced upsert into the workspace; the video file stays
+  in the browser's IndexedDB). There is no "save plan" button.
+- **Paid promotion is a PLAN, not a purchase.** Post for Me publishes organic
+  posts only, and RClipper is not connected to any ad-buying API or payment for
+  ads. Per channel the owner sets daily budget × days or a one-time total over
+  N days; the per-account total becomes the target's `planned_budget`. The UI
+  says plainly that nothing is charged and where to pay (TikTok Promote / Ads
+  Manager, Meta boost / Ads Manager, Google Ads). Buying ads for the owner would
+  need the TikTok Business / Meta Marketing / Google Ads APIs plus a payment
+  flow — not built (`features/ad-lab/adLabPromotion.ts`).
+- **Delete failed posts**: Analyze shows "ลบรายการ" on FAILED publications only
+  (`DELETE /api/ad-lab/publications/:id`): removes the publication, its targets
+  and snapshots (cascade) and the uploaded video in Spaces. Anything published
+  or still processing is refused (409) — the record is the audit trail of a
+  real post.
 - **Analyze tab → "ผลจากโพสต์จริง"**: per post and per account — status, link,
   views, engagement, engagement rate, clicks; the owner types ad spend, revenue
   and customers (conversions); Ad Lab computes CPV, CPE, CPM, CPA and ROAS, a
@@ -137,3 +156,83 @@ Step-by-step commands: `docs/AD_LAB_GO_LIVE.md`. Summary:
 - Travy/TravyBuzz is not an Ad Lab channel.
 - A production deploy of `main` reaches the WebView apps, so the server-side
   gate must stay in place.
+
+
+## TikTok Ads Manager + Chinese_TTT outcomes (P1–P6)
+
+Publishing keeps **Post for Me** for organic posts, then an **Advertise** panel
+(TikTok) with Ads Manager-style targeting:
+
+- Objectives (traffic, video views, reach, engagement, conversions, …)
+- Locations, age, gender, languages
+- Interests / behaviors / custom & lookalike audience IDs
+- Devices / OS / connection
+- Budget & schedule (existing plan fields)
+- **Search keywords** (include / exclude; broad / phrase / exact)
+- Spark Ads: reuse the organic `platform_post_id`
+- UTM fields for light attribution to LINE / Stripe
+
+Creating an ads structure from Analyze (`Create Ads draft (paused)`) calls
+`POST /api/ad-lab/ads/draft`. With Marketing API credentials it creates
+campaign / ad group / ad with `operation_status = DISABLE` (paused). Without
+credentials it stores a **stub** link so the UI can be exercised. **RClipper
+never enables spend and never charges for ads.**
+
+### Analyze additions
+
+- Planned vs actual spend % on each target
+- CSV / paste import from Ads Manager (`POST /api/ad-lab/ads/import`)
+- Optional report sync (`POST /api/ad-lab/ads/sync`) when an `ads_ad_id` exists
+- **LINE OA friend count** snapshots (`/api/ad-lab/outcomes/line`) — stub without token
+- **Stripe received payments** read-only (`/api/ad-lab/outcomes/stripe`) — stub without key;
+  filters PaymentIntents by metadata (default `product=chinese_ttt`)
+
+### Migration 040 (additive — apply when ready)
+
+```bash
+node scripts/apply-migration.js src/db/migrations/040_ad_lab_ads_outcomes.sql
+```
+
+Adds ads_* columns on `ad_lab_publication_targets` plus
+`ad_lab_line_friend_snapshots`, `ad_lab_stripe_revenue_snapshots`,
+`ad_lab_ads_imports`. The publication repository detects missing ads columns
+and keeps working for organic publish until 040 is applied; ads link writes
+then require the migration.
+
+### Env vars (optional — missing ⇒ stub)
+
+```env
+# TikTok Marketing API (Ads Manager) — draft/reporting only
+TIKTOK_MARKETING_ACCESS_TOKEN=
+TIKTOK_MARKETING_ADVERTISER_ID=
+TIKTOK_MARKETING_APP_ID=
+TIKTOK_MARKETING_APP_SECRET=
+# TIKTOK_MARKETING_API_BASE=https://business-api.tiktok.com/open_api/v1.3
+
+# LINE Official Account (Chinese_TTT friend count)
+AD_LAB_LINE_OA_CHANNEL_ACCESS_TOKEN=
+# AD_LAB_LINE_OA_BOT_USER_ID=
+
+# Stripe revenue (read-only; never creates charges from Ad Lab)
+AD_LAB_STRIPE_SECRET_KEY=
+AD_LAB_STRIPE_METADATA_KEY=product
+AD_LAB_STRIPE_METADATA_VALUE=chinese_ttt
+```
+
+### Open decisions for Tho
+
+1. Separate LINE OA token for Chinese_TTT friend insights
+2. Stripe metadata tagging for Chinese_TTT payments (`product=chinese_ttt`)
+3. TikTok Marketing API OAuth / advertiser id in Business Center
+4. Apply migration 040 on cloud Postgres when ready
+5. Whether live Marketing API create is wanted beyond stub + CSV for week 1
+
+### Code map (ads / outcomes)
+
+- Targeting model: `src/domain/models/AdLabAdTargeting.ts`
+- UI: `AdTargetingPanel.tsx`, `AdsImportPanel.tsx`, `ChineseTttOutcomesPanel.tsx`
+- Services: `tiktokMarketingClient.ts`, `lineOfficialAccountClient.ts`,
+  `stripeRevenueClient.ts`, `AdLabAdsService.ts`, `AdLabOutcomesService.ts`,
+  `adLabCsvImport.ts`
+- API: `/api/ad-lab/ads/{draft,sync,import}`, `/api/ad-lab/outcomes/{line,stripe}`
+- Migration: `040_ad_lab_ads_outcomes.sql`

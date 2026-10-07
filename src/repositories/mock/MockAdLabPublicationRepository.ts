@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import type { AdLabAdsLink } from "@/domain/models/AdLabAdTargeting";
 import type {
   AdLabNormalizedMetrics,
   AdLabPublication,
@@ -53,6 +54,7 @@ export class MockAdLabPublicationRepository implements IAdLabPublicationReposito
         conversions: 0,
         metrics: null,
         metricsFetchedAt: null,
+        ads: null,
       })),
     };
     this.store.set(id, publication);
@@ -90,6 +92,10 @@ export class MockAdLabPublicationRepository implements IAdLabPublicationReposito
     if (p) Object.assign(p, { providerPostId, status, error, updatedAt: new Date().toISOString() });
   }
 
+  async delete(id: string) {
+    this.store.delete(id);
+  }
+
   async setStatus(id: string, status: AdLabPublicationStatus, error: string | null = null) {
     const p = this.store.get(id);
     if (p) Object.assign(p, { status, error, updatedAt: new Date().toISOString() });
@@ -120,5 +126,17 @@ export class MockAdLabPublicationRepository implements IAdLabPublicationReposito
     if (values.spend !== undefined) found.target.spend = values.spend;
     if (values.revenue !== undefined) found.target.revenue = values.revenue;
     if (values.conversions !== undefined) found.target.conversions = values.conversions;
+  }
+
+  async updateTargetAdsLink(targetId: string, link: AdLabAdsLink) {
+    const found = this.locate(targetId);
+    if (!found) return;
+    found.target.ads = structuredClone(link);
+  }
+
+  async updateTargetAdsMetrics(targetId: string, _metrics: Record<string, unknown>) {
+    const found = this.locate(targetId);
+    if (!found || !found.target.ads) return;
+    found.target.ads.lastSyncedAt = new Date().toISOString();
   }
 }

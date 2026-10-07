@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -9,6 +9,10 @@ import { AD_LAB_CHANNELS, type AdLabAdResult, type AdLabChannel } from "@/domain
 import { useAdLabStore } from "./useAdLabStore";
 import { calculateAdLabMetrics, diagnoseAdLabMetrics } from "@/services/ad-lab/AdLabPrototypeService";
 import { PublishedResults } from "./PublishedResults";
+import { ChineseTttOutcomesPanel } from "./ChineseTttOutcomesPanel";
+import { AdsImportPanel } from "./AdsImportPanel";
+import { listAdLabPublications } from "./adLabPublishingClient";
+import type { AdLabPublication } from "@/domain/models/AdLabPublication";
 
 const labels: Record<AdLabChannel, string> = { tiktok: "TikTok", instagram: "Instagram", facebook: "Facebook", youtube: "YouTube" };
 const n = (value: string) => Math.max(0, Number(value) || 0);
@@ -21,6 +25,10 @@ export function AnalyzeWorkspace() {
   const [values, setValues] = useState({ spend: "", revenue: "", impressions: "", views3s: "", completedViews: "", clicks: "", conversions: "" });
 
   const brandResults = useMemo(() => store.results.filter((item) => !brandId || item.brandId === brandId), [brandId, store.results]);
+  const [publications, setPublications] = useState<AdLabPublication[]>([]);
+  useEffect(() => {
+    void listAdLabPublications().then(setPublications).catch(() => setPublications([]));
+  }, [brandId]);
   const metrics = useMemo(() => calculateAdLabMetrics(brandResults), [brandResults]);
 
   function save(event: FormEvent) {
@@ -44,6 +52,24 @@ export function AnalyzeWorkspace() {
       </div>
 
       <PublishedResults brandId={brandId} />
+
+      {brandId ? <ChineseTttOutcomesPanel brandId={brandId} /> : null}
+
+      {brandId ? (
+        <AdsImportPanel
+          brandId={brandId}
+          publications={publications}
+          onImported={(publication) => {
+            if (!publication) return;
+            setPublications((current) => {
+              const exists = current.some((p) => p.id === publication.id);
+              return exists
+                ? current.map((p) => (p.id === publication.id ? publication : p))
+                : [publication, ...current];
+            });
+          }}
+        />
+      ) : null}
 
       <div className="border-t border-slate-200 pt-6">
         <h3 className="text-lg font-semibold text-slate-950">ผลที่กรอกเอง</h3>
@@ -78,7 +104,7 @@ export function AnalyzeWorkspace() {
             </div>
             <Button type="submit" fullWidth>บันทึกและวิเคราะห์</Button>
           </form>}
-          <div className="mt-4 border-t border-slate-100 pt-4 text-xs text-slate-500">API connectors รุ่นถัดไป: TikTok, Instagram, Facebook และ YouTube เท่านั้น</div>
+          <div className="mt-4 border-t border-slate-100 pt-4 text-xs text-slate-500">TikTok Ads Manager + LINE OA + Stripe outcomes ใช้ได้ด้านบน (stub ได้ถ้ายังไม่มี secret)</div>
         </Card>
       </div>
     </div>

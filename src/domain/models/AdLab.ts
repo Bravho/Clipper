@@ -1,3 +1,5 @@
+import type { AdLabAdTargeting } from "./AdLabAdTargeting";
+
 export const AD_LAB_CHANNELS = [
   "tiktok",
   "instagram",
@@ -73,10 +75,21 @@ export interface AdLabChannelPublishingSettings {
   publish: boolean;
   /** Ids of the AdLabSocialAccount rows this channel publishes to. */
   accountIds: string[];
+  /**
+   * Paid promotion PLAN for this channel. Ad Lab does not buy ads or take
+   * payment: the owner pays the platform (TikTok Promote, Meta boost, Google
+   * Ads) themselves. These values become the target's planned budget, so the
+   * Analyze tab can compare cost-effectiveness against what was planned.
+   */
   advertisingEnabled: boolean;
+  /** "daily": `budget` is per day × durationDays; "total": `budget` is the whole run. */
   budgetType: "daily" | "total";
   budget: number;
+  /** Promotion length in days. Absent on plans saved before it existed (treated as 7). */
+  durationDays?: number;
   targetAudience: string;
+  /** Rich TikTok Ads Manager-style targeting (plan). Absent on older plans. */
+  adTargeting?: AdLabAdTargeting | null;
 }
 
 export interface AdLabPublishingPlan {
@@ -90,7 +103,8 @@ export interface AdLabPublishingPlan {
   videoType: string;
   caption: string;
   channelSettings: Record<AdLabChannel, AdLabChannelPublishingSettings>;
-  status: "ready";
+  /** "draft" while incomplete; "ready" once it has a video, caption and accounts. */
+  status: "draft" | "ready";
   updatedAt: string;
 }
 

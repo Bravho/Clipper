@@ -24,11 +24,13 @@ const STATUS: Record<AdLabPublishingError["code"], number> = {
   empty_file: 400,
   video_not_found: 400,
   no_targets: 400,
+  missing_caption: 400,
   duplicate_target: 400,
   unknown_connection: 400,
   connection_not_connected: 409,
   channel_mismatch: 400,
   not_found: 404,
+  not_deletable: 409,
   provider_error: 502,
   insights_unavailable: 502,
 };

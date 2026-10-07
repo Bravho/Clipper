@@ -1,4 +1,5 @@
 import type { AdLabChannel } from "@/domain/models/AdLab";
+import type { AdLabAdsLink } from "@/domain/models/AdLabAdTargeting";
 import type {
   AdLabNormalizedMetrics,
   AdLabPublication,
@@ -46,6 +47,8 @@ export interface IAdLabPublicationRepository {
     error?: string | null
   ): Promise<void>;
   setStatus(id: string, status: AdLabPublicationStatus, error?: string | null): Promise<void>;
+  /** Remove a publication; its targets and metric snapshots go with it. */
+  delete(id: string): Promise<void>;
   updateTargetOutcome(targetId: string, outcome: UpdateAdLabTargetOutcome): Promise<void>;
   updateTargetMetrics(
     targetId: string,
@@ -56,4 +59,8 @@ export interface IAdLabPublicationRepository {
     targetId: string,
     values: { spend?: number; revenue?: number; conversions?: number }
   ): Promise<void>;
+  /** Persist TikTok Ads Manager draft/link fields (migration 040 columns). */
+  updateTargetAdsLink(targetId: string, link: AdLabAdsLink): Promise<void>;
+  /** Optional: store raw ads reporting metrics JSON. */
+  updateTargetAdsMetrics?(targetId: string, metrics: Record<string, unknown>): Promise<void>;
 }

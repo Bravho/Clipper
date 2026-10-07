@@ -14,9 +14,14 @@ import {
 import {
   listAdLabPublications,
   refreshAdLabPublication,
+  deleteAdLabPublication,
   updateAdLabTargetEconomics,
+  createAdLabAdsDraft,
+  syncAdLabAdsReport,
 } from "./adLabPublishingClient";
 import { CHANNEL_ACCENT, CHANNEL_LABELS } from "./socialAccountChannels";
+import { defaultAdLabAdTargeting } from "@/domain/models/AdLabAdTargeting";
+import { plannedVsActual } from "@/services/ad-lab/adLabCsvImport";
 
 /**
  * Real results of posts published from the Ad Lab: per-post outcome and
@@ -185,6 +190,8 @@ export function PublishedResults({ brandId }: { brandId: string }) {
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<Record<string, string[]>>({});
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -213,6 +220,19 @@ export function PublishedResults({ brandId }: { brandId: string }) {
       setWarnings((current) => ({ ...current, [id]: [err instanceof Error ? err.message : "อัปเดตไม่สำเร็จ"] }));
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function remove(id: string) {
+    setDeletingId(id);
+    try {
+      await deleteAdLabPublication(id);
+      setPublications((current) => current.filter((p) => p.id !== id));
+      setConfirmDeleteId(null);
+    } catch (err) {
+      setWarnings((current) => ({ ...current, [id]: [err instanceof Error ? err.message : "ลบไม่สำเร็จ"] }));
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -311,9 +331,30 @@ export function PublishedResults({ brandId }: { brandId: string }) {
                       {new Date(publication.createdAt).toLocaleString()} · {STATUS_LABEL[publication.status]}
                     </p>
                   </div>
-                  <Button size="sm" variant="secondary" loading={busyId === publication.id} onClick={() => void refresh(publication.id)}>
-                    อัปเดตผลล่าสุด
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {publication.status === "failed" && (
+                      confirmDeleteId === publication.id ? (
+                        <>
+                          <span className="text-xs text-red-700">ลบรายการนี้ พร้อมวิดีโอที่อัปโหลดและข้อมูลผลทั้งหมด?</span>
+                          <Button size="sm" variant="ghost" disabled={deletingId === publication.id} onClick={() => setConfirmDeleteId(null)}>
+                            ยกเลิก
+                          </Button>
+                          <Button size="sm" variant="danger" loading={deletingId === publication.id} onClick={() => void remove(publication.id)}>
+                            ยืนยันลบ
+                          </Button>
+                        </>
+                      ) : (
+                        <Button size="sm" variant="outline" className="text-red-700" onClick={() => setConfirmDeleteId(publication.id)}>
+                          ลบรายการ
+                        </Button>
+                      )
+                    )}
+                    {confirmDeleteId !== publication.id && (
+                      <Button size="sm" variant="secondary" loading={busyId === publication.id} onClick={() => void refresh(publication.id)}>
+                        อัปเดตผลล่าสุด
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 {publication.error && <p className="px-5 pt-3 text-sm text-red-700">{publication.error}</p>}
                 {(warnings[publication.id] ?? []).length > 0 && (
@@ -362,8 +403,70 @@ export function PublishedResults({ brandId }: { brandId: string }) {
                                 <EconomicsInput label="ยอดขาย ฿" value={target.revenue} onSave={(v) => saveEconomics(target.id, { revenue: v })} />
                                 <EconomicsInput label="ลูกค้า" integer value={target.conversions} onSave={(v) => saveEconomics(target.id, { conversions: v })} />
                               </div>
-                              {target.plannedBudget > 0 && (
-                                <p className="mt-1 text-[11px] text-slate-400">งบที่วางแผนไว้ {baht(target.plannedBudget, 0)}</p>
+                              {target.plannedBudget > 0 && (() => {
+                                const pva = plannedVsActual(target.plannedBudget, target.spend);
+                                return (
+                                  <p className="mt-1 text-[11px] text-slate-400">
+                                    plan {baht(pva.planned, 0)}
+                                    {pva.pctOfPlan !== null ? ` / actual ${pva.pctOfPlan.toFixed(0)}% of plan` : ""}
+                                    {pva.delta > 0 ? ` / over ${baht(pva.delta, 0)}` : ""}
+                                  </p>
+                                );
+                              })()}
+                              {target.channel === "tiktok" && (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {!target.ads?.adId ? (
+                                    <button
+                                      type="button"
+                                      className="rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-medium text-violet-800"
+                                      onClick={() => void (async () => {
+                                        try {
+                                          const targeting = defaultAdLabAdTargeting({
+                                            sparkMode: true,
+                                            sparkPostId: target.platformPostId || "",
+                                            utmCampaign: "chinese_ttt",
+                                          });
+                                          const result = await createAdLabAdsDraft({
+                                            targetId: target.id,
+                                            targeting,
+                                            dailyBudgetBaht: target.plannedBudget > 0 ? target.plannedBudget / 7 : 0,
+                                            campaignName: publication.campaignName,
+                                          });
+                                          replace(result.publication);
+                                        } catch (err) {
+                                          setWarnings((current) => ({
+                                            ...current,
+                                            [publication.id]: [err instanceof Error ? err.message : "Ads draft failed"],
+                                          }));
+                                        }
+                                      })()}
+                                    >
+                                      Create Ads draft (paused)
+                                    </button>
+                                  ) : (
+                                    <>
+                                      <span className="text-[11px] text-slate-500">
+                                        ad {target.ads.adId}{target.ads.stub ? " · stub" : ""} · {target.ads.status}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700"
+                                        onClick={() => void (async () => {
+                                          try {
+                                            replace(await syncAdLabAdsReport(target.id));
+                                          } catch (err) {
+                                            setWarnings((current) => ({
+                                              ...current,
+                                              [publication.id]: [err instanceof Error ? err.message : "Ads sync failed"],
+                                            }));
+                                          }
+                                        })()}
+                                      >
+                                        Sync Ads report
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               )}
                             </td>
                             <td className="py-3 tabular-nums">{baht(e.cpv)}</td>
