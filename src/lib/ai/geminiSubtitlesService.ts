@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { AI_CONFIG, requireGeminiApiKey } from "@/config/aiTools";
 import { spacesClient } from "@/lib/spaces";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -49,7 +49,198 @@ async function downloadAsBase64(url: string): Promise<{ data: string; mimeType: 
 }
 
 /**
- * Align vocal audio track with scripts using Gemini 2.0 Flash Audio capability.
+ * Per-language budget for ONE caption chunk returned by the alignment call.
+ * Each chunk is shown as one on-screen line, so these match the phone /
+ * Remotion one-line budgets (`maxChars` in `deviceRenderCaptions.ts` and
+ * `LANG_STYLE` in `remotion/TemplatedVideo.tsx`): a chunk inside them is never
+ * re-split by `splitSegmentsForDisplay` nor re-wrapped by the renderers, so
+ * the break Gemini chose is the break the viewer sees. Thai is counted the way
+ * the renderers count it — every code point, vowel and tone marks included.
+ */
+export const CAPTION_CHUNK_LIMITS: Record<SubtitleLanguage, number> = {
+  th: 26,
+  en: 30,
+  zh: 16,
+};
+
+/** Gaps between chunks shorter than this are closed so captions don't flicker. */
+const MAX_CLOSED_GAP_SECONDS = 0.35;
+
+/** Chinese punctuation that must not start a caption line. */
+const ZH_NO_LEADING = /^[，。！？、；：,.!?;:）」』】》〉…·\s]+/;
+/** Trailing Chinese pauses dropped from a caption (subtitle convention). Keeps ！？ */
+const ZH_DROP_TRAILING = /[，。、；：,.;:\s]+$/;
+
+function buildAlignmentPrompt(params: {
+  scriptThai: string;
+  scriptEnglish: string;
+  scriptChinese?: string;
+  durationSeconds: number;
+  protectedPhrases: string[];
+  feedback?: string;
+}): string {
+  const protectedLine = params.protectedPhrases.length
+    ? `- NEVER split these names across two chunks; each must sit whole inside one chunk: ${params.protectedPhrases
+        .map((p) => `"${p}"`)
+        .join(", ")}.\n`
+    : "";
+  const chinese = params.scriptChinese
+    ? `Chinese (Simplified) translation: "${params.scriptChinese}"`
+    : "No Chinese translation is given — translate each chunk into natural Simplified Chinese yourself.";
+  const feedback = params.feedback
+    ? `\nYOUR PREVIOUS ANSWER WAS REJECTED: ${params.feedback}\nFix exactly that and answer again.\n`
+    : "";
+
+  return `You are making on-screen SUBTITLES for a short social-media video. Listen to this Thai voice-over (exactly ${params.durationSeconds} seconds long) and cut its script into short caption CHUNKS, each one shown on screen as ONE line while it is being spoken.
+
+Thai script (what is spoken): "${params.scriptThai}"
+English translation: "${params.scriptEnglish}"
+${chinese}
+
+HOW TO CUT THE THAI INTO CHUNKS
+- Copy the Thai script EXACTLY, in order. Joined together, the chunks' textThai must equal the script (spaces may be dropped). Do not add, remove, fix or reorder any Thai character.
+- Each chunk is one natural spoken phrase — break where a Thai speaker pauses: at a space in the script, or between clauses.
+- Each textThai is at most ${CAPTION_CHUNK_LIMITS.th} characters counting EVERY Thai character including vowel and tone marks (about 3–6 words).
+- NEVER break inside a word, a compound word or a loanword (e.g. ร้านอาหาร, น้ำซุป, เข้มข้น, เริ่มต้น, ชาบู, วากิว, บุฟเฟ่ต์, คาเฟ่), a menu item, a person or place name, or a brand.
+- NEVER start a chunk with a particle or repeat mark (ครับ, ค่ะ, คะ, นะ, จ้า, เลย, ด้วย, ๆ) — keep it with the word before it.
+- NEVER end a chunk on a word that needs what follows (ที่, ของ, และ, กับ, ใน, แต่, ก็, จะ, ไม่, การ, ความ, ให้, ว่า, แค่).
+- Keep a number with its unit (50 บาท, 10 นาที, 2 คน).
+${protectedLine}- No chunk may be shorter than 2 words unless it is the whole sentence.
+
+TRANSLATIONS PER CHUNK
+- textEnglish and textChinese must translate THAT chunk only, so all three lines mean the same thing at the same moment. Use the given translations as the source, re-cut to match the Thai chunks; light rewording for natural word order is fine, but keep the overall meaning.
+- textEnglish: at most ${CAPTION_CHUNK_LIMITS.en} characters; do not end a chunk on "the", "a", "at", "in", "of", "to", "and"; keep numbers with their units and names whole.
+- textChinese: Simplified Chinese, at most ${CAPTION_CHUNK_LIMITS.zh} characters; never start with punctuation; no trailing ，or 。; keep numbers with their measure words and names whole.
+
+TIMING
+- startSecond / endSecond: when that chunk is actually spoken in the audio, in seconds (e.g. 1.25). Chunks are in order and do not overlap; all times are between 0 and ${params.durationSeconds}.
+${feedback}
+Return ONLY JSON: { "segments": [ { "sentenceNumber": 1, "textThai": "...", "textEnglish": "...", "textChinese": "...", "startSecond": 0.0, "endSecond": 1.8 } ] }`;
+}
+
+const ALIGNMENT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    segments: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          sentenceNumber: { type: Type.INTEGER },
+          textThai: { type: Type.STRING },
+          textEnglish: { type: Type.STRING },
+          textChinese: { type: Type.STRING },
+          startSecond: { type: Type.NUMBER },
+          endSecond: { type: Type.NUMBER },
+        },
+        required: ["sentenceNumber", "textThai", "textEnglish", "textChinese", "startSecond", "endSecond"],
+        propertyOrdering: ["sentenceNumber", "textThai", "textEnglish", "textChinese", "startSecond", "endSecond"],
+      },
+    },
+  },
+  required: ["segments"],
+};
+
+const compactThai = (s: string) => s.normalize("NFC").replace(/\s+/g, "");
+const codePoints = (s: string) => Array.from(s).length;
+
+/**
+ * Clean up Gemini's caption chunks: drop empties, coerce numbers, clamp to the
+ * audio, put them in order without overlaps, close tiny gaps, tidy Chinese
+ * punctuation and renumber. Pure — exported for tests.
+ */
+export function normalizeCaptionChunks(raw: unknown, durationSeconds: number): TimedSegment[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const duration = durationSeconds > 0 ? durationSeconds : Number.POSITIVE_INFINITY;
+  const num = (v: unknown) => (typeof v === "number" ? v : Number(v));
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+  const chunks = list
+    .map((item) => {
+      const r = (item ?? {}) as Record<string, unknown>;
+      const start = num(r.startSecond);
+      const end = num(r.endSecond);
+      return {
+        textThai: str(r.textThai).normalize("NFC"),
+        textEnglish: str(r.textEnglish).replace(/\s+/g, " "),
+        textChinese: str(r.textChinese).replace(ZH_NO_LEADING, "").replace(ZH_DROP_TRAILING, ""),
+        startSecond: Number.isFinite(start) ? Math.max(0, Math.min(duration, start)) : NaN,
+        endSecond: Number.isFinite(end) ? Math.max(0, Math.min(duration, end)) : NaN,
+      };
+    })
+    .filter((c) => c.textThai || c.textEnglish || c.textChinese)
+    .filter((c) => Number.isFinite(c.startSecond) && Number.isFinite(c.endSecond));
+
+  // Keep Gemini's order (it follows the script); only repair the times.
+  const out: TimedSegment[] = [];
+  let cursor = 0;
+  for (const c of chunks) {
+    const start = Math.max(c.startSecond, cursor);
+    let end = Math.max(c.endSecond, start);
+    if (end - start < 0.2) end = Math.min(duration, start + 0.2);
+    if (!(end > start)) continue;
+    const prev = out[out.length - 1];
+    if (prev && start - prev.endSecond > 0 && start - prev.endSecond < MAX_CLOSED_GAP_SECONDS) {
+      prev.endSecond = start;
+    }
+    out.push({ sentenceNumber: out.length + 1, ...c, startSecond: start, endSecond: end });
+    cursor = end;
+  }
+  return out;
+}
+
+/**
+ * Problems with a set of caption chunks, worst first. An empty list means the
+ * chunks can be used as they are. Pure — exported for tests.
+ */
+export function captionChunkProblems(
+  chunks: TimedSegment[],
+  scriptThai: string,
+  protectedPhrases: string[] = []
+): { fatal: string[]; soft: string[] } {
+  const fatal: string[] = [];
+  const soft: string[] = [];
+  if (chunks.length === 0) {
+    fatal.push("no usable segments were returned");
+    return { fatal, soft };
+  }
+  const joined = compactThai(chunks.map((c) => c.textThai).join(""));
+  if (joined !== compactThai(scriptThai)) {
+    fatal.push(
+      "the textThai chunks joined together do not equal the Thai script exactly — copy it character for character"
+    );
+  }
+  for (const phrase of protectedPhrases.map(compactThai).filter(Boolean)) {
+    if (!compactThai(scriptThai).includes(phrase)) continue;
+    if (!chunks.some((c) => compactThai(c.textThai).includes(phrase))) {
+      fatal.push(`the name "${phrase}" was split across chunks`);
+    }
+  }
+  const tooLong = (lang: SubtitleLanguage, field: keyof TimedSegment) =>
+    chunks
+      .map((c) => String(c[field] ?? ""))
+      .filter((t) => codePoints(t) > CAPTION_CHUNK_LIMITS[lang]);
+  const longTh = tooLong("th", "textThai");
+  if (longTh.length) soft.push(`these Thai chunks are longer than ${CAPTION_CHUNK_LIMITS.th} characters: ${longTh.map((t) => `"${t}"`).join(", ")}`);
+  const longEn = tooLong("en", "textEnglish");
+  if (longEn.length) soft.push(`these English chunks are longer than ${CAPTION_CHUNK_LIMITS.en} characters: ${longEn.map((t) => `"${t}"`).join(", ")}`);
+  const longZh = tooLong("zh", "textChinese");
+  if (longZh.length) soft.push(`these Chinese chunks are longer than ${CAPTION_CHUNK_LIMITS.zh} characters: ${longZh.map((t) => `"${t}"`).join(", ")}`);
+  return { fatal, soft };
+}
+
+/**
+ * Align the voice track with its script AND cut it into subtitle chunks, in one
+ * Gemini call. Gemini does the phrasing (where a Thai line may break, and the
+ * matching English / Chinese for each chunk) because a dictionary word splitter
+ * cuts Thai loanwords and compounds mid-word and cannot keep the three
+ * languages saying the same thing at the same moment.
+ *
+ * The chunks are checked: the Thai must be the script verbatim (or the
+ * captions would not match the voice), protected names must stay whole, and
+ * every chunk should fit one line. On a problem the call is retried ONCE with
+ * the problem spelled out; the better of the two answers is kept, and anything
+ * still too long is split later by `splitSegmentsForDisplay` as a safety net.
  */
 export async function alignAudioWithScript(params: {
   audioUrl: string;
@@ -57,53 +248,50 @@ export async function alignAudioWithScript(params: {
   scriptEnglish: string;
   scriptChinese?: string;
   durationSeconds: number;
+  /** Names that must never be split across captions (e.g. the place name). */
+  protectedPhrases?: string[];
 }): Promise<TimedSegment[]> {
   const ai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
-
-  // Download vocal file and encode as base64
   const { data, mimeType } = await downloadAsBase64(params.audioUrl);
+  const protectedPhrases = (params.protectedPhrases ?? []).map((p) => p.trim()).filter(Boolean);
 
-  const prompt = `Listen carefully to this spoken vocal track and align it word-for-word/sentence-for-sentence with the script segments provided below.
-  Determine the exact starting and ending times (in seconds, e.g. 1.25) for each sentence segment.
-  The audio file is exactly ${params.durationSeconds} seconds long.
+  const attempt = async (feedback?: string) => {
+    const response = await ai.models.generateContent({
+      model: AI_CONFIG.gemini.textModel,
+      contents: [
+        { inlineData: { data, mimeType } },
+        { text: buildAlignmentPrompt({ ...params, protectedPhrases, feedback }) },
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: ALIGNMENT_RESPONSE_SCHEMA,
+        temperature: 0.1,
+      },
+    });
+    const raw = response.text ?? "";
+    if (!raw) throw new Error("Gemini audio alignment returned empty response");
+    const segments = normalizeCaptionChunks(JSON.parse(raw)?.segments, params.durationSeconds);
+    return { segments, problems: captionChunkProblems(segments, params.scriptThai, protectedPhrases) };
+  };
 
-  Thai Script: "${params.scriptThai}"
-  English Translation: "${params.scriptEnglish}"
-  ${params.scriptChinese ? `Chinese (Simplified) Translation: "${params.scriptChinese}"` : "Also translate each sentence into Simplified Chinese yourself."}
+  const first = await attempt();
+  if (first.problems.fatal.length === 0 && first.problems.soft.length === 0) return first.segments;
 
-  Return ONLY a valid JSON object matching the schema below:
-  {
-    "segments": [
-      {
-        "sentenceNumber": 1,
-        "textThai": "Thai sentence string",
-        "textEnglish": "English sentence string",
-        "textChinese": "Simplified Chinese sentence string",
-        "startSecond": number,
-        "endSecond": number
-      }
-    ]
-  }`;
+  let second: Awaited<ReturnType<typeof attempt>> | null = null;
+  try {
+    second = await attempt([...first.problems.fatal, ...first.problems.soft].join("; "));
+  } catch (err) {
+    console.warn("[GeminiAlignment] retry failed, keeping first answer:", err);
+  }
 
-  const contents = [
-    { inlineData: { data, mimeType } },
-    { text: prompt }
-  ];
-
-  const response = await ai.models.generateContent({
-    model: AI_CONFIG.gemini.textModel, // "gemini-2.0-flash"
-    contents,
-    config: {
-      responseMimeType: "application/json",
-      temperature: 0.1,
-    },
-  });
-
-  const raw = response.text ?? "";
-  if (!raw) throw new Error("Gemini audio alignment returned empty response");
-
-  const parsed = JSON.parse(raw);
-  return parsed.segments as TimedSegment[];
+  const score = (r: Awaited<ReturnType<typeof attempt>>) =>
+    r.problems.fatal.length * 100 + r.problems.soft.length;
+  const best = second && score(second) <= score(first) ? second : first;
+  if (best.problems.fatal.length || best.problems.soft.length) {
+    console.warn("[GeminiAlignment] caption chunks kept with problems:", best.problems);
+  }
+  if (best.segments.length === 0) throw new Error("Gemini audio alignment returned no usable segments");
+  return best.segments;
 }
 
 /**

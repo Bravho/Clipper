@@ -1850,12 +1850,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       const geminiSubtitlesService = await import("@/lib/ai/geminiSubtitlesService");
+      // The place name must never be cut across two captions.
+      const { clipRequestRepository } = await import("@/repositories/index");
+      const placeName = (await clipRequestRepository.findById(job.requestId))?.placeName?.trim();
       const segments = await geminiSubtitlesService.alignAudioWithScript({
         audioUrl: stored.storageUrl,
         scriptThai,
         scriptEnglish,
         scriptChinese,
         durationSeconds: voiceDurationSeconds ?? 15,
+        protectedPhrases: placeName ? [placeName] : [],
       });
       voiceTimestamps = JSON.stringify(segments);
       subtitleTimeline = voiceTimestamps;
