@@ -30,6 +30,7 @@ import {
   type CaptionLanguage,
 } from "@/lib/mobile/deviceRenderCaptions";
 import { MONTAGE_FPS, type MontageTransition, type MotionPreset } from "@/config/montage";
+import type { ManifestTextGraphics } from "@/lib/textGraphics/plan";
 
 /**
  * Build a device render manifest from APPROVED job data.
@@ -86,6 +87,10 @@ export interface ManifestTemplateInput {
   canvas: "none" | "black" | "palette_light" | "palette_dark";
   decor: string[];
   palette: { primary: string; secondary: string; accent: string; neutral: string };
+  /** Scene cut times in picture seconds (see `templateTimelineForScenePlan`). */
+  beats?: number[];
+  /** The finished video's length, seconds. */
+  endSeconds?: number | null;
 }
 
 export interface BuildDeviceRenderManifestInput {
@@ -117,6 +122,12 @@ export interface BuildDeviceRenderManifestInput {
    */
   musicSelected?: boolean;
   template: ManifestTemplateInput;
+  /**
+   * Text graphics for a final export, already resolved (`toManifestTextGraphics`).
+   * In picture seconds, so — unlike captions — NOT shifted by the lead-in.
+   * Dropped on every other stage.
+   */
+  textGraphics?: ManifestTextGraphics | null;
   upload?: DeviceRenderUpload | null;
   leaseExpiresAt: Date;
   maxOutputBytes: number;
@@ -335,7 +346,12 @@ export function buildDeviceRenderManifest(
       canvas: input.template.canvas,
       decor: input.template.decor,
       palette: input.template.palette,
+      beats: input.template.beats ?? [],
+      endSeconds: input.template.endSeconds ?? null,
     },
+    textGraphics: isFinal && !input.travy && input.textGraphics && input.textGraphics.items.length > 0
+      ? input.textGraphics
+      : null,
     output: {
       mimeType: "video/mp4" as const,
       videoCodec: "h264" as const,

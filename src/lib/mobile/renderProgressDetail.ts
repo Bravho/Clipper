@@ -30,6 +30,8 @@ const LOOK_NAMES: Record<string, string> = {
   clean_frame: "Minimal frame",
   framed_cream: "Warm frame",
   editorial: "Editorial",
+  bold_pop: "Bold pop",
+  cinematic: "Cinematic",
 };
 
 export interface TimelineShot {

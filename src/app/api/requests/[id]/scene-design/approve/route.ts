@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isTextGraphicChoice, type TextGraphicChoice } from "@/config/textGraphicStyles";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
@@ -97,6 +98,13 @@ export async function POST(
   }
   const selectedMotionTemplate = rawTemplate as string | undefined;
 
+  // Text-graphics style (studio only). Optional: older app builds don't send it.
+  const rawTextStyle = body?.selectedTextStyle;
+  if (rawTextStyle !== undefined && !isTextGraphicChoice(rawTextStyle)) {
+    return NextResponse.json({ error: "Unknown text style." }, { status: 400 });
+  }
+  const selectedTextStyle = rawTextStyle as TextGraphicChoice | undefined;
+
   const autoApproveRemaining = body?.autoApproveRemaining === true;
 
   // Use the same strict coverage rule as the later merge approval so a plan that
@@ -116,6 +124,11 @@ export async function POST(
   }
 
   try {
+    // Saved BEFORE production starts, so the phone's final render already sees
+    // it. Never throws: the text style must not be able to block production.
+    const { textGraphicsService } = await import("@/services/TextGraphicsService");
+    if (selectedTextStyle) await textGraphicsService.saveChoice(jobId, selectedTextStyle);
+
     const updated = await videoGenerationService.approveSceneDesignByRequester(
       jobId,
       session.user.id,
@@ -130,6 +143,13 @@ export async function POST(
         autoApproveRemaining,
       }
     );
+    // Write the plan now (reused when the studio already previewed this edit),
+    // so the final render does not wait on Claude. Fire-and-forget.
+    if (selectedTextStyle && selectedTextStyle !== "none") {
+      void textGraphicsService.ensurePlan(updated).catch((err) => {
+        console.error("[scene-design/approve] text graphics plan failed:", err);
+      });
+    }
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {
     // The originals' keep window has passed (config/localMedia.ts).

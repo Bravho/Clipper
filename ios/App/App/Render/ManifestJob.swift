@@ -129,7 +129,10 @@ final class ManifestJob {
 
             let outputURL = workDirectory.appendingPathComponent("\(UUID().uuidString)-output.mp4")
             output = outputURL
-            let renderer = ManifestRenderer(manifest: manifest, workDirectory: workDirectory)
+            let renderer = ManifestRenderer(
+                manifest: manifest,
+                workDirectory: workDirectory,
+                textGraphicsFonts: fetchTextGraphicsFonts())
 
             let resolve: ManifestRenderer.SourceResolver = { assetId in
                 guard let url = inputs[assetId] else {
@@ -328,6 +331,23 @@ final class ManifestJob {
             report(Double(index + 1) / Double(pending.count) * Self.downloadShare * 100)
         }
         return inputs
+    }
+
+    /// The text-graphics fonts, best effort: one that will not download is
+    /// noted and left out, and its text draws in the system face. Never fails
+    /// the render.
+    private func fetchTextGraphicsFonts() -> [String: URL] {
+        guard let spec = manifest.textGraphics?.value else { return [:] }
+        var fonts: [String: URL] = [:]
+        for font in spec.fonts {
+            if isCancelled { break }
+            do {
+                fonts[font.key] = try fetch(font.url, label: "font-\(font.key)", extension: "ttf")
+            } catch {
+                note("Text-graphics font \(font.key) not downloaded — \(Self.chain(error))")
+            }
+        }
+        return fonts
     }
 
     private func fetch(_ url: String, label: String, extension ext: String) throws -> URL {

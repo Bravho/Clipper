@@ -33,7 +33,7 @@ function extractStorageKey(url: string): string {
 }
 
 /** Download file from DO Spaces as base64 */
-async function downloadAsBase64(url: string): Promise<{ data: string; mimeType: string }> {
+export async function downloadAsBase64(url: string): Promise<{ data: string; mimeType: string }> {
   const key = extractStorageKey(url);
   const bucket = process.env.DO_SPACES_BUCKET!;
   const res = await spacesClient.send(new GetObjectCommand({ Bucket: bucket, Key: key }));

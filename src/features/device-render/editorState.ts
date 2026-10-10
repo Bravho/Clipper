@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_TEXT_GRAPHIC_CHOICE, type TextGraphicChoice } from "@/config/textGraphicStyles";
 import { PIPELINE_STEP_COSTS, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import {
   ACCEPTED_MIME_TYPES,
@@ -157,6 +158,8 @@ export interface EditorDocument {
   scenes: EditorScene[];
   captionLanguages: CaptionLanguage[];
   templateId: string;
+  /** Text-graphics style (`src/config/textGraphicStyles.ts`): auto, a pack, or none. */
+  textStyle: TextGraphicChoice;
   /** Id of a track in `public/music`, or null for no bed. */
   musicTrackId: string | null;
   /** A locally chosen voice file, for a draft before the approved voice exists. */
@@ -192,6 +195,7 @@ export function emptyDocument(): EditorDocument {
     scenes: [],
     captionLanguages: ["en", "zh"],
     templateId: "none",
+    textStyle: DEFAULT_TEXT_GRAPHIC_CHOICE,
     musicTrackId: null,
     voiceFile: null,
     musicFile: null,

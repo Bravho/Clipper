@@ -12,6 +12,7 @@ import {
   type MotionPreset,
 } from "@/config/montage";
 import { MOTION_TEMPLATES } from "@/config/motionTemplates";
+import { DEFAULT_TEXT_GRAPHIC_CHOICE, isTextGraphicChoice } from "@/config/textGraphicStyles";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
 import { DEFAULT_ELEVENLABS_VOICE_ID, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -94,6 +95,7 @@ import {
 import {
   approveStudioContent,
   approveStudioProduction,
+  fetchTextGraphicsPreview,
   approveStudioVideo,
   approveStudioVoice,
   fetchStudioContent,
@@ -840,6 +842,7 @@ function StudioEditor({
           ? { captionLanguages: production.subtitleLanguages as typeof current.captionLanguages }
           : {}),
         ...(production.templateId ? { templateId: production.templateId } : {}),
+        ...(isTextGraphicChoice(production.textStyle) ? { textStyle: production.textStyle } : {}),
       }));
       setApprovedScenes(produced);
       setSoundConfirmed(true);
@@ -1211,6 +1214,7 @@ function StudioEditor({
         musicTrackId: document.musicTrackId,
         subtitleLanguages: document.captionLanguages,
         templateId: document.templateId,
+        textStyle: document.textStyle ?? DEFAULT_TEXT_GRAPHIC_CHOICE,
         t,
       });
       setApprovedScenes(document.scenes);
@@ -1946,6 +1950,24 @@ function StudioEditor({
               setGraphicConfirmed(false);
               update((current) => ({ ...current, templateId }));
             }}
+            textStyle={document.textStyle ?? DEFAULT_TEXT_GRAPHIC_CHOICE}
+            onTextStyle={(textStyle) => {
+              setGraphicConfirmed(false);
+              update((current) => ({ ...current, textStyle }));
+            }}
+            loadTextPreview={
+              requestId && content?.jobId
+                ? (choice, fresh) =>
+                    fetchTextGraphicsPreview({
+                      requestId,
+                      choice,
+                      scenePlan: scenePlanFromScenes(document, indexOfSource),
+                      musicTrackId: document.musicTrackId,
+                      fresh,
+                      t,
+                    })
+                : null
+            }
             graphicConfirmed={graphicConfirmed}
             onConfirm={() => {
               setGraphicConfirmed(true);

@@ -4,6 +4,7 @@ import {
   type BuildDeviceRenderManifestInput,
 } from "@/lib/mobile/deviceRenderManifestBuilder";
 import { DEVICE_MUSIC_LEAD_IN_SECONDS } from "@/lib/mobile/deviceRenderAudio";
+import { sanitizeTextGraphicItems, toManifestTextGraphics } from "@/lib/textGraphics/plan";
 import { DEVICE_MIN_CLIP_PLAYBACK_RATE } from "@/lib/mobile/deviceRenderCaptions";
 
 /**
@@ -406,6 +407,39 @@ describe("device render manifest builder", () => {
       // Same lead-in as the mix it makes, so captions stay on the speech.
       expect(manifest.captions[0].startSeconds).toBeCloseTo(DEVICE_MUSIC_LEAD_IN_SECONDS, 5);
       expect(manifest.output.coverRequired).toBe(true);
+    });
+
+    it("carries text graphics on a final only, unshifted, and never on Travy", () => {
+      const textGraphics = toManifestTextGraphics(
+        {
+          version: 1,
+          choice: "premium",
+          styleId: "premium",
+          items: sanitizeTextGraphicItems(
+            [{ kind: "hook", start: 0.3, end: 3.5, title: "Shop", sub: "Thai food" }],
+            10
+          ),
+          source: "fallback",
+          fingerprint: "f",
+          durationSeconds: 10,
+          createdAt: "2026-10-10T00:00:00.000Z",
+        },
+        "#06D6A0",
+        "https://app.rclipper.com"
+      );
+      const final = buildDeviceRenderManifest(
+        base({ stage: "final", inputVideoUrl: "https://example.com/master.mp4", musicSelected: true, textGraphics })
+      );
+      expect(final.textGraphics?.items[0].start).toBe(0.3);
+      expect(final.textGraphics?.style.id).toBe("premium");
+
+      const montage = buildDeviceRenderManifest(base({ textGraphics }));
+      expect(montage.textGraphics).toBeNull();
+
+      const travy = buildDeviceRenderManifest(
+        base({ stage: "final", travy: true, inputVideoUrl: "https://example.com/master.mp4", textGraphics })
+      );
+      expect(travy.textGraphics).toBeNull();
     });
 
     it("refuses a from-sources final without the voice to mix", () => {

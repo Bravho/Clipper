@@ -25,6 +25,9 @@ struct ManifestRenderer {
 
     let manifest: RenderManifest
     let workDirectory: URL
+    /// Text-graphics font key → downloaded TTF (see `ManifestJob`). A key with
+    /// no file draws in the system heavy face.
+    var textGraphicsFonts: [String: URL] = [:]
 
     /// A built composition and what the caller needs to export and report it.
     struct Built {
@@ -400,7 +403,9 @@ struct ManifestRenderer {
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(manifest.fps))
         videoComposition.instructions = [instruction]
 
-        let animationTool = buildOverlayLayers(canvas: canvas, includeTemplate: includeTemplate)
+        let animationTool = buildOverlayLayers(
+            canvas: canvas, includeTemplate: includeTemplate,
+            durationSeconds: CMTimeGetSeconds(asset.duration))
         return Built(
             asset: composition,
             videoComposition: videoComposition,
@@ -467,7 +472,8 @@ struct ManifestRenderer {
             videoComposition: master.videoComposition,
             audioMix: master.audioMix,
             animationTool: buildOverlayLayers(
-                canvas: manifest.canvasSize, includeTemplate: includeTemplate),
+                canvas: manifest.canvasSize, includeTemplate: includeTemplate,
+                durationSeconds: master.durationSeconds),
             durationSeconds: master.durationSeconds,
             temporaryFiles: master.temporaryFiles,
             validationNotes: master.validationNotes
@@ -478,12 +484,21 @@ struct ManifestRenderer {
     /// (inset into the card for framed_cream), the template's animated layers,
     /// and one caption layer per cue timed with keyframe animations.
     private func buildOverlayLayers(
-        canvas: CGSize, includeTemplate: Bool
+        canvas: CGSize, includeTemplate: Bool, durationSeconds: Double
     ) -> AVVideoCompositionCoreAnimationTool? {
         let templateLayer = includeTemplate
-            ? OverlayPainter.templateLayer(manifest.template, canvas: canvas) : nil
+            ? OverlayPainter.templateLayer(
+                manifest.template, canvas: canvas,
+                durationSeconds: durationSeconds, fps: manifest.fps)
+            : nil
         let hasCaptions = !manifest.captions.isEmpty && !manifest.captionLanguages.isEmpty
-        guard templateLayer != nil || hasCaptions else { return nil }
+        // Text graphics are decoration: dropped with the template on the
+        // fallback export, drawn above it and below the captions.
+        let textLayer = includeTemplate
+            ? TextGraphicsLayers.build(
+                manifest.textGraphics?.value, fonts: textGraphicsFonts, canvas: canvas)
+            : nil
+        guard templateLayer != nil || textLayer != nil || hasCaptions else { return nil }
 
         let videoLayer = CALayer()
         // framed_cream: the picture scaled to cover the card's window, centred
@@ -501,6 +516,10 @@ struct ManifestRenderer {
             // The template goes UNDER the captions, matching the composition —
             // a template scrim that covered the text would be worse than none.
             parentLayer.addSublayer(templateLayer)
+        }
+
+        if let textLayer {
+            parentLayer.addSublayer(textLayer)
         }
 
         if hasCaptions {

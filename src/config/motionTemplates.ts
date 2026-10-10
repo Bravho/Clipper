@@ -2,13 +2,14 @@
  * Motion-graphic template catalog (Phase 7).
  *
  * A template is an aesthetic preset applied when the final styled/captioned
- * video is rendered (see `remotion/TemplatedVideo.tsx`). The requester picks one
- * at the merged-review step; "none" (default) is a clean full-bleed video with
+ * video is rendered. What each one LOOKS like — and how it moves with the
+ * edit's cuts — is `src/lib/motionTemplates/templateRenderer.ts`, ported to
+ * the phones (`TemplatePainter.java`, `OverlayPainter.swift`). The old Mac
+ * render (`remotion/TemplatedVideo.tsx`) only knows the first three looks —
+ * see `legacyTemplateId`. The requester picks one at the merged-review step; "none" (default) is a clean full-bleed video with
  * just subtitles.
  *
- * The actual per-template rendering lives in the Remotion bundle, keyed by `id`
- * (the bundle can't import this file's path alias). This catalog drives the
- * picker UI, the display names, and validation.
+ * This catalog drives the picker UI, the display names, and validation.
  */
 
 export type TemplateFrame = "full_bleed" | "corner_bracket" | "polaroid" | "rounded_inset";
@@ -22,7 +23,7 @@ export interface MotionTemplate {
   frame: TemplateFrame;
   /** Canvas behind an inset frame; "none" = video fills the screen. */
   canvas: "none" | "black" | "palette_light" | "palette_dark";
-  /** Decoration ids the Remotion template renders. */
+  /** Names of the decoration the look draws (descriptive; renderers choose by id). */
   decor: string[];
 }
 
@@ -38,26 +39,44 @@ export const MOTION_TEMPLATES: MotionTemplate[] = [
   {
     id: "clean_frame",
     name: "กรอบมินิมอล",
-    description: "กรอบมุมสีขาว + ระลอกคลื่นบางๆ ดูสะอาดตาและมืออาชีพ",
+    description: "กรอบมุมสีขาวที่ขยับตามจังหวะตัดต่อ ระลอกคลื่นบางๆ และแถบบอกความคืบหน้าของฉาก ดูสะอาดตาและมืออาชีพ",
     frame: "corner_bracket",
     canvas: "none",
-    decor: ["corner_brackets", "ripple", "accent_bar"],
+    decor: ["corner_brackets", "ripple", "scene_progress"],
   },
   {
     id: "framed_cream",
     name: "กรอบอบอุ่น",
-    description: "วางวิดีโอในกรอบมนบนพื้นหลังโทนอุ่น + ลายเส้นมินิมอล",
+    description: "วางวิดีโอในกรอบมนบนพื้นหลังโทนอุ่น ลายเส้นพลิ้วไหว และเส้นสีวิ่งรอบกรอบทุกครั้งที่เปลี่ยนฉาก",
     frame: "rounded_inset",
     canvas: "palette_light",
-    decor: ["wave_line", "sprig"],
+    decor: ["wave_line", "sprig", "blobs", "card_comet"],
   },
   {
     id: "editorial",
     name: "เรียบหรู (Editorial)",
-    description: "กรอบเส้นบางรอบภาพ + ไล่เฉดมุมบน-ล่าง และแถบเน้นเล็กๆ ดูเรียบหรูแบบนิตยสาร",
+    description: "กรอบเส้นบางรอบภาพ ไล่เฉดบน-ล่าง และตัวนับฉากแบบนิตยสาร (02 / 05) ที่เลื่อนตามการตัดต่อ ดูเรียบหรู",
     frame: "full_bleed",
     canvas: "none",
-    decor: ["hairline_border", "kicker", "scrims"],
+    decor: ["hairline_border", "kicker", "scrims", "scene_counter"],
+  },
+  {
+    id: "bold_pop",
+    name: "ป๊อปสดใส",
+    description: "แถบสีพุ่งจากมุมจอ ของตกแต่งลอยเด้ง และแถบสีปาดผ่านทุกการเปลี่ยนฉาก สนุกและเร้าใจแบบโปรโมชัน",
+    // `frame` is what builds older than these looks fall back to (they choose
+    // by frame when the id is unknown): corner brackets beat nothing at all.
+    frame: "corner_bracket",
+    canvas: "none",
+    decor: ["corner_stripes", "confetti", "beat_wipe", "progress_line"],
+  },
+  {
+    id: "cinematic",
+    name: "ภาพยนตร์ (Cinematic)",
+    description: "แถบดำแบบหนังโรง แสงฟุ้งเคลื่อนช้าๆ และแสงแฟลร์ผ่านทุกการเปลี่ยนฉาก ดูพรีเมียมและมีระดับ",
+    frame: "corner_bracket",
+    canvas: "none",
+    decor: ["letterbox", "vignette", "light_leak", "beat_flare"],
   },
 ];
 
@@ -84,4 +103,20 @@ export function pickRandomMotionTemplateId(): string {
 
 export function isValidTemplateId(id: unknown): id is string {
   return typeof id === "string" && MOTION_TEMPLATES.some((t) => t.id === id);
+}
+
+/**
+ * The nearest look the old Mac render (`remotion/TemplatedVideo.tsx`) knows,
+ * for the backup pipeline: it only draws clean_frame, framed_cream and
+ * editorial, and renders a newer id as no template at all.
+ */
+export function legacyTemplateId(id: string | null | undefined): string {
+  switch (id) {
+    case "bold_pop":
+      return "clean_frame";
+    case "cinematic":
+      return "editorial";
+    default:
+      return id ?? DEFAULT_TEMPLATE_ID;
+  }
 }

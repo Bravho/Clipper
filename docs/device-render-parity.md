@@ -216,26 +216,44 @@ export ignores that and always renders **English + Chinese**.
 
 ## 7. Templates and graphic motion
 
-`src/config/motionTemplates.ts` names four templates by `id`; what they LOOK
-like is `remotion/TemplatedVideo.tsx`, which chooses by id (the catalogue's
-`frame`/`decor` fields describe the look but do not lay it out). Drawn over the
-video and under the captions, `s = min(width, height) / 1080`:
+`src/config/motionTemplates.ts` names six Looks by `id`. Since 10 Oct 2026 what
+they LOOK like — and how they move — is the reference renderer
+`src/lib/motionTemplates/templateRenderer.ts` (motion formulas in `motion.ts`),
+which the studio's example frames use directly. Android `TemplatePainter.java`
+(+ `TemplateMotion.java`) ports it call for call; iOS `OverlayPainter.swift`
+builds Core Animation layers whose moving properties are sampled from the same
+formulas once per video frame. Change all three together.
 
-| id | what the composition draws |
+**The timeline.** The manifest's template carries `beats` (scene cut times in
+picture seconds, mid-crossfade) and `endSeconds` (the finished video's length,
+`max(picture, voice + lead-in)`), from `templateTimelineForScenePlan`. Builds
+that predate them ignore both; a renderer given neither still enters and
+breathes but has no cut accents, progress or outro. Every Look has:
+
+- **intro** (first ~1.5 s): staggered, eased entrances, overshoot on pops
+- **idle**: slow low-amplitude loops (breathing, drift, twinkle)
+- **beat**: a short accent on every cut, peaking on the cut itself
+- **outro** (last ~1.2–1.4 s): a closing gesture that frames the call-to-action
+
+| id | what it draws |
 | --- | --- |
 | `none` | nothing |
-| `clean_frame` | four white corner brackets (90s box, 44s inset, max(3, 7s) border, 22s corner, drop shadow) easing in and sliding 20s from the corners over 0.7 s; two accent ripples from (13 %, 84 %) growing 0.15 → 1 × 32 % of the short side with opacity 0 → 0.5 → 0 every 3.6 s, the second 1.8 s behind; a 56s × 5s accent bar 54s from the top |
-| `framed_cream` | the video inset in a white card (top 6.5 %, sides 5.5 %, bottom 13 %, radius 34, 22 px padding, window radius 22, shadow 0 16 42 rgba(0,0,0,0.22)) on the palette's neutral canvas, `objectFit: cover`; a botanical branch at (66 %, 90 %) and a three-period wave at 94.5 % drawn on between 0.2 s and 1.6 s; three dots; an accent sparkle at (10 %, 4 %) |
-| `editorial` | top scrim 20 % from rgba(0,0,0,0.42), bottom scrim 30 % from 0.55; a hairline rounded frame (inset 4.5 % of the short side, radius 18s) drawn on around its perimeter between 0.2 s and 1.5 s; an accent kicker (dot + 96s rule) top-left |
+| `clean_frame` | white corner brackets that grow out of the corners with an overshoot, breathe ±5s, punch 16s inward on cuts and close 22s inward at the end; two accent ripples from (13 %, 84 %); a segmented scene-progress bar 54s from the top (plain accent bar with no length) |
+| `framed_cream` | the video inset in the white card on a neutral→secondary diagonal wash; two flat colour blobs drifting in the margins (never in the window); branch draws on then sways ±2.5°; wave drifts; dots bob; two sparkles twinkle and pop on cuts; an accent comet runs round the card on each cut, and the card is outlined in accent at the end |
+| `editorial` | scrims; hairline frame that draws on (eased); kicker dot pops and pulses on cuts, rule extends; a rolling `02 / 05` scene counter top-right; an accent frame draws over the hairline at the end |
+| `bold_pop` | three colour stripes shooting in from top-left and bottom-right and sliding; five floating confetti shapes; a slanted accent + secondary wipe across every cut; a progress line along the bottom edge |
+| `cinematic` | letterbox bars sliding in, with accent hairlines; vignette; a drifting secondary light leak; an anamorphic flare (flash + glow + core streak) across every cut; bars close in and the frame darkens at the end |
 
-The phone renderers reproduce all of it, animation included: Android redraws
-the template bitmap per frame while anything moves (`TemplatePainter`, draw-on
-via `PathMeasure`) and reuses the settled bitmap after 1.7 s (every frame for
-`clean_frame`, whose ripples never stop); iOS builds `CAShapeLayer`s with
-`strokeEnd`, opacity, translation and repeating ripple animations timed from
-`AVCoreAnimationBeginTimeAtZero` (`OverlayPainter.templateLayer`). For
-`framed_cream` the picture is scaled to cover the card's window before the
-template layer draws the card and canvas around it.
+Android redraws the bitmap every frame (all Looks move all the time); static
+parts — scrims, the warm canvas, the card with its blurred shadow, the
+vignette — are cached bitmaps blitted per frame. For `framed_cream` the picture
+is scaled to cover the card's window before the template layer draws around it.
+
+The old Mac render (`remotion/TemplatedVideo.tsx`) still draws the original,
+mostly static versions of the first three Looks; for the new ids the backup
+pipeline renders the nearest old one (`legacyTemplateId`: `bold_pop` →
+`clean_frame`, `cinematic` → `editorial`). Older phone builds pick by `frame`
+for an id they do not know, so both new Looks fall back to `clean_frame`.
 
 The palette (`primary`, `secondary`, `accent`, `neutral`) is derived per job
 from the place name, the matching business profile and the script

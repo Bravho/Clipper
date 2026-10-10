@@ -13,6 +13,8 @@ import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import { RenderStep, isRenderStep } from "@/domain/enums/RenderStep";
 import { DEVICE_RENDER, isDeviceEligibleStep } from "@/config/deviceRender";
 import { getTemplate } from "@/config/motionTemplates";
+import { readScenePlanJson, templateTimelineForScenePlan } from "@/lib/motionTemplates/timeline";
+import { toManifestTextGraphics, type ManifestTextGraphics } from "@/lib/textGraphics/plan";
 import { spacesClient, spacesPublicUrl, spacesSignedUrl, SPACES_BUCKET } from "@/lib/spaces";
 import { buildFinalClipKey, buildThumbnailKey } from "@/lib/spacesKeys";
 import {
@@ -308,6 +310,7 @@ export class DeviceRenderService {
         captionLanguages: plan.captionLanguages,
         musicSelected: plan.musicSelected,
         template: plan.template,
+        textGraphics: plan.textGraphics,
         buildFromSources: plan.buildFromSources,
         upload: null,
         leaseExpiresAt,
@@ -871,6 +874,7 @@ export class DeviceRenderService {
     captions: ManifestCaptionInput[];
     captionLanguages: CaptionLanguage[];
     template: Parameters<typeof buildDeviceRenderManifest>[0]["template"];
+    textGraphics: ManifestTextGraphics | null;
     estimatedInputBytes: number;
     estimatedOutputBytes: number;
     durationSeconds: number;
@@ -891,13 +895,36 @@ export class DeviceRenderService {
     const leadIn = musicSelected ? 0.6 : 0;
     const buildFromSources = fromSources && stage !== "montage";
 
+    // The edit's rhythm for the Look: cut times and the video's length.
+    const templateTimeline = templateTimelineForScenePlan(
+      readScenePlanJson(job.approvedScenePlan ?? job.scenePlan),
+      job.voiceDurationSeconds,
+      leadIn
+    );
     const templateSpec = {
       id: template.id,
       frame: template.frame,
       canvas: template.canvas,
       decor: template.decor,
       palette,
+      beats: templateTimeline.beats,
+      endSeconds: templateTimeline.endSeconds,
     };
+
+    // Text graphics belong to the finished video only. Usually written when
+    // production was approved (or previewed in the studio) and simply read
+    // here; if not, Claude gets a short window before the fallback plan is
+    // used, so a claim never hangs on it. Any failure renders without them.
+    let textGraphics: ManifestTextGraphics | null = null;
+    if (stage === "final" && appOrigin()) {
+      try {
+        const { textGraphicsService } = await import("@/services/TextGraphicsService");
+        const plan = await textGraphicsService.ensurePlan(job, { timeoutMs: 20_000 });
+        textGraphics = toManifestTextGraphics(plan, palette.accent, appOrigin());
+      } catch (err) {
+        console.error("[device-render] text graphics skipped:", err);
+      }
+    }
 
     const languages =
       job.subtitleLanguages && job.subtitleLanguages.length > 0
@@ -927,6 +954,7 @@ export class DeviceRenderService {
         captions: await this._captionCues(job),
         captionLanguages: languages,
         template: templateSpec,
+        textGraphics,
         estimatedInputBytes: master.fileSizeBytes || 60_000_000,
         estimatedOutputBytes: (master.fileSizeBytes || 60_000_000) * 1.3,
         durationSeconds: voiceDuration + leadIn,
@@ -1024,6 +1052,7 @@ export class DeviceRenderService {
       captions: isFinal ? await this._captionCues(job) : [],
       captionLanguages: isFinal ? languages : [],
       template: templateSpec,
+      textGraphics,
       estimatedInputBytes,
       estimatedOutputBytes: 60_000_000,
       durationSeconds: voiceDuration + leadIn,

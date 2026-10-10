@@ -1,5 +1,7 @@
 "use client";
 
+import type { TextGraphicChoice } from "@/config/textGraphicStyles";
+import type { TextGraphicsPreviewResult } from "./TextStylePicker";
 import {
   createLocalAnalysisFrame,
   readLocalMaterial,
@@ -108,6 +110,7 @@ export interface StudioContent {
     musicTrackId: string | null;
     subtitleLanguages: string[];
     templateId: string | null;
+    textStyle?: string | null;
   } | null;
 }
 
@@ -522,6 +525,7 @@ export function approveStudioProduction(input: {
   musicTrackId: string | null;
   subtitleLanguages: string[];
   templateId: string;
+  textStyle: TextGraphicChoice;
   t?: StudioT;
 }): Promise<void> {
   return postJson(
@@ -533,10 +537,42 @@ export function approveStudioProduction(input: {
       selectedMusicTrack: input.musicTrackId ?? "none",
       subtitleLanguages: input.subtitleLanguages.slice(0, 2),
       selectedMotionTemplate: input.templateId,
+      selectedTextStyle: input.textStyle,
       autoApproveRemaining: true,
     },
     (input.t ?? studioEnglish)("studio.pipe.productionFailed")
   );
+}
+
+/**
+ * Ask for the text graphics Claude writes for this edit, resolved against the
+ * chosen style pack, for the Graphic step's "preview with your video".
+ */
+export async function fetchTextGraphicsPreview(input: {
+  requestId: string;
+  choice: TextGraphicChoice;
+  scenePlan: StudioScenePlan[];
+  musicTrackId: string | null;
+  fresh: boolean;
+  t?: StudioT;
+}): Promise<TextGraphicsPreviewResult> {
+  const response = await fetch("/api/device-render/text-graphics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      requestId: input.requestId,
+      choice: input.choice,
+      scenePlan: input.scenePlan,
+      musicTrackId: input.musicTrackId ?? "none",
+      fresh: input.fresh,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      await readError(response, (input.t ?? studioEnglish)("studio.text.previewFailed"))
+    );
+  }
+  return (await response.json()) as TextGraphicsPreviewResult;
 }
 
 /**

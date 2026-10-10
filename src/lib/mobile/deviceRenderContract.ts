@@ -192,6 +192,49 @@ export const deviceTemplateSchema = z.object({
   canvas: z.enum(["none", "black", "palette_light", "palette_dark"]),
   decor: z.array(z.string().min(1)),
   palette: devicePaletteSchema,
+  /**
+   * The edit's rhythm, so a Look can move WITH it (`src/lib/motionTemplates`):
+   * scene cut times in picture seconds (mid-crossfade, ascending), and the
+   * finished video's length. Builds that predate them ignore both and draw
+   * their own (older) version of the Look. No contract version bump.
+   */
+  beats: z.array(z.number().nonnegative()).default([]),
+  endSeconds: z.number().positive().nullable().default(null),
+});
+
+/**
+ * Scene-matched text graphics, drawn on a FINAL export above the template and
+ * below nothing (captions sit at the bottom, text graphics at the top). The
+ * style pack travels as data (`src/config/textGraphicStyles.ts`) and the items
+ * are in picture seconds (`src/lib/textGraphics/plan.ts`). Null on every other
+ * stage, and on a final whose requester chose no text graphics. Builds that
+ * predate it ignore the field and render the video without them.
+ */
+export const deviceTextGraphicItemSchema = z.object({
+  kind: z.enum(["hook", "label", "cta"]),
+  start: z.number().nonnegative(),
+  end: z.number().nonnegative(),
+  title: z.string(),
+  sub: z.string(),
+  kicker: z.string(),
+  num: z.string(),
+  badge: z.string(),
+  brand: z.string(),
+  place: z.string(),
+  /** "" = the pack's default position for the kind. */
+  position: z.string().default(""),
+});
+
+export const deviceTextGraphicsSchema = z.object({
+  style: z.object({ id: z.string().min(1) }).passthrough(),
+  accent: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  fonts: z.array(z.object({
+    key: z.string().min(1),
+    url: z.string().url(),
+    ascent: z.number().positive(),
+    descent: z.number().nonnegative(),
+  })),
+  items: z.array(deviceTextGraphicItemSchema),
 });
 
 /**
@@ -260,6 +303,7 @@ export const deviceRenderManifestSchema = z.object({
   captions: z.array(deviceRenderCaptionSchema),
   captionLanguages: z.array(captionLanguageSchema).max(3),
   template: deviceTemplateSchema,
+  textGraphics: deviceTextGraphicsSchema.nullable().default(null),
   output: deviceRenderOutputSchema,
   upload: deviceRenderUploadSchema.nullable(),
   /** Lease expiry. A device past this must stop and release rather than upload. */
@@ -281,6 +325,7 @@ export type DeviceRenderSource = z.infer<typeof deviceRenderSourceSchema>;
 export type DeviceRenderCaption = z.infer<typeof deviceRenderCaptionSchema>;
 export type DeviceRenderTemplate = z.infer<typeof deviceTemplateSchema>;
 export type DeviceRenderUpload = z.infer<typeof deviceRenderUploadSchema>;
+export type DeviceRenderTextGraphics = z.infer<typeof deviceTextGraphicsSchema>;
 
 export const DEVICE_RENDER_DIMENSIONS: Record<DeviceRenderRatio, {
   width: number; height: number;

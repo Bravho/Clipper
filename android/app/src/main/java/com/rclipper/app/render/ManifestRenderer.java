@@ -27,7 +27,9 @@ import org.json.JSONException;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Turns a validated render manifest into a Media3 {@link Composition}.
@@ -75,6 +77,12 @@ public final class ManifestRenderer {
      * video.
      */
     public boolean plainFraming = false;
+
+    /**
+     * Text-graphics font key → downloaded TTF, filled in by {@link ManifestJob}
+     * before a final is built. A key with no file draws in the system bold face.
+     */
+    public Map<String, File> textGraphicsFonts = new HashMap<>();
 
     public ManifestRenderer(Context context) {
         this.context = context;
@@ -572,6 +580,22 @@ public final class ManifestRenderer {
             cleanup.add(overlay::release);
         } else {
             templatePainter.release();
+        }
+
+        // Text graphics are decoration too: dropped with the template on the
+        // fallback attempt, drawn above it and below the captions.
+        if (includeTemplate && manifest.textGraphics != null) {
+            TextGraphicsPainter textPainter = new TextGraphicsPainter(
+                manifest.textGraphics, textGraphicsFonts, manifest.width, manifest.height);
+            if (!textPainter.isEmpty()) {
+                Overlays.TextGraphicsOverlay overlay =
+                    new Overlays.TextGraphicsOverlay(textPainter, manifest.width, manifest.height);
+                overlays.add(overlay);
+                cleanup.add(overlay::release);
+                decoration.templateIncluded = true;
+            } else {
+                textPainter.release();
+            }
         }
 
         CaptionPainter captionPainter = new CaptionPainter(

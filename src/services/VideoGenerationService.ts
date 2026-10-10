@@ -4,6 +4,7 @@ import {
   clipRequestRepository,
   renderTaskRepository,
 } from "@/repositories/index";
+import { legacyTemplateId } from "@/config/motionTemplates";
 import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
@@ -3226,7 +3227,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       masterStorageUrl: master.storageUrl,
       ratio,
       minDurationSeconds: inputs.durationSeconds,
-      templateId: job.selectedMotionTemplate ?? "none",
+      templateId: legacyTemplateId(job.selectedMotionTemplate),
       palette: inputs.palette,
       timeline: inputs.timeline,
       languages: languages.length > 0 ? languages : ["en", "zh"],

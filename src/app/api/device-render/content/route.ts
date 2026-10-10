@@ -194,6 +194,7 @@ export async function GET(request: Request) {
             musicTrackId: job.selectedMusicTrack ?? null,
             subtitleLanguages: job.subtitleLanguages ?? [],
             templateId: job.selectedMotionTemplate ?? null,
+            textStyle: job.selectedTextStyle ?? null,
           }
         : null,
       script: hasScript

@@ -118,6 +118,10 @@ struct RenderManifest: Decodable {
         let canvas: String
         let decor: [String]
         let palette: Palette
+        /// Scene cut times in picture seconds; absent from older servers.
+        let beats: [Double]?
+        /// The finished video's length; absent/null from older servers.
+        let endSeconds: Double?
     }
 
     struct Output: Decodable {
@@ -156,6 +160,10 @@ struct RenderManifest: Decodable {
     /// Render this master or final straight from the originals in ONE export
     /// (plugin version 6+). Absent on older manifests, hence optional.
     let buildFromSources: Bool?
+    /// Scene-matched text graphics for a final export. Absent on older
+    /// manifests and on every other stage; unreadable ones decode as nil
+    /// (see `LenientTextGraphics`) so they can never fail a render.
+    let textGraphics: LenientTextGraphics?
 
     var composesFromSources: Bool { buildFromSources ?? false }
 
@@ -239,6 +247,85 @@ struct RenderManifest: Decodable {
 /// One error type for the whole render path, so a failure that reaches the web
 /// layer always carries a sentence a tester can act on rather than an NSError
 /// code they have to look up.
+// MARK: - Text graphics (manifest `textGraphics`)
+
+/// The style pack, accent, fonts and timed items for the text graphics.
+/// THE REFERENCE IS `src/config/textGraphicStyles.ts` and
+/// `src/lib/textGraphics/plan.ts`.
+struct TextGraphicsSpec: Decodable {
+    struct MotionEntry: Decodable {
+        let kind: String?
+        let delay: Double?
+        let dur: Double?
+        let amp: Double?
+        let period: Double?
+    }
+
+    struct Shape: Decodable {
+        let frame: String?
+        let frameWidth: Double?
+        let textEffect: String?
+        let cardRadius: Double?
+        let barWidth: Double?
+        let underline: Bool?
+        let badge: String?
+        let badgeRotate: Double?
+        let tiltDeg: Double?
+        let shadowDx: Double?
+        let shadowDy: Double?
+        let ctaRadius: Double?
+        let hookDot: Bool?
+        let uppercaseSub: Bool?
+    }
+
+    struct Style: Decodable {
+        let id: String
+        let fonts: [String: String]
+        let sizes: [String: Double]
+        let colors: [String: String]
+        let shape: Shape
+        let positions: [String: String]?
+        let motion: [String: MotionEntry]
+    }
+
+    struct Font: Decodable {
+        let key: String
+        let url: String
+        let ascent: Double
+        let descent: Double
+    }
+
+    struct Item: Decodable {
+        let kind: String
+        let start: Double
+        let end: Double
+        let title: String
+        let sub: String
+        let kicker: String
+        let num: String
+        let badge: String
+        let brand: String
+        let place: String
+        /// "" or absent = the pack's default position for the kind.
+        let position: String?
+    }
+
+    let style: Style
+    let accent: String
+    let fonts: [Font]
+    let items: [Item]
+}
+
+/// Decodes `textGraphics` without ever throwing: anything unreadable is nil.
+struct LenientTextGraphics: Decodable {
+    let value: TextGraphicsSpec?
+
+    init(from decoder: Decoder) throws {
+        let decoded = try? TextGraphicsSpec(from: decoder)
+        value = (decoded?.items.isEmpty ?? true) ? nil : decoded
+    }
+}
+
 enum RenderError: LocalizedError {
     case manifest(String)
     case missingInput(String)

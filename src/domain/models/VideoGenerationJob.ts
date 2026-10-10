@@ -227,6 +227,18 @@ export interface VideoGenerationJob {
   selectedMotionTemplate?: string | null;
 
   /**
+   * Text-graphics style chosen in the studio's Graphic step: "auto" (Claude
+   * picks), a pack id, or "none". See `src/config/textGraphicStyles.ts`.
+   */
+  selectedTextStyle?: string | null;
+
+  /**
+   * The written text-graphics plan (JSON `TextGraphicsPlan`,
+   * `src/lib/textGraphics/plan.ts`), or null before one is written.
+   */
+  textGraphicsPlan?: string | null;
+
+  /**
    * Phase 8 — per-channel publishing drafts shown on the distribution-review
    * step. Auto-filled by Gemini from the approved script + business profile,
    * editable by the requester, then used to post to each channel on confirm.

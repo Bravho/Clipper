@@ -55,6 +55,32 @@ public final class Overlays {
     }
 
     /**
+     * The text graphics (hook, scene labels, closing card), redrawn per frame
+     * while one is on screen, transparent otherwise.
+     */
+    public static final class TextGraphicsOverlay extends BitmapOverlay {
+        private final TextGraphicsPainter painter;
+        private final Bitmap blank;
+
+        public TextGraphicsOverlay(TextGraphicsPainter painter, int width, int height) {
+            this.painter = painter;
+            this.blank = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            this.blank.eraseColor(Color.TRANSPARENT);
+        }
+
+        @Override
+        public Bitmap getBitmap(long presentationTimeUs) {
+            Bitmap drawn = painter.draw(presentationTimeUs / 1_000_000d);
+            return drawn != null ? drawn : blank;
+        }
+
+        public void release() {
+            painter.release();
+            if (!blank.isRecycled()) blank.recycle();
+        }
+    }
+
+    /**
      * The template frame and decor. The painter animates the draw-on strokes,
      * the bracket ease-in and the ripples frame by frame, and hands back the same
      * settled bitmap once nothing moves any more.

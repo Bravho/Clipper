@@ -492,6 +492,9 @@ describe("DeviceRenderService", () => {
       expect(manifest.sources.map((source) => source.assetId)).toEqual([photo.id]);
       expect(manifest.scenes[0].assets[0]).toMatchObject({ motion: "ken_burns_in", durationSeconds: 16 });
       expect(manifest.template.id).toBe("framed_cream");
+      // One scene: no cuts to hit, but the Look still knows the length.
+      expect(manifest.template.beats).toEqual([]);
+      expect(manifest.template.endSeconds).toBeGreaterThanOrEqual(16);
       expect(manifest.captions[0].startSeconds).toBeCloseTo(0.6, 5);
       expect(manifest.captionLanguages).toEqual(["th", "en"]);
     });

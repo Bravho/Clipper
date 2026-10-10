@@ -3,12 +3,14 @@
 import type { MotionTemplate } from "@/config/motionTemplates";
 import type { EditorDocument } from "./editorState";
 import { TemplateExample } from "./TemplateExample";
+import { TextStylePicker, type TextGraphicsPreviewResult } from "./TextStylePicker";
+import type { TextGraphicChoice } from "@/config/textGraphicStyles";
 import { useStudioT, type StudioT } from "./studioI18n";
 
 // The studio's names for the Looks, in its language. The ids are the server's;
 // the catalogue's own (Thai) names stay on the request page, and are the
 // fallback for a Look the studio has no words for yet.
-const LOOK_IDS = new Set(["none", "clean_frame", "framed_cream", "editorial"]);
+const LOOK_IDS = new Set(["none", "clean_frame", "framed_cream", "editorial", "bold_pop", "cinematic"]);
 
 function lookWords(t: StudioT, template: MotionTemplate): { name: string; description: string } {
   if (!LOOK_IDS.has(template.id)) {
@@ -32,6 +34,9 @@ export function StylePanel({
   templates,
   ratio,
   onTemplate,
+  textStyle,
+  onTextStyle,
+  loadTextPreview,
   graphicConfirmed,
   onConfirm,
   locked,
@@ -42,6 +47,11 @@ export function StylePanel({
   /** The shape of the main video, which the example frames are drawn at. */
   ratio: string;
   onTemplate: (templateId: string) => void;
+  /** The text-graphics style pack: auto, a pack, or none. */
+  textStyle: TextGraphicChoice;
+  onTextStyle: (choice: TextGraphicChoice) => void;
+  /** The real text for this edit, for the preview; null before the request exists. */
+  loadTextPreview: ((choice: TextGraphicChoice, fresh: boolean) => Promise<TextGraphicsPreviewResult>) | null;
   graphicConfirmed: boolean;
   onConfirm: () => void;
   /** Production has started: the Look is what is being rendered. */
@@ -91,6 +101,16 @@ export function StylePanel({
           );
         })}
       </div>
+
+      <TextStylePicker
+        document={document}
+        ratio={ratio}
+        choice={textStyle}
+        onChoice={onTextStyle}
+        loadPreview={loadTextPreview}
+        locked={locked}
+        disabled={disabled}
+      />
 
       <div className="studio-approve">
         <button

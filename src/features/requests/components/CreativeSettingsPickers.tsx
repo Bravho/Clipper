@@ -53,6 +53,34 @@ export function TemplateThumb({ id }: { id: string }) {
           <rect x="17" y="14" width="14" height="2" rx="1" fill="#f5b301" />
           <rect x="12" y="94" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
         </>
+      ) : id === "bold_pop" ? (
+        <>
+          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
+          <g strokeWidth="3" strokeLinecap="round">
+            <path d="M-2 18 L14 2" stroke="#FF6B35" />
+            <path d="M0 24 L12 12" stroke="#FFB703" />
+            <path d="M3 28 L10 21" stroke="#06D6A0" />
+            <path d="M66 98 L54 110" stroke="#FF6B35" />
+            <path d="M64 92 L55 101" stroke="#FFB703" />
+          </g>
+          <path d="M30 0 H44 L30 112 H16 Z" fill="#06D6A0" opacity="0.85" />
+          <circle cx="54" cy="24" r="3" fill="none" stroke="#06D6A0" strokeWidth="1.3" />
+          <path d="M6 42 h6 M9 39 v6" stroke="#FFB703" strokeWidth="1.5" strokeLinecap="round" />
+          <rect y="108" width="40" height="2.5" fill="#06D6A0" />
+          <rect x="12" y="96" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
+        </>
+      ) : id === "cinematic" ? (
+        <>
+          <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />
+          <circle cx="50" cy="16" r="26" fill="#FFB703" opacity="0.18" />
+          <rect x="4" y="52" width="56" height="1.2" fill="#ffffff" opacity="0.85" />
+          <ellipse cx="32" cy="52.5" rx="26" ry="3" fill="#06D6A0" opacity="0.3" />
+          <path d="M0 8 Q0 0 8 0 H56 Q64 0 64 8 V9 H0 Z" fill="#000" />
+          <path d="M0 103 H64 V104 Q64 112 56 112 H8 Q0 112 0 104 Z" fill="#000" />
+          <rect x="16" y="8.4" width="32" height="0.8" fill="#06D6A0" />
+          <rect x="16" y="102.8" width="32" height="0.8" fill="#06D6A0" />
+          <rect x="12" y="92" width="40" height="6" rx="3" fill="#ffffff" opacity="0.92" />
+        </>
       ) : id === "clean_frame" ? (
         <>
           <rect width="64" height="112" rx="8" fill="url(#tvScreen)" />

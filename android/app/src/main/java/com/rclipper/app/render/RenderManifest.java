@@ -48,6 +48,8 @@ public final class RenderManifest {
     public final List<Caption> captions;
     public final List<String> captionLanguages;
     public final Template template;
+    /** Scene-matched text graphics for a final export; null when none. */
+    public final TextGraphics textGraphics;
     public final boolean coverRequired;
     public final double coverAtSeconds;
     public final long maxOutputBytes;
@@ -199,6 +201,10 @@ public final class RenderManifest {
         public final int secondary;
         public final int accent;
         public final int neutral;
+        /** Scene cut times (picture seconds), ascending; empty from older servers. */
+        public final double[] beats;
+        /** The finished video's length; NaN when the server did not send it. */
+        public final double endSeconds;
 
         Template(JSONObject json) throws JSONException {
             id = json.getString("id");
@@ -214,6 +220,10 @@ public final class RenderManifest {
             secondary = parseColor(palette.getString("secondary"));
             accent = parseColor(palette.getString("accent"));
             neutral = parseColor(palette.getString("neutral"));
+            double end = json.has("endSeconds") && !json.isNull("endSeconds")
+                ? json.optDouble("endSeconds", Double.NaN) : Double.NaN;
+            endSeconds = end > 0d ? end : Double.NaN;
+            beats = TemplateMotion.normaliseBeats(json.optJSONArray("beats"), endSeconds);
         }
 
         public boolean hasDecor(String name) {
@@ -277,6 +287,8 @@ public final class RenderManifest {
         }
 
         template = new Template(json.getJSONObject("template"));
+        // Optional and lenient: unreadable text graphics render the video without them.
+        textGraphics = TextGraphics.parse(json);
 
         JSONObject output = json.getJSONObject("output");
         coverRequired = output.optBoolean("coverRequired", false);

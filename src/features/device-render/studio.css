@@ -1675,3 +1675,54 @@ a.studio-button {
     text-decoration-color: #374151;
   }
 }
+
+/* ── Graphic: text-graphics style packs and the real-text preview ──────── */
+
+.studio-text-section {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--s-border);
+}
+
+.studio-text-preview-box {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin-top: 10px;
+}
+
+.studio-text-preview {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  width: 100%;
+}
+
+.studio-text-preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.studio-text-preview-controls input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.studio-text-preview-controls .studio-button {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.studio-text-preview-controls .studio-counter {
+  white-space: nowrap;
+}
+
+/* A still of each text style, on a fixed 9:8 stage. */
+.studio-text-snapshot {
+  width: 100%;
+  aspect-ratio: 9 / 8;
+}

@@ -127,6 +127,7 @@ public final class ManifestJob {
 
             output = new File(workDirectory, java.util.UUID.randomUUID() + "-output.mp4");
             ManifestRenderer renderer = new ManifestRenderer(context);
+            renderer.textGraphicsFonts = fetchTextGraphicsFonts();
 
             ManifestRenderer.Built built;
             boolean retriedWithHardCuts = false;
@@ -480,6 +481,29 @@ public final class ManifestJob {
         if (mimeType.startsWith("image/")) return "jpg";
         if (mimeType.startsWith("audio/")) return "m4a";
         return "bin";
+    }
+
+    /**
+     * The text-graphics fonts, best effort: a font that will not download is
+     * logged and left out, and its text draws in the system bold face. Never
+     * fails the render.
+     */
+    private Map<String, File> fetchTextGraphicsFonts() throws InterruptedException {
+        Map<String, File> fonts = new HashMap<>();
+        if (manifest.textGraphics == null) return fonts;
+        for (TextGraphics.Font font : manifest.textGraphics.fontFiles) {
+            if (cancelled) throw new InterruptedException();
+            try {
+                File destination = new File(
+                    workDirectory, java.util.UUID.randomUUID() + "-font-" + font.key + ".ttf");
+                Transfers.download(font.url, destination, null);
+                downloaded.put("font-" + font.key, destination);
+                fonts.put(font.key, destination);
+            } catch (Exception failure) {
+                log.note("Text-graphics font " + font.key + " not downloaded: " + failure.getMessage());
+            }
+        }
+        return fonts;
     }
 
     private void cleanupDownloads() {
