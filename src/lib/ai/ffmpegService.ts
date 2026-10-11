@@ -10,6 +10,7 @@ import { spacesClient, spacesPublicUrl, spacesUpload } from "@/lib/spaces";
 import { buildFinalClipKey } from "@/lib/spacesKeys";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { ImageCoordinates } from "./geminiSubtitlesService";
+import { BACKGROUND_MUSIC_DIR, findMusicTrack } from "@/config/backgroundMusic";
 
 const execFileAsync = promisify(execFile);
 
@@ -1155,8 +1156,16 @@ export async function composeAndExport(
     const videoPath = path.join(tmpDir, "base.mp4");
     const audioPath = path.join(tmpDir, "voice.wav");
 
-    const musicPath = params.musicTrackId
-      ? path.join(process.cwd(), "public", "music", `${params.musicTrackId}.mp3`)
+    // "none", null and ids outside the current catalog (a retired track saved
+    // on an older job) all compose without a music bed rather than failing.
+    const musicTrack = findMusicTrack(params.musicTrackId);
+    if (params.musicTrackId && params.musicTrackId !== "none" && !musicTrack) {
+      console.warn(
+        `[compose] request ${params.requestId}: music track "${params.musicTrackId}" is not in the catalog; composing without music`
+      );
+    }
+    const musicPath = musicTrack
+      ? path.join(process.cwd(), "public", BACKGROUND_MUSIC_DIR, musicTrack.file)
       : undefined;
 
     console.log(

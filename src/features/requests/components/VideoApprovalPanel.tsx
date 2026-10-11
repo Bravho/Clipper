@@ -17,7 +17,7 @@ import {
   musicTrackLabel,
   subtitleLangsLabel,
 } from "@/features/requests/components/CreativeSettingsPickers";
-import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
+import { findMusicTrack, normalizeMusicTrackId } from "@/config/backgroundMusic";
 import { Platform, PLATFORM_LABELS, OPTIONAL_FORM_PLATFORMS, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import { VoiceSelector } from "@/features/requests/components/VoiceSelector";
 import {
@@ -214,7 +214,10 @@ export function VideoApprovalPanel({
   }, [isAwaitingApproval, regeneratingScene, sceneVideos]);
 
   // Music picker state — initialise from job's saved track so approval steps show the current selection
-  const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(savedMusicTrack ?? null);
+  const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(
+    // A retired track id opens as "not chosen", so a new track (or none) is picked.
+    normalizeMusicTrackId(savedMusicTrack)
+  );
   const [playingMusicTrack, setPlayingMusicTrack] = useState<string | null>(null);
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
   const voicePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -703,7 +706,8 @@ export function VideoApprovalPanel({
       return;
     }
 
-    const track = BACKGROUND_MUSIC_TRACKS.find((t) => t.id === trackId)!;
+    const track = findMusicTrack(trackId);
+    if (!track) return;
     if (playingMusicTrack !== trackId) {
       const audio = new Audio(track.url);
       audio.onended = () => setPlayingMusicTrack(null);

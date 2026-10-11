@@ -79,7 +79,7 @@ web flow already makes.
   and material. Then the generated voice plays here with **Approve the voice**
   (`approve-voice`, channels ordered so the primary one's shape is the shape
   edited in Media) or **Make it again** (`voice/regenerate`). Below that, the
-  background tracks (each with a ▶ preview from `/music/<id>.mp3`) and the
+  background tracks (each with a ▶ preview from `/musics/<file>.mp3`) and the
   caption languages (at most two — the scene-design approval keeps two), then
   **Confirm the sound**, which needs an approved voice and moves on to Graphic.
 - **Graphic** is the Look. Each template shows an example frame drawn on the

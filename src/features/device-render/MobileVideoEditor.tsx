@@ -13,7 +13,7 @@ import {
 } from "@/config/montage";
 import { MOTION_TEMPLATES } from "@/config/motionTemplates";
 import { DEFAULT_TEXT_GRAPHIC_CHOICE, isTextGraphicChoice } from "@/config/textGraphicStyles";
-import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
+import { BACKGROUND_MUSIC_TRACKS, findMusicTrack } from "@/config/backgroundMusic";
 import { DEFAULT_ELEVENLABS_VOICE_ID, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
@@ -836,7 +836,8 @@ function StudioEditor({
         ...current,
         scenes: produced,
         ...(production.musicTrackId
-          ? { musicTrackId: production.musicTrackId === "none" ? null : production.musicTrackId }
+          ? // "none" and a track that is no longer in the catalog both open as no music.
+            { musicTrackId: findMusicTrack(production.musicTrackId)?.id ?? null }
           : {}),
         ...(production.subtitleLanguages.length > 0
           ? { captionLanguages: production.subtitleLanguages as typeof current.captionLanguages }

@@ -86,7 +86,7 @@ Read the existing code first so you don't re-implement working pieces.
   (lower) the music whenever the speaking voice is loud, so narration is always clear.
   Already built: `composeSingleRatio` mixes music with `loudnorm` → `asplit` → `sidechaincompress`
   (music keyed off the voice) → `amix` → `alimiter`; the track is chosen via `selectedMusicTrack` at
-  animation approval; files live in `public/music/{id}.mp3`; a "no music" option exists.
+  animation approval; files live in `public/musics/` (catalog with file names in `src/config/backgroundMusic.ts`); a "no music" option exists.
   REMAINING: (a) the compose hardcodes `-t 15` / `-shortest` and the music `atrim=0:15` — make these
   DYNAMIC to the real voice/video duration (probe it) so longer/shorter clips aren't clipped and the
   music covers the whole video; (b) tune the duck threshold/ratio/attack/release so music drops

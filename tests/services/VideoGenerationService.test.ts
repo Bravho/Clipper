@@ -1010,7 +1010,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
       autoApproveRemaining: true,
       contentApprovedBy: "user-001",
       selectedMotionTemplate: "editorial",
-      selectedMusicTrack: "happy",
+      selectedMusicTrack: "bossa-nova-suave",
     });
 
     const service = new VideoGenerationService();
@@ -1024,7 +1024,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     // randomly substituted template.
     expect(updated?.subtitleLanguages).toEqual(["en", "zh"]);
     expect(updated?.selectedMotionTemplate).toBe("editorial");
-    expect(updated?.selectedMusicTrack).toBe("happy");
+    expect(updated?.selectedMusicTrack).toBe("bossa-nova-suave");
   });
 
   it("express lane runs every remaining gate itself: merged review → overlay → extra ratios → download, never stopping", async () => {
@@ -1104,7 +1104,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
       "user-001",
       { scenePlan: JSON.stringify(scenePlan), durationSeconds: 14 },
       {
-        selectedMusicTrack: "happy",
+        selectedMusicTrack: "bossa-nova-suave",
         subtitleLanguages: ["en", "zh"],
         selectedMotionTemplate: "editorial",
         autoApproveRemaining: true,
@@ -1116,7 +1116,7 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     // decorated template because it fired before those screens existed.
     expect(updated.subtitleLanguages).toEqual(["en", "zh"]);
     expect(updated.selectedMotionTemplate).toBe("editorial");
-    expect(updated.selectedMusicTrack).toBe("happy");
+    expect(updated.selectedMusicTrack).toBe("bossa-nova-suave");
     expect(updated.contentApprovedBy).toBe("user-001");
     // "none" is a legitimate choice now that they are actually shown the picker.
     expect(MOTION_TEMPLATES.map((t) => t.id)).toContain(DEFAULT_TEMPLATE_ID);

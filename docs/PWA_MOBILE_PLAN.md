@@ -11,7 +11,7 @@ The app is a **Next.js 14 App Router** project (TypeScript, Tailwind, NextAuth v
 - **Server-rendered.** Pages are React Server Components with route protection in `src/middleware.ts` (`withAuth`). Auth is server-session based (NextAuth JWT). This cannot be exported as a purely static bundle without a major refactor.
 - **API routes** live under `src/app/api/*` (auth, register, requests, uploads, staff/*, admin/*, payments, credits). The mobile app needs these reachable over HTTPS.
 - **Heavy server-side work**: AI video pipeline (Remotion, FFmpeg, Gemini, ElevenLabs), Digital Ocean Spaces storage, email. None of this can run inside a mobile WebView — it must stay on the server.
-- **No PWA today**: no `manifest.json`, no service worker, no offline handling. `public/` has only `logo.png` and a `music/` folder.
+- **No PWA today**: no `manifest.json`, no service worker, no offline handling. `public/` has only `logo.png` and a background-music folder (now `musics/`).
 - **No Capacitor** installed.
 - Branding is already **"Travy"** in the display layer (`PLATFORM_LABELS[Platform.TravyApp] = "Travy App"`).
 

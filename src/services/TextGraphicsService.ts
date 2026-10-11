@@ -12,6 +12,7 @@ import { AI_CONFIG } from "@/config/aiTools";
 import { sceneJoinDissolves, sceneMontageSeconds } from "@/config/montage";
 import { DEVICE_SCENE_CROSSFADE_SECONDS } from "@/lib/mobile/deviceRenderCaptions";
 import { DEVICE_MUSIC_LEAD_IN_SECONDS } from "@/lib/mobile/deviceRenderAudio";
+import { findMusicTrack } from "@/config/backgroundMusic";
 import {
   TEXT_GRAPHIC_LIMITS,
   fallbackTextGraphicItems,
@@ -248,7 +249,7 @@ export class TextGraphicsService {
     const durationSeconds = windows.length > 0 ? windows[windows.length - 1].end : 0;
     if (!(durationSeconds > 3)) return null;
 
-    const musicSelected = options.musicSelected ?? Boolean(job.selectedMusicTrack && job.selectedMusicTrack !== "none");
+    const musicSelected = options.musicSelected ?? Boolean(findMusicTrack(job.selectedMusicTrack));
     const leadInSeconds = musicSelected ? DEVICE_MUSIC_LEAD_IN_SECONDS : 0;
     const timeline = readTimeline(job, leadInSeconds);
 

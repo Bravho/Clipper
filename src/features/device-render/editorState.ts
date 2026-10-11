@@ -160,7 +160,7 @@ export interface EditorDocument {
   templateId: string;
   /** Text-graphics style (`src/config/textGraphicStyles.ts`): auto, a pack, or none. */
   textStyle: TextGraphicChoice;
-  /** Id of a track in `public/music`, or null for no bed. */
+  /** Id of a track in `public/musics` (src/config/backgroundMusic.ts), or null for no bed. */
   musicTrackId: string | null;
   /** A locally chosen voice file, for a draft before the approved voice exists. */
   voiceFile: File | null;

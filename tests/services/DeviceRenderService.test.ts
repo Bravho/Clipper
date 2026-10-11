@@ -226,7 +226,7 @@ async function seed(options: { withMaster?: boolean } = {}) {
     rvcVoiceModel: "voice-1",
     voiceRecordingAssetId: null,
     processedVoiceAssetId: null,
-    selectedMusicTrack: "happy",
+    selectedMusicTrack: "bossa-nova-suave",
     voiceDurationSeconds: 14,
     voiceTimestamps: null,
     videoGenTaskIds: null,
@@ -486,7 +486,7 @@ describe("DeviceRenderService", () => {
       expect(manifest.buildFromSources).toBe(true);
       expect(manifest.masterUrl).toBeNull();
       expect(manifest.voiceUrl).toContain("signed.example.com");
-      expect(manifest.musicUrl).toMatch(/\/music\/happy\.mp3$/);
+      expect(manifest.musicUrl).toMatch(/\/musics\/Bossa%20Nova%20Suave\.mp3$/);
       expect(manifest.audio.musicSelected).toBe(true);
       expect(manifest.audio.voiceLeadInSeconds).toBeCloseTo(0.6, 5);
       expect(manifest.sources.map((source) => source.assetId)).toEqual([photo.id]);

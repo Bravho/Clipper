@@ -16,7 +16,7 @@ import {
   SubtitleLanguagePicker,
   type SubtitleLang,
 } from "@/features/requests/components/CreativeSettingsPickers";
-import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
+import { findMusicTrack, normalizeMusicTrackId } from "@/config/backgroundMusic";
 import {
   assetPlaySeconds,
   minMontageTotalSeconds,
@@ -112,8 +112,10 @@ export function SceneDesignApprovalPanel({
   // Every remaining creative choice is made HERE, on the last screen the
   // requester reviews before generation starts, so the express lane below can
   // run the whole production on their real choices instead of guessing.
+  // A track saved before the catalog changed is no longer offered, so it opens
+  // as "not chosen" rather than being submitted and rejected by the server.
   const [selectedMusicTrack, setSelectedMusicTrack] = useState<string | null>(
-    savedMusicTrack ?? null
+    normalizeMusicTrackId(savedMusicTrack)
   );
   const [playingMusicTrack, setPlayingMusicTrack] = useState<string | null>(null);
   const musicAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -143,7 +145,8 @@ export function SceneDesignApprovalPanel({
       setSelectedMusicTrack("none");
       return;
     }
-    const track = BACKGROUND_MUSIC_TRACKS.find((t) => t.id === trackId)!;
+    const track = findMusicTrack(trackId);
+    if (!track) return;
     if (playingMusicTrack !== trackId) {
       const audio = new Audio(track.url);
       audio.onended = () => setPlayingMusicTrack(null);

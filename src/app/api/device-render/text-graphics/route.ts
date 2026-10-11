@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { authorizeDeviceRenderRequest, readJsonBody } from "../_guard";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { isTextGraphicChoice } from "@/config/textGraphicStyles";
+import { findMusicTrack } from "@/config/backgroundMusic";
 import { toManifestTextGraphics } from "@/lib/textGraphics/plan";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
@@ -46,7 +47,7 @@ export async function POST(request: Request) {
   const scenePlan = Array.isArray(body.scenePlan) ? (body.scenePlan as ScenePlan[]) : undefined;
   const musicTrackId = typeof body.musicTrackId === "string" ? body.musicTrackId : null;
   const musicSelected =
-    body.musicTrackId === undefined ? undefined : Boolean(musicTrackId && musicTrackId !== "none");
+    body.musicTrackId === undefined ? undefined : Boolean(findMusicTrack(musicTrackId));
 
   try {
     const { textGraphicsService } = await import("@/services/TextGraphicsService");

@@ -13,6 +13,7 @@ import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
 import { RenderStep, isRenderStep } from "@/domain/enums/RenderStep";
 import { DEVICE_RENDER, isDeviceEligibleStep } from "@/config/deviceRender";
 import { getTemplate } from "@/config/motionTemplates";
+import { findMusicTrack } from "@/config/backgroundMusic";
 import { readScenePlanJson, templateTimelineForScenePlan } from "@/lib/motionTemplates/timeline";
 import { toManifestTextGraphics, type ManifestTextGraphics } from "@/lib/textGraphics/plan";
 import { spacesClient, spacesPublicUrl, spacesSignedUrl, SPACES_BUCKET } from "@/lib/spaces";
@@ -890,7 +891,10 @@ export class DeviceRenderService {
     const { videoGenerationService } = await import("@/services/VideoGenerationService");
     const palette = await videoGenerationService.deriveOverlayPaletteForJob(job);
 
-    const musicSelected = Boolean(job.selectedMusicTrack);
+    // "none" and a retired track id (not in the catalog) both mean no music, so
+    // the lead-in and the manifest's musicUrl always agree.
+    const musicTrack = findMusicTrack(job.selectedMusicTrack);
+    const musicSelected = Boolean(musicTrack);
     const voiceDuration = job.voiceDurationSeconds ?? 15;
     const leadIn = musicSelected ? 0.6 : 0;
     const buildFromSources = fromSources && stage !== "montage";
@@ -1035,9 +1039,7 @@ export class DeviceRenderService {
 
       // Music is a static asset shipped with the app's public folder, not a
       // per-request object, so it is a plain public URL.
-      musicUrl = job.selectedMusicTrack
-        ? `${appOrigin()}/music/${job.selectedMusicTrack}.mp3`
-        : null;
+      musicUrl = musicTrack ? `${appOrigin()}${musicTrack.url}` : null;
     }
 
     const isFinal = stage === "final";
