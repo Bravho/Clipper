@@ -1,5 +1,5 @@
-RClipper update 1.0.9
+RClipper update 1.0.10
 
-- Improved mobile video processing and reliability.
-- Updated the Studio experience and pricing plans.
-- Improved upload handling and quota checks.
+- Improved mobile video rendering, audio mixing, and playback reliability.
+- Added more music, voice previews, and richer text and motion templates.
+- Improved storyboard timing, scene controls, and publishing workflows.
