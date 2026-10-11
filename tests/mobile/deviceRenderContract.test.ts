@@ -395,9 +395,9 @@ describe("device render manifest", () => {
         },
       ],
     });
-    // 4 + 6, minus one 0.2 s scene crossfade, which is what the server's xfade
-    // removes from the concatenated base.
-    expect(manifestPictureSeconds(twoScenes)).toBeCloseTo(9.8, 5);
+    // 4 + 6: the scene dissolve borrows from the outgoing tail, as on both
+    // phones and in the server's concat, so it removes no time.
+    expect(manifestPictureSeconds(twoScenes)).toBeCloseTo(10, 5);
   });
 
   it("still honours the previous contract version on a completion", () => {

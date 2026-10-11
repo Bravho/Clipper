@@ -71,6 +71,11 @@ export interface SceneWindow {
   description: string;
   /** Index into the ordered source assets of the scene's first shot, if any. */
   firstAssetIndex: number | null;
+  /**
+   * When the picture visibly changes to this scene: mid-way through the
+   * dissolve into it (= `start` for the first scene and for a cut).
+   */
+  cutAt: number;
 }
 
 /** What the phone gets: the plan resolved against its pack, accent and fonts. */
@@ -116,26 +121,41 @@ export function clipText(value: unknown, max: number): string {
 // ── Scene timeline ───────────────────────────────────────────────────────────
 
 /**
- * Place the approved scenes on the picture timeline: each scene follows the
- * previous one minus the between-scene crossfade, exactly as the phone (and
- * `manifestPictureSeconds`) lays them out.
+ * Place the approved scenes on the picture timeline exactly as the phones lay
+ * them out: back to back, each starting at the running total of the scenes
+ * before it. The dissolve into a scene BORROWS the outgoing scene's tail (the
+ * incoming one is mounted early over it), so it adds no time and removes none
+ * — the picture is the plain sum of the scenes (`sceneJoinDissolves` in
+ * `config/montage.ts`). `cutAt` is the mid-dissolve moment the picture changes.
+ *
+ * `crossfadeSeconds` is the dissolve into every scene after the first unless
+ * the scene gives its own `dissolveInSeconds` (0 for a cut).
  */
 export function sceneWindows(
-  scenes: { sceneNumber?: number; seconds: number; description?: string; firstAssetIndex?: number | null }[],
+  scenes: {
+    sceneNumber?: number;
+    seconds: number;
+    description?: string;
+    firstAssetIndex?: number | null;
+    dissolveInSeconds?: number;
+  }[],
   crossfadeSeconds: number
 ): SceneWindow[] {
   const windows: SceneWindow[] = [];
   let cursor = 0;
   scenes.forEach((scene, index) => {
     const seconds = Math.max(0, Number.isFinite(scene.seconds) ? scene.seconds : 0);
-    const start = index === 0 ? 0 : Math.max(0, cursor - crossfadeSeconds);
+    const start = cursor;
     const end = start + seconds;
+    const dissolve =
+      index === 0 ? 0 : Math.max(0, scene.dissolveInSeconds ?? crossfadeSeconds);
     windows.push({
       sceneNumber: scene.sceneNumber ?? index + 1,
       start: round2(start),
       end: round2(end),
       description: (scene.description ?? "").trim(),
       firstAssetIndex: scene.firstAssetIndex ?? null,
+      cutAt: round2(Math.max(0, start - dissolve / 2)),
     });
     cursor = end;
   });

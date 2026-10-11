@@ -21,6 +21,7 @@ import {
   type TextGraphicsPlan,
 } from "@/lib/textGraphics/plan";
 import type { TgItemLayout } from "@/lib/textGraphics/layout";
+import { sceneJoinDissolves } from "@/config/montage";
 import { DEVICE_SCENE_CROSSFADE_SECONDS } from "@/lib/mobile/deviceRenderCaptions";
 import { shotPlaySeconds, type EditorDocument } from "./editorState";
 import { useStudioT, type StudioT } from "./studioI18n";
@@ -256,9 +257,14 @@ export interface TextGraphicsPreviewResult {
 /** The edit's shots on the picture timeline, for the preview player. */
 function shotTimeline(document: EditorDocument) {
   const scenes = document.scenes.filter((scene) => scene.shots.length > 0);
+  const dissolves = sceneJoinDissolves(
+    scenes.map((scene) => ({ transitionIn: scene.transitionIn, assets: scene.shots })),
+    DEVICE_SCENE_CROSSFADE_SECONDS
+  );
   const windows = sceneWindows(
-    scenes.map((scene) => ({
+    scenes.map((scene, index) => ({
       seconds: scene.shots.reduce((sum, shot) => sum + shotPlaySeconds(shot), 0),
+      dissolveInSeconds: index === 0 ? 0 : dissolves[index - 1],
     })),
     DEVICE_SCENE_CROSSFADE_SECONDS
   );

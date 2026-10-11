@@ -109,13 +109,31 @@ The named transitions layer an extra flourish on top of the same dissolve:
 | `slide` | `translateX((1 − fade) × 12 %)` |
 | `zoom` | `scale(1.04 − 0.04 × fade)` |
 
-**Between scenes** (`ffmpegService.crossfadeConcatLocal`): an `xfade` of
-`fadeSeconds = 0.2`, never longer than half the shortest segment and never below
-0.05 s. Join *k*'s offset is the running accumulated duration minus the fade.
-Because each overlap shortens the result, the concatenated base is padded by
-`fade × (n − 1) + 0.2` s of cloned final frame so the base outlasts the voice;
-the compose step's black tail covers any remaining shortfall. A failed xfade
-degrades to a hard-cut concat rather than losing the render.
+**Between scenes** — one rule everywhere, `sceneJoinDissolves` in
+`src/config/montage.ts`: a 0.2 s dissolve into each scene, **0 for a scene set
+to "cut"**, never longer than half of either neighbouring shot. The dissolve
+**borrows** the outgoing scene's tail — it adds no time and removes none — so
+scene *k* reaches full picture at the plain running total of the scenes before
+it, the picture changes mid-dissolve (`start − fade/2`), and the picture is
+exactly the sum of the slots. This is what both phones do (the incoming shot is
+mounted `fade` early over the outgoing tail).
+
+The server matches it (`ffmpegService.crossfadeConcatLocal`): each incoming
+segment gets `fade` seconds of its own first frame in front
+(`tpad=start_mode=clone`) and is `xfade`d in at `runningTotal − fade`; a cut
+join is a plain `concat`. The output is bounded to Σ segments with `-t` — no
+tail padding. (Before 2026-10-10 the xfade overlapped the segments, shortening
+the base by `fade × (n − 1)`, then padded a cloned last frame of
+`fade × (n − 1) + 0.2` s: server videos ran ~0.2 s longer than phone videos and
+later scenes started up to 0.2 s × scene early.) The one visible difference
+left: during the 0.2 s dissolve the server shows the incoming scene's first
+frame held, where the phone already plays it. A failed filtergraph degrades
+to a hard-cut concat rather than losing the render.
+
+The Look's `beats`, the text-graphics `sceneWindows` and
+`manifestPictureSeconds` all use this same timeline (scenes back to back, cut
+mid-dissolve), as does the studio's Sound preview
+(`src/features/device-render/soundPreviewTimeline.ts`).
 
 **On Android** (`ManifestRenderer.buildMontage`) there is no transition
 primitive at all, so the dissolve is built out of TWO video sequences: shot *i*

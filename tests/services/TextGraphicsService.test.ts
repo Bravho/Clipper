@@ -58,7 +58,8 @@ it("falls back without an API key: business name hook and a closing card", async
   expect(plan?.source).toBe("fallback");
   expect(plan?.styleId).toBe("premium");
   expect(plan?.items[0]).toMatchObject({ kind: "hook", title: "MAGURO KAPPOU" });
-  expect(plan?.durationSeconds).toBeCloseTo(13.8, 5);
+  // Scenes back to back — the scene dissolve borrows, it does not shorten.
+  expect(plan?.durationSeconds).toBeCloseTo(14, 5);
 });
 
 it("reuses a stored plan whose fingerprint matches, without asking again", async () => {

@@ -342,18 +342,19 @@ export const TRAVY_CAPTION_LANGUAGES = ["en", "zh"] as const;
 /**
  * Total on-screen length of a manifest's picture, in seconds.
  *
- * Shots are contiguous within a scene — a dissolve borrows from the adjacent
- * slot rather than extending the timeline — so the picture is the sum of every
- * slot MINUS the between-scene crossfade overlaps, which is exactly what
- * `crossfadeConcatLocal` produces before its tail padding.
+ * Every dissolve — within a scene AND between scenes — borrows from the
+ * outgoing shot's tail rather than extending or shortening the timeline, so
+ * the picture is exactly the sum of every slot. This is what both phones
+ * render (`pictureSeconds`) and what `crossfadeConcatLocal` produces.
  */
 export function manifestPictureSeconds(manifest: DeviceRenderManifest): number {
-  const scenesTotal = manifest.scenes.reduce(
-    (total, scene) => total + scene.assets.reduce((sum, shot) => sum + shot.durationSeconds, 0),
-    0
+  return Math.max(
+    0,
+    manifest.scenes.reduce(
+      (total, scene) => total + scene.assets.reduce((sum, shot) => sum + shot.durationSeconds, 0),
+      0
+    )
   );
-  const joins = Math.max(0, manifest.scenes.length - 1);
-  return Math.max(0, scenesTotal - joins * manifest.sceneTransitionSeconds);
 }
 
 function assertSilentIntermediate(manifest: DeviceRenderManifest): void {

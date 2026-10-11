@@ -38,6 +38,8 @@ import {
   evaluateMontageCoverage,
   isMontageTransition,
   minMontageTotalSeconds,
+  SCENE_DISSOLVE_SECONDS,
+  sceneJoinDissolves,
   sceneMontageSeconds,
   type MontageTransition,
 } from "@/config/montage";
@@ -1532,6 +1534,21 @@ export class VideoGenerationService {
    * the single `baseVideoAssetId` the rest of the pipeline consumes, using the
    * existing `ffmpegService.concatVideos`. Returns the new base asset's id.
    */
+  /**
+   * The dissolve at each scene join of the approved plan (`sceneJoinDissolves`:
+   * 0.2 s, 0 for a "cut", clamped to half the neighbouring shots), or the plain
+   * default when the plan does not line up with the segments being joined.
+   */
+  private _sceneJoinFades(job: VideoGenerationJob, segmentCount: number): number[] | number {
+    try {
+      const plan = JSON.parse(job.approvedScenePlan ?? job.scenePlan ?? "[]") as ScenePlan[];
+      if (Array.isArray(plan) && plan.length === segmentCount) return sceneJoinDissolves(plan);
+    } catch {
+      /* fall through to the default */
+    }
+    return SCENE_DISSOLVE_SECONDS;
+  }
+
   private async _concatMontageBaseVideo(job: VideoGenerationJob): Promise<string> {
     const { clipRequestRepository } = await import("@/repositories/index");
     const req = await clipRequestRepository.findById(job.requestId);
@@ -1549,10 +1566,12 @@ export class VideoGenerationService {
     if (storageKeys.length === 0) throw new Error("Montage segment assets missing for concatenation");
 
     const outputKey = buildAiVideoKey(req.userId, job.requestId);
-    // Cross-dissolve at scene joins (falls back to hard-cut concat on failure).
+    // Cross-dissolve at scene joins (falls back to hard-cut concat on failure),
+    // on the phones' timeline: borrowed dissolves, cuts where the plan cuts.
     const { storageKey, storageUrl, fileSizeBytes } = await ffmpegService.concatVideosWithCrossfade(
       storageKeys,
-      outputKey
+      outputKey,
+      this._sceneJoinFades(job, storageKeys.length)
     );
 
     const scheduledDeletionAt = new Date();
@@ -1624,7 +1643,11 @@ export class VideoGenerationService {
         }
         // Cross-dissolve at scene joins (falls back to hard-cut on failure) —
         // the same filtergraph the stored-key path uses.
-        return await ffmpegService.concatLocalVideosWithCrossfade(segmentPaths, outputKey);
+        return await ffmpegService.concatLocalVideosWithCrossfade(
+          segmentPaths,
+          outputKey,
+          sceneJoinDissolves(scenePlan)
+        );
       } finally {
         // Delete the segments however we leave this block. At up to four ratios
         // per job these are the largest temp files the pipeline makes.
@@ -1644,7 +1667,8 @@ export class VideoGenerationService {
     // identical to the primary base's `_concatMontageBaseVideo`.
     return ffmpegService.concatVideosWithCrossfade(
       segments.map((s) => s.storageKey),
-      outputKey
+      outputKey,
+      sceneJoinDissolves(scenePlan)
     );
   }
 

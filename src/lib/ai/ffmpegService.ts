@@ -5,6 +5,7 @@ import { existsSync } from "fs";
 import * as path from "path";
 import * as os from "os";
 import { AI_CONFIG } from "@/config/aiTools";
+import { SCENE_DISSOLVE_SECONDS } from "@/config/montage";
 import { spacesClient, spacesPublicUrl, spacesUpload } from "@/lib/spaces";
 import { buildFinalClipKey } from "@/lib/spacesKeys";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -925,31 +926,40 @@ export async function applyTiledWatermark(params: {
 }
 
 /**
- * Concatenate per-scene montage segments with a short cross-dissolve at each
- * scene join (ffmpeg `xfade`), so scene boundaries dissolve like the within-scene
- * cuts instead of hard-switching.
- *
- * `xfade` overlaps each join by `fadeSeconds`, which shortens the result by
- * `fadeSeconds*(n-1)`. The downstream compose step muxes the voiceover with
- * `-shortest`, and the animation/overlay duration is keyed off the measured
- * voice length (NOT this base), so we freeze the final frame for a short pad to
- * guarantee the base outlasts the voice — the voice is never clipped, and only
- * the frozen frames beyond the voice (which compose drops) are added.
- *
- * Falls back to a hard-cut concat (`concatVideos`) if probing or the xfade
- * filtergraph fails, so the pipeline always produces a base video.
+ * The dissolve at each scene join, seconds: one number for every join, or one
+ * per join (index k − 1 = into scene k; 0 = hard cut). Callers with the
+ * approved scene plan pass `sceneJoinDissolves(plan)` so a scene set to "cut"
+ * is cut here exactly as the phones cut it.
  */
+export type SceneJoinFades = number | number[];
+
 /**
- * The crossfade filtergraph itself, over segments ALREADY on disk.
+ * Concatenate per-scene montage segments with a short cross-dissolve at each
+ * scene join, on the SAME timeline the phone renderers produce.
  *
- * Extracted so the stored-key path and the local-segment path share one
- * implementation — the pairwise xfade offsets and the tpad length correction
- * are subtle enough that a second copy would drift.
+ * THE DISSOLVE BORROWS, IT NEVER SHORTENS. A plain `xfade` overlaps the two
+ * segments, which used to make the base `fade × (n − 1)` shorter than the
+ * scenes and pull every later scene earlier — then a cloned last frame was
+ * padded on to restore the length, so the server's video ran ~0.2 s longer
+ * than the phone's and its cuts drifted from the voice and the Look's accents.
+ * Instead, each incoming segment is given `fade` seconds of its own first
+ * frame IN FRONT (`tpad=start_mode=clone`) and dissolved in at
+ * `runningTotal − fade`: scene k still reaches full picture at the plain
+ * running total of the scenes before it, the picture changes mid-dissolve, and
+ * the result is exactly Σ segment lengths — no tail padding. Same as
+ * `ManifestRenderer.buildPicture` (Android) / `ManifestRenderer.swift` (iOS),
+ * which mount the incoming shot early over the outgoing tail.
+ *
+ * Falls back to a hard-cut concat (`concatVideos`) if probing or the
+ * filtergraph fails, so the pipeline always produces a base video.
+ *
+ * The filtergraph itself runs over segments ALREADY on disk, shared by the
+ * stored-key path and the local-segment path so the two cannot drift.
  */
 async function crossfadeConcatLocal(
   inputPaths: string[],
   outPath: string,
-  fadeSeconds: number
+  fades: SceneJoinFades
 ): Promise<void> {
   const ffmpeg = AI_CONFIG.ffmpeg.path;
 
@@ -958,34 +968,38 @@ async function crossfadeConcatLocal(
     throw new Error("xfade concat: could not probe one or more segment durations");
   }
 
-  // Never dissolve longer than half of the shortest segment.
-  const fade = Math.max(0.05, Math.min(fadeSeconds, ...durations.map((d) => d / 2)));
+  // Per join: 0 = hard cut; otherwise never longer than half of either
+  // neighbouring segment, never below 0.05 s.
+  const joins = durations.slice(1).map((d, k) => {
+    const want = Array.isArray(fades) ? (fades[k] ?? SCENE_DISSOLVE_SECONDS) : fades;
+    if (!(Number.isFinite(want) && want > 0)) return 0;
+    return Math.max(0.05, Math.min(want, durations[k] / 2, d / 2));
+  });
 
   const inputArgs: string[] = [];
   inputPaths.forEach((p) => inputArgs.push("-i", p));
 
-  // Chain xfade pairwise. offset for join k = (running accumulated duration) - fade.
-  const filters: string[] = [];
-  let prevLabel = "0:v";
-  let accDuration = durations[0];
-  for (let i = 1; i < inputPaths.length; i++) {
-    const offset = Math.max(0, accDuration - fade);
-    const outLabel = i === inputPaths.length - 1 ? "vxf" : `vx${i}`;
-    filters.push(
-      `[${prevLabel}][${i}:v]xfade=transition=fade:duration=${fade.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`
-    );
-    prevLabel = outLabel;
-    accDuration = accDuration + durations[i] - fade;
-  }
-  // Restore only the length the xfade overlaps removed (`fade*(n-1)`) plus a
-  // tiny safety margin — NOT a full extra second. Over-padding here froze the
-  // last scene's final frame for ~1s+; keeping the base at its true montage
-  // length lets the compose step cover any voice-vs-picture shortfall with a
-  // black tail (audio continues) instead of a long frozen frame.
-  const padSeconds = fade * (inputPaths.length - 1) + 0.2;
-  filters.push(
-    `[${prevLabel}]tpad=stop_mode=clone:stop_duration=${padSeconds.toFixed(3)},format=yuv420p,fps=30[vout]`
+  // Same timebase / rate / format on every input — xfade and concat need it.
+  const filters: string[] = inputPaths.map(
+    (_, i) => `[${i}:v]settb=AVTB,fps=30,format=yuv420p,setsar=1[n${i}]`
   );
+  let prevLabel = "n0";
+  let total = durations[0];
+  for (let i = 1; i < inputPaths.length; i++) {
+    const fade = joins[i - 1];
+    const outLabel = `vx${i}`;
+    if (fade > 0) {
+      filters.push(
+        `[n${i}]tpad=start_mode=clone:start_duration=${fade.toFixed(3)}[p${i}]`,
+        `[${prevLabel}][p${i}]xfade=transition=fade:duration=${fade.toFixed(3)}:offset=${Math.max(0, total - fade).toFixed(3)}[${outLabel}]`
+      );
+    } else {
+      filters.push(`[${prevLabel}][n${i}]concat=n=2:v=1:a=0[${outLabel}]`);
+    }
+    prevLabel = outLabel;
+    total += durations[i];
+  }
+  filters.push(`[${prevLabel}]format=yuv420p,fps=30[vout]`);
 
   await execFileAsync(ffmpeg, [
     "-y",
@@ -996,6 +1010,8 @@ async function crossfadeConcatLocal(
     "-pix_fmt", "yuv420p",
     "-r", "30",
     "-an",
+    // Exactly the sum of the scenes, as the phones render it.
+    "-t", total.toFixed(3),
     outPath,
   ]);
 }
@@ -1039,7 +1055,7 @@ async function hardCutConcatLocal(
 export async function concatVideosWithCrossfade(
   inputStorageKeys: string[],
   outputStorageKey: string,
-  fadeSeconds = 0.2
+  fades: SceneJoinFades = SCENE_DISSOLVE_SECONDS
 ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
   if (inputStorageKeys.length <= 1) {
     return concatVideos(inputStorageKeys, outputStorageKey);
@@ -1055,7 +1071,7 @@ export async function concatVideosWithCrossfade(
     }
 
     const outPath = path.join(tmpDir, "xfade-out.mp4");
-    await crossfadeConcatLocal(inputPaths, outPath, fadeSeconds);
+    await crossfadeConcatLocal(inputPaths, outPath, fades);
 
     await uploadToSpaces(outPath, outputStorageKey);
     const { size } = await fs.stat(outPath);
@@ -1085,7 +1101,7 @@ export async function concatVideosWithCrossfade(
 export async function concatLocalVideosWithCrossfade(
   inputPaths: string[],
   outputStorageKey: string,
-  fadeSeconds = 0.2
+  fades: SceneJoinFades = SCENE_DISSOLVE_SECONDS
 ): Promise<{ storageKey: string; storageUrl: string; fileSizeBytes: number }> {
   if (inputPaths.length === 0) {
     throw new Error("concatLocalVideosWithCrossfade: at least one input path is required");
@@ -1101,7 +1117,7 @@ export async function concatLocalVideosWithCrossfade(
       await fs.copyFile(inputPaths[0], outPath);
     } else {
       try {
-        await crossfadeConcatLocal(inputPaths, outPath, fadeSeconds);
+        await crossfadeConcatLocal(inputPaths, outPath, fades);
       } catch (err) {
         // Same degradation as the stored-key path: a failed dissolve must not
         // lose the render, so fall back to a hard cut.

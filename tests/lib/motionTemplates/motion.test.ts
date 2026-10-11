@@ -124,9 +124,18 @@ describe("timeline for a scene plan", () => {
       { durationSeconds: 3, assets: [] },
     ];
     const timeline = templateTimelineForScenePlan(plan as never, 15, 0.6);
-    // Scene 2 starts at 4 − 0.2 = 3.8; the cut lands mid-crossfade at 3.9.
-    expect(timeline.beats).toEqual([3.9, 8.7]);
+    // Scenes run back to back (4, 9); the 0.2 s dissolve borrows the outgoing
+    // tail, so the picture changes mid-dissolve at 3.9 and 8.9.
+    expect(timeline.beats).toEqual([3.9, 8.9]);
     expect(timeline.endSeconds).toBeCloseTo(15.6, 6);
-    expect(templateTimelineForScenePlan(plan as never, null, 0).endSeconds).toBeCloseTo(11.6, 6);
+    expect(templateTimelineForScenePlan(plan as never, null, 0).endSeconds).toBeCloseTo(12, 6);
+  });
+
+  it("a scene set to cut changes at its start, with no dissolve", () => {
+    const plan = [
+      { durationSeconds: 4, assets: [] },
+      { durationSeconds: 5, assets: [], transitionIn: "cut" },
+    ];
+    expect(templateTimelineForScenePlan(plan as never, null, 0).beats).toEqual([4]);
   });
 });

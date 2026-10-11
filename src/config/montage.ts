@@ -471,3 +471,54 @@ export function isMotionPreset(value: unknown): value is MotionPreset {
 export function isMontageTransition(value: unknown): value is MontageTransition {
   return typeof value === "string" && (MONTAGE_TRANSITIONS as string[]).includes(value);
 }
+
+/**
+ * Between-scene dissolve length, seconds. Mirrors the phones'
+ * `DEVICE_SCENE_CROSSFADE_SECONDS` and the server concat's default.
+ */
+export const SCENE_DISSOLVE_SECONDS = 0.2;
+
+/** Minimal scene shape the scene-join rule needs. */
+export interface SceneJoinScene {
+  transitionIn?: string | null;
+  durationSeconds?: number;
+  assets?: Array<{ durationSeconds?: number }>;
+}
+
+/**
+ * The dissolve INTO each scene after the first (index k − 1 = into scene k),
+ * as BOTH phone renderers lay it out (`ManifestRenderer.buildPicture`,
+ * `ManifestRenderer.swift`): 0 when the scene's transition is "cut", otherwise
+ * {@link SCENE_DISSOLVE_SECONDS}, never longer than half of either neighbouring
+ * shot (the outgoing scene's last shot, the incoming scene's first).
+ *
+ * THE DISSOLVE BORROWS, IT NEVER ADDS OR REMOVES TIME. The incoming scene is
+ * mounted that much early over the outgoing scene's tail, so scene k still
+ * reaches full picture at the plain running total of the slots before it, the
+ * cut (the moment the picture changes) lands mid-dissolve, and the video's
+ * picture is exactly the sum of the slots. The server concat, the Look's cut
+ * accents, the text-graphics windows and the studio's Sound preview all use
+ * this one rule so none of them can drift from what the phone renders.
+ */
+export function sceneJoinDissolves(
+  scenes: SceneJoinScene[],
+  sceneDissolveSeconds: number = SCENE_DISSOLVE_SECONDS
+): number[] {
+  const slot = (value: unknown) => (Number.isFinite(value) && (value as number) > 0 ? (value as number) : 0);
+  const firstShot = (scene: SceneJoinScene) =>
+    scene.assets && scene.assets.length > 0 ? slot(scene.assets[0].durationSeconds) : slot(scene.durationSeconds);
+  const lastShot = (scene: SceneJoinScene) =>
+    scene.assets && scene.assets.length > 0
+      ? slot(scene.assets[scene.assets.length - 1].durationSeconds)
+      : slot(scene.durationSeconds);
+  const joins: number[] = [];
+  for (let k = 1; k < scenes.length; k++) {
+    if (scenes[k].transitionIn === "cut") {
+      joins.push(0);
+      continue;
+    }
+    const half = Math.min(lastShot(scenes[k - 1]), firstShot(scenes[k])) / 2;
+    joins.push(Math.max(0, Math.min(sceneDissolveSeconds, half)));
+  }
+  return joins;
+}

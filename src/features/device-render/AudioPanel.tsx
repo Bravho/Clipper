@@ -8,6 +8,7 @@ import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
 import type { EditorDocument } from "./editorState";
 import type { StudioScript } from "./studioPipeline";
 import { pipelineStepText, useStudioT } from "./studioI18n";
+import { SoundSyncPreview } from "./SoundSyncPreview";
 
 /** Where the speaking script is, from the studio's point of view. */
 export type ScriptStatus = "not_submitted" | "writing" | "review" | "approved" | "failed";
@@ -366,13 +367,27 @@ export function AudioPanel({
 
           {voiceStatus !== "generating" && voiceUrl && (
             <>
-              <audio
-                key={voiceUrl}
-                src={voiceUrl}
-                controls
-                preload="metadata"
-                style={{ width: "100%" }}
-              />
+              {/* The voice bar plays the storyboard with it, on the rendered
+                  video's clock (music lead-in, dissolves, black tail), so the
+                  narration can be checked against the pictures. With no shots
+                  yet there is nothing to show, and the plain bar remains. */}
+              {document.scenes.some((scene) => scene.shots.length > 0) ? (
+                <SoundSyncPreview
+                  key={voiceUrl}
+                  document={document}
+                  voiceUrl={voiceUrl}
+                  voiceSeconds={voiceSeconds}
+                  musicUrl={tracks.find((track) => track.id === document.musicTrackId)?.url ?? null}
+                />
+              ) : (
+                <audio
+                  key={voiceUrl}
+                  src={voiceUrl}
+                  controls
+                  preload="metadata"
+                  style={{ width: "100%" }}
+                />
+              )}
               {voiceSeconds != null && (
                 <p className="studio-counter" style={{ textAlign: "left" }}>
                   {t("studio.audio.voiceLength", { seconds: voiceSeconds.toFixed(1) })}

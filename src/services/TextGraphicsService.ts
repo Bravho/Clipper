@@ -9,7 +9,7 @@ import {
   type TextGraphicStyleId,
 } from "@/config/textGraphicStyles";
 import { AI_CONFIG } from "@/config/aiTools";
-import { sceneMontageSeconds } from "@/config/montage";
+import { sceneJoinDissolves, sceneMontageSeconds } from "@/config/montage";
 import { DEVICE_SCENE_CROSSFADE_SECONDS } from "@/lib/mobile/deviceRenderCaptions";
 import { DEVICE_MUSIC_LEAD_IN_SECONDS } from "@/lib/mobile/deviceRenderAudio";
 import {
@@ -154,8 +154,10 @@ function readScenePlan(raw: string | null | undefined): ScenePlan[] {
 }
 
 export function windowsForScenePlan(plan: ScenePlan[]): SceneWindow[] {
+  const dissolves = sceneJoinDissolves(plan, DEVICE_SCENE_CROSSFADE_SECONDS);
   return sceneWindows(
     plan.map((scene, index) => ({
+      dissolveInSeconds: index === 0 ? 0 : dissolves[index - 1],
       sceneNumber: scene.sceneNumber ?? index + 1,
       seconds: sceneMontageSeconds(scene),
       description: scene.visualDescriptionThai ?? "",

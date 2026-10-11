@@ -74,12 +74,12 @@ describe("sanitizeTextGraphicItems", () => {
 });
 
 describe("sceneWindows", () => {
-  it("places scenes on the picture timeline, overlapping by the crossfade", () => {
-    const windows = sceneWindows([{ seconds: 4 }, { seconds: 3 }, { seconds: 5 }], 0.2);
-    expect(windows.map((w) => [w.start, w.end])).toEqual([
-      [0, 4],
-      [3.8, 6.8],
-      [6.6, 11.6],
+  it("places scenes back to back; the dissolve borrows, so the cut is mid-dissolve", () => {
+    const windows = sceneWindows([{ seconds: 4 }, { seconds: 3 }, { seconds: 5, dissolveInSeconds: 0 }], 0.2);
+    expect(windows.map((w) => [w.start, w.end, w.cutAt])).toEqual([
+      [0, 4, 0],
+      [4, 7, 3.9],
+      [7, 12, 7],
     ]);
   });
 });
