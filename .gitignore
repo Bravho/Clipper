@@ -51,6 +51,7 @@ coverage/
 # uploads or generated files
 /uploads
 /public/uploads
+/_deploy
 
 # database local files
 *.sqlite
