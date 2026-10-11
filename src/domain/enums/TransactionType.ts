@@ -25,4 +25,10 @@ export enum TransactionType {
   ManagementPurchase = "management_purchase",
   /** Credits returned when a Management purchase is refunded. */
   ManagementRefund = "management_refund",
+  /**
+   * Credits spent on more voice makes for ONE request (config/requestLimits.ts
+   * VOICE_MAKE_TOP_UP). `referenceId` is the request; the count of these rows
+   * for a request is how many packs it has bought.
+   */
+  VoiceMakeTopUp = "voice_make_top_up",
 }

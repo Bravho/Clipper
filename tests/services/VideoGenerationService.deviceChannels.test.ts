@@ -45,6 +45,20 @@ jest.mock("@/lib/ai/ffmpegService", () => ({
   },
 }));
 
+// Packs of voice makes bought with credits: read from the ledger in Postgres,
+// so stand in for it here. 0 unless a test says otherwise.
+const mockPacksBought = jest.fn(async (_requestId: string) => 0);
+jest.mock("@/services/VoiceMakeTopUpService", () => {
+  const actual = jest.requireActual("@/services/VoiceMakeTopUpService");
+  return {
+    ...actual,
+    voiceMakeTopUpService: {
+      packsBought: (requestId: string) => mockPacksBought(requestId),
+      purchase: jest.fn(),
+    },
+  };
+});
+
 const {
   clipRequestRepository: mockClipRepo,
   videoGenerationJobRepository: mockJobRepo,
@@ -64,7 +78,7 @@ import {
   VoiceMakeLimitError,
 } from "@/services/VideoGenerationService";
 import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
-import { MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
+import { MAX_VOICE_MAKES_PER_REQUEST, VOICE_MAKE_TOP_UP } from "@/config/requestLimits";
 import { ELEVENLABS_VOICE_FILE_NAME } from "@/lib/ai/elevenLabsTtsService";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import type { MockUploadedAssetRepository } from "@/repositories/mock/MockUploadedAssetRepository";
@@ -513,6 +527,29 @@ describe("Per-request limits (2026-09-27)", () => {
     expect((await mockJobRepo.findById(job.id))!.currentStep).toBe(
       VideoGenerationStep.AwaitingVoiceApproval
     );
+  });
+
+  it("adds the makes of every pack bought with credits to the allowance", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    await addVoiceMakes(request.id, MAX_VOICE_MAKES_PER_REQUEST);
+    mockPacksBought.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
+    expect(await service.voiceMakesFor(request.id)).toEqual({
+      used: MAX_VOICE_MAKES_PER_REQUEST,
+      limit: MAX_VOICE_MAKES_PER_REQUEST + VOICE_MAKE_TOP_UP.makes,
+    });
+    const job = await createJob(request.id, VideoGenerationStep.AwaitingVoiceApproval);
+    const updated = await service.regenerateVoice(job.id, USER_ID);
+    expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingVoice);
+  });
+
+  it("falls back to the included makes when the ledger cannot be read", async () => {
+    const service = new VideoGenerationService();
+    const request = await createRequest("device");
+    mockPacksBought.mockRejectedValueOnce(new Error("db down"));
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    expect((await service.voiceMakesFor(request.id)).limit).toBe(MAX_VOICE_MAKES_PER_REQUEST);
+    spy.mockRestore();
   });
 
   it("refuses to remake an approved voice from the scene-design step", async () => {

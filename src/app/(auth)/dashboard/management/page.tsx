@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
-import { isManagementEnabledFor } from "@/config/management";
+import { isManagementEnabledFor, managementConnectablePlatforms } from "@/config/management";
 import { getServerI18n } from "@/i18n/server";
 import { Card } from "@/components/ui/Card";
 import {
@@ -31,6 +31,7 @@ import type { ManagementAccessPass } from "@/domain/models/ManagementEntitlement
 import type { ManagementUploadBundle } from "@/domain/models/ManagementUploadBundle";
 import { hasUsableMedia } from "@/domain/models/ManagementContent";
 import { SOCIAL_PLATFORM_LABELS } from "@/services/social-publishing/types";
+import type { PublishFlowUnavailableChannel } from "@/features/management/components/PublishFlowModal";
 import {
   VideoLibrary,
   type LibraryVideo,
@@ -149,6 +150,49 @@ export default async function ManagementOverviewPage() {
     (connection) => connection.connectionStatus === SocialConnectionStatus.Pending
   ).length;
 
+  // A channel the user connected but cannot publish to must not just vanish
+  // from the picker (that is how Instagram "went missing"). One entry per
+  // platform that has no usable account, saying why and pointing to settings.
+  const publishablePlatforms = new Set(connectedChannels.map((c) => c.platform));
+  const unavailableByPlatform = new Map<string, PublishFlowUnavailableChannel>();
+  for (const connection of connections) {
+    if (publishablePlatforms.has(connection.platform)) continue;
+    const reason =
+      connection.connectionStatus === SocialConnectionStatus.Disconnected
+        ? ("disconnected" as const)
+        : connection.connectionStatus === SocialConnectionStatus.Pending ||
+            (connection.connectionStatus === SocialConnectionStatus.Connected &&
+              !connection.providerAccountId)
+          ? ("pending" as const)
+          : null;
+    if (!reason) continue;
+    const existing = unavailableByPlatform.get(connection.platform);
+    // A disconnected real account says more than a stray unfinished attempt.
+    if (existing && !(existing.reason === "pending" && reason === "disconnected")) continue;
+    unavailableByPlatform.set(connection.platform, {
+      platform: connection.platform,
+      label:
+        SOCIAL_PLATFORM_LABELS[
+          connection.platform as keyof typeof SOCIAL_PLATFORM_LABELS
+        ] ?? connection.platform,
+      accountName: connection.accountName ?? connection.accountUsername,
+      reason,
+    });
+  }
+  // An enabled channel with no account at all (e.g. removed in settings) is
+  // offered as "connect it" rather than simply not being there.
+  for (const platform of managementConnectablePlatforms()) {
+    if (publishablePlatforms.has(platform) || unavailableByPlatform.has(platform)) continue;
+    unavailableByPlatform.set(platform, {
+      platform,
+      label:
+        SOCIAL_PLATFORM_LABELS[platform as keyof typeof SOCIAL_PLATFORM_LABELS] ?? platform,
+      accountName: null,
+      reason: "not_connected",
+    });
+  }
+  const unavailableChannels = [...unavailableByPlatform.values()];
+
   const counts = {
     ready: items.filter((c) => c.status === ManagementContentStatus.Ready).length,
     published: items.filter((c) => c.status === ManagementContentStatus.Published).length,
@@ -258,6 +302,7 @@ export default async function ManagementOverviewPage() {
           videos={videos}
           connections={connectedChannels}
           incompleteConnections={incompleteConnections}
+          unavailableChannels={unavailableChannels}
           unlimited={!!access}
           tokensRemaining={tokensRemaining}
           canUpload={canUpload}

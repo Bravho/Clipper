@@ -119,6 +119,12 @@ public final class ManifestJob {
         try {
             log.note("Stage " + manifest.stage + " at " + manifest.width + "×" + manifest.height
                 + ", " + manifest.fps + " fps, from originals: " + manifest.buildFromSources);
+            // Say whether the server sent text graphics, so a final without
+            // them can be told apart from one whose drawing failed.
+            log.note(manifest.textGraphics == null
+                ? "Text graphics: none in this manifest"
+                : "Text graphics: " + manifest.textGraphics.items.size() + " item(s), style "
+                    + manifest.textGraphics.styleId);
             Map<String, File> inputs = fetchInputs();
             if (cancelled) throw new InterruptedException();
             for (RenderManifest.Source source : manifest.sources) {
@@ -396,6 +402,20 @@ public final class ManifestJob {
             if (log.lastFailure() == null) log.failure("Render", error);
             else log.note("Gave up after the attempts above.");
             callback.onFailure(RenderErrorLog.diagnose(root), error, log.lines());
+        } catch (OutOfMemoryError outOfMemory) {
+            // An Error, not an Exception: without this it escapes the render
+            // thread and Android closes the whole app — what happened during
+            // "Voice and music" before the mixer stopped decoding the entire
+            // music track (see PcmBuffers). Now a render that runs out of memory
+            // fails like any other: the app stays open, what was made is kept,
+            // and Resume can try again.
+            cleanupDownloads();
+            if (output != null) output.delete();
+            log.failure("Render (out of memory)", outOfMemory);
+            callback.onFailure(
+                "This phone ran out of memory while making the video. Close other apps, then tap Resume.",
+                null,
+                log.lines());
         }
     }
 

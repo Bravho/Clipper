@@ -10,7 +10,7 @@ import {
   evaluateMontageCoverage,
   sceneMontageSeconds,
 } from "@/config/montage";
-import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
+import { BACKGROUND_MUSIC_TRACKS, findMusicTrack } from "@/config/backgroundMusic";
 import { isValidTemplateId } from "@/config/motionTemplates";
 import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 
@@ -113,6 +113,9 @@ export async function POST(
   const coverage = evaluateMontageCoverage({
     voiceDurationSeconds: job.voiceDurationSeconds,
     totalSceneSeconds,
+    // The music this approval sets (or the job's), since the lead-in is only
+    // there with music.
+    musicSelected: Boolean(findMusicTrack(selectedMusicTrack ?? job.selectedMusicTrack)),
   });
   if (!coverage.isCovered) {
     return NextResponse.json(

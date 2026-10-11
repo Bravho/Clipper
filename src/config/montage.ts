@@ -106,10 +106,49 @@ export function minMontageTotalSeconds(voiceDurationSeconds: number | null | und
   return voice + MONTAGE_INTRO_SECONDS + MONTAGE_ENDING_SECONDS;
 }
 
+/**
+ * The least picture after the last spoken word, so the word is not cut at the
+ * very edge of the video. Small on purpose: this is the HARD floor, not the
+ * comfortable ending ({@link MONTAGE_ENDING_SECONDS}), which "Fit to the voice"
+ * and the automatic planner still aim for.
+ */
+export const MONTAGE_MIN_TAIL_SECONDS = 0.3;
+
+/**
+ * The least picture the scenes must add up to for the voice to never play over
+ * black — what every gate enforces (2026-10-11).
+ *
+ * WHY NOT {@link minMontageTotalSeconds}. That rule asked for the music intro
+ * (0.6 s) and a full 1.0 s ending ON TOP of the voice, even with no music,
+ * where there is no intro at all. A 40.8 s voice over 41.3 s of pictures with
+ * no music plays to the end with picture under every word, yet was refused
+ * as "needs 42.4 s". The renderers put the voice at the lead-in (0.6 s with
+ * music, 0 without) and run the video for max(pictures, lead-in + voice)
+ * (`mixedTrackDurationSeconds`), so the voice is covered exactly when the
+ * pictures reach lead-in + voice; the small tail keeps the last word off the
+ * edge.
+ *
+ * `musicSelected` defaults to true, the stricter answer, for callers that do
+ * not know yet whether there will be music.
+ */
+export function minVoiceCoverSeconds(
+  voiceDurationSeconds: number | null | undefined,
+  musicSelected = true
+): number {
+  const voice =
+    Number.isFinite(voiceDurationSeconds) && (voiceDurationSeconds as number) > 0
+      ? (voiceDurationSeconds as number)
+      : 0;
+  return voice + (musicSelected ? MONTAGE_INTRO_SECONDS : 0) + MONTAGE_MIN_TAIL_SECONDS;
+}
+
 export interface MontageCoverage {
   voiceSeconds: number;
   visualSeconds: number;
+  /** The hard floor: {@link minVoiceCoverSeconds}. */
   requiredVisualSeconds: number;
+  /** The comfortable length "Fit to the voice" aims for: {@link minMontageTotalSeconds}. */
+  recommendedVisualSeconds: number;
   deficitSeconds: number;
   surplusSeconds: number;
   isCovered: boolean;
@@ -119,6 +158,8 @@ export interface MontageCoverage {
 export function evaluateMontageCoverage(params: {
   voiceDurationSeconds: number | null | undefined;
   totalSceneSeconds: number;
+  /** Background music is chosen (adds the 0.6 s lead-in). Default true. */
+  musicSelected?: boolean;
 }): MontageCoverage {
   const voiceSeconds =
     Number.isFinite(params.voiceDurationSeconds) && (params.voiceDurationSeconds as number) > 0
@@ -128,12 +169,13 @@ export function evaluateMontageCoverage(params: {
     Number.isFinite(params.totalSceneSeconds) && params.totalSceneSeconds > 0
       ? params.totalSceneSeconds
       : 0;
-  const requiredVisualSeconds = minMontageTotalSeconds(voiceSeconds);
+  const requiredVisualSeconds = minVoiceCoverSeconds(voiceSeconds, params.musicSelected ?? true);
   const deficitSeconds = Math.max(0, requiredVisualSeconds - visualSeconds);
   return {
     voiceSeconds,
     visualSeconds,
     requiredVisualSeconds,
+    recommendedVisualSeconds: minMontageTotalSeconds(voiceSeconds),
     deficitSeconds,
     surplusSeconds: Math.max(0, visualSeconds - requiredVisualSeconds),
     // One frame of tolerance absorbs floating-point/frame rounding only.

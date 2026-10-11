@@ -4,6 +4,7 @@ import type { TextGraphicChoice } from "@/config/textGraphicStyles";
 import type { TextGraphicsPreviewResult } from "./TextStylePicker";
 import {
   createLocalAnalysisFrame,
+  LocalMaterialExpiredError,
   readLocalMaterial,
   restoreLocalMaterial,
   retainLocalFile,
@@ -93,8 +94,16 @@ export interface StudioContent {
    * Absent from an older server.
    */
   voiceMakes?: { used: number; limit: number };
+  /**
+   * More voice makes for credits (config/requestLimits.ts VOICE_MAKE_TOP_UP)
+   * and the wallet's balance (null when it could not be read). Absent from an
+   * older server.
+   */
+  voiceMakeTopUp?: { makes: number; priceCredits: number; balanceCredits: number | null };
   /** Approved steps can no longer be reopened or remade (2026-09-27). */
   lockedAfterApproval?: boolean;
+  /** The script on the server was written from the approved storyboard. */
+  scriptFromStoryboard?: boolean;
   /** Why the phone's latest part stopped with an error, if it did. */
   lastPhoneError?: {
     stage: string;
@@ -325,6 +334,26 @@ export async function approveStudioContent(input: {
 }
 
 /**
+ * Read a kept original, or null when it is genuinely gone: not in the app's
+ * storage (reinstall, cleared data) or past its keep window. Any other error
+ * (storage briefly busy right after the app reopened) is retried a few times
+ * before giving up.
+ */
+async function readKeptOriginal(descriptor: LocalMediaDescriptor): Promise<File | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await readLocalMaterial(descriptor);
+    } catch (error) {
+      if (error instanceof LocalMaterialExpiredError) return null;
+      const name = (error as { name?: string } | null)?.name;
+      if (name === "NotFoundError" || name === "TypeMismatchError") return null;
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  return null;
+}
+
+/**
  * Rebuild the editor's sources from the originals this phone kept.
  *
  * A studio reopened after submission has no picked files in memory, but it
@@ -341,31 +370,45 @@ export async function restoreStudioSources(
   const missingMedia: LocalMediaDescriptor[] = [];
 
   for (const descriptor of localMedia) {
+    // 1. Is the original still on this phone? Only a file that is really not
+    //    there (or past its keep window) counts as missing — a passing read
+    //    error is tried again.
+    const file = await readKeptOriginal(descriptor);
+    if (!file) {
+      missing.push(descriptor.fileName);
+      missingMedia.push(descriptor);
+      continue;
+    }
+
+    // 2. A picture to show for it. This can fail without anything being lost:
+    //    a clip the in-app browser cannot decode (HEVC, the default on many
+    //    Android cameras) whose preview copy could not be made just now — for
+    //    example while the phone's video engine was busy, or right after the
+    //    app was closed mid-render. Before 2026-10-11 that failure was counted
+    //    as "missing", and the studio told the person the clips were gone and
+    //    to start again, while every one was still safely kept.
+    const isClip = descriptor.mimeType.startsWith("video/");
+    let probed: { durationSeconds: number | null; posterUrl: string | null; previewUrl: string };
     try {
-      const file = await readLocalMaterial(descriptor);
-      const isClip = descriptor.mimeType.startsWith("video/");
-      // The same preparation as when the clip was first added, including the
-      // phone-made preview copy for a clip the in-app browser cannot play.
-      const probed = isClip
+      probed = isClip
         ? await prepareClip(file)
         : {
             durationSeconds: null,
             posterUrl: await readImagePoster(file),
             previewUrl: URL.createObjectURL(file),
           };
-      sources.push({
-        id: descriptor.localId,
-        kind: isClip ? "clip" : "image",
-        file,
-        previewUrl: probed.previewUrl,
-        posterUrl: probed.posterUrl,
-        durationSeconds: probed.durationSeconds ?? descriptor.durationSeconds,
-        fileName: descriptor.fileName,
-      });
     } catch {
-      missing.push(descriptor.fileName);
-      missingMedia.push(descriptor);
+      probed = { durationSeconds: null, posterUrl: null, previewUrl: URL.createObjectURL(file) };
     }
+    sources.push({
+      id: descriptor.localId,
+      kind: isClip ? "clip" : "image",
+      file,
+      previewUrl: probed.previewUrl,
+      posterUrl: probed.posterUrl,
+      durationSeconds: probed.durationSeconds ?? descriptor.durationSeconds,
+      fileName: descriptor.fileName,
+    });
   }
 
   return { sources, missing, missingMedia };
@@ -454,6 +497,12 @@ export function approveStudioVoice(input: {
   requestId: string;
   jobId: string;
   platforms: Platform[];
+  /**
+   * The storyboard's length as arranged now, and whether music is chosen: a
+   * voice the storyboard covers is accepted even past the material rule.
+   */
+  storyboardSeconds?: number | null;
+  musicSelected?: boolean;
   t?: StudioT;
 }): Promise<void> {
   const t = input.t ?? studioEnglish;
@@ -461,7 +510,12 @@ export function approveStudioVoice(input: {
     const response = await fetch(`/api/requests/${input.requestId}/approve-voice`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: input.jobId, targetPlatforms: input.platforms }),
+      body: JSON.stringify({
+        jobId: input.jobId,
+        targetPlatforms: input.platforms,
+        ...(input.storyboardSeconds ? { storyboardSeconds: input.storyboardSeconds } : {}),
+        ...(input.musicSelected !== undefined ? { musicSelected: input.musicSelected } : {}),
+      }),
     });
     if (response.ok) return;
     const body = (await response.json().catch(() => null)) as {
@@ -490,7 +544,7 @@ export function approveStudioVoice(input: {
   })();
 }
 
-/** Make the voice again, optionally with the other speaker. */
+/** Make the voice again, optionally with another speaker. */
 export function regenerateStudioVoice(input: {
   requestId: string;
   jobId: string;
@@ -499,12 +553,145 @@ export function regenerateStudioVoice(input: {
   scriptText?: string | null;
   t?: StudioT;
 }): Promise<void> {
+  const t = input.t ?? studioEnglish;
   const scriptText = input.scriptText?.trim();
-  return postJson(
-    `/api/requests/${input.requestId}/voice/regenerate`,
-    { jobId: input.jobId, voiceId: input.voiceId, ...(scriptText ? { scriptText } : {}) },
-    (input.t ?? studioEnglish)("studio.pipe.voiceAgainFailed")
-  );
+  return (async () => {
+    const response = await fetch(`/api/requests/${input.requestId}/voice/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobId: input.jobId,
+        voiceId: input.voiceId,
+        ...(scriptText ? { scriptText } : {}),
+      }),
+    });
+    if (response.ok) return;
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      code?: string;
+      limit?: number;
+    } | null;
+    // Out of makes: say so in the studio's language; the panel offers more.
+    if (body?.code === "voice_make_limit_reached" && typeof body.limit === "number") {
+      throw new Error(t("studio.audio.makesUsedUp", { limit: body.limit }));
+    }
+    throw new Error(body?.error ?? t("studio.pipe.voiceAgainFailed"));
+  })();
+}
+
+/**
+ * Rewrite the speaking script from the storyboard as approved here: one line
+ * per scene about that scene's pictures, held to that scene's time. Only while
+ * the script waits for approval. Returns the new script.
+ */
+export function fitStudioScriptToStoryboard(input: {
+  requestId: string;
+  jobId: string;
+  scenes: { summary: string; shots: { assetIndex: number; seconds: number }[] }[];
+  musicSelected: boolean;
+  t?: StudioT;
+}): Promise<{ scriptThai: string; sceneLines: string[]; speakSeconds: number }> {
+  const t = input.t ?? studioEnglish;
+  return (async () => {
+    const response = await fetch(`/api/requests/${input.requestId}/script/fit-storyboard`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobId: input.jobId,
+        musicSelected: input.musicSelected,
+        scenes: input.scenes,
+      }),
+    });
+    if (!response.ok) throw new Error(await readError(response, t("studio.audio.fitScriptFailed")));
+    return (await response.json()) as { scriptThai: string; sceneLines: string[]; speakSeconds: number };
+  })();
+}
+
+/**
+ * Shorten the script so a new voice runs about `targetVoiceSeconds` — the
+ * last step of Auto-fit. Returns the text; nothing is saved.
+ */
+export function shortenStudioScript(input: {
+  requestId: string;
+  jobId: string;
+  text: string;
+  voiceSeconds: number;
+  targetVoiceSeconds: number;
+  t?: StudioT;
+}): Promise<string> {
+  const t = input.t ?? studioEnglish;
+  return (async () => {
+    const response = await fetch(`/api/requests/${input.requestId}/script/shorten`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobId: input.jobId,
+        text: input.text,
+        voiceSeconds: input.voiceSeconds,
+        targetVoiceSeconds: input.targetVoiceSeconds,
+      }),
+    });
+    if (!response.ok) throw new Error(await readError(response, t("studio.audio.shortenFailed")));
+    const body = (await response.json()) as { text?: string };
+    return body.text ?? input.text;
+  })();
+}
+
+/** Thrown by `buyStudioVoiceMakes` when the wallet is short. */
+export class StudioCreditsShortError extends Error {
+  constructor(readonly requiredCredits: number, readonly balanceCredits: number, message: string) {
+    super(message);
+    this.name = "StudioCreditsShortError";
+  }
+}
+
+/**
+ * Spend credits on more voice makes for this request. The server sells a pack
+ * only while the makes are used up, so a repeated tap never charges twice.
+ */
+export function buyStudioVoiceMakes(input: {
+  requestId: string;
+  jobId: string;
+  t?: StudioT;
+}): Promise<{ limit: number; creditsSpent: number; balanceCredits: number | null }> {
+  const t = input.t ?? studioEnglish;
+  return (async () => {
+    const response = await fetch(`/api/requests/${input.requestId}/voice/top-up`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: input.jobId }),
+    });
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      code?: string;
+      limit?: number;
+      creditsSpent?: number;
+      requiredCredits?: number;
+      balanceCredits?: number;
+    } | null;
+    if (response.ok && body && typeof body.limit === "number") {
+      return {
+        limit: body.limit,
+        creditsSpent: body.creditsSpent ?? 0,
+        balanceCredits: body.balanceCredits ?? null,
+      };
+    }
+    if (body?.code === "insufficient_credits") {
+      const required = body.requiredCredits ?? 0;
+      const balance = body.balanceCredits ?? 0;
+      throw new StudioCreditsShortError(
+        required,
+        balance,
+        t("studio.audio.topUpShort", { price: required, balance })
+      );
+    }
+    // Makes were left after all (another tap already bought them): not an
+    // error worth showing — the refresh that follows shows the new count.
+    if (body?.code === "voice_makes_still_left" && typeof body.limit === "number") {
+      return { limit: body.limit, creditsSpent: 0, balanceCredits: null };
+    }
+    throw new Error(body?.error ?? t("studio.audio.topUpFailed"));
+  })();
 }
 
 /**

@@ -4,30 +4,8 @@ import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
 import { logAuthEvent } from "@/lib/auth/diagnostics";
 import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
-import { isBrowserMarketingOnly } from "@/config/studioRollout";
+import { isAppOnlyPath, isBrowserMarketingOnly } from "@/config/studioRollout";
 
-/**
- * Requester pages a WEB BROWSER may still open once the browser is the
- * marketing site (BROWSER_MARKETING_ONLY): the account, credits and pricing
- * (Stripe top-ups and packages stay available on the web), the legal page,
- * and the two Channel Management pages a browser can land on by itself — the
- * social-account OAuth return and the publishing-package purchase.
- * Everything else a requester does happens in the app.
- */
-const BROWSER_REQUESTER_PATHS = [
-  ROUTES.ACCOUNT,
-  ROUTES.CREDITS,
-  ROUTES.PRICING,
-  ROUTES.LEGAL,
-  ROUTES.MANAGEMENT_CONNECTIONS,
-  ROUTES.MANAGEMENT_PAYMENTS,
-];
-
-function browserMayOpen(pathname: string): boolean {
-  return BROWSER_REQUESTER_PATHS.some(
-    (allowed) => pathname === allowed || pathname.startsWith(`${allowed}/`)
-  );
-}
 
 /**
  * Clipper route protection middleware.
@@ -46,8 +24,8 @@ function browserMayOpen(pathname: string): boolean {
  *
  * Browser vs app: the app shells append `RClipperNative/<platform>` to the
  * user agent. With BROWSER_MARKETING_ONLY on, a requester in a web browser is
- * sent to "get the app" for everything but BROWSER_REQUESTER_PATHS. Admin
- * pages are never affected — admins work in a browser.
+ * sent to "get the app" only for the video-making pages
+ * (APP_ONLY_REQUESTER_PATHS). Admin pages are never affected.
  */
 export default withAuth(
   function middleware(req: NextRequestWithAuth) {
@@ -87,12 +65,12 @@ export default withAuth(
       }
     }
 
-    // The browser is the marketing site: requester work happens in the app.
+    // Making a video happens in the app; a browser gets "download the app".
     if (
       role === Role.Requester &&
       isBrowserMarketingOnly() &&
       !isAppUserAgent(req.headers.get("user-agent")) &&
-      !browserMayOpen(pathname)
+      isAppOnlyPath(pathname)
     ) {
       logAuthEvent("middleware_redirect", {
         path: pathname,

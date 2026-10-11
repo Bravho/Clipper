@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 
 import { authorizeDeviceRenderRequest } from "../_guard";
 import { videoGenerationService } from "@/services/VideoGenerationService";
-import { LOCK_AFTER_APPROVAL, MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
+import {
+  LOCK_AFTER_APPROVAL,
+  MAX_VOICE_MAKES_PER_REQUEST,
+  VOICE_MAKE_TOP_UP,
+} from "@/config/requestLimits";
+import { creditService } from "@/services/CreditService";
+import { textGraphicChoiceOf } from "@/services/TextGraphicsService";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import type { StoryboardScene } from "@/domain/models/VideoGenerationJob";
@@ -194,7 +200,7 @@ export async function GET(request: Request) {
             musicTrackId: job.selectedMusicTrack ?? null,
             subtitleLanguages: job.subtitleLanguages ?? [],
             templateId: job.selectedMotionTemplate ?? null,
-            textStyle: job.selectedTextStyle ?? null,
+            textStyle: textGraphicChoiceOf(job),
           }
         : null,
       script: hasScript
@@ -228,7 +234,20 @@ export async function GET(request: Request) {
       voiceMakes: await videoGenerationService
         .voiceMakesFor(requestId)
         .catch(() => ({ used: 0, limit: MAX_VOICE_MAKES_PER_REQUEST })),
+      // What more voice makes cost, and what the wallet holds, so the studio
+      // can offer a pack when the makes run out (VoiceMakeTopUpService).
+      voiceMakeTopUp: {
+        makes: VOICE_MAKE_TOP_UP.makes,
+        priceCredits: VOICE_MAKE_TOP_UP.priceCredits,
+        balanceCredits: await creditService.getBalance(auth.caller.userId).catch(() => null),
+      },
       lockedAfterApproval: LOCK_AFTER_APPROVAL,
+      // The script on the server was written from the approved storyboard
+      // (each scene carries its line), so a reopened studio shows it rather
+      // than asking for the storyboard to be approved again.
+      scriptFromStoryboard:
+        Boolean(storyboard?.length) &&
+        (storyboard ?? []).every((scene) => typeof scene.scriptLine === "string"),
     },
     { headers: { "Cache-Control": "no-store, max-age=0" } }
   );

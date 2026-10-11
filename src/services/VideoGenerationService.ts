@@ -13,7 +13,13 @@ import * as chatGptVisionService from "@/lib/ai/chatGptVisionService";
 import * as montageService from "@/lib/ai/montageService";
 import * as elevenLabsTtsService from "@/lib/ai/elevenLabsTtsService";
 import { ELEVENLABS_VOICE_FILE_NAME } from "@/lib/ai/elevenLabsTtsService";
-import { LOCK_AFTER_APPROVAL, MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
+import { LOCK_AFTER_APPROVAL } from "@/config/requestLimits";
+import { findMusicTrack } from "@/config/backgroundMusic";
+import {
+  voiceMakeLimitForPacks,
+  voiceMakeTopUpService,
+  type VoiceMakeTopUpResult,
+} from "@/services/VoiceMakeTopUpService";
 import { ORIGINALS_KEPT_DAYS, originalsExpireAt } from "@/config/localMedia";
 import * as ffmpegService from "@/lib/ai/ffmpegService";
 import type { VideoRatio } from "@/lib/ai/ffmpegService";
@@ -38,6 +44,9 @@ import {
   evaluateMontageCoverage,
   isMontageTransition,
   minMontageTotalSeconds,
+  minVoiceCoverSeconds,
+  MONTAGE_ENDING_SECONDS,
+  MONTAGE_INTRO_SECONDS,
   SCENE_DISSOLVE_SECONDS,
   sceneJoinDissolves,
   sceneMontageSeconds,
@@ -48,7 +57,7 @@ import type { VideoGenerationJob, ScenePlan, StoryboardScene, UpdateVideoGenerat
 import type { JobUpdateActor } from "@/repositories/interfaces/IVideoGenerationJobRepository";
 import { getPublishFieldConfig, isPublishablePlatform } from "@/config/publishFields";
 import { DEFAULT_LOCALE, type AppLocale } from "@/i18n/config";
-import type { GenerateContentParams } from "@/lib/ai/chatGptVisionService";
+import { speakSecondsForScenes, type GenerateContentParams } from "@/lib/ai/chatGptVisionService";
 import type { LocalAnalysisFrame, LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
 import { localMediaDescriptorSchema } from "@/lib/mobile/localMediaContract";
 import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
@@ -255,7 +264,7 @@ export class VoiceMakeLimitError extends Error {
   readonly code = "voice_make_limit_reached";
   constructor(readonly used: number, readonly limit: number) {
     super(
-      `This video has used all ${limit} voice makes. Approve one of the voices you have, or start a new video.`
+      `This video has used all ${limit} voice makes. Approve one of the voices you have, or buy more voice makes with credits.`
     );
     this.name = "VoiceMakeLimitError";
   }
@@ -621,6 +630,173 @@ export class VideoGenerationService {
         console.error("Failed to auto-save business profile from AI output:", profileErr);
       }
     }
+  }
+
+  /**
+   * Write the speaking script again FROM THE APPROVED STORYBOARD.
+   *
+   * The first script is written at submission, before the requester has
+   * arranged anything: it knows the pictures but not which scene shows which,
+   * nor for how long. Once the storyboard is approved in the studio this
+   * rewrites it scene by scene — each line about that scene's own pictures and
+   * held to that scene's time (the first scene gives up the music intro, the
+   * last the quiet ending) — so the voice made from it follows the pictures
+   * and fits the combined scene length. Same inputs the first script had
+   * (brief, place name, business profile, the stored picture derivatives),
+   * plus the storyboard.
+   *
+   * Only while the script is still waiting for approval: an approved script
+   * has a voice made from it.
+   */
+  async writeScriptForStoryboard(
+    jobId: string,
+    userId: string,
+    input: {
+      scenes: {
+        summary: string;
+        shots: { assetIndex: number; seconds: number }[];
+      }[];
+      /** Background music chosen (or not chosen yet): the voice starts after its intro. */
+      musicSelected: boolean;
+    }
+  ): Promise<{ scriptThai: string; sceneLines: string[]; speakSeconds: number }> {
+    const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingContentApproval);
+    await this.requireAiProcessingConsent(job.requestId);
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const { businessProfileService } = await import("@/services/BusinessProfileService");
+    const req = await clipRequestRepository.findById(job.requestId);
+    if (!req || req.userId !== userId) throw new Error(`ClipRequest not found: ${job.requestId}`);
+
+    const ordered = await this._orderedSourceAssets(job.requestId);
+    if (ordered.length === 0) {
+      throw new NoUsableMediaError("No pictures are stored for this request.");
+    }
+
+    // Only scenes with valid pictures; asset indexes are the submitted order.
+    const scenes = input.scenes
+      .map((scene) => ({
+        summary: scene.summary.trim().slice(0, 300),
+        shots: scene.shots.filter(
+          (shot) =>
+            Number.isInteger(shot.assetIndex) &&
+            shot.assetIndex >= 0 &&
+            shot.assetIndex < ordered.length &&
+            Number.isFinite(shot.seconds) &&
+            shot.seconds > 0
+        ),
+      }))
+      .filter((scene) => scene.shots.length > 0);
+    if (scenes.length === 0) throw new Error("The storyboard has no scenes with pictures.");
+
+    const sceneSeconds = scenes.map((scene) =>
+      scene.shots.reduce((sum, shot) => sum + shot.seconds, 0)
+    );
+    const speak = speakSecondsForScenes(
+      sceneSeconds,
+      input.musicSelected ? MONTAGE_INTRO_SECONDS : 0,
+      MONTAGE_ENDING_SECONDS
+    );
+
+    let businessProfileContext = null;
+    try {
+      const profile = await businessProfileService.getProfile(req.userId);
+      if (profile && businessProfileMatchesPlace(profile.businessName, req.placeName)) {
+        businessProfileContext = {
+          businessName: profile.businessName,
+          category: profile.category,
+          location: profile.location,
+          description: profile.description,
+          menuDetails: profile.menuDetails,
+        };
+      }
+    } catch (err) {
+      console.error("Failed to load business profile context for the storyboard script:", err);
+    }
+
+    const output = await chatGptVisionService.generateScriptForStoryboard({
+      imageUrls: ordered.map((asset) => asset.url),
+      placeName: req.placeName,
+      contentLanguage:
+        req.preferredLanguage === "en" || req.preferredLanguage === "vi"
+          ? req.preferredLanguage
+          : "th",
+      title: req.title,
+      description: req.description,
+      targetAudience: req.targetAudience,
+      targetPlatforms: req.targetPlatforms,
+      preferredStyle: req.preferredStyle ?? "",
+      businessProfileContext,
+      scenes: scenes.map((scene, index) => ({
+        sceneNumber: index + 1,
+        summary: scene.summary,
+        seconds: sceneSeconds[index],
+        speakSeconds: speak[index],
+        shots: scene.shots.map((shot) => ({
+          assetIndex: shot.assetIndex,
+          kind: ordered[shot.assetIndex]?.kind === "clip" ? "clip" : "image",
+          seconds: shot.seconds,
+        })),
+      })),
+    });
+
+    // The storyboard the script was written for goes with it, so approval and
+    // scene design start from the same arrangement.
+    const storyboard: StoryboardScene[] = scenes.map((scene, index) => ({
+      sceneNumber: index + 1,
+      summary: scene.summary,
+      assetIndexes: Array.from(new Set(scene.shots.map((shot) => shot.assetIndex))),
+      roughDurationHint: Math.round(sceneSeconds[index] * 10) / 10,
+      scriptLine: output.sceneLines[index] ?? "",
+    }));
+    await videoGenerationJobRepository.update(jobId, {
+      scriptThai: output.scriptThai,
+      scriptEnglish: null,
+      storyboard: JSON.stringify(storyboard),
+      ...(output.captionThai ? { captionThai: output.captionThai } : {}),
+    });
+
+    return {
+      scriptThai: output.scriptThai,
+      sceneLines: output.sceneLines,
+      speakSeconds: speak.reduce((sum, seconds) => sum + seconds, 0),
+    };
+  }
+
+  /**
+   * Shorten a script so the voice made from it runs about `targetVoiceSeconds`.
+   *
+   * Used by the studio's Auto-fit when the voice is longer than the scenes can
+   * be stretched to carry. The cut is sized from the voice that was actually
+   * made — its real length against the script's length — so it is right for
+   * this speaker's pace rather than for an average. Nothing is saved: the
+   * shortened text goes back into the studio's script box, where the person
+   * reads it and makes the voice again.
+   */
+  async shortenScriptForVoice(
+    jobId: string,
+    userId: string,
+    input: { text: string; voiceSeconds: number; targetVoiceSeconds: number }
+  ): Promise<{ text: string }> {
+    const job = await this._getJob(jobId);
+    const { clipRequestRepository } = await import("@/repositories/index");
+    const req = await clipRequestRepository.findById(job.requestId);
+    if (!req || req.userId !== userId) throw new Error(`ClipRequest not found: ${job.requestId}`);
+    await this.requireAiProcessingConsent(job.requestId);
+
+    const { scriptLanguageOf, countScriptUnits } = await import("@/lib/ai/scriptLength");
+    const language = scriptLanguageOf(req.preferredLanguage);
+    const units = countScriptUnits(input.text, language);
+    if (!(input.voiceSeconds > 0) || !(input.targetVoiceSeconds > 0) || units === 0) {
+      return { text: input.text };
+    }
+    // 3% under, so the remade voice lands inside rather than on the line.
+    const ratio = Math.min(1, (input.targetVoiceSeconds / input.voiceSeconds) * 0.97);
+    const text = await chatGptVisionService.shortenScriptToUnits(
+      input.text,
+      Math.floor(units * ratio),
+      language
+    );
+    return { text };
   }
 
   /**
@@ -1744,9 +1920,44 @@ export class VideoGenerationService {
     ).length;
   }
 
+  /**
+   * The request's voice-make allowance: the included makes plus every pack
+   * bought for it with credits (VoiceMakeTopUpService). If the ledger cannot
+   * be read the included makes are assumed — the server never grants more than
+   * it can prove were bought.
+   */
+  async voiceMakeLimit(requestId: string): Promise<number> {
+    const packs = await voiceMakeTopUpService.packsBought(requestId).catch((err) => {
+      console.error("[voice-makes] could not read bought packs:", err);
+      return 0;
+    });
+    return voiceMakeLimitForPacks(packs);
+  }
+
   /** The voice-make allowance of one request, for the studio to show. */
   async voiceMakesFor(requestId: string): Promise<{ used: number; limit: number }> {
-    return { used: await this.countVoiceMakes(requestId), limit: MAX_VOICE_MAKES_PER_REQUEST };
+    const [used, limit] = await Promise.all([
+      this.countVoiceMakes(requestId),
+      this.voiceMakeLimit(requestId),
+    ]);
+    return { used, limit };
+  }
+
+  /**
+   * Buy more voice makes for a phone-made request whose makes are used up.
+   * Only while the voice can still be made (it is waiting for approval, or
+   * its make failed) — after approval the voice is locked and more makes
+   * would be credits spent on nothing.
+   */
+  async buyVoiceMakes(jobId: string, userId: string): Promise<VoiceMakeTopUpResult> {
+    const job = await this._getJob(jobId);
+    const voiceOpen =
+      job.currentStep === VideoGenerationStep.AwaitingVoiceApproval ||
+      (job.currentStep === VideoGenerationStep.Failed &&
+        job.failedAtStep === VideoGenerationStep.GeneratingVoice);
+    if (!voiceOpen) throw new StepLockedAfterApprovalError("The voice");
+    const used = await this.countVoiceMakes(job.requestId);
+    return voiceMakeTopUpService.purchase({ userId, requestId: job.requestId, usedMakes: used });
   }
 
   /**
@@ -1950,9 +2161,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // moves, so a refused remake leaves the voices the requester already has.
     if (LOCK_AFTER_APPROVAL && (await this._isDeviceRendered(job.requestId))) {
       if (fromSceneDesign) throw new StepLockedAfterApprovalError("The voice");
-      const used = await this.countVoiceMakes(job.requestId);
-      if (used >= MAX_VOICE_MAKES_PER_REQUEST) {
-        throw new VoiceMakeLimitError(used, MAX_VOICE_MAKES_PER_REQUEST);
+      const { used, limit } = await this.voiceMakesFor(job.requestId);
+      if (used >= limit) {
+        throw new VoiceMakeLimitError(used, limit);
       }
     }
 
@@ -2275,7 +2486,16 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   async approveVoiceConversionByRequester(
     jobId: string,
     userId: string,
-    targetPlatforms?: Platform[]
+    targetPlatforms?: Platform[],
+    /**
+     * The studio's storyboard length right now, seconds. A voice longer than
+     * the material rule allows is still accepted when the storyboard (as
+     * arranged, e.g. after Auto-fit) covers it — the scene-design gate checks
+     * the real plan again, so this cannot let an uncovered voice through.
+     */
+    storyboardSeconds?: number | null,
+    /** Music chosen: the voice starts after its intro. Default true (stricter). */
+    musicSelected = true
   ): Promise<VideoGenerationJob> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
     if (!Number.isFinite(job.voiceDurationSeconds) || (job.voiceDurationSeconds as number) <= 0) {
@@ -2298,7 +2518,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // studio's "Approve the voice" button applies).
     if (deviceRendered) {
       const material = materialSecondsOfDescriptors(readLocalMediaDescriptors(job.renderPayload));
-      if (material > 0 && !voiceFitsMaterial(job.voiceDurationSeconds as number, material)) {
+      const storyboardCovers =
+        Number.isFinite(storyboardSeconds) &&
+        (storyboardSeconds as number) > 0 &&
+        (storyboardSeconds as number) <= videoLimitSeconds + 1 &&
+        minVoiceCoverSeconds(job.voiceDurationSeconds as number, musicSelected) <=
+          (storyboardSeconds as number) + 1 / 30;
+      if (
+        material > 0 &&
+        !storyboardCovers &&
+        !voiceFitsMaterial(job.voiceDurationSeconds as number, material)
+      ) {
         throw new VoiceTooLongForMaterialError(
           job.voiceDurationSeconds as number,
           material,
@@ -2379,6 +2609,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const coverage = evaluateMontageCoverage({
       voiceDurationSeconds: job.voiceDurationSeconds,
       totalSceneSeconds: totalSeconds,
+      musicSelected: Boolean(findMusicTrack(job.selectedMusicTrack)),
     });
     if (!coverage.isCovered) {
       throw new Error(
@@ -2567,6 +2798,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const coverage = evaluateMontageCoverage({
         voiceDurationSeconds: job.voiceDurationSeconds,
         totalSceneSeconds: totalSeconds,
+        musicSelected: Boolean(findMusicTrack(job.selectedMusicTrack)),
       });
       if (!coverage.isCovered) {
         throw new Error(

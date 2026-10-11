@@ -40,7 +40,7 @@ import java.nio.ShortBuffer;
  */
 public final class AudioMixer {
 
-    private static final int CHANNELS = 2;
+    private static final int CHANNELS = PcmBuffers.CHANNELS;
     private static final int ENCODE_BITRATE = 192_000;
     private static final long CODEC_TIMEOUT_US = 10_000;
 
@@ -69,6 +69,12 @@ public final class AudioMixer {
      * Mix the approved voice and optional music into one AAC file covering
      * `totalSeconds`.
      *
+     * MEMORY. Everything here is bounded by the video's length, not the
+     * music's: each track is decoded only as far as the video needs, held as
+     * 16-bit samples, and the mix is generated chunk by chunk straight into the
+     * encoder (see {@link PcmBuffers} for why — the old full-track decode ran
+     * the app out of memory and closed it during "Voice and music").
+     *
      * @param voice  the approved ElevenLabs voice, already downloaded
      * @param music  the selected background track, or null
      * @param totalSeconds the whole clip length: max(picture, voice + lead-in)
@@ -82,8 +88,10 @@ public final class AudioMixer {
         int sampleRate = spec.sampleRate;
         int totalFrames = (int) Math.round(totalSeconds * sampleRate);
         if (totalFrames <= 0) throw new IOException("Invalid mix length");
+        int leadInFrames = Math.max(0, (int) Math.round(spec.leadInSeconds * sampleRate));
 
-        float[] voicePcm = decodeToFloat(voice, sampleRate);
+        // The voice is only heard from the lead-in to the end of the clip.
+        short[] voicePcm = decode(voice, sampleRate, Math.max(1, totalFrames - leadInFrames));
         if (voicePcm.length == 0) {
             throw new IOException("The speaking voice decoded to nothing");
         }
@@ -92,7 +100,8 @@ public final class AudioMixer {
         double sumSquares = 0;
         double peak = 0;
         int counted = 0;
-        for (float sample : voicePcm) {
+        for (short raw : voicePcm) {
+            float sample = raw / 32768f;
             float abs = Math.abs(sample);
             if (abs > peak) peak = abs;
             // Silence at the head and tail of a TTS render would drag the RMS
@@ -105,90 +114,41 @@ public final class AudioMixer {
         }
         double rms = counted > 0 ? Math.sqrt(sumSquares / counted) : 0;
         float voiceGain = voiceNormalizationGain(rms, peak);
-        for (int i = 0; i < voicePcm.length; i++) voicePcm[i] *= voiceGain;
 
-        // ── 2. Lay the voice out on the timeline ────────────────────────────
-        // Delayed by the lead-in and padded with silence to the full clip, so
-        // the sidechain key runs the whole way and the bed recovers under the
-        // ending instead of the mix stopping with the narration.
-        int leadInFrames = (int) Math.round(spec.leadInSeconds * sampleRate);
-        float[] voiceTrack = new float[totalFrames * CHANNELS];
-        int voiceFrames = voicePcm.length / CHANNELS;
-        for (int frame = 0; frame < voiceFrames; frame++) {
-            int target = frame + leadInFrames;
-            if (target < 0 || target >= totalFrames) continue;
-            voiceTrack[target * CHANNELS] = voicePcm[frame * CHANNELS];
-            voiceTrack[target * CHANNELS + 1] = voicePcm[frame * CHANNELS + 1];
-        }
-
-        // ── 3. Loop the music under it ──────────────────────────────────────
-        float[] musicTrack = null;
+        // ── 2. The music: only as much as the clip needs; looped if shorter ──
+        short[] musicPcm = null;
         if (music != null && music.isFile() && spec.musicSelected) {
-            float[] musicPcm = decodeToFloat(music, sampleRate);
-            if (musicPcm.length >= CHANNELS) {
-                musicTrack = new float[totalFrames * CHANNELS];
-                int musicFrames = musicPcm.length / CHANNELS;
-                for (int frame = 0; frame < totalFrames; frame++) {
-                    int source = frame % musicFrames;
-                    musicTrack[frame * CHANNELS] = musicPcm[source * CHANNELS] * spec.musicBedVolume;
-                    musicTrack[frame * CHANNELS + 1] = musicPcm[source * CHANNELS + 1] * spec.musicBedVolume;
-                }
-            }
+            short[] decoded = decode(music, sampleRate, totalFrames);
+            if (decoded.length >= CHANNELS) musicPcm = decoded;
         }
 
-        // ── 4. Duck and mix ─────────────────────────────────────────────────
-        float[] mixed = new float[totalFrames * CHANNELS];
-        float attackCoefficient = envelopeCoefficient(spec.duckAttackMs, sampleRate);
-        float releaseCoefficient = envelopeCoefficient(spec.duckReleaseMs, sampleRate);
-        float envelope = 0f;
+        // ── 3. Duck, mix and encode, a chunk at a time ──────────────────────
+        PcmBuffers.MixSettings settings = new PcmBuffers.MixSettings();
+        settings.voiceGain = voiceGain;
+        settings.leadInFrames = leadInFrames;
+        settings.musicBedVolume = spec.musicBedVolume;
+        settings.duckThreshold = spec.duckThreshold;
+        settings.duckRatio = spec.duckRatio;
+        settings.attackCoefficient = envelopeCoefficient(spec.duckAttackMs, sampleRate);
+        settings.releaseCoefficient = envelopeCoefficient(spec.duckReleaseMs, sampleRate);
+        settings.limit = spec.limit;
 
-        for (int frame = 0; frame < totalFrames; frame++) {
-            float voiceL = voiceTrack[frame * CHANNELS];
-            float voiceR = voiceTrack[frame * CHANNELS + 1];
-
-            // The sidechain key is the delayed, normalised voice — so ducking
-            // only engages once narration actually starts, leaving the
-            // music-only intro at the full bed level.
-            float key = Math.max(Math.abs(voiceL), Math.abs(voiceR));
-            float coefficient = key > envelope ? attackCoefficient : releaseCoefficient;
-            envelope = key + coefficient * (envelope - key);
-
-            float duck = musicTrack != null ? duckGain(envelope) : 1f;
-
-            float left = voiceL;
-            float right = voiceR;
-            if (musicTrack != null) {
-                left += musicTrack[frame * CHANNELS] * duck;
-                right += musicTrack[frame * CHANNELS + 1] * duck;
-            }
-
-            // `amix=normalize=0` then `alimiter=limit=0.95`: sum without
-            // rescaling, then clip the peaks that produces.
-            mixed[frame * CHANNELS] = limit(left);
-            mixed[frame * CHANNELS + 1] = limit(right);
-        }
-
-        encodeAac(mixed, sampleRate, output);
+        encodeAac(new PcmBuffers.MixSource(voicePcm, musicPcm, totalFrames, settings), sampleRate, output);
         return new Result(output, totalSeconds, peak, voiceGain);
     }
 
     // ── DSP, mirroring deviceRenderAudio.ts ─────────────────────────────────
 
-    private float limit(float sample) {
-        return Math.max(-spec.limit, Math.min(spec.limit, sample));
-    }
-
     private static float dbToLinear(double db) {
-        return (float) Math.pow(10, db / 20);
+        return PcmBuffers.dbToLinear(db);
     }
 
     private static double linearToDb(double linear) {
-        return 20 * Math.log10(Math.max(linear, 1e-9));
+        return PcmBuffers.linearToDb(linear);
     }
 
     static float envelopeCoefficient(float timeMs, int sampleRate) {
-        if (!(timeMs > 0) || sampleRate <= 0) return 0f;
-        return (float) Math.exp(-1 / ((timeMs / 1000d) * sampleRate));
+        return PcmBuffers.envelopeCoefficient(timeMs, sampleRate);
     }
 
     /** Mirrors `voiceNormalizationGain`. */
@@ -206,24 +166,21 @@ public final class AudioMixer {
 
     /** Mirrors `duckGain` — `sidechaincompress=threshold=T:ratio=R` in dB. */
     float duckGain(float envelope) {
-        if (!(envelope > spec.duckThreshold) || !(spec.duckRatio > 1)) return 1f;
-        double overDb = linearToDb(envelope) - linearToDb(spec.duckThreshold);
-        double reductionDb = overDb - overDb / spec.duckRatio;
-        return dbToLinear(-reductionDb);
+        return PcmBuffers.duckGain(envelope, spec.duckThreshold, spec.duckRatio);
     }
 
     // ── Decode ──────────────────────────────────────────────────────────────
 
     /**
-     * Decode any audio file to interleaved stereo float PCM at `sampleRate`.
+     * Decode an audio file to interleaved stereo 16-bit PCM at `targetRate`,
+     * stopping once `maxFrames` frames (at the target rate) are covered.
      *
      * Channel and rate conversion are done here rather than by the decoder
      * because `MediaCodec` will happily hand back mono at 44.1 kHz and there is
      * no portable resampler in the platform API. Linear interpolation is enough
-     * for a 44.1 -> 48 kHz hop on speech and music; it is not enough for
-     * anything that would be audible as aliasing at these ratios.
+     * for a 44.1 -> 48 kHz hop on speech and music.
      */
-    private float[] decodeToFloat(File file, int targetRate) throws IOException {
+    private short[] decode(File file, int targetRate, int maxFrames) throws IOException {
         MediaExtractor extractor = new MediaExtractor();
         MediaCodec codec = null;
         try {
@@ -251,7 +208,10 @@ public final class AudioMixer {
             codec.configure(format, null, null, 0);
             codec.start();
 
-            GrowableFloatArray decoded = new GrowableFloatArray();
+            int cap = PcmBuffers.sourceSamplesFor(maxFrames, sourceRate, targetRate, sourceChannels);
+            PcmBuffers.ShortCollector decoded =
+                new PcmBuffers.ShortCollector(Math.min(cap, 1 << 18), cap);
+            short[] chunk = new short[16 * 1024];
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             boolean inputDone = false;
             boolean outputDone = false;
@@ -279,20 +239,27 @@ public final class AudioMixer {
                         buffer.position(info.offset);
                         buffer.limit(info.offset + info.size);
                         ShortBuffer shorts = buffer.order(ByteOrder.nativeOrder()).asShortBuffer();
-                        while (shorts.hasRemaining()) {
-                            decoded.add(shorts.get() / 32768f);
+                        while (shorts.hasRemaining() && !decoded.full()) {
+                            int count = Math.min(chunk.length, shorts.remaining());
+                            shorts.get(chunk, 0, count);
+                            decoded.add(chunk, 0, count);
                         }
                     }
                     codec.releaseOutputBuffer(outIndex, false);
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outputDone = true;
+                    // Enough for the clip: the rest of the track is never heard.
+                    if (decoded.full()) outputDone = true;
                 } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MediaFormat outFormat = codec.getOutputFormat();
                     sourceRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE);
                     sourceChannels = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+                    decoded.setCap(
+                        PcmBuffers.sourceSamplesFor(maxFrames, sourceRate, targetRate, sourceChannels));
                 }
             }
 
-            return conform(decoded.toArray(), sourceChannels, sourceRate, targetRate);
+            return PcmBuffers.toStereo(
+                decoded.data(), decoded.size(), sourceChannels, sourceRate, targetRate, maxFrames);
         } finally {
             if (codec != null) {
                 try { codec.stop(); } catch (RuntimeException ignored) { }
@@ -302,44 +269,9 @@ public final class AudioMixer {
         }
     }
 
-    /** Interleave to stereo and resample to the mix rate. */
-    private static float[] conform(float[] samples, int channels, int sourceRate, int targetRate) {
-        if (channels <= 0) channels = 1;
-        int frames = samples.length / channels;
-        if (frames == 0) return new float[0];
-
-        // To stereo first: mono is duplicated, anything wider is folded down by
-        // taking its first two channels (surround material is not something the
-        // pipeline produces, and averaging N channels would change the level).
-        float[] stereo = new float[frames * CHANNELS];
-        for (int frame = 0; frame < frames; frame++) {
-            float left = samples[frame * channels];
-            float right = channels > 1 ? samples[frame * channels + 1] : left;
-            stereo[frame * CHANNELS] = left;
-            stereo[frame * CHANNELS + 1] = right;
-        }
-        if (sourceRate == targetRate || sourceRate <= 0) return stereo;
-
-        double ratio = (double) targetRate / sourceRate;
-        int outFrames = (int) Math.floor(frames * ratio);
-        float[] resampled = new float[outFrames * CHANNELS];
-        for (int frame = 0; frame < outFrames; frame++) {
-            double sourcePosition = frame / ratio;
-            int index = (int) Math.floor(sourcePosition);
-            double fraction = sourcePosition - index;
-            int next = Math.min(index + 1, frames - 1);
-            for (int channel = 0; channel < CHANNELS; channel++) {
-                float a = stereo[index * CHANNELS + channel];
-                float b = stereo[next * CHANNELS + channel];
-                resampled[frame * CHANNELS + channel] = (float) (a + (b - a) * fraction);
-            }
-        }
-        return resampled;
-    }
-
     // ── Encode ──────────────────────────────────────────────────────────────
 
-    private void encodeAac(float[] pcm, int sampleRate, File output) throws IOException {
+    private void encodeAac(PcmBuffers.MixSource source, int sampleRate, File output) throws IOException {
         MediaFormat format = MediaFormat.createAudioFormat(
             MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, CHANNELS);
         format.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
@@ -348,6 +280,7 @@ public final class AudioMixer {
 
         MediaCodec codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
         MediaMuxer muxer = null;
+        short[] chunk = new short[32 * 1024];
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             codec.start();
@@ -356,7 +289,6 @@ public final class AudioMixer {
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             int muxerTrack = -1;
             boolean muxerStarted = false;
-            int sampleIndex = 0;
             boolean inputDone = false;
             boolean outputDone = false;
 
@@ -367,22 +299,20 @@ public final class AudioMixer {
                         ByteBuffer buffer = codec.getInputBuffer(index);
                         if (buffer == null) throw new IOException("Encoder gave no input buffer");
                         buffer.clear();
-                        int capacityShorts = buffer.capacity() / 2;
-                        int count = Math.min(capacityShorts, pcm.length - sampleIndex);
-                        ShortBuffer shorts = buffer.order(ByteOrder.nativeOrder()).asShortBuffer();
-                        for (int i = 0; i < count; i++) {
-                            float sample = Math.max(-1f, Math.min(1f, pcm[sampleIndex + i]));
-                            shorts.put((short) Math.round(sample * 32767f));
-                        }
                         long presentationTimeUs =
-                            (long) (sampleIndex / (double) CHANNELS / sampleRate * 1_000_000d);
+                            (long) (source.position() / (double) sampleRate * 1_000_000d);
+                        int capacityShorts = Math.min(buffer.capacity() / 2, chunk.length);
+                        // Whole frames only, so left and right never split.
+                        capacityShorts -= capacityShorts % CHANNELS;
+                        int count = source.fill(chunk, capacityShorts);
                         if (count <= 0) {
                             codec.queueInputBuffer(index, 0, 0, presentationTimeUs,
                                 MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                             inputDone = true;
                         } else {
+                            ShortBuffer shorts = buffer.order(ByteOrder.nativeOrder()).asShortBuffer();
+                            shorts.put(chunk, 0, count);
                             codec.queueInputBuffer(index, 0, count * 2, presentationTimeUs, 0);
-                            sampleIndex += count;
                         }
                     }
                 }
@@ -415,27 +345,6 @@ public final class AudioMixer {
 
         if (!output.isFile() || output.length() == 0) {
             throw new IOException("The audio mix produced no bytes");
-        }
-    }
-
-    /** A float[] that grows, because decoded length is not known up front. */
-    private static final class GrowableFloatArray {
-        private float[] data = new float[1 << 16];
-        private int size;
-
-        void add(float value) {
-            if (size == data.length) {
-                float[] grown = new float[data.length * 2];
-                System.arraycopy(data, 0, grown, 0, size);
-                data = grown;
-            }
-            data[size++] = value;
-        }
-
-        float[] toArray() {
-            float[] result = new float[size];
-            System.arraycopy(data, 0, result, 0, size);
-            return result;
         }
     }
 }

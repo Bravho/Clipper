@@ -1,6 +1,7 @@
 import {
   briefProblems,
   canRequestStoryboard,
+  DEFAULT_SHOT_SECONDS,
   emptyDocument,
   retimeScenes,
   scenePlanFromScenes,
@@ -14,6 +15,7 @@ import {
   type EditorSource,
 } from "@/features/device-render/editorState";
 import { Platform } from "@/domain/enums/Platform";
+import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 
 /**
  * The phone studio's pure decisions: whether a brief is good enough to open a
@@ -62,18 +64,16 @@ describe("briefProblems", () => {
     expect(problems.join(" ")).toContain("20 characters");
   });
 
-  it("rejects a length the pipeline will not accept", () => {
+  it("never blocks a brief over a length — the brief has none any more", () => {
     const brief = {
       ...emptyDocument().brief,
       clipName: "Name here",
       placeName: "Pho 54",
       details: "Twenty characters of description, at least, to clear the minimum.",
-      // The studio allows up to 90 seconds (the phone renders it); past that
-      // is refused.
-      targetSeconds: 91,
+      // A request saved by an older build with a length past today's limit.
+      targetSeconds: 120,
     };
-    expect(briefProblems(brief).join(" ")).toContain("Video length");
-    expect(briefProblems({ ...brief, targetSeconds: 90 }).join(" ")).not.toContain("Video length");
+    expect(briefProblems(brief)).toEqual([]);
   });
 
   it("starts on TikTok — the studio does not offer Travy for now", () => {
@@ -211,22 +211,31 @@ describe("scenesFromStoryboard", () => {
       { sceneNumber: 1, summary: "", assetIndexes: [0, 1] },
     ]);
     const clipShot = scenes[0].shots[0];
-    // Ten seconds on screen, 1.6s of footage: the window stops at the end of
-    // the file and the renderer slows the clip to fill the rest.
-    expect(clipShot.durationSeconds).toBe(10);
+    // 1.6s of footage: the window stops at the end of the file.
     expect(clipShot.trimEndSeconds).toBe(1.6);
   });
 
-  it("comes out at the length the brief asked for", () => {
+  it("keeps each shot's natural length — the brief sets no length any more", () => {
+    // documentWith(..., 12) gives the brief a length; it must be ignored.
     const scenes = scenesFromStoryboard(document, [
       { sceneNumber: 1, summary: "", assetIndexes: [0, 1] },
       { sceneNumber: 2, summary: "", assetIndexes: [2] },
     ]);
-    const total = scenes.reduce(
-      (sum, scene) => sum + scene.shots.reduce((inner, shot) => inner + shot.durationSeconds, 0),
-      0
+    for (const scene of scenes) {
+      for (const shot of scene.shots) expect(shot.durationSeconds).toBe(DEFAULT_SHOT_SECONDS);
+    }
+  });
+
+  it("shortens a storyboard that would run past the 90-second limit", () => {
+    const many = documentWith(
+      Array.from({ length: 40 }, (_, i) => source(`p${i}`, "image", null)),
+      15
     );
-    expect(total).toBeCloseTo(12, 5);
+    const scenes = scenesFromStoryboard(
+      many,
+      Array.from({ length: 40 }, (_, i) => ({ sceneNumber: i + 1, summary: "", assetIndexes: [i] }))
+    );
+    expect(scenesPlaySeconds(scenes)).toBeLessThanOrEqual(STUDIO_MAX_DURATION_SECONDS + 0.5);
   });
 
   it("gives a clip a window no longer than the slot it is on screen for", () => {

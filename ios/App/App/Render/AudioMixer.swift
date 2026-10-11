@@ -48,7 +48,14 @@ final class AudioMixer {
         let totalFrames = Int((totalSeconds * sampleRate).rounded())
         guard totalFrames > 0 else { throw RenderError.audio("Invalid mix length") }
 
-        var voicePcm = try readInterleaved(url: voice, sampleRate: sampleRate)
+        // Only what the clip can play is read: the voice from the lead-in to
+        // the end, the music up to the clip's length (looped below if shorter).
+        // Reading the whole three-minute music file held several 60–70 MB
+        // copies at once — the out-of-memory that closed the app during
+        // "Voice and music" on Android (see PcmBuffers.java).
+        let voiceLeadIn = Int((spec.voiceLeadInSeconds * sampleRate).rounded())
+        var voicePcm = try readInterleaved(
+            url: voice, sampleRate: sampleRate, maxFrames: max(1, totalFrames - voiceLeadIn))
         guard !voicePcm.isEmpty else {
             throw RenderError.audio("The speaking voice decoded to nothing")
         }
@@ -89,7 +96,7 @@ final class AudioMixer {
         // ── 3. Loop the music under it ──────────────────────────────────────
         var musicTrack: [Float]?
         if spec.musicSelected, let music {
-            let musicPcm = try readInterleaved(url: music, sampleRate: sampleRate)
+            let musicPcm = try readInterleaved(url: music, sampleRate: sampleRate, maxFrames: totalFrames)
             if musicPcm.count >= 2 {
                 let musicFrames = musicPcm.count / 2
                 let bed = Float(spec.musicBedVolume)
@@ -177,13 +184,14 @@ final class AudioMixer {
 
     // ── Decode ──────────────────────────────────────────────────────────────
 
-    /// Read any audio file as interleaved stereo Float32 at `sampleRate`.
+    /// Read an audio file as interleaved stereo Float32 at `sampleRate`, at
+    /// most `maxFrames` frames of it (at the target rate).
     ///
     /// `AVAudioFile` converts on read when its processing format asks for a
     /// different layout, which is how the channel fold and the resample happen
     /// without a hand-written resampler — the one piece of this that Apple's
     /// frameworks genuinely do for us.
-    private func readInterleaved(url: URL, sampleRate: Double) throws -> [Float] {
+    private func readInterleaved(url: URL, sampleRate: Double, maxFrames: Int) throws -> [Float] {
         let file: AVAudioFile
         do {
             file = try AVAudioFile(forReading: url)
@@ -204,10 +212,13 @@ final class AudioMixer {
             throw RenderError.audio("Could not convert \(url.lastPathComponent) to the mix format")
         }
 
-        let sourceFrames = AVAudioFrameCount(file.length)
+        guard file.length > 0, maxFrames > 0 else { return [] }
+        let ratio = sampleRate / file.processingFormat.sampleRate
+        // Source frames that cover `maxFrames` at the target rate, plus a little.
+        let neededSource = AVAudioFramePosition((Double(maxFrames) / ratio).rounded(.up)) + 2
+        let sourceFrames = AVAudioFrameCount(min(file.length, neededSource))
         guard sourceFrames > 0 else { return [] }
 
-        let ratio = sampleRate / file.processingFormat.sampleRate
         let capacity = AVAudioFrameCount((Double(sourceFrames) * ratio).rounded(.up) + 4096)
         guard let inputBuffer = AVAudioPCMBuffer(
                 pcmFormat: file.processingFormat, frameCapacity: sourceFrames),
@@ -216,7 +227,7 @@ final class AudioMixer {
             throw RenderError.audio("Could not allocate audio buffers")
         }
 
-        try file.read(into: inputBuffer)
+        try file.read(into: inputBuffer, frameCount: sourceFrames)
 
         var supplied = false
         var conversionError: NSError?
@@ -235,7 +246,7 @@ final class AudioMixer {
         }
 
         guard let channelData = outputBuffer.floatChannelData else { return [] }
-        let frames = Int(outputBuffer.frameLength)
+        let frames = min(Int(outputBuffer.frameLength), maxFrames)
         var interleaved = [Float](repeating: 0, count: frames * 2)
         let left = channelData[0]
         let right = outputBuffer.format.channelCount > 1 ? channelData[1] : channelData[0]

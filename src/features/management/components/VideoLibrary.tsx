@@ -16,6 +16,7 @@ import {
   type PublishFlowAsset,
   type PublishFlowConnection,
   type PublishFlowSuggestion,
+  type PublishFlowUnavailableChannel,
   type PublishFlowVideo,
 } from "@/features/management/components/PublishFlowModal";
 import {
@@ -55,6 +56,8 @@ interface VideoLibraryProps {
   connections: PublishFlowConnection[];
   /** OAuth attempts that never completed — publishable to, they are not. */
   incompleteConnections?: number;
+  /** Channels connected once but not publishable now (pending / disconnected). */
+  unavailableChannels?: PublishFlowUnavailableChannel[];
   /** An active access pass — publishing does not spend tokens. */
   unlimited: boolean;
   /** Current one-channel publishing allowance when there is no access pass. */
@@ -78,6 +81,7 @@ export function VideoLibrary({
   videos,
   connections,
   incompleteConnections = 0,
+  unavailableChannels = [],
   unlimited,
   tokensRemaining,
   canUpload,
@@ -261,6 +265,7 @@ export function VideoLibrary({
           video={publishingVideo}
           connections={connections}
           incompleteConnections={incompleteConnections}
+          unavailableChannels={unavailableChannels}
           unlimited={unlimited}
           tokensRemaining={tokens}
           onClose={closePublishingFlow}

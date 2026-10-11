@@ -3,19 +3,85 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { MusicTrack } from "@/config/backgroundMusic";
-import { ELEVENLABS_VOICES, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
+import {
+  ELEVENLABS_VOICES,
+  type ElevenLabsVoiceGender,
+  type ElevenLabsVoiceId,
+} from "@/config/elevenLabsVoices";
+import { ROUTES } from "@/config/routes";
 import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
 import type { EditorDocument } from "./editorState";
 import type { StudioScript } from "./studioPipeline";
 import { pipelineStepText, useStudioT } from "./studioI18n";
 import { SoundSyncPreview } from "./SoundSyncPreview";
+import { preloadVoiceSamples, voiceSampleSource, voiceSampleUrl } from "./voiceSamples";
 
 /** Where the speaking script is, from the studio's point of view. */
-export type ScriptStatus = "not_submitted" | "writing" | "review" | "approved" | "failed";
+export type ScriptStatus =
+  | "not_submitted"
+  | "writing"
+  /** A draft exists, but the script is written from the approved storyboard. */
+  | "waiting_storyboard"
+  | "review"
+  | "approved"
+  | "failed";
 
 /** Where the generated voice is. */
 export type VoiceStatus = "none" | "generating" | "review" | "approved";
 
+
+/** One speaker as the picker shows it. */
+interface SpeakerEntry {
+  id: ElevenLabsVoiceId;
+  name: string;
+  gender: ElevenLabsVoiceGender;
+  previewUrl: string;
+}
+
+const CONFIG_SPEAKERS: SpeakerEntry[] = ELEVENLABS_VOICES.map((voice) => ({
+  id: voice.id,
+  name: voice.name,
+  gender: voice.gender,
+  previewUrl: voiceSampleUrl(voice.id),
+}));
+
+// Read once per app session: the genders do not change while the app is open.
+let speakerCatalog: Promise<SpeakerEntry[]> | null = null;
+
+/**
+ * The speakers, with the genders the server resolved from ElevenLabs for any
+ * voice whose gender is not written in config. Starts from the config list, so
+ * the picker is usable at once and on an older server.
+ */
+function useVoiceCatalog(): SpeakerEntry[] {
+  const [voices, setVoices] = useState<SpeakerEntry[]>(CONFIG_SPEAKERS);
+  useEffect(() => {
+    let live = true;
+    // Normally already started when the studio opened; harmless if so.
+    preloadVoiceSamples();
+    speakerCatalog ??= fetch("/api/voices")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { voices?: Partial<SpeakerEntry>[] } | null) => {
+        const byId = new Map((body?.voices ?? []).map((voice) => [voice.id, voice]));
+        return CONFIG_SPEAKERS.map((voice) => {
+          const fromServer = byId.get(voice.id);
+          const gender = fromServer?.gender;
+          return gender === "female" || gender === "male" ? { ...voice, gender } : voice;
+        });
+      })
+      .catch(() => {
+        speakerCatalog = null;
+        return CONFIG_SPEAKERS;
+      });
+    void speakerCatalog.then((list) => {
+      if (live) setVoices(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return voices;
+}
 
 // Each caption language is named in its own script, as a language menu is.
 const LANGUAGES: { id: CaptionLanguage; label: string }[] = [
@@ -58,12 +124,17 @@ export function AudioPanel({
   script,
   currentStep,
   onScriptChange,
+  scriptFitting = false,
+  onFitScript = null,
   voiceScriptStale = false,
   materialSeconds = 0,
   maxVoiceSeconds = 0,
   voiceTooLong = false,
   storyboardFit = null,
   onOpenStoryboard = null,
+  onFitToVoice = null,
+  autoFitting = false,
+  scriptBudget = null,
   voiceId,
   onVoice,
   onApprove,
@@ -78,6 +149,9 @@ export function AudioPanel({
   remakeBlocker = null,
   remakeDiscardsVideo = false,
   voiceMakes = null,
+  voiceMakeTopUp = null,
+  onBuyVoiceMakes = null,
+  buyingVoiceMakes = false,
   voiceBusy,
   voiceError,
   onLanguages,
@@ -94,6 +168,10 @@ export function AudioPanel({
   script: StudioScript | null;
   currentStep: string | null;
   onScriptChange: (change: Partial<StudioScript>) => void;
+  /** The script is being rewritten from the approved storyboard. */
+  scriptFitting?: boolean;
+  /** Rewrite the script from the approved storyboard (null: not offered). */
+  onFitScript?: (() => void) | null;
   /** The script on screen is not the one the current voice was made from. */
   voiceScriptStale?: boolean;
   /** Total length of the picked clips and photos, seconds. */
@@ -110,6 +188,20 @@ export function AudioPanel({
   storyboardFit?: { scenes: number; need: number; fits: boolean } | null;
   /** Open the Storyboard step, where the scenes can be lengthened. */
   onOpenStoryboard?: (() => void) | null;
+  /** Auto-fit: stretch the scenes to the voice, then shorten the script if needed. */
+  onFitToVoice?: (() => void) | null;
+  /** Auto-fit is shortening the script on the server. */
+  autoFitting?: boolean;
+  /**
+   * How long the script on screen will read, against how much speech the
+   * storyboard carries (its length less the music intro and ending).
+   */
+  scriptBudget?: {
+    estimateSeconds: number;
+    carrySeconds: number;
+    unitsPerSecond: number;
+    unit: "th" | "en" | "vi";
+  } | null;
   voiceId: ElevenLabsVoiceId;
   onVoice: (voiceId: ElevenLabsVoiceId) => void;
   onApprove: () => void;
@@ -124,6 +216,11 @@ export function AudioPanel({
   onRemakeVoice?: (() => void) | null;
   /** Voice makes used / allowed for this request; null from an older server. */
   voiceMakes?: { used: number; limit: number } | null;
+  /** More voice makes for credits, and the wallet balance; null from an older server. */
+  voiceMakeTopUp?: { makes: number; priceCredits: number; balanceCredits: number | null } | null;
+  /** Buy one pack of voice makes (called after the requester confirms the price). */
+  onBuyVoiceMakes?: (() => void) | null;
+  buyingVoiceMakes?: boolean;
   /** Why the approved voice cannot be made again right now, or null. */
   remakeBlocker?: string | null;
   /** Remaking the voice sets the finished main video aside. */
@@ -154,27 +251,29 @@ export function AudioPanel({
           : t("studio.audio.makesLeft", { left: makesLeft, limit: voiceMakes.limit })}
       </p>
     ) : null;
-  // The voices by gender, in the studio's language. The ids are the server's;
-  // only the words are the studio's.
-  const voiceName = (voice: { gender: string; label: string }) =>
-    voice.gender === "female"
+  // ── speakers: names, genders (resolved by the server for voices whose
+  // gender is not written in config), and a Thai sample of each ──
+  const voices = useVoiceCatalog();
+  const genderWord = (gender: ElevenLabsVoiceGender) =>
+    gender === "female"
       ? t("studio.audio.voice.female")
-      : voice.gender === "male"
+      : gender === "male"
         ? t("studio.audio.voice.male")
-        : voice.label;
+        : null;
 
-  // ── background preview: one shared player, one track at a time ──
+  // ── previews: one shared player, one track or voice sample at a time ──
   const player = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [previewFailed, setPreviewFailed] = useState<string | null>(null);
 
   const stopPreview = useCallback(() => {
     player.current?.pause();
     setPlaying(null);
   }, []);
 
-  const togglePreview = useCallback(
-    (track: MusicTrack) => {
-      if (playing === track.id) {
+  const togglePlay = useCallback(
+    (key: string, url: string) => {
+      if (playing === key) {
         stopPreview();
         return;
       }
@@ -184,12 +283,20 @@ export function AudioPanel({
       }
       const audio = player.current;
       audio.pause();
-      audio.src = track.url;
+      audio.src = url;
       audio.currentTime = 0;
-      setPlaying(track.id);
-      void audio.play().catch(() => setPlaying(null));
+      setPlaying(key);
+      setPreviewFailed(null);
+      void audio.play().catch(() => {
+        setPlaying(null);
+        setPreviewFailed(key);
+      });
     },
     [playing, stopPreview]
+  );
+  const togglePreview = useCallback(
+    (track: MusicTrack) => togglePlay(`music:${track.id}`, track.url),
+    [togglePlay]
   );
 
   // Leaving the step must not leave music playing under the next one.
@@ -200,6 +307,150 @@ export function AudioPanel({
     },
     []
   );
+
+  /**
+   * The speaker list: ▶ plays a short Thai sample (the same sentence for
+   * every voice, made once on the server — it never uses a voice make), the
+   * row picks the voice. Same shape as the background-music list below.
+   */
+  const speakerList = (pickDisabled: boolean) => (
+    <ul
+      className="studio-track-list"
+      role="radiogroup"
+      aria-label={t("studio.audio.speaker")}
+      style={{ marginBottom: 4 }}
+    >
+      {voices.map((voice) => {
+        const selected = voiceId === voice.id;
+        const key = `voice:${voice.id}`;
+        const isPlaying = playing === key;
+        const gender = genderWord(voice.gender);
+        return (
+          <li key={voice.id} className="studio-track-row">
+            <button
+              type="button"
+              className="studio-track-play studio-track-play-button"
+              aria-label={
+                isPlaying
+                  ? t("studio.audio.stopTrack", { track: voice.name })
+                  : t("studio.audio.listenVoice", { voice: voice.name })
+              }
+              aria-pressed={isPlaying}
+              onClick={() => togglePlay(key, voiceSampleSource(voice.id))}
+            >
+              {isPlaying ? "❚❚" : "▶"}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className="studio-track"
+              disabled={pickDisabled}
+              onClick={() => onVoice(voice.id)}
+            >
+              <span className="studio-track-label">
+                {voice.name}
+                {gender && (
+                  <span style={{ color: "var(--s-text-muted)", fontWeight: 500 }}>
+                    {" : "}
+                    {gender}
+                  </span>
+                )}
+              </span>
+              <span className="studio-track-check" aria-hidden>
+                {selected ? "✓" : ""}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+      {previewFailed?.startsWith("voice:") && (
+        <li>
+          <p className="studio-counter" style={{ textAlign: "left" }}>
+            {t("studio.audio.previewFailed")}
+          </p>
+        </li>
+      )}
+    </ul>
+  );
+
+  // ── more voice makes for credits, once the included ones are used ──
+  const [confirmingTopUp, setConfirmingTopUp] = useState(false);
+  const canBuyMakes =
+    makesExhausted && Boolean(voiceMakeTopUp) && Boolean(onBuyVoiceMakes) && voiceStatus === "review";
+  const topUpCard =
+    canBuyMakes && voiceMakeTopUp ? (
+      <div className="studio-note studio-note-accent" role="status" style={{ marginTop: 10 }}>
+        <p style={{ margin: 0 }}>
+          {t("studio.audio.topUpOffer", {
+            makes: voiceMakeTopUp.makes,
+            price: voiceMakeTopUp.priceCredits,
+          })}
+        </p>
+        {voiceMakeTopUp.balanceCredits != null && (
+          <p className="studio-counter" style={{ textAlign: "left", margin: "6px 0 0" }}>
+            {t("studio.audio.topUpBalance", { balance: voiceMakeTopUp.balanceCredits })}
+          </p>
+        )}
+        {voiceMakeTopUp.balanceCredits != null &&
+        voiceMakeTopUp.balanceCredits < voiceMakeTopUp.priceCredits ? (
+          <>
+            <p style={{ margin: "8px 0 0" }}>
+              {t("studio.audio.topUpShort", {
+                price: voiceMakeTopUp.priceCredits,
+                balance: voiceMakeTopUp.balanceCredits,
+              })}
+            </p>
+            <a
+              className="studio-button studio-button-ghost"
+              style={{ display: "block", marginTop: 10, textAlign: "center" }}
+              href={ROUTES.CREDITS}
+            >
+              {t("studio.audio.topUpGetCredits")}
+            </a>
+          </>
+        ) : confirmingTopUp ? (
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              className="studio-button studio-button-primary"
+              style={{ flex: 1 }}
+              disabled={disabled || buyingVoiceMakes}
+              onClick={() => {
+                setConfirmingTopUp(false);
+                onBuyVoiceMakes?.();
+              }}
+            >
+              {t("studio.audio.topUpConfirm", { price: voiceMakeTopUp.priceCredits })}
+            </button>
+            <button
+              type="button"
+              className="studio-button studio-button-ghost"
+              style={{ flex: 1 }}
+              disabled={buyingVoiceMakes}
+              onClick={() => setConfirmingTopUp(false)}
+            >
+              {t("studio.audio.topUpCancel")}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="studio-button studio-button-primary"
+            style={{ marginTop: 10 }}
+            disabled={disabled || buyingVoiceMakes}
+            onClick={() => setConfirmingTopUp(true)}
+          >
+            {buyingVoiceMakes
+              ? t("studio.audio.working")
+              : t("studio.audio.topUpButton", {
+                  makes: voiceMakeTopUp.makes,
+                  price: voiceMakeTopUp.priceCredits,
+                })}
+          </button>
+        )}
+      </div>
+    ) : null;
 
   const toggleLanguage = (language: CaptionLanguage) => {
     const chosen = document.captionLanguages;
@@ -237,6 +488,22 @@ export function AudioPanel({
           <p className="studio-panel-hint">{t("studio.audio.writingHint")}</p>
         )}
 
+        {scriptStatus === "waiting_storyboard" && (
+          <>
+            <p className="studio-panel-hint">{t("studio.audio.waitingStoryboard")}</p>
+            {onOpenStoryboard && (
+              <button
+                type="button"
+                className="studio-button studio-button-primary"
+                style={{ marginTop: 10 }}
+                onClick={onOpenStoryboard}
+              >
+                {t("studio.audio.openStoryboard")}
+              </button>
+            )}
+          </>
+        )}
+
         {scriptStatus === "failed" && (
           <p className="studio-note studio-note-danger">{t("studio.audio.failed")}</p>
         )}
@@ -259,19 +526,50 @@ export function AudioPanel({
                 className="studio-textarea"
                 style={{ minHeight: 160 }}
                 value={script.text}
-                readOnly={approving}
+                readOnly={approving || scriptFitting}
                 onChange={(event) => onScriptChange({ text: event.target.value })}
               />
               <p className="studio-counter">
                 {t("studio.audio.characters", { count: script.text.trim().length })}
               </p>
-              {materialSeconds > 0 && (
-                <p className="studio-counter" style={{ textAlign: "left" }}>
-                  {t("studio.audio.materialHint", {
-                    material: materialSeconds.toFixed(1),
-                    max: maxVoiceSeconds.toFixed(1),
-                  })}
-                </p>
+              {scriptBudget ? (
+                // The script against the storyboard: written a little long on
+                // purpose, so the person trims rather than writes.
+                (() => {
+                  const over = scriptBudget.estimateSeconds - scriptBudget.carrySeconds;
+                  const fits = over <= 0.05;
+                  return (
+                    <p
+                      className={fits ? "studio-counter" : "studio-note studio-note-warning"}
+                      style={{ textAlign: "left", marginTop: 6 }}
+                    >
+                      {t("studio.audio.budgetReads", {
+                        reads: scriptBudget.estimateSeconds.toFixed(1),
+                        carry: scriptBudget.carrySeconds.toFixed(1),
+                      })}{" "}
+                      {fits
+                        ? t("studio.audio.budgetFits")
+                        : t(
+                            scriptBudget.unit === "th"
+                              ? "studio.audio.budgetTrimThai"
+                              : "studio.audio.budgetTrimWords",
+                            {
+                              seconds: over.toFixed(1),
+                              units: Math.ceil(over * scriptBudget.unitsPerSecond),
+                            }
+                          )}
+                    </p>
+                  );
+                })()
+              ) : (
+                materialSeconds > 0 && (
+                  <p className="studio-counter" style={{ textAlign: "left" }}>
+                    {t("studio.audio.materialHint", {
+                      material: materialSeconds.toFixed(1),
+                      max: maxVoiceSeconds.toFixed(1),
+                    })}
+                  </p>
+                )
               )}
             </label>
 
@@ -299,32 +597,49 @@ export function AudioPanel({
                     {voiceBusy ? t("studio.audio.working") : t("studio.audio.makeAgainEdited")}
                   </button>
                 )}
+                {/* Says WHY the button is grey when the makes are used up,
+                    and offers more right here. */}
+                {makesExhausted && voiceStatus !== "generating" && makesNote}
+                {voiceStatus !== "generating" && topUpCard}
               </div>
+            )}
+
+            {scriptStatus === "review" && scriptFitting && (
+              <p className="studio-note studio-note-accent" role="status" style={{ marginBottom: 12 }}>
+                <span className="studio-live-dot" aria-hidden /> {t("studio.audio.fittingScript")}
+              </p>
+            )}
+
+            {scriptStatus === "review" && onFitScript && !scriptFitting && (
+              <>
+                <button
+                  type="button"
+                  className="studio-button studio-button-ghost"
+                  style={{ marginBottom: 6 }}
+                  disabled={disabled || approving}
+                  onClick={onFitScript}
+                >
+                  {t("studio.audio.fitScript")}
+                </button>
+                <p className="studio-counter" style={{ textAlign: "left", marginTop: 0 }}>
+                  {t("studio.audio.fitScriptHint")}
+                </p>
+              </>
             )}
 
             {scriptStatus === "review" && (
               <>
                 <span className="studio-label">{t("studio.audio.voice")}</span>
-                <div className="studio-chip-row" role="group" aria-label={t("studio.audio.voice")}>
-                  {ELEVENLABS_VOICES.map((voice) => (
-                    <button
-                      key={voice.id}
-                      type="button"
-                      className="studio-chip"
-                      aria-pressed={voiceId === voice.id}
-                      disabled={disabled || approving}
-                      onClick={() => onVoice(voice.id)}
-                    >
-                      <strong>{voiceName(voice)}</strong>
-                    </button>
-                  ))}
-                </div>
+                <p className="studio-counter" style={{ textAlign: "left", marginTop: 0 }}>
+                  {t("studio.audio.voicePickHint")}
+                </p>
+                {speakerList(disabled || approving)}
 
                 <button
                   type="button"
                   className="studio-button studio-button-primary"
                   style={{ marginTop: 16 }}
-                  disabled={disabled || approving || !script.text.trim()}
+                  disabled={disabled || approving || scriptFitting || !script.text.trim()}
                   onClick={onApprove}
                 >
                   {approving ? t("studio.audio.approving") : t("studio.audio.approveScript")}
@@ -413,11 +728,32 @@ export function AudioPanel({
                       need: storyboardFit.need.toFixed(1),
                     }
                   )}
+                  {/* One tap fixes it here: the scenes are stretched to the
+                      voice. Storyboard stays a tap away for fixing it by hand. */}
+                  {onFitToVoice && (
+                    <>
+                      <button
+                        type="button"
+                        className="studio-button studio-button-primary"
+                        style={{ display: "block", width: "100%", marginTop: 10 }}
+                        disabled={disabled || autoFitting || voiceBusy}
+                        onClick={onFitToVoice}
+                      >
+                        {autoFitting ? t("studio.audio.working") : t("studio.audio.fitToVoice")}
+                      </button>
+                      <span
+                        className="studio-counter"
+                        style={{ display: "block", textAlign: "left", marginTop: 6 }}
+                      >
+                        {t("studio.audio.autoFitHint")}
+                      </span>
+                    </>
+                  )}
                   {onOpenStoryboard && (
                     <button
                       type="button"
                       className="studio-button studio-button-ghost"
-                      style={{ display: "block", marginTop: 10 }}
+                      style={{ display: "block", width: "100%", marginTop: 8 }}
                       onClick={onOpenStoryboard}
                     >
                       {t("studio.audio.openStoryboard")}
@@ -433,20 +769,7 @@ export function AudioPanel({
               <span className="studio-label" style={{ marginTop: 12 }}>
                 {t("studio.audio.speaker")}
               </span>
-              <div className="studio-chip-row" role="group" aria-label={t("studio.audio.speaker")}>
-                {ELEVENLABS_VOICES.map((voice) => (
-                  <button
-                    key={voice.id}
-                    type="button"
-                    className="studio-chip"
-                    aria-pressed={voiceId === voice.id}
-                    disabled={disabled || voiceBusy}
-                    onClick={() => onVoice(voice.id)}
-                  >
-                    <strong>{voiceName(voice)}</strong>
-                  </button>
-                ))}
-              </div>
+              {speakerList(disabled || voiceBusy)}
               <button
                 type="button"
                 className="studio-button studio-button-primary"
@@ -480,6 +803,7 @@ export function AudioPanel({
                 {t("studio.audio.again")}
               </button>
               {makesNote}
+              {!voiceScriptStale && topUpCard}
             </>
           )}
 
@@ -497,20 +821,7 @@ export function AudioPanel({
               <span className="studio-label" style={{ marginTop: 14 }}>
                 {t("studio.audio.speaker")}
               </span>
-              <div className="studio-chip-row" role="group" aria-label={t("studio.audio.speaker")}>
-                {ELEVENLABS_VOICES.map((voice) => (
-                  <button
-                    key={voice.id}
-                    type="button"
-                    className="studio-chip"
-                    aria-pressed={voiceId === voice.id}
-                    disabled={disabled || voiceBusy || remakeBlocker !== null}
-                    onClick={() => onVoice(voice.id)}
-                  >
-                    <strong>{voiceName(voice)}</strong>
-                  </button>
-                ))}
-              </div>
+              {speakerList(disabled || voiceBusy || remakeBlocker !== null)}
               <button
                 type="button"
                 className="studio-button studio-button-ghost"
@@ -562,7 +873,7 @@ export function AudioPanel({
           </li>
           {tracks.map((track) => {
             const selected = document.musicTrackId === track.id;
-            const isPlaying = playing === track.id;
+            const isPlaying = playing === `music:${track.id}`;
             return (
               <li key={track.id} className="studio-track-row">
                 <button

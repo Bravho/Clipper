@@ -1,3 +1,5 @@
+import { ROUTES } from "@/config/routes";
+
 /**
  * The switch-over from the server pipeline to the phone studio.
  *
@@ -14,10 +16,11 @@
  *     keep the web form.
  *
  *   BROWSER_MARKETING_ONLY=true
- *     A web browser (no `RClipperNative/` in the user agent) sees the marketing
- *     site. Requester pages redirect to "get the app", except account, credits
- *     and pricing (Stripe top-ups stay available in a browser). Admin pages,
- *     sign-in, email links and every callback/webhook are untouched.
+ *     A web browser (no `RClipperNative/` in the user agent) is shown "get the
+ *     app" instead of the video-making pages (`isAppOnlyPath`). Every other
+ *     page — dashboard, requests, Channel Management, credits, pricing,
+ *     account — works in a browser. Admin pages, sign-in, email links and
+ *     every callback/webhook are untouched.
  *
  * Read at request time (not build time) so the droplet can flip them with an
  * env change and a restart.
@@ -28,6 +31,26 @@ export function isStudioOnly(): boolean {
 
 export function isBrowserMarketingOnly(): boolean {
   return process.env.BROWSER_MARKETING_ONLY === "true";
+}
+
+/**
+ * The pages that MAKE a video. With BROWSER_MARKETING_ONLY on, these are the
+ * only requester pages a WEB BROWSER is turned away from — video generation
+ * renders on the phone, so a browser is sent to "get the app" instead.
+ * Everything else (dashboard, requests and their results, Channel
+ * Management, credits, pricing, account) works in a browser.
+ *
+ *   /studio                 the phone studio (the one way to make a video)
+ *   /dashboard/requests/new the old request form (now forwards to the studio)
+ *
+ * The retired `/device-render-lab` redirects to /studio, so it lands here too.
+ */
+const APP_ONLY_REQUESTER_PATHS = [ROUTES.STUDIO, ROUTES.REQUESTS_NEW] as const;
+
+export function isAppOnlyPath(pathname: string): boolean {
+  return APP_ONLY_REQUESTER_PATHS.some(
+    (appOnly) => pathname === appOnly || pathname.startsWith(`${appOnly}/`)
+  );
 }
 
 /**

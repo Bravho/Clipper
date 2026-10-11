@@ -33,6 +33,19 @@ export interface PublishFlowConnection {
   accountName: string | null;
 }
 
+/**
+ * A channel the user cannot publish to right now — the OAuth attempt never
+ * finished (`pending`), the platform rejected the login (`disconnected`), or
+ * there is no account for an enabled channel at all (`not_connected`). Shown greyed out in the picker so the channel does not
+ * silently vanish; the fix lives in channel settings.
+ */
+export interface PublishFlowUnavailableChannel {
+  platform: string;
+  label: string;
+  accountName: string | null;
+  reason: "pending" | "disconnected" | "not_connected";
+}
+
 export interface PublishFlowVideo {
   id: string;
   title: string;
@@ -75,6 +88,8 @@ interface PublishFlowModalProps {
    * accounts is told they have none.
    */
   incompleteConnections?: number;
+  /** Channels with no usable connection, shown disabled with a way to fix them. */
+  unavailableChannels?: PublishFlowUnavailableChannel[];
   unlimited: boolean;
   tokensRemaining: number;
   onClose: () => void;
@@ -136,6 +151,7 @@ export function PublishFlowModal({
   video,
   connections,
   incompleteConnections = 0,
+  unavailableChannels = [],
   unlimited,
   tokensRemaining,
   onClose,
@@ -490,6 +506,7 @@ export function PublishFlowModal({
                 })}
               </div>
             ) : (
+              unavailableChannels.length === 0 &&
               <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
                 <p className="text-sm font-medium text-slate-800">
                   {incompleteConnections > 0
@@ -506,6 +523,39 @@ export function PublishFlowModal({
                 <Link href={ROUTES.MANAGEMENT_CONNECTIONS} className="mt-3 inline-block">
                   <Button size="sm">Open channel settings</Button>
                 </Link>
+              </div>
+            )}
+            {unavailableChannels.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Needs attention
+                </p>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  {unavailableChannels.map((item) => (
+                    <Link
+                      key={`${item.platform}:${item.accountName ?? ""}`}
+                      href={ROUTES.MANAGEMENT_CONNECTIONS}
+                      className="flex min-h-20 items-center gap-3 rounded-xl border border-dashed border-amber-300 bg-amber-50/60 p-3 text-left transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    >
+                      <span className="opacity-50">
+                        <ChannelMark platform={item.platform} label={item.label} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold text-slate-700">
+                          {item.label}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-5 text-amber-800">
+                          {item.reason === "disconnected"
+                            ? "Disconnected. Sign in again in channel settings to publish here."
+                            : item.reason === "not_connected"
+                              ? "Not connected. Connect it in channel settings to publish here."
+                              : "Connection not finished. Open channel settings and press Refresh, or connect again."}
+                        </span>
+                      </span>
+                      <ChevronRightIcon />
+                    </Link>
+                  ))}
+                </div>
               </div>
             )}
             <AccessNote unlimited={unlimited} tokensRemaining={tokensRemaining} />

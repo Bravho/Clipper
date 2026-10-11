@@ -20,6 +20,32 @@
 export const MAX_VOICE_MAKES_PER_REQUEST = 5;
 
 /**
+ * More voice makes, bought with credits once the included ones are used
+ * (set 2026-10-11). Each purchase adds `makes` to THIS request only; it is
+ * offered only when the request has none left, so a double tap cannot buy two.
+ *
+ * COST OF 5 MORE MAKES (what the server pays, ฿32.8 / USD):
+ *   ElevenLabs eleven_v3 bills 1 credit per character; at a plan rate of
+ *   ≈ $0.20 per 1,000 characters a Thai script reads ≈ 12 characters/second:
+ *     typical 40 s voice ≈ 500 chars ≈ $0.10 ≈ ฿3.3 per make
+ *     longest  88 s voice ≈ 1,080 chars ≈ $0.22 ≈ ฿7.1 per make
+ *   + Gemini alignment / translation of the new voice ≈ ฿0.5–1 per make
+ *   + storing the MP3 (≈ 1 MB) — under ฿0.1
+ *   ⇒ 5 makes ≈ ฿20 typical, ≈ ฿40 worst case.
+ *
+ * PRICE: 49 credits (฿49 on the web). ≈ 2.4× cost on a typical script (≈ 58%
+ * margin) and still above cost at the 88 s maximum, so a request that buys
+ * pack after pack never loses money. Mobile top-ups are already priced for
+ * the store commission (config/mobilePurchases.ts), so one price serves both.
+ *
+ * Changing the price needs no migration: the ledger stores what was charged.
+ */
+export const VOICE_MAKE_TOP_UP = {
+  makes: 5,
+  priceCredits: 49,
+} as const;
+
+/**
  * No going back after an approval. Once a step is approved (script → voice →
  * scene design → video), a phone-made request cannot be reopened or remade:
  * no "make the voice again" from the scene-design step, no "regenerate the

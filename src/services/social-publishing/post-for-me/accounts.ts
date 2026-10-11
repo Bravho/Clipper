@@ -44,6 +44,7 @@ export async function createAuthUrl(
       // to everything the account has ever posted, which we do not use and
       // should not ask users to consent to.
       permissions: ["posts"],
+      ...platformDataFor(input.platform),
       ...(isWhiteLabel && input.redirectUrlOverride
         ? { redirect_url_override: input.redirectUrlOverride }
         : {}),
@@ -61,6 +62,26 @@ export async function createAuthUrl(
   }
 
   return { platform: response.platform, authorizationUrl: response.url };
+}
+
+/**
+ * Provider-specific extras for the auth-url call.
+ *
+ * Instagram takes `platform_data.instagram.connection_type`. The provider
+ * defaults it to Instagram Login today; it is sent explicitly so the login
+ * path is ours to choose (POST_FOR_ME_INSTAGRAM_CONNECTION_TYPE).
+ */
+export function platformDataFor(
+  platform: CreateAccountConnectionInput["platform"]
+): { platform_data?: Record<string, unknown> } {
+  if (platform === "instagram") {
+    return {
+      platform_data: {
+        instagram: { connection_type: POST_FOR_ME_CONFIG.instagramConnectionType },
+      },
+    };
+  }
+  return {};
 }
 
 /**

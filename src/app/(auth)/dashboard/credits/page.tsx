@@ -25,6 +25,7 @@ const TRANSACTION_LABELS: Record<TransactionType, MessageKey> = {
   [TransactionType.TopUp]: "credits.txn.topUp",
   [TransactionType.ManagementPurchase]: "credits.txn.packagePurchase",
   [TransactionType.ManagementRefund]: "credits.txn.packageRefund",
+  [TransactionType.VoiceMakeTopUp]: "credits.txn.voiceMakes",
 };
 
 const TRANSACTION_VARIANTS: Record<
@@ -40,6 +41,7 @@ const TRANSACTION_VARIANTS: Record<
   [TransactionType.TopUp]: "green",
   [TransactionType.ManagementPurchase]: "red",
   [TransactionType.ManagementRefund]: "green",
+  [TransactionType.VoiceMakeTopUp]: "red",
 };
 
 export default async function CreditsPage({

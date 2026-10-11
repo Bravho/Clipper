@@ -146,6 +146,10 @@ export interface EditorBrief {
   /** รายละเอียดคลิป — what to promote and the message to carry. */
   details: string;
   /** ความยาววิดีโอ — the finished length being aimed at, in seconds. */
+  /**
+   * Internal default only — the brief no longer asks for a length (it is set
+   * in Storyboard against the voice). Kept so older saved requests load.
+   */
   targetSeconds: number;
   /** Where it is going. The first channel's shape is the main video's. */
   platforms: Platform[];
@@ -532,17 +536,9 @@ export function briefProblems(brief: EditorBrief, t: StudioT = studioEnglish): s
   if (brief.details.trim().length < 20) {
     problems.push(t("studio.brief.problem.details"));
   }
-  if (
-    brief.targetSeconds < PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS ||
-    brief.targetSeconds > STUDIO_MAX_DURATION_SECONDS
-  ) {
-    problems.push(
-      t("studio.brief.problem.length", {
-        min: PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS,
-        max: STUDIO_MAX_DURATION_SECONDS,
-      })
-    );
-  }
+  // No length check: the brief has no length any more (2026-10-11). A request
+  // saved earlier with a length outside today's range must not block a brief
+  // over a field the person can no longer see.
   if (brief.platforms.length === 0) {
     problems.push(t("studio.brief.problem.platform"));
   }
@@ -603,6 +599,147 @@ export function retimeScenes(
       };
     }),
   }));
+}
+
+/**
+ * Longest a photo is held when stretching the storyboard to a voice, and how
+ * many times its own length it may grow. A photo held much longer than this
+ * stops reading as a moving video even with its camera move.
+ */
+export const STRETCH_PHOTO_MAX_SECONDS = 8;
+export const STRETCH_PHOTO_MAX_FACTOR = 2.5;
+/** Slowest a clip is played when stretching (the renderer's own floor). */
+export const STRETCH_CLIP_MIN_RATE = 0.8;
+
+export interface StretchResult {
+  scenes: EditorScene[];
+  /** Total scene length after stretching, seconds. */
+  totalSeconds: number;
+  /** The longest the storyboard can be stretched to, seconds. */
+  capacitySeconds: number;
+  /** True when `targetSeconds` was reached. */
+  reached: boolean;
+  /** Seconds added to photos, to clips from unused footage, and by slowing clips. */
+  addedToPhotos: number;
+  addedFromFootage: number;
+  addedBySlowing: number;
+}
+
+/**
+ * Lengthen the storyboard to `targetSeconds` — AUTO-FIT, step one.
+ *
+ * WHAT IS STRETCHED, IN ORDER OF HOW LITTLE IT CHANGES THE VIDEO:
+ *  1. Every shot grows in proportion to its own length, so the edit's rhythm
+ *     (which shots are long, which are quick) is kept — unlike "fit" by even
+ *     slices, which throws the person's timing away.
+ *  2. A clip grows first into footage the trim left unused: more real video,
+ *     nothing slowed.
+ *  3. Past its footage a clip plays slower, but never below 0.8× — slower than
+ *     that looks like a mistake rather than a choice.
+ *  4. A photo is held longer (its camera move simply runs longer), up to 2.5×
+ *     its length and never past 8 s.
+ * Shots that hit their limit stop; the rest share what is left, so the time
+ * lands where there is room for it.
+ *
+ * When even that cannot reach the target, the result says how far it got
+ * (`reached: false`), and the studio shortens the script for the remainder.
+ */
+export function stretchScenesToLength(
+  scenes: EditorScene[],
+  targetSeconds: number,
+  sourceOf: (sourceId: string) => { kind: "image" | "clip"; durationSeconds: number | null } | null
+): StretchResult {
+  interface Slot {
+    sceneIndex: number;
+    shotIndex: number;
+    start: number;
+    duration: number;
+    cap: number;
+    clip: boolean;
+    window: number;
+    windowMax: number;
+  }
+  const slots: Slot[] = [];
+  scenes.forEach((scene, sceneIndex) =>
+    scene.shots.forEach((shot, shotIndex) => {
+      const source = sourceOf(shot.sourceId);
+      const clip = source?.kind === "clip";
+      const start = shotPlaySeconds(shot);
+      if (clip) {
+        const window =
+          shot.trimEndSeconds != null ? Math.max(0, shot.trimEndSeconds - shot.trimStartSeconds) : start;
+        const footage = source?.durationSeconds ?? null;
+        const windowMax =
+          footage != null && footage > 0 ? Math.max(window, footage - shot.trimStartSeconds) : window;
+        const cap = Math.max(start, windowMax / STRETCH_CLIP_MIN_RATE);
+        slots.push({ sceneIndex, shotIndex, start, duration: start, cap, clip, window, windowMax });
+      } else {
+        const cap = Math.max(
+          start,
+          Math.min(STRETCH_PHOTO_MAX_SECONDS, start * STRETCH_PHOTO_MAX_FACTOR)
+        );
+        slots.push({ sceneIndex, shotIndex, start, duration: start, cap, clip, window: 0, windowMax: 0 });
+      }
+    })
+  );
+
+  const current = slots.reduce((sum, slot) => sum + slot.start, 0);
+  const capacity = slots.reduce((sum, slot) => sum + slot.cap, 0);
+  let gap = targetSeconds - current;
+
+  // Share the gap in proportion to each shot's length among shots with room,
+  // again and again as shots reach their limit.
+  for (let round = 0; round < 50 && gap > 0.005; round++) {
+    const open = slots.filter((slot) => slot.cap - slot.duration > 0.005);
+    if (open.length === 0) break;
+    const weight = open.reduce((sum, slot) => sum + Math.max(slot.start, 0.1), 0);
+    let used = 0;
+    for (const slot of open) {
+      const share = (gap * Math.max(slot.start, 0.1)) / weight;
+      const grow = Math.min(share, slot.cap - slot.duration);
+      slot.duration += grow;
+      used += grow;
+    }
+    gap -= used;
+    if (used < 0.0005) break;
+  }
+
+  let addedToPhotos = 0;
+  let addedFromFootage = 0;
+  let addedBySlowing = 0;
+  const round2 = (value: number) => Math.round(value * 100) / 100;
+  const next = scenes.map((scene, sceneIndex) => ({
+    ...scene,
+    shots: scene.shots.map((shot, shotIndex) => {
+      const slot = slots.find((item) => item.sceneIndex === sceneIndex && item.shotIndex === shotIndex);
+      if (!slot || slot.duration - slot.start < 0.005) return shot;
+      const duration = round2(slot.duration);
+      if (!slot.clip) {
+        addedToPhotos += slot.duration - slot.start;
+        return { ...shot, durationSeconds: duration };
+      }
+      // Real footage first; the rest of the slot is the clip playing slower.
+      const window = Math.max(slot.window, Math.min(slot.windowMax, slot.duration));
+      addedFromFootage += Math.max(0, window - Math.max(slot.window, slot.start));
+      addedBySlowing += Math.max(0, slot.duration - Math.max(window, slot.start));
+      return {
+        ...shot,
+        durationSeconds: duration,
+        trimEndSeconds: round2(shot.trimStartSeconds + window),
+      };
+    }),
+  }));
+
+  const total = scenesPlaySeconds(next);
+  return {
+    scenes: next,
+    totalSeconds: total,
+    capacitySeconds: capacity,
+    reached: total + 1 / 30 >= targetSeconds,
+    addedToPhotos,
+    addedFromFootage,
+    addedBySlowing,
+  };
 }
 
 /** One scene as the storyboard model describes it: a sentence and some material. */
@@ -669,11 +806,24 @@ export function scenesFromStoryboard(
     });
   }
 
-  return retimeScenes(
-    oneMaterialPerScene(scenes),
-    document.brief.targetSeconds,
-    (sourceId) => findSource(document, sourceId)?.durationSeconds ?? null
-  );
+  // Each shot keeps its natural length (a photo's default hold, a clip's own
+  // window); the brief no longer sets a length (2026-10-11). Only a storyboard
+  // over the studio's limit is shortened to fit it. The real length is set
+  // later, against the voice, in Storyboard.
+  const arranged = oneMaterialPerScene(scenes);
+  const shotCount = arranged.reduce((count, scene) => count + scene.shots.length, 0);
+  // retimeScenes rounds each slot to 0.1 s; round the share DOWN so the total
+  // stays inside the limit.
+  const capped = shotCount > 0
+    ? (Math.floor((STUDIO_MAX_DURATION_SECONDS / shotCount) * 10) / 10) * shotCount
+    : STUDIO_MAX_DURATION_SECONDS;
+  return scenesPlaySeconds(arranged) > STUDIO_MAX_DURATION_SECONDS
+    ? retimeScenes(
+        arranged,
+        capped,
+        (sourceId) => findSource(document, sourceId)?.durationSeconds ?? null
+      )
+    : arranged;
 }
 
 /**

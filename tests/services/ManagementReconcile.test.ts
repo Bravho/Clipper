@@ -247,3 +247,56 @@ describe("reconcile", () => {
     expect(out.done).toBe(true);
   });
 });
+
+describe("reconcile — dead platform login", () => {
+  it("marks the connection disconnected when the platform rejects the login", async () => {
+    const getPostStatus = jest.fn(async () => ({
+      externalPostId: "post-a",
+      status: "processed",
+      results: [
+        result("sa_ig", false, {
+          error: { code: "account_disconnected", message: "Error validating access token" },
+        }),
+      ],
+    }));
+    const h = build([target("t-ig", "conn-ig", "post-a")], getPostStatus, {
+      "conn-ig": "sa_ig",
+    });
+    const updateStatus = jest.fn(async () => ({}));
+    Object.assign(h.connections, {
+      findById: jest.fn(async (id: string) => ({
+        id,
+        userId: "user-1",
+        platform: "instagram",
+        providerAccountId: "sa_ig",
+        connectionStatus: "connected",
+      })),
+      updateStatus,
+    });
+
+    await h.service.reconcile(PUB_ID);
+
+    expect(updateStatus).toHaveBeenCalledWith("conn-ig", "disconnected");
+    expect(h.audit.record).toHaveBeenCalledWith(
+      "management.social_account.disconnected",
+      expect.objectContaining({ userId: "user-1" })
+    );
+  });
+
+  it("leaves the connection alone for an ordinary rejection", async () => {
+    const getPostStatus = jest.fn(async () => ({
+      externalPostId: "post-a",
+      status: "processed",
+      results: [result("sa_ig", false)],
+    }));
+    const h = build([target("t-ig", "conn-ig", "post-a")], getPostStatus, {
+      "conn-ig": "sa_ig",
+    });
+    const updateStatus = jest.fn(async () => ({}));
+    Object.assign(h.connections, { updateStatus });
+
+    await h.service.reconcile(PUB_ID);
+
+    expect(updateStatus).not.toHaveBeenCalled();
+  });
+});

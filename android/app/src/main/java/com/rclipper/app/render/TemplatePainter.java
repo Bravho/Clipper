@@ -281,8 +281,10 @@ public final class TemplatePainter {
     private float cleanBracketOffset(int k, double t) {
         double intro = ramp(t, 0.1 + 0.08 * k, 0.65);
         double slide = (1 - easeOutBack(intro)) * 36 * s;
-        double breathe = 5 * s * wave(t, 4.2) * ramp(t, 0.8, 0.6);
-        double punch = 16 * s * beatEnvelope(t, beats, 0.06, 0.5);
+        // Strengths raised 2026-10-11 with templateRenderer.ts (the Look read
+        // as a still frame at 5 px / 16 px).
+        double breathe = 14 * s * wave(t, 3.2) * ramp(t, 0.8, 0.6);
+        double punch = 36 * s * beatEnvelope(t, beats, 0.06, 0.5);
         double close = 22 * s * easeInOutCubic(outro(t, end, 1.2));
         return (float) (slide + breathe - punch - close);
     }
@@ -326,12 +328,12 @@ public final class TemplatePainter {
 
         double ripplesIn = ramp(t, 0.6, 0.6);
         if (ripplesIn > 0) {
-            float ringWidth = Math.max(2f, 2.5f * s);
+            float ringWidth = Math.max(3f, 4f * s);
             stroke.setStrokeWidth(ringWidth);
             for (double delay : new double[] { 0d, 1.8d }) {
                 float p = (float) (((t + delay) % 3.6d) / 3.6d);
-                float diameter = (0.15f + 0.85f * p) * Math.min(width, height) * 0.32f;
-                float opacity = p < 0.15f ? (p / 0.15f) * 0.5f : 0.5f * (1f - (p - 0.15f) / 0.85f);
+                float diameter = (0.15f + 0.85f * p) * Math.min(width, height) * 0.42f;
+                float opacity = p < 0.15f ? (p / 0.15f) * 0.8f : 0.8f * (1f - (p - 0.15f) / 0.85f);
                 stroke.setColor(withAlpha(template.accent, opacity * ripplesIn));
                 canvas.drawCircle(width * 0.13f, height * 0.84f,
                     Math.max(0f, diameter / 2f - ringWidth / 2f), stroke);
@@ -444,12 +446,12 @@ public final class TemplatePainter {
         canvas.clipPath(path, Region.Op.DIFFERENCE);
         fill.reset();
         fill.setAntiAlias(true);
-        fill.setColor(withAlpha(template.accent, 0.16 * appear));
-        canvas.drawCircle((float) (width * 0.92 + 14 * s * wave(t, 7)),
-            (float) (height * 0.05 + 10 * s * wave(t, 7, 0.25)), shortSide * 0.2f, fill);
-        fill.setColor(withAlpha(template.primary, 0.12 * appear));
-        canvas.drawCircle((float) (width * 0.06 + 12 * s * wave(t, 9, 0.25)),
-            (float) (height * 0.93 + 10 * s * wave(t, 9)), shortSide * 0.24f, fill);
+        fill.setColor(withAlpha(template.accent, 0.2 * appear));
+        canvas.drawCircle((float) (width * 0.92 + 60 * s * wave(t, 7)),
+            (float) (height * 0.05 + 40 * s * wave(t, 7, 0.25)), shortSide * 0.2f, fill);
+        fill.setColor(withAlpha(template.primary, 0.16 * appear));
+        canvas.drawCircle((float) (width * 0.06 + 50 * s * wave(t, 9, 0.25)),
+            (float) (height * 0.93 + 40 * s * wave(t, 9)), shortSide * 0.24f, fill);
         canvas.restore();
 
         canvas.drawBitmap(card, 0, 0, blit);
@@ -479,7 +481,7 @@ public final class TemplatePainter {
         stroke.setStrokeCap(Paint.Cap.ROUND);
 
         // The branch: draws on, then sways about its base (0, 60).
-        double sway = 2.5 * wave(t, 5) * ramp(t, 1.2, 0.8);
+        double sway = 6 * wave(t, 5) * ramp(t, 1.2, 0.8);
         canvas.save();
         canvas.translate(width * 0.66f, height * 0.9f);
         canvas.scale(s, s);
@@ -504,7 +506,7 @@ public final class TemplatePainter {
         // The wave: draws on, then drifts.
         float segmentW = width * 0.11f;
         float amplitude = 14f * s;
-        float drift = (float) (8 * s * wave(t, 6) * ramp(t, 1.6, 0.6));
+        float drift = (float) (22 * s * wave(t, 6) * ramp(t, 1.6, 0.6));
         float wy = height * 0.945f;
         path.reset();
         path.moveTo(width * 0.14f + drift, wy);
@@ -522,7 +524,7 @@ public final class TemplatePainter {
         fill.setColor(withAlpha(ink, 0.5 * draw));
         float[][] dots = { { 0.12f, 0.9f, 4f }, { 0.16f, 0.93f, 3f }, { 0.1f, 0.955f, 3f } };
         for (int k = 0; k < dots.length; k++) {
-            float bob = (float) (4 * s * wave(t, 2.8, k / 3d));
+            float bob = (float) (10 * s * wave(t, 2.8, k / 3d));
             canvas.drawCircle(width * dots[k][0], height * dots[k][1] + bob, dots[k][2] * s, fill);
         }
 
@@ -531,8 +533,8 @@ public final class TemplatePainter {
         float[][] sparkles = { { width * 0.1f, height * 0.04f, 16f * s, 0f, 0.8f },
             { width * 0.88f, height * 0.035f, 10f * s, 0.5f, 0.65f } };
         for (float[] sp : sparkles) {
-            float scale = (float) (1 + 0.15 * wave(t, 2.4, sp[3]) + pop);
-            float spin = (float) (12 * wave(t, 4.8, sp[3]));
+            float scale = (float) (1 + 0.35 * wave(t, 2.4, sp[3]) + pop);
+            float spin = (float) (25 * wave(t, 4.8, sp[3]));
             canvas.save();
             canvas.translate(sp[0], sp[1]);
             canvas.rotate(spin);
@@ -586,6 +588,21 @@ public final class TemplatePainter {
             stroke.setColor(withAlpha(template.neutral, 0.85));
             strokeSegment(path, 0f, (float) draw, stroke);
         }
+        // A short accent light runs round the hairline the whole time
+        // (templateRenderer.ts editorialRunner).
+        double runAlpha = 0.9 * ramp(t, 1.5, 0.6);
+        if (runAlpha > 0) {
+            double head = (((t - 1.5) / 6d) % 1 + 1) % 1;
+            double tail = head + 0.1;
+            roundRectFromTop(path, frame, 18f * s);
+            stroke.setStrokeWidth(border * 2f);
+            stroke.setColor(withAlpha(template.accent, runAlpha));
+            strokeSegment(path, (float) head, (float) Math.min(1d, tail), stroke);
+            if (tail > 1d) {
+                roundRectFromTop(path, frame, 18f * s);
+                strokeSegment(path, 0f, (float) (tail - 1d), stroke);
+            }
+        }
         double close = easeInOutCubic(outro(t, end, 1.4));
         if (close > 0) {
             roundRectFromTop(path, frame, 18f * s);
@@ -598,7 +615,8 @@ public final class TemplatePainter {
         fill.reset();
         fill.setAntiAlias(true);
         fill.setColor(template.accent);
-        double dotScale = easeOutBack(ramp(t, 0.35, 0.45)) * (1 + 0.6 * beatEnvelope(t, beats, 0.05, 0.45));
+        double dotScale = easeOutBack(ramp(t, 0.35, 0.45)) * (1 + 0.6 * beatEnvelope(t, beats, 0.05, 0.45))
+            * (1 + 0.25 * wave(t, 1.6) * ramp(t, 0.9, 0.5));
         if (dotScale > 0) {
             canvas.drawCircle(inset + 34f * s, inset + 42f * s, (float) (6f * s * dotScale), fill);
         }

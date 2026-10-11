@@ -34,6 +34,7 @@ import {
   ManagementContentStatus,
   ManagementPublicationStatus,
   ManagementPublicationTargetStatus,
+  SocialConnectionStatus,
 } from "@/domain/enums/ManagementStatus";
 
 /** Terminal target states — nothing further will change for these. */
@@ -127,6 +128,9 @@ export class ManagementReconcileService {
             errorCode: result.error?.code ?? "unknown",
             errorMessage: result.error?.message ?? "The platform rejected the post.",
           });
+          if (result.error?.code === "account_disconnected") {
+            await this.markConnectionDisconnected(target.socialConnectionId);
+          }
         }
       }
     }
@@ -161,6 +165,34 @@ export class ManagementReconcileService {
     }
 
     return { done, status: rolled };
+  }
+
+  /**
+   * The platform says this account's login is dead (e.g. Instagram after a
+   * password change). Every further post would fail the same way, so the
+   * connection must stop looking "connected": the channel settings page then
+   * shows Reconnect, and the publish picker lists it under "needs attention"
+   * instead of offering a channel that cannot work.
+   */
+  private async markConnectionDisconnected(connectionId: string): Promise<void> {
+    try {
+      const conn = await this.connections.findById(connectionId);
+      if (!conn || conn.connectionStatus !== SocialConnectionStatus.Connected) return;
+      await this.connections.updateStatus(conn.id, SocialConnectionStatus.Disconnected);
+      await this.audit.record("management.social_account.disconnected", {
+        userId: conn.userId,
+        metadata: {
+          platform: conn.platform,
+          providerAccountId: conn.providerAccountId,
+          reason: "platform_rejected_login",
+        },
+      });
+    } catch (err) {
+      console.error("[management reconcile] could not mark connection disconnected", {
+        connectionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** Resolve each target's connection to its provider account id. */

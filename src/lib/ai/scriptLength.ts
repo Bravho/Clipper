@@ -32,6 +32,29 @@ export const SCRIPT_UNITS_PER_SECOND: Record<ScriptLanguage, number> = {
 const THAI_STACKED_MARKS = /[ัิ-ฺ็-๎]/g;
 const THAI_LETTER = /[ก-ะาำเ-ๆ๐-๙]/g;
 
+/**
+ * How fast an AI voice ACTUALLY speaks, in the same units — for estimating a
+ * script's voice length, not for limits. Thai is measured from a real make:
+ * a 499-character script (≈ 420 spoken letters) came out at 40.8 s ≈ 10.3/s.
+ * The limits above stay on the slow side of these on purpose.
+ */
+export const SPOKEN_UNITS_PER_SECOND: Record<ScriptLanguage, number> = {
+  th: 10.3,
+  vi: 3.6,
+  en: 2.6,
+};
+
+/** Roughly how long the voice made from `text` will run, seconds. */
+export function estimateVoiceSeconds(text: string, language: ScriptLanguage): number {
+  return countScriptUnits(text, language) / SPOKEN_UNITS_PER_SECOND[language];
+}
+
+/** Units of script that make roughly `seconds` of voice. */
+export function unitsForVoiceSeconds(seconds: number, language: ScriptLanguage): number {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  return Math.floor(safe * SPOKEN_UNITS_PER_SECOND[language]);
+}
+
 export function scriptLanguageOf(locale: AppLocale | string | null | undefined): ScriptLanguage {
   return locale === "en" || locale === "vi" ? locale : "th";
 }

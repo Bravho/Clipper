@@ -158,11 +158,16 @@ export function validateClipDuration(durationSeconds: number): string | null {
  * web form keeps the schemas above.
  */
 export const studioClipRequestFormSchema = clipRequestFormSchema.extend({
+  // The phone studio no longer asks for a length in the brief (2026-10-11):
+  // the video's length is set in Storyboard against the voice, and written to
+  // the request at the scene-design approval. A placeholder is stored until
+  // then; an older app build that still sends a length is still accepted.
   durationSeconds: z.coerce
     .number({ invalid_type_error: "Enter the video length" })
     .int("Whole seconds only")
     .min(PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS, `At least ${PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS} seconds`)
-    .max(STUDIO_MAX_DURATION_SECONDS, `At most ${STUDIO_MAX_DURATION_SECONDS} seconds`),
+    .max(STUDIO_MAX_DURATION_SECONDS, `At most ${STUDIO_MAX_DURATION_SECONDS} seconds`)
+    .default(PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS),
 });
 
 export const studioDraftClipRequestSchema = studioClipRequestFormSchema.partial();

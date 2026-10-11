@@ -7,11 +7,13 @@ import {
   estimateStoryboardTotalRange,
   suggestVoiceDurationRange,
   minMontageTotalSeconds,
+  minVoiceCoverSeconds,
   reallocateSceneAssetDurations,
   sceneMontageSeconds,
   voiceOverShortageSeconds,
   MONTAGE_INTRO_SECONDS,
   MONTAGE_ENDING_SECONDS,
+  MONTAGE_MIN_TAIL_SECONDS,
   SUGGESTED_SECONDS_PER_IMAGE,
   ESTIMATED_SCENE_SECONDS_PER_ASSET_MIN,
   ESTIMATED_SCENE_SECONDS_PER_ASSET_MAX,
@@ -270,16 +272,38 @@ describe("minMontageTotalSeconds", () => {
 });
 
 describe("evaluateMontageCoverage", () => {
-  it("uses the same strict voice + intro + ending rule at every gate", () => {
+  it("needs the voice plus the music lead-in and a short tail — not the full ending", () => {
+    // 20 s voice with music: 0.6 lead-in + 20 + 0.3 tail = 20.9 s.
     expect(
-      evaluateMontageCoverage({ voiceDurationSeconds: 20, totalSceneSeconds: 21.6 })
-        .isCovered
+      evaluateMontageCoverage({ voiceDurationSeconds: 20, totalSceneSeconds: 20.9 }).isCovered
     ).toBe(true);
-    const short = evaluateMontageCoverage({
-      voiceDurationSeconds: 20,
-      totalSceneSeconds: 20,
-    });
+    const short = evaluateMontageCoverage({ voiceDurationSeconds: 20, totalSceneSeconds: 20 });
     expect(short.isCovered).toBe(false);
-    expect(short.deficitSeconds).toBeCloseTo(1.6);
+    expect(short.deficitSeconds).toBeCloseTo(0.9);
+    // The comfortable length is still reported, for "Fit to the voice".
+    expect(short.recommendedVisualSeconds).toBeCloseTo(
+      20 + MONTAGE_INTRO_SECONDS + MONTAGE_ENDING_SECONDS
+    );
+  });
+
+  it("drops the lead-in when there is no music (the reported 40.8 s voice over 41.3 s)", () => {
+    // Refused before 2026-10-11 as "needs 42.4 s", though every word had picture.
+    expect(
+      evaluateMontageCoverage({
+        voiceDurationSeconds: 40.8,
+        totalSceneSeconds: 41.3,
+        musicSelected: false,
+      }).isCovered
+    ).toBe(true);
+    // With music the voice starts 0.6 s later, so the same pictures fall short.
+    expect(
+      evaluateMontageCoverage({ voiceDurationSeconds: 40.8, totalSceneSeconds: 41.3 }).isCovered
+    ).toBe(false);
+  });
+
+  it("assumes music when the caller does not say", () => {
+    expect(minVoiceCoverSeconds(10)).toBeCloseTo(10 + MONTAGE_INTRO_SECONDS + MONTAGE_MIN_TAIL_SECONDS);
+    expect(minVoiceCoverSeconds(10, false)).toBeCloseTo(10 + MONTAGE_MIN_TAIL_SECONDS);
+    expect(minVoiceCoverSeconds(null, false)).toBeCloseTo(MONTAGE_MIN_TAIL_SECONDS);
   });
 });

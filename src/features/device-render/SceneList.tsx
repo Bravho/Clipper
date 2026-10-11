@@ -164,7 +164,9 @@ export function SceneList({
   const total = scenesPlaySeconds(document.scenes);
   const needed = requiredSeconds ?? targetSeconds;
   const short = requiredSeconds != null ? total + 1 / 30 < requiredSeconds : false;
-  const offTarget = requiredSeconds == null && Math.abs(total - targetSeconds) > 0.25;
+  // With no voice yet there is no target, only the limit: offer to fit only
+  // a storyboard that runs over it (targetSeconds is the studio's maximum).
+  const offTarget = requiredSeconds == null && total > targetSeconds + 0.05;
 
   let segment = -1;
 
@@ -189,7 +191,7 @@ export function SceneList({
           <strong>{total.toFixed(1)}s</strong>{" "}
           {requiredSeconds != null
             ? t("studio.scenes.voiceNeeds", { seconds: requiredSeconds.toFixed(1) })
-            : t("studio.scenes.target", { seconds: targetSeconds })}
+            : t("studio.scenes.maxLength", { seconds: targetSeconds })}
         </span>
         {(short || offTarget) && !disabled && (
           <button

@@ -248,8 +248,10 @@ export const CLEAN_CORNERS: [number, number][] = [
 export function cleanBracketOffset(k: number, t: number, s: number, tl: TemplateTimeline): number {
   const intro = ramp(t, 0.1 + 0.08 * k, 0.65);
   const slide = (1 - easeOutBack(intro)) * 36 * s;
-  const breathe = 5 * s * wave(t, 4.2) * ramp(t, 0.8, 0.6);
-  const punch = 16 * s * beatEnvelope(t, tl.beats, 0.06, 0.5);
+  // Motion strengths raised 2026-10-11: at 5 px / 16 px the Look read as a
+  // still frame on a phone (under 1% of pixels changed per second).
+  const breathe = 14 * s * wave(t, 3.2) * ramp(t, 0.8, 0.6);
+  const punch = 36 * s * beatEnvelope(t, tl.beats, 0.06, 0.5);
   const close = 22 * s * easeInOutCubic(outro(t, tl, 1.2));
   return slide + breathe - punch - close;
 }
@@ -296,12 +298,12 @@ function paintCleanFrame(ctx: CanvasRenderingContext2D, input: PaintTemplateInpu
   // Two accent ripples pulsing from the bottom-left, 1.8 s apart.
   const ripplesIn = ramp(t, 0.6, 0.6);
   if (ripplesIn > 0) {
-    const ringWidth = Math.max(2, 2.5 * s);
+    const ringWidth = Math.max(3, 4 * s);
     ctx.lineWidth = ringWidth;
     for (const delay of [0, 1.8]) {
       const p = ((t + delay) % 3.6) / 3.6;
-      const diameter = (0.15 + 0.85 * p) * Math.min(W, H) * 0.32;
-      const opacity = p < 0.15 ? (p / 0.15) * 0.5 : 0.5 * (1 - (p - 0.15) / 0.85);
+      const diameter = (0.15 + 0.85 * p) * Math.min(W, H) * 0.42;
+      const opacity = p < 0.15 ? (p / 0.15) * 0.8 : 0.8 * (1 - (p - 0.15) / 0.85);
       ctx.strokeStyle = rgba(palette.accent, opacity * ripplesIn);
       ctx.beginPath();
       ctx.arc(W * 0.13, H * 0.84, Math.max(0, diameter / 2 - ringWidth / 2), 0, Math.PI * 2);
@@ -410,8 +412,8 @@ function paintFramedCream(ctx: CanvasRenderingContext2D, input: PaintTemplateInp
   addRoundRect(ctx, win.x, win.y, win.w, win.h, WINDOW_RADIUS);
   ctx.clip("evenodd");
   const blobs: [number, number, number, string, number][] = [
-    [W * 0.92 + 14 * s * wave(t, 7), H * 0.05 + 10 * s * wave(t, 7, 0.25), short * 0.2, palette.accent, 0.16],
-    [W * 0.06 + 12 * s * wave(t, 9, 0.25), H * 0.93 + 10 * s * wave(t, 9), short * 0.24, palette.primary, 0.12],
+    [W * 0.92 + 60 * s * wave(t, 7), H * 0.05 + 40 * s * wave(t, 7, 0.25), short * 0.2, palette.accent, 0.2],
+    [W * 0.06 + 50 * s * wave(t, 9, 0.25), H * 0.93 + 40 * s * wave(t, 9), short * 0.24, palette.primary, 0.16],
   ];
   for (const [x, y, radius, color, alpha] of blobs) {
     ctx.fillStyle = rgba(color, alpha * appear);
@@ -451,7 +453,7 @@ function paintFramedCream(ctx: CanvasRenderingContext2D, input: PaintTemplateInp
   ctx.lineCap = "round";
 
   // The branch: draws on, then sways about its base.
-  const sway = (2.5 * Math.PI / 180) * wave(t, 5) * ramp(t, 1.2, 0.8);
+  const sway = (6 * Math.PI / 180) * wave(t, 5) * ramp(t, 1.2, 0.8);
   ctx.save();
   ctx.translate(W * 0.66, H * 0.9);
   ctx.scale(s, s);
@@ -485,7 +487,7 @@ function paintFramedCream(ctx: CanvasRenderingContext2D, input: PaintTemplateInp
   // The wave across the bottom margin: draws on, then drifts.
   const segment = W * 0.11;
   const amplitude = 14 * s;
-  const drift = 8 * s * wave(t, 6) * ramp(t, 1.6, 0.6);
+  const drift = 22 * s * wave(t, 6) * ramp(t, 1.6, 0.6);
   let x = W * 0.14 + drift;
   const y = H * 0.945;
   ctx.beginPath();
@@ -506,7 +508,7 @@ function paintFramedCream(ctx: CanvasRenderingContext2D, input: PaintTemplateInp
   // Three dots, bobbing out of phase.
   ctx.fillStyle = rgba(ink, 0.5 * draw);
   ([[0.12, 0.9, 4], [0.16, 0.93, 3], [0.1, 0.955, 3]] as const).forEach(([dx, dy, r], k) => {
-    const bob = 4 * s * wave(t, 2.8, k / 3);
+    const bob = 10 * s * wave(t, 2.8, k / 3);
     ctx.beginPath();
     ctx.arc(W * dx, H * dy + bob, r * s, 0, Math.PI * 2);
     ctx.fill();
@@ -519,8 +521,8 @@ function paintFramedCream(ctx: CanvasRenderingContext2D, input: PaintTemplateInp
     [W * 0.88, H * 0.035, 10 * s, 0.5, 0.65],
   ];
   for (const [sx, sy, r, phase, alpha] of sparkles) {
-    const scale = 1 + 0.15 * wave(t, 2.4, phase) + pop;
-    const spin = (12 * Math.PI / 180) * wave(t, 4.8, phase);
+    const scale = 1 + 0.35 * wave(t, 2.4, phase) + pop;
+    const spin = (25 * Math.PI / 180) * wave(t, 4.8, phase);
     ctx.save();
     ctx.translate(sx, sy);
     ctx.rotate(spin);
@@ -585,6 +587,19 @@ function paintEditorial(ctx: CanvasRenderingContext2D, input: PaintTemplateInput
     ctx.lineWidth = border;
     strokeSegment(ctx, frameLength, 0, draw);
   }
+  // A short accent light runs round the hairline the whole time, so the Look
+  // is never still between cuts (added 2026-10-11).
+  const run = editorialRunner(t);
+  if (run.alpha > 0) {
+    roundRectFromTop(ctx, frame, 18 * s);
+    ctx.strokeStyle = rgba(palette.accent, run.alpha);
+    ctx.lineWidth = border * 2;
+    strokeSegment(ctx, frameLength, run.from, run.to);
+    if (run.wrapTo > 0) {
+      roundRectFromTop(ctx, frame, 18 * s);
+      strokeSegment(ctx, frameLength, 0, run.wrapTo);
+    }
+  }
   // At the end an accent frame draws over it.
   const close = easeInOutCubic(outro(t, tl, 1.4));
   if (close > 0) {
@@ -595,7 +610,10 @@ function paintEditorial(ctx: CanvasRenderingContext2D, input: PaintTemplateInput
   }
 
   // Kicker: the dot pops in and pulses on cuts; the rule extends.
-  const dotScale = easeOutBack(ramp(t, 0.35, 0.45)) * (1 + 0.6 * beatEnvelope(t, tl.beats, 0.05, 0.45));
+  const dotScale =
+    easeOutBack(ramp(t, 0.35, 0.45)) *
+    (1 + 0.6 * beatEnvelope(t, tl.beats, 0.05, 0.45)) *
+    (1 + 0.25 * wave(t, 1.6) * ramp(t, 0.9, 0.5));
   ctx.fillStyle = palette.accent;
   if (dotScale > 0) {
     ctx.beginPath();
@@ -616,6 +634,21 @@ function paintEditorial(ctx: CanvasRenderingContext2D, input: PaintTemplateInput
   }
 
   paintSceneCounter(ctx, input, s, inset);
+}
+
+/**
+ * The editorial runner: an accent segment 10% of the frame long, going round
+ * once every 6 s after the frame has drawn on. Fractions of the frame's
+ * length; `wrapTo` > 0 is the part that has wrapped past the start.
+ */
+export const EDITORIAL_RUNNER_PERIOD = 6;
+export const EDITORIAL_RUNNER_LENGTH = 0.1;
+export function editorialRunner(t: number): { from: number; to: number; wrapTo: number; alpha: number } {
+  const alpha = 0.9 * ramp(t, 1.5, 0.6);
+  if (alpha <= 0) return { from: 0, to: 0, wrapTo: 0, alpha: 0 };
+  const head = (((t - 1.5) / EDITORIAL_RUNNER_PERIOD) % 1 + 1) % 1;
+  const to = head + EDITORIAL_RUNNER_LENGTH;
+  return { from: head, to: Math.min(1, to), wrapTo: to > 1 ? to - 1 : 0, alpha };
 }
 
 /** Fraction of the kicker rule's straight part that is drawn. */

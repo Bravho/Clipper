@@ -42,6 +42,7 @@
  * likely to succeed, never less.
  */
 
+import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
 import { describeError, diagLog, isUnreadableFileError } from "./uploadDiagnostics";
 
 /** Directory inside OPFS. Namespaced so a future feature can share the origin. */
@@ -226,12 +227,18 @@ export async function sweepStaleSnapshots(): Promise<void> {
     if (typeof entries !== "function") return;
 
     const cutoff = Date.now() - STALE_SNAPSHOT_MS;
+    // The phone studio's picks (`studio-…`) are a request's media until it is
+    // submitted, and are read back when the app reopens
+    // (features/device-render/studioDraftMedia.ts): kept as long as submitted
+    // originals are, not six hours.
+    const studioCutoff = Date.now() - ORIGINALS_KEPT_DAYS * 86_400_000;
     let swept = 0;
     for await (const entry of entries.call(dir)) {
       if (entry.kind !== "file") continue;
       try {
         const stored = await (entry as FileSystemFileHandle).getFile();
-        if (stored.lastModified < cutoff) {
+        const limit = entry.name.startsWith("studio-") ? studioCutoff : cutoff;
+        if (stored.lastModified < limit) {
           await dir.removeEntry(entry.name);
           swept += 1;
         }

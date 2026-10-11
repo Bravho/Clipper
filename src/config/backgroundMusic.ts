@@ -4,7 +4,7 @@
  *
  * `id` is what gets saved on a job (`video_generation_jobs.selected_music_track`)
  * and sent by clients, so it must stay stable once released. `file` is the exact
- * file name on disk (several contain spaces or "&"), and
+ * file name on disk, and
  * `url` is the same file as a percent-encoded public path, safe for <audio>, the
  * render manifest and the native render plugins.
  *
@@ -24,6 +24,20 @@ export interface MusicTrack {
   /** Length of the file in seconds (ffprobe). The mix loops it as needed. */
   durationSeconds?: number;
 }
+
+/**
+ * FILE NAMES: letters, digits, spaces, "-", "_" and "." only.
+ *
+ * "Fresh & Intriguing.mp3" played in a desktop browser but not in the phone
+ * app — the only track whose name has a character that changes meaning when a
+ * URL path is decoded and re-encoded on the way (the Capacitor WebView proxies
+ * the app's requests to the server). A space survives that round trip; "&",
+ * "#", "?", "%" and "+" are not safe to rely on. The file was renamed
+ * "Fresh and Intriguing.mp3" — the id and the label are unchanged, so saved
+ * jobs keep their choice. `tests/config/backgroundMusic.test.ts` refuses any
+ * new file name outside this set.
+ */
+export const SAFE_MUSIC_FILE_NAME = /^[A-Za-z0-9 ._-]+\.mp3$/;
 
 /** Folder under `public/` that holds the catalog's files. */
 export const BACKGROUND_MUSIC_DIR = "musics";
@@ -57,7 +71,7 @@ export const BACKGROUND_MUSIC_TRACKS: MusicTrack[] = [
   track("digital-discovery",        "Digital Discovery",        "Digital Discovery.mp3",        "electronic, tech",      178.84),
   track("dub-shuffle",              "Dub Shuffle",              "Dub Shuffle.mp3",              "dub, laid-back",        179.84),
   track("elegant-forward-motion",   "Elegant Forward Motion",   "Elegant Forward Motion.mp3",   "cinematic, elegant",    179.6),
-  track("fresh-and-intriguing",     "Fresh & Intriguing",       "Fresh & Intriguing.mp3",       "pop, fresh",            180),
+  track("fresh-and-intriguing",     "Fresh & Intriguing",       "Fresh and Intriguing.mp3",     "pop, fresh",            180),
   track("full-band-reveal",         "Full Band Reveal",         "Full Band Reveal.mp3",         "full band, uplifting",  189.08),
   track("mellow-midrange",          "Mellow Midrange",          "Mellow Midrange.mp3",          "mellow, calm",          197.96),
   track("progressive-flow",         "Progressive Flow",         "Progressive Flow.mp3",         "electronic, driving",   184.88),

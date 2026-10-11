@@ -1,10 +1,12 @@
 import {
   clipRequestFormSchema,
+  studioClipRequestFormSchema,
   submitClipRequestSchema,
   validateUploadCount,
 } from "@/features/requests/validation/clipRequestSchema";
 import { Platform } from "@/domain/enums/Platform";
 import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
+import { PIPELINE_STEP_COSTS } from "@/config/credits";
 
 const validBase = {
   title: "My Great Clip",
@@ -195,5 +197,19 @@ describe("validateUploadCount", () => {
 
   it(`enforces a limit of ${MAX_UPLOAD_COUNT} files`, () => {
     expect(MAX_UPLOAD_COUNT).toBe(10);
+  });
+});
+
+describe("studioClipRequestFormSchema without a length", () => {
+  it("accepts a phone-studio brief with no length (it is set in Storyboard)", () => {
+    const { durationSeconds: _omit, ...noLength } = validBase;
+    void _omit;
+    const parsed = studioClipRequestFormSchema.safeParse(noLength);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.durationSeconds).toBe(PIPELINE_STEP_COSTS.DEFAULT_DURATION_SECONDS);
+  });
+
+  it("still accepts a length sent by an older app build", () => {
+    expect(studioClipRequestFormSchema.safeParse({ ...validBase, durationSeconds: 60 }).success).toBe(true);
   });
 });

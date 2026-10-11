@@ -48,12 +48,13 @@ export interface StoredVoiceResult {
 export const ELEVENLABS_VOICE_FILE_NAME = "elevenlabs_generated.mp3";
 
 /**
- * Synthesize the script with ElevenLabs and upload the MP3 to DO Spaces.
- * Throws with a descriptive message on any failure (API key, quota, network).
+ * One ElevenLabs text-to-speech call, returning the MP3 bytes. Used by the
+ * pipeline's voice make (below) and by the speaker picker's previews.
  */
-export async function synthesizeAndStore(
-  params: SynthesizeStoreParams
-): Promise<StoredVoiceResult> {
+export async function synthesizeToBuffer(params: {
+  text: string;
+  voiceId: ElevenLabsVoiceId;
+}): Promise<Buffer> {
   const { apiKey, model, stability, languageCode } = AI_CONFIG.elevenLabs;
 
   if (!apiKey) {
@@ -84,7 +85,17 @@ export async function synthesizeAndStore(
     throw new Error(`ElevenLabs TTS error ${res.status}: ${body.slice(0, 300)}`);
   }
 
-  const buffer = Buffer.from(await res.arrayBuffer());
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/**
+ * Synthesize the script with ElevenLabs and upload the MP3 to DO Spaces.
+ * Throws with a descriptive message on any failure (API key, quota, network).
+ */
+export async function synthesizeAndStore(
+  params: SynthesizeStoreParams
+): Promise<StoredVoiceResult> {
+  const buffer = await synthesizeToBuffer({ text: params.text, voiceId: params.voiceId });
 
   const storageKey = `voice_recordings/${params.userId}/${params.requestId}/elevenlabs_generated_${Date.now()}.mp3`;
   const bucket = process.env.DO_SPACES_BUCKET!;

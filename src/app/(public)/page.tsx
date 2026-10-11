@@ -9,7 +9,6 @@ import { Role } from "@/domain/enums/Role";
 import { getServerI18n } from "@/i18n/server";
 import type { MessageKey } from "@/i18n/messages";
 import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
-import { isBrowserMarketingOnly } from "@/config/studioRollout";
 import {
   FREE_REQUESTS_PER_WINDOW,
   FREE_WINDOW_DAYS,
@@ -22,10 +21,9 @@ import { StoreButtons } from "@/features/marketing/StoreButtons";
  * The marketing home page — what a web browser sees at rclipper.
  *
  * Videos are made in the app (the studio renders them on the phone), so this
- * page sells the app and sends people to the stores. Inside the app a signed-in
- * user goes straight to their home; in a browser a signed-in requester stays on
- * the marketing page once BROWSER_MARKETING_ONLY is on (their requester pages
- * redirect to "get the app"), admins still go to the admin portal.
+ * page sells the app and sends people to the stores. A signed-in user goes
+ * straight to their home, in the app and in a browser alike; in a browser only
+ * the video-making pages redirect to "get the app" (see middleware).
  *
  * The previous page is kept in `_to_delete/legacy-web-flow/public-home-page.tsx`.
  */
@@ -35,10 +33,9 @@ export default async function HomePage() {
   const inApp = isAppUserAgent(headers().get("user-agent"));
 
   if (session?.user) {
-    const role = session.user.role as Role;
-    if (role !== Role.Requester || inApp || !isBrowserMarketingOnly()) {
-      redirect(getRoleHomePath(role));
-    }
+    // Signed in: go to your home — in a browser too, where everything but
+    // making a video works (see middleware).
+    redirect(getRoleHomePath(session.user.role as Role));
   } else if (inApp) {
     // Inside the app there is nothing to download: go to sign-in (which links
     // to sign-up).

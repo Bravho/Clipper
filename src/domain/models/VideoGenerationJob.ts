@@ -430,6 +430,13 @@ export interface StoryboardScene {
   assetIndexes: number[];
   /** Optional pre-voice duration estimate (not binding). */
   roughDurationHint?: number;
+  /**
+   * The speaking-script line written for this scene from the approved
+   * storyboard (VideoGenerationService.writeScriptForStoryboard). Present on
+   * every scene once the script has been written from the storyboard — which
+   * is how a reopened studio knows the script on the server is that one.
+   */
+  scriptLine?: string;
 }
 
 /**

@@ -919,14 +919,36 @@ export class DeviceRenderService {
     // production was approved (or previewed in the studio) and simply read
     // here; if not, Claude gets a short window before the fallback plan is
     // used, so a claim never hangs on it. Any failure renders without them.
+    //
+    // Every outcome is logged with its reason: a final that silently came out
+    // with the Look's frame but no text graphics (2026-10-11) gave nothing to
+    // go on — was the choice "none", the origin missing, or the plan empty?
     let textGraphics: ManifestTextGraphics | null = null;
-    if (stage === "final" && appOrigin()) {
-      try {
-        const { textGraphicsService } = await import("@/services/TextGraphicsService");
-        const plan = await textGraphicsService.ensurePlan(job, { timeoutMs: 20_000 });
-        textGraphics = toManifestTextGraphics(plan, palette.accent, appOrigin());
-      } catch (err) {
-        console.error("[device-render] text graphics skipped:", err);
+    if (stage === "final") {
+      const { textGraphicsService, textGraphicChoiceOf } = await import(
+        "@/services/TextGraphicsService"
+      );
+      const choice = textGraphicChoiceOf(job);
+      const origin = appOrigin();
+      if (choice === "none") {
+        console.log(`[device-render] job ${job.id} ${ratio}: no text graphics (choice is none)`);
+      } else if (!origin) {
+        console.error(
+          `[device-render] job ${job.id} ${ratio}: text graphics "${choice}" SKIPPED — no app origin (set NEXTAUTH_URL)`
+        );
+      } else {
+        try {
+          const plan = await textGraphicsService.ensurePlan(job, { timeoutMs: 20_000 });
+          textGraphics = toManifestTextGraphics(plan, palette.accent, origin);
+          console.log(
+            `[device-render] job ${job.id} ${ratio}: text graphics "${choice}" → ` +
+              (textGraphics
+                ? `${textGraphics.items.length} item(s), style ${textGraphics.style.id}, source ${plan?.source}`
+                : "no plan (scene plan too short?)")
+          );
+        } catch (err) {
+          console.error(`[device-render] job ${job.id} ${ratio}: text graphics skipped:`, err);
+        }
       }
     }
 
@@ -1177,8 +1199,16 @@ async function spacesSignedUrlForPublic(url: string): Promise<string> {
   return url;
 }
 
+/**
+ * The public origin the phone downloads music and text-graphics fonts from.
+ * NEXTAUTH_URL normally; in production with it unset, the live site (the same
+ * default the app itself is built against, capacitor.config.ts) rather than
+ * nothing — an empty origin used to drop text graphics silently.
+ */
 function appOrigin(): string {
-  return (process.env.NEXTAUTH_URL ?? "").replace(/\/$/, "");
+  const configured = (process.env.NEXTAUTH_URL ?? process.env.APP_ORIGIN ?? "").trim();
+  if (configured) return configured.replace(/\/$/, "");
+  return process.env.NODE_ENV === "production" ? "https://app.rclipper.com" : "";
 }
 
 export const deviceRenderService = new DeviceRenderService();

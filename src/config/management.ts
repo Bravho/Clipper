@@ -588,6 +588,21 @@ export const POST_FOR_ME_CONFIG = {
   get requestTimeoutMs(): number {
     return Number(process.env.POST_FOR_ME_TIMEOUT_MS ?? "20000");
   },
+  /**
+   * How an Instagram account is signed in: "instagram" (Instagram Login — any
+   * Business/Creator account, no Facebook Page needed) or "facebook" (Facebook
+   * Login, then pick the Instagram account linked to a Page).
+   *
+   * Sent as `platform_data.instagram.connection_type` on the auth-url call.
+   * Post for Me currently defaults to "instagram" when it is missing; sending
+   * it explicitly keeps the flow fixed if that default ever changes.
+   */
+  get instagramConnectionType(): "instagram" | "facebook" {
+    const raw = (process.env.POST_FOR_ME_INSTAGRAM_CONNECTION_TYPE ?? "")
+      .trim()
+      .toLowerCase();
+    return raw === "facebook" ? "facebook" : "instagram";
+  },
 } as const;
 
 export function requirePostForMeApiKey(): string {

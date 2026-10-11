@@ -43,10 +43,18 @@ export async function POST(
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
   try {
+    // The studio's storyboard length (after any Auto-fit); optional.
+    const storyboardSeconds =
+      typeof body?.storyboardSeconds === "number" && Number.isFinite(body.storyboardSeconds)
+        ? body.storyboardSeconds
+        : null;
+    const musicSelected = typeof body?.musicSelected === "boolean" ? body.musicSelected : true;
     const updated = await videoGenerationService.approveVoiceConversionByRequester(
       jobId,
       session.user.id,
-      targetPlatforms
+      targetPlatforms,
+      storyboardSeconds,
+      musicSelected
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 
-import { PIPELINE_STEP_COSTS, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
+import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import { FORM_PLATFORMS, Platform, PLATFORM_LABELS } from "@/domain/enums/Platform";
 import { geocodePlaceName } from "@/features/requests/components/GoogleMapLocationPicker";
 import { briefProblems, type EditorBrief } from "./editorState";
@@ -152,7 +152,7 @@ export function BriefPanel({
         description: brief.details.trim(),
         targetAudience: "",
         targetPlatforms: brief.platforms,
-        durationSeconds: brief.targetSeconds,
+        // No length: it is set in Storyboard (the server stores a placeholder).
         // Tells the server this brief is the phone studio's, which may run
         // longer than the web form's limit because the phone renders it.
         studio: true,
@@ -264,39 +264,14 @@ export function BriefPanel({
         </label>
       </section>
 
+      {/* No length to pick here (2026-10-11): the video's length is set in
+          Storyboard, where the scenes are timed to the voice. Only the limit
+          is said up front. */}
       <section className="studio-panel">
         <h2 className="studio-panel-title">{t("studio.brief.lengthTitle")}</h2>
-        <label className="studio-field">
-          <span className="studio-label studio-length-value">
-            <strong>{brief.targetSeconds}s</strong>
-            <span>
-              {brief.targetSeconds >= 60
-                ? t("studio.brief.minutes", {
-                    minutes: Math.floor(brief.targetSeconds / 60),
-                    seconds: brief.targetSeconds % 60 ? `${brief.targetSeconds % 60}s` : "",
-                  }).trim()
-                : ""}
-            </span>
-          </span>
-          <input
-            className="studio-range"
-            type="range"
-            min={PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS}
-            max={STUDIO_MAX_DURATION_SECONDS}
-            step={1}
-            value={brief.targetSeconds}
-            disabled={disabled}
-            aria-label={t("studio.brief.lengthAria")}
-            onChange={(event) => change({ targetSeconds: Math.round(Number(event.target.value)) })}
-          />
-          <span className="studio-range-ends">
-            <span>{PIPELINE_STEP_COSTS.MIN_DURATION_SECONDS}s</span>
-            <span>{STUDIO_MAX_DURATION_SECONDS}s</span>
-          </span>
-          <p className="studio-counter" style={{ textAlign: "left" }}>
-            {t("studio.brief.lengthHint")}
-          </p>
-        </label>
+        <p className="studio-note studio-note-accent" style={{ margin: 0 }}>
+          {t("studio.brief.lengthLimit", { seconds: STUDIO_MAX_DURATION_SECONDS })}
+        </p>
       </section>
 
       <section className="studio-panel">

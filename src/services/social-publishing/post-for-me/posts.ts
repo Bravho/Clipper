@@ -24,6 +24,38 @@ import type {
 } from "../types";
 
 /**
+ * Settings a platform needs on every post, whatever the copy.
+ *
+ * Instagram: the Instagram API no longer publishes a plain feed VIDEO, so a
+ * video goes out as a Reel. Post for Me already picks REELS for a video; the
+ * placement is stated explicitly so that never depends on the provider's
+ * default. `share_to_feed` keeps the Reel on the profile grid as well.
+ */
+export function platformPostDefaults(platform: string): Record<string, unknown> {
+  if (platform === "instagram") {
+    return { placement: "reels", share_to_feed: true };
+  }
+  return {};
+}
+
+/** One `account_configurations` entry per target that has anything to say. */
+export function buildAccountConfigurations(
+  targets: { externalAccountId: string; platform: string; caption?: string; title?: string }[]
+): { social_account_id: string; configuration: Record<string, unknown> }[] {
+  return targets
+    .map((t) => ({
+      social_account_id: t.externalAccountId,
+      configuration: {
+        ...platformPostDefaults(t.platform),
+        ...(t.caption !== undefined ? { caption: t.caption } : {}),
+        // Instagram has no title field; sending one is at best ignored.
+        ...(t.title !== undefined && t.platform !== "instagram" ? { title: t.title } : {}),
+      },
+    }))
+    .filter((c) => Object.keys(c.configuration).length > 0);
+}
+
+/**
  * Create a post.
  *
  * `scheduled_at` absent or null means publish immediately. We send the UTC ISO
@@ -47,15 +79,7 @@ export async function createPost(
     );
   }
 
-  const accountConfigurations = input.targets
-    .filter((t) => t.caption !== undefined || t.title !== undefined)
-    .map((t) => ({
-      social_account_id: t.externalAccountId,
-      configuration: {
-        ...(t.caption !== undefined ? { caption: t.caption } : {}),
-        ...(t.title !== undefined ? { title: t.title } : {}),
-      },
-    }));
+  const accountConfigurations = buildAccountConfigurations(input.targets);
 
   const response = await postForMeRequest<PfmSocialPost>({
     method: "POST",
@@ -100,15 +124,7 @@ export async function createPost(
  * retry could clobber a concurrent change. maxAttempts is 1.
  */
 export async function updatePost(input: UpdateSocialPostInput): Promise<void> {
-  const accountConfigurations = (input.targets ?? [])
-    .filter((t) => t.caption !== undefined || t.title !== undefined)
-    .map((t) => ({
-      social_account_id: t.externalAccountId,
-      configuration: {
-        ...(t.caption !== undefined ? { caption: t.caption } : {}),
-        ...(t.title !== undefined ? { title: t.title } : {}),
-      },
-    }));
+  const accountConfigurations = buildAccountConfigurations(input.targets ?? []);
 
   const body: Record<string, unknown> = {
     ...(input.caption !== undefined ? { caption: input.caption } : {}),

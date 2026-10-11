@@ -551,24 +551,25 @@ enum OverlayPainter {
             layer.add(track("transform", clock) { t in
                 let intro = TM.ramp(t, 0.1 + 0.08 * Double(k), 0.65)
                 let slide = (1 - TM.easeOutBack(intro)) * 36 * sd
-                let breathe = 5 * sd * TM.wave(t, 4.2) * TM.ramp(t, 0.8, 0.6)
-                let punch = 16 * sd * TM.beatEnvelope(t, tl.beats, 0.06, 0.5)
+                // Strengths raised 2026-10-11 with templateRenderer.ts.
+                let breathe = 14 * sd * TM.wave(t, 3.2) * TM.ramp(t, 0.8, 0.6)
+                let punch = 36 * sd * TM.beatEnvelope(t, tl.beats, 0.06, 0.5)
                 let close = 22 * sd * TM.easeInOutCubic(TM.outro(t, tl, 1.2))
                 let o = CGFloat(slide + breathe - punch - close)
                 return transformValue(tx: -dx * o, ty: -dy * o)
             }, forKey: "t")
         }
 
-        // Ripples: diameter 0.15 → 1 of 32 % of the short side, opacity
-        // 0 → 0.5 → 0 every 3.6 s, the second 1.8 s behind; faded in after 0.6 s.
+        // Ripples: diameter 0.15 → 1 of 42 % of the short side, opacity
+        // 0 → 0.8 → 0 every 3.6 s, the second 1.8 s behind; faded in after 0.6 s.
         let ripples = CALayer()
         ripples.frame = container.bounds
         ripples.opacity = 0
         ripples.add(track("opacity", clock) { num(TM.ramp($0, 0.6, 0.6)) }, forKey: "o")
         container.addSublayer(ripples)
-        let maxDiameter = min(canvas.width, canvas.height) * 0.32
+        let maxDiameter = min(canvas.width, canvas.height) * 0.42
         let center = CGPoint(x: canvas.width * 0.13, y: canvas.height * 0.84)
-        let ringWidth = max(2, 2.5 * s)
+        let ringWidth = max(3, 4 * s)
         for delay in [0.0, 1.8] {
             let ring = CAShapeLayer()
             let rr = maxDiameter / 2 - ringWidth / 2
@@ -586,7 +587,7 @@ enum OverlayPainter {
             grow.fromValue = 0.15
             grow.toValue = 1.0
             let pulse = CAKeyframeAnimation(keyPath: "opacity")
-            pulse.values = [0, 0.5, 0]
+            pulse.values = [0, 0.8, 0]
             pulse.keyTimes = [0, 0.15, 1]
             let group = CAAnimationGroup()
             group.animations = [grow, pulse]
@@ -719,13 +720,13 @@ enum OverlayPainter {
         blobs.add(track("opacity", clock) { num(TM.easeOutCubic(TM.ramp($0, 0, 0.8))) }, forKey: "o")
         container.addSublayer(blobs)
         let blobSpecs: [(CGFloat, UIColor, Float, (Double) -> CGPoint)] = [
-            (short * 0.2, palette.accent, 0.16, { t in
-                CGPoint(x: canvas.width * 0.92 + CGFloat(14 * sd * TM.wave(t, 7)),
-                        y: canvas.height * 0.05 + CGFloat(10 * sd * TM.wave(t, 7, 0.25)))
+            (short * 0.2, palette.accent, 0.2, { t in
+                CGPoint(x: canvas.width * 0.92 + CGFloat(60 * sd * TM.wave(t, 7)),
+                        y: canvas.height * 0.05 + CGFloat(40 * sd * TM.wave(t, 7, 0.25)))
             }),
-            (short * 0.24, palette.primary, 0.12, { t in
-                CGPoint(x: canvas.width * 0.06 + CGFloat(12 * sd * TM.wave(t, 9, 0.25)),
-                        y: canvas.height * 0.93 + CGFloat(10 * sd * TM.wave(t, 9)))
+            (short * 0.24, palette.primary, 0.16, { t in
+                CGPoint(x: canvas.width * 0.06 + CGFloat(50 * sd * TM.wave(t, 9, 0.25)),
+                        y: canvas.height * 0.93 + CGFloat(40 * sd * TM.wave(t, 9)))
             }),
         ]
         for (radius, color, alpha, at) in blobSpecs {
@@ -784,7 +785,7 @@ enum OverlayPainter {
         branch.bounds = .zero
         branch.position = CGPoint(x: canvas.width * 0.66, y: canvas.height * 0.9)
         branch.add(track("transform", clock) { t in
-            let sway = CGFloat(2.5 * Double.pi / 180 * TM.wave(t, 5) * TM.ramp(t, 1.2, 0.8))
+            let sway = CGFloat(6 * Double.pi / 180 * TM.wave(t, 5) * TM.ramp(t, 1.2, 0.8))
             var m = CATransform3DMakeScale(s, s, 1)
             m = CATransform3DTranslate(m, 0, 60, 0)
             m = CATransform3DRotate(m, sway, 0, 0, 1)
@@ -841,7 +842,7 @@ enum OverlayPainter {
         waveLayer.strokeEnd = 0
         waveLayer.add(track("strokeEnd", clock) { num(min(1, draw($0) * dash / waveLength)) }, forKey: "e")
         waveLayer.add(track("transform", clock) { t in
-            transformValue(tx: CGFloat(8 * sd * TM.wave(t, 6) * TM.ramp(t, 1.6, 0.6)))
+            transformValue(tx: CGFloat(22 * sd * TM.wave(t, 6) * TM.ramp(t, 1.6, 0.6)))
         }, forKey: "t")
         container.addSublayer(waveLayer)
 
@@ -855,7 +856,7 @@ enum OverlayPainter {
             dot.opacity = 0
             dot.add(track("opacity", clock) { num(0.5 * draw($0)) }, forKey: "o")
             dot.add(track("transform", clock) { t in
-                transformValue(ty: CGFloat(4 * sd * TM.wave(t, 2.8, Double(k) / 3)))
+                transformValue(ty: CGFloat(10 * sd * TM.wave(t, 2.8, Double(k) / 3)))
             }, forKey: "t")
             container.addSublayer(dot)
         }
@@ -870,9 +871,9 @@ enum OverlayPainter {
             sparkle.opacity = 0
             sparkle.add(track("opacity", clock) { num(alpha * draw($0)) }, forKey: "o")
             sparkle.add(track("transform", clock) { t in
-                let scale = CGFloat(1 + 0.15 * TM.wave(t, 2.4, phase)
+                let scale = CGFloat(1 + 0.35 * TM.wave(t, 2.4, phase)
                                     + 0.5 * TM.beatEnvelope(t, tl.beats, 0.06, 0.45))
-                let spin = CGFloat(12 * Double.pi / 180 * TM.wave(t, 4.8, phase))
+                let spin = CGFloat(25 * Double.pi / 180 * TM.wave(t, 4.8, phase))
                 return transformValue(rotate: spin, sx: scale, sy: scale)
             }, forKey: "t")
             container.addSublayer(sparkle)
@@ -912,6 +913,32 @@ enum OverlayPainter {
         frame.add(track("strokeEnd", clock) { num(TM.easeInOutCubic(TM.ramp($0, 0.2, 1.3))) }, forKey: "e")
         container.addSublayer(frame)
 
+        // A short accent light runs round the hairline the whole time
+        // (templateRenderer.ts editorialRunner): head..head+0.1 of the frame,
+        // once every 6 s; the second layer draws the part past the start.
+        func runnerHead(_ t: Double) -> Double {
+            let x = ((t - 1.5) / 6).truncatingRemainder(dividingBy: 1)
+            return x < 0 ? x + 1 : x
+        }
+        let runner = shapeLayer(framePath, frame: container.bounds)
+        runner.strokeColor = palette.accent.cgColor
+        runner.lineWidth = border * 2
+        runner.lineCap = .butt
+        runner.opacity = 0
+        runner.add(track("opacity", clock) { num(0.9 * TM.ramp($0, 1.5, 0.6)) }, forKey: "o")
+        runner.add(track("strokeStart", clock) { num(runnerHead($0)) }, forKey: "s")
+        runner.add(track("strokeEnd", clock) { num(min(1, runnerHead($0) + 0.1)) }, forKey: "e")
+        container.addSublayer(runner)
+        let runnerWrap = shapeLayer(framePath, frame: container.bounds)
+        runnerWrap.strokeColor = palette.accent.cgColor
+        runnerWrap.lineWidth = border * 2
+        runnerWrap.lineCap = .butt
+        runnerWrap.opacity = 0
+        runnerWrap.strokeStart = 0
+        runnerWrap.add(track("opacity", clock) { num(0.9 * TM.ramp($0, 1.5, 0.6)) }, forKey: "o")
+        runnerWrap.add(track("strokeEnd", clock) { num(max(0, runnerHead($0) + 0.1 - 1)) }, forKey: "e")
+        container.addSublayer(runnerWrap)
+
         if tl.end != nil {
             let closing = shapeLayer(framePath, frame: container.bounds)
             closing.strokeColor = palette.accent.withAlphaComponent(0.95).cgColor
@@ -929,7 +956,8 @@ enum OverlayPainter {
         dot.fillColor = palette.accent.cgColor
         dot.add(track("transform", clock) { t in
             let k = CGFloat(max(0.0001, TM.easeOutBack(TM.ramp(t, 0.35, 0.45))
-                * (1 + 0.6 * TM.beatEnvelope(t, tl.beats, 0.05, 0.45))))
+                * (1 + 0.6 * TM.beatEnvelope(t, tl.beats, 0.05, 0.45))
+                * (1 + 0.25 * TM.wave(t, 1.6) * TM.ramp(t, 0.9, 0.5))))
             return transformValue(sx: k, sy: k)
         }, forKey: "t")
         container.addSublayer(dot)

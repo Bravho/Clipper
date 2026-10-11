@@ -10,7 +10,9 @@ import { sanitizeStoryboard } from "@/lib/ai/storyboard";
 import {
   countScriptUnits,
   maxScriptUnits,
+  SCRIPT_UNITS_PER_SECOND,
   scriptLanguageOf,
+  unitsForVoiceSeconds,
   scriptUnitName,
   trimScriptToFit,
   type ScriptLanguage,
@@ -480,4 +482,226 @@ async function fitScriptToLength(
     console.error("[Script length] shorten pass failed:", err);
   }
   return trimScriptToFit(shortened, seconds, language);
+}
+
+/**
+ * One scene of the APPROVED storyboard, as the script writer sees it: how long
+ * it holds the screen, how much of that is free for speech, and which
+ * pictures it shows for how long.
+ */
+export interface ScriptSceneTiming {
+  sceneNumber: number;
+  /** The requester's one-line summary of the scene (may be empty). */
+  summary: string;
+  /** How long the scene holds the screen, seconds. */
+  seconds: number;
+  /**
+   * Seconds of speech the scene can carry: its length, less the music intro
+   * on the first scene and the quiet ending on the last.
+   */
+  speakSeconds: number;
+  /** The scene's pictures in order: zero-based asset index, kind, seconds on screen. */
+  shots: { assetIndex: number; kind: "image" | "clip"; seconds: number }[];
+}
+
+export interface StoryboardScriptOutput {
+  scriptThai: string;
+  /** The line written for each scene, in scene order ("" for a silent scene). */
+  sceneLines: string[];
+}
+
+const STORYBOARD_SCRIPT_SYSTEM_PROMPT = `You are an expert short-form video voice-over writer.
+
+The requester has ALREADY arranged and approved the storyboard: the scenes, their order, the pictures in each scene, and how long each scene and picture stays on screen. Write the spoken voice-over so it matches that storyboard exactly: what is said during a scene must be about what that scene's pictures show, and each scene's line must fit inside that scene's time.
+
+Requirements:
+- Write ONE line (one or two short sentences) per scene, in scene order. The lines are read back to back as one voice-over, so they must flow naturally from one to the next.
+- Each scene's line is about the pictures shown in that scene (look at the uploaded assets with those indexes). Describe what is actually visible; never describe a picture that belongs to another scene.
+- PER-SCENE LENGTH: each scene has a target and a maximum in the user prompt. Write close to the TARGET — it is deliberately a little longer than the scene, so the requester can cut words they do not want rather than having to write new ones. Never exceed the maximum. A scene with a maximum of 0 gets an empty line "".
+- The first scene opens with a hook that makes the viewer stop scrolling. The last scene closes with a short, gentle invitation.
+- TTS-safe text only: clear standard words and spelling for AI text-to-speech. No numerals, symbols, abbreviations, slang, or loanwords an AI voice may mispronounce; write numbers and units as words.
+- Natural, non-forceful tone: warm, relaxed, sincere, conversational, the way a friendly local person speaks. No hard-sell hype, exaggerated superlatives, or pushy commands.
+- Place name: if the requester gave a place/shop name in the title or description, say it naturally once (in the hook or the closing). Never invent one.
+- Target audience is for tone only; never mention or address it.
+- Product accuracy: only mention items visibly present in the pictures or stated by the requester.
+
+Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
+
+Schema:
+{
+  "scenes": [ { "sceneNumber": 1, "line": "string" } ],
+  "captionThai": "string"
+}`;
+
+/**
+ * How much longer than the storyboard the script is written: a little, on
+ * purpose (Tho, 2026-10-11) — trimming a script is easy on a phone, writing
+ * more is not. `MAX` is the hard ceiling enforced in code.
+ */
+export const STORYBOARD_SCRIPT_TARGET_SHARE = 1.1;
+export const STORYBOARD_SCRIPT_MAX_SHARE = 1.2;
+
+/** Target and ceiling for one scene's line, in script units. */
+export function sceneLineUnits(
+  speakSeconds: number,
+  language: ScriptLanguage
+): { target: number; max: number } {
+  if (!(speakSeconds >= 0.5)) return { target: 0, max: 0 };
+  return {
+    target: unitsForVoiceSeconds(speakSeconds * STORYBOARD_SCRIPT_TARGET_SHARE, language),
+    max: unitsForVoiceSeconds(speakSeconds * STORYBOARD_SCRIPT_MAX_SHARE, language),
+  };
+}
+
+/** `trimScriptToFit` takes seconds at the LIMIT rate; express units that way. */
+function limitSecondsForUnits(units: number, language: ScriptLanguage): number {
+  return units / SCRIPT_UNITS_PER_SECOND[language];
+}
+
+function buildStoryboardScriptPrompt(
+  params: GenerateContentParams & { scenes: ScriptSceneTiming[] },
+  language: ScriptLanguage
+): string {
+  const total = params.scenes.reduce((sum, scene) => sum + scene.seconds, 0);
+  const speak = params.scenes.reduce((sum, scene) => sum + scene.speakSeconds, 0);
+  const lines = [
+    buildUserPrompt({ ...params, videoDurationSeconds: total }),
+    "",
+    `APPROVED STORYBOARD — ${params.scenes.length} scene(s), ${total.toFixed(1)} seconds of pictures in total, of which about ${speak.toFixed(1)} seconds can carry speech (the music intro and the quiet ending are kept free).`,
+    `Lengths are counted in ${scriptUnitName(language)}.`,
+  ];
+  for (const scene of params.scenes) {
+    const { target, max } = sceneLineUnits(scene.speakSeconds, language);
+    const shots = scene.shots
+      .map((shot) => `asset index ${shot.assetIndex} (${shot.kind}, ${shot.seconds.toFixed(1)} s)`)
+      .join(", ");
+    lines.push(
+      `  Scene ${scene.sceneNumber}: ${scene.seconds.toFixed(1)} s on screen (about ${scene.speakSeconds.toFixed(1)} s of speech); line target ${target}, maximum ${max}.` +
+        `${scene.summary ? ` Summary: ${scene.summary}.` : ""} Pictures in order: ${shots || "none"}.`
+    );
+  }
+  lines.push(
+    "Write each scene's line about that scene's own pictures, close to its target, so the voice follows the pictures as they change."
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Write the speaking script FROM the approved storyboard: one line per scene,
+ * each about that scene's pictures and held to that scene's share of time, so
+ * the voice changes subject when the picture does and the whole voice fits the
+ * combined scene length.
+ *
+ * The limits are enforced in code as well as asked for: a scene line over its
+ * budget is trimmed at a phrase boundary, and the joined script goes through
+ * the same length check as every other script.
+ */
+export async function generateScriptForStoryboard(
+  params: GenerateContentParams & { scenes: ScriptSceneTiming[] }
+): Promise<StoryboardScriptOutput & { captionThai: string | null }> {
+  const language = scriptLanguageOf(params.contentLanguage);
+  const output = await generateWithImages<{
+    scenes?: { sceneNumber?: unknown; line?: unknown }[];
+    captionThai?: unknown;
+  }>(params, `${STORYBOARD_SCRIPT_SYSTEM_PROMPT}\n\n${buildStoryboardScriptPrompt(params, language)}`);
+
+  const written = Array.isArray(output.scenes) ? output.scenes : [];
+  const sceneLines = params.scenes.map((scene, index) => {
+    const match =
+      written.find((item) => Number(item?.sceneNumber) === scene.sceneNumber) ?? written[index];
+    const raw = typeof match?.line === "string" ? sanitizeThaiVoiceScript(match.line) : "";
+    const { max } = sceneLineUnits(scene.speakSeconds, language);
+    if (!raw || max === 0) return "";
+    return trimScriptToFit(raw, limitSecondsForUnits(max, language), language);
+  });
+
+  // The whole script: at most the ceiling share of what the scenes carry.
+  const speakSeconds = params.scenes.reduce((sum, scene) => sum + scene.speakSeconds, 0);
+  const joined = sceneLines.filter(Boolean).join(" ");
+  if (!joined) throw new Error("The script writer returned no lines for the storyboard.");
+  const ceiling = unitsForVoiceSeconds(speakSeconds * STORYBOARD_SCRIPT_MAX_SHARE, language);
+  const scriptThai =
+    countScriptUnits(joined, language) > ceiling
+      ? await shortenScriptToUnits(joined, ceiling, language)
+      : joined;
+  return {
+    scriptThai,
+    sceneLines,
+    captionThai: typeof output.captionThai === "string" && output.captionThai.trim()
+      ? output.captionThai.trim()
+      : null,
+  };
+}
+
+/**
+ * Shorten a script to at most `maxUnits`: one AI pass that keeps the hook, the
+ * place name and the closing line, then — only if that is still too long or
+ * fails — a trim at a sentence/phrase boundary. Used when the voice came out
+ * longer than the scenes can be stretched to carry.
+ */
+export async function shortenScriptToUnits(
+  script: string,
+  maxUnits: number,
+  language: ScriptLanguage
+): Promise<string> {
+  const max = Math.max(1, Math.floor(maxUnits));
+  const count = countScriptUnits(script, language);
+  if (count <= max) return script;
+
+  let shortened = script;
+  try {
+    const ai = new GoogleGenAI({ apiKey: AI_CONFIG.gemini.apiKey });
+    const response = await ai.models.generateContent({
+      model: AI_CONFIG.gemini.visionModel,
+      contents: [
+        {
+          text: [
+            "Shorten this voice-over script so an AI voice says it in less time.",
+            `HARD LIMIT: at most ${max} ${scriptUnitName(language)}; aim for about ${Math.floor(max * 0.95)}. It is currently ${count}.`,
+            "Keep the same language, the order of ideas (each part describes the pictures shown at that moment), the opening hook, any place/shop name exactly as written, and a short gentle closing line. Remove the least important words and phrases evenly across the script rather than cutting the end. Keep it natural and TTS-safe (no numerals, symbols, or abbreviations).",
+            'Respond with ONLY a JSON object: {"script": "string"}',
+            "",
+            "Script:",
+            script,
+          ].join("\n"),
+        },
+      ],
+      config: { responseMimeType: "application/json", temperature: 0.3 },
+    });
+    const parsed = JSON.parse(response.text ?? "{}") as { script?: unknown };
+    if (typeof parsed.script === "string" && parsed.script.trim()) {
+      shortened = sanitizeThaiVoiceScript(parsed.script);
+    }
+  } catch (err) {
+    console.error("[Script length] shorten-to-units pass failed:", err);
+  }
+  return trimScriptToFit(shortened, limitSecondsForUnits(max, language), language);
+}
+
+/**
+ * Split the storyboard's time into speech time per scene: the first scene
+ * gives up the music intro, the last the quiet ending, and a scene shorter
+ * than what it gives up carries no speech.
+ */
+export function speakSecondsForScenes(
+  sceneSeconds: number[],
+  introSeconds: number,
+  endingSeconds: number
+): number[] {
+  const out = sceneSeconds.map((seconds) => (Number.isFinite(seconds) && seconds > 0 ? seconds : 0));
+  // Take the intro from the front and the ending from the back, spilling into
+  // the next scene when one is too short to absorb it.
+  let intro = Math.max(0, introSeconds);
+  for (let i = 0; i < out.length && intro > 0; i++) {
+    const take = Math.min(out[i], intro);
+    out[i] -= take;
+    intro -= take;
+  }
+  let ending = Math.max(0, endingSeconds);
+  for (let i = out.length - 1; i >= 0 && ending > 0; i--) {
+    const take = Math.min(out[i], ending);
+    out[i] -= take;
+    ending -= take;
+  }
+  return out.map((seconds) => Math.round(seconds * 100) / 100);
 }

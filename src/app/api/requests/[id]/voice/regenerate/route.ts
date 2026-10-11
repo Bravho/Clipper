@@ -8,16 +8,12 @@ import {
   StepLockedAfterApprovalError,
   VoiceMakeLimitError,
 } from "@/services/VideoGenerationService";
-import {
-  ELEVENLABS_FEMALE_VOICE_ID,
-  ELEVENLABS_MALE_VOICE_ID,
-} from "@/config/elevenLabsVoices";
+import { VOICE_MAKE_TOP_UP } from "@/config/requestLimits";
+import { ELEVENLABS_VOICE_IDS } from "@/config/elevenLabsVoices";
 
 const schema = z.object({
   jobId: z.string().min(1),
-  voiceId: z
-    .enum([ELEVENLABS_FEMALE_VOICE_ID, ELEVENLABS_MALE_VOICE_ID])
-    .optional(),
+  voiceId: z.enum(ELEVENLABS_VOICE_IDS).optional(),
   /** The script as edited in the studio; replaces the approved one when it differs. */
   scriptText: z.string().trim().min(1).max(5000).optional(),
 });
@@ -61,7 +57,14 @@ export async function POST(
     // show in the requester's language, and the count so it can say how many.
     if (err instanceof VoiceMakeLimitError) {
       return NextResponse.json(
-        { error: err.message, code: err.code, used: err.used, limit: err.limit },
+        {
+          error: err.message,
+          code: err.code,
+          used: err.used,
+          limit: err.limit,
+          // What buying more makes costs, so the studio can offer it.
+          topUp: { makes: VOICE_MAKE_TOP_UP.makes, priceCredits: VOICE_MAKE_TOP_UP.priceCredits },
+        },
         { status: 409 }
       );
     }

@@ -168,6 +168,17 @@ export function windowsForScenePlan(plan: ScenePlan[]): SceneWindow[] {
   );
 }
 
+/**
+ * The text-graphics choice saved for a job: from `render_payload.textStyle`
+ * (always writable) or the `selected_text_style` column (migration 038).
+ * "none" only when neither holds a real choice.
+ */
+export function textGraphicChoiceOf(job: Pick<VideoGenerationJob, "renderPayload" | "selectedTextStyle">): TextGraphicChoice {
+  const fromPayload = job.renderPayload?.textStyle;
+  if (isTextGraphicChoice(fromPayload)) return fromPayload;
+  return isTextGraphicChoice(job.selectedTextStyle) ? job.selectedTextStyle : "none";
+}
+
 export class TextGraphicsService {
   /**
    * The plan for `job`, written if needed.
@@ -189,9 +200,7 @@ export class TextGraphicsService {
       fresh?: boolean;
     } = {}
   ): Promise<TextGraphicsPlan | null> {
-    const choice: TextGraphicChoice =
-      options.choice ??
-      (isTextGraphicChoice(job.selectedTextStyle) ? job.selectedTextStyle : "none");
+    const choice: TextGraphicChoice = options.choice ?? textGraphicChoiceOf(job);
     if (choice === "none") return null;
 
     const inputs = await this._inputs(job, choice, options);
@@ -222,12 +231,33 @@ export class TextGraphicsService {
     }
   }
 
-  /** Save the requester's choice. Never throws: a missing column must not block production. */
+  /**
+   * Save the requester's choice. Never throws: a missing column must not block
+   * production.
+   *
+   * Written TWICE on purpose (2026-10-11). The `selected_text_style` column
+   * comes from migration 038; on a database without it that write fails, the
+   * choice was lost, every final render read "none" — and the video came out
+   * with the Look's frame but none of the text graphics picked in Graphic.
+   * The choice is now also kept in `render_payload` (a column every database
+   * has), and `textGraphicChoiceOf` reads either.
+   */
   async saveChoice(jobId: string, choice: TextGraphicChoice): Promise<void> {
     try {
       await videoGenerationJobRepository.update(jobId, { selectedTextStyle: choice });
     } catch (err) {
-      console.error("[textGraphics] could not save the style choice:", err);
+      console.error(
+        "[textGraphics] could not save the style choice to selected_text_style (is migration 038 applied?):",
+        err
+      );
+    }
+    try {
+      const job = await videoGenerationJobRepository.findById(jobId);
+      await videoGenerationJobRepository.update(jobId, {
+        renderPayload: { ...(job?.renderPayload ?? {}), textStyle: choice },
+      });
+    } catch (err) {
+      console.error("[textGraphics] could not save the style choice to render_payload:", err);
     }
   }
 

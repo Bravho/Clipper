@@ -10,6 +10,7 @@ import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import { getServerI18n } from "@/i18n/server";
 import type { MessageKey } from "@/i18n/messages";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
+import { isManagementEnabledFor } from "@/config/management";
 
 export const metadata: Metadata = { title: "Get the app" };
 export const dynamic = "force-dynamic";
@@ -30,7 +31,19 @@ export default async function GetTheAppPage() {
 
   const { t } = getServerI18n();
 
+  const management = session?.user
+    ? isManagementEnabledFor({
+        id: session.user.id,
+        email: session.user.email,
+        role: session.user.role,
+      })
+    : false;
+
   const links: { href: string; label: MessageKey }[] = [
+    ...(management
+      ? [{ href: ROUTES.MANAGEMENT, label: "mkt.getApp.management" as MessageKey }]
+      : []),
+    { href: ROUTES.DASHBOARD, label: "nav.dashboard" },
     { href: ROUTES.ACCOUNT, label: "mkt.getApp.account" },
     { href: ROUTES.CREDITS, label: "mkt.getApp.credits" },
     { href: ROUTES.PRICING, label: "mkt.getApp.pricing" },

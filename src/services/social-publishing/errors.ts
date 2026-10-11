@@ -111,7 +111,25 @@ export function classifyTargetError(raw: unknown): {
   if (has("temporarily unavailable", "server error", "internal error", "503", "502")) {
     return { code: "provider_unavailable", message: text };
   }
-  if (has("disconnect", "reconnect", "token expired", "re-authenticate", "reauth")) {
+  // Meta (Instagram/Facebook) reports a dead login as OAuthException code 190:
+  // "Error validating access token: The session has been invalidated because
+  // the user changed their password ...". This used to fall through to
+  // "unknown", so the account kept looking connected while every post failed.
+  if (
+    has(
+      "disconnect",
+      "reconnect",
+      "token expired",
+      "re-authenticate",
+      "reauth",
+      "error validating access token",
+      "access token has expired",
+      "invalid oauth access token",
+      "session has been invalidated",
+      "session has expired",
+      "oauthexception"
+    )
+  ) {
     return { code: "account_disconnected", message: text };
   }
   if (has("permission", "not authorized", "unauthorized", "scope", "forbidden")) {

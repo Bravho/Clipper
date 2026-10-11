@@ -5,6 +5,7 @@ import {
   BACKGROUND_MUSIC_TRACKS,
   findMusicTrack,
   normalizeMusicTrackId,
+  SAFE_MUSIC_FILE_NAME,
 } from "@/config/backgroundMusic";
 
 const dir = path.join(process.cwd(), "public", BACKGROUND_MUSIC_DIR);
@@ -14,6 +15,15 @@ describe("background music catalog", () => {
     const onDisk = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".mp3")).sort();
     const inCatalog = BACKGROUND_MUSIC_TRACKS.map((t) => t.file).sort();
     expect(inCatalog).toEqual(onDisk);
+  });
+
+  // "Fresh & Intriguing.mp3" would not play in the phone app; a URL-unsafe
+  // character in a file name must never come back.
+  it("names every file with URL-safe characters only", () => {
+    for (const t of BACKGROUND_MUSIC_TRACKS) {
+      expect(t.file).toMatch(SAFE_MUSIC_FILE_NAME);
+      expect(t.url).not.toMatch(/%(?!20)/);
+    }
   });
 
   it("has unique ids, no reserved 'none', and resolvable files and urls", () => {

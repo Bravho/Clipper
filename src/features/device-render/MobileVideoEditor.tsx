@@ -8,12 +8,19 @@ import {
   MONTAGE_TRANSITIONS,
   MOTION_PRESETS,
   minMontageTotalSeconds,
+  minVoiceCoverSeconds,
+  MONTAGE_ENDING_SECONDS,
+  MONTAGE_INTRO_SECONDS,
   type MontageTransition,
   type MotionPreset,
 } from "@/config/montage";
 import { MOTION_TEMPLATES } from "@/config/motionTemplates";
 import { DEFAULT_TEXT_GRAPHIC_CHOICE, isTextGraphicChoice } from "@/config/textGraphicStyles";
-import { BACKGROUND_MUSIC_TRACKS, findMusicTrack } from "@/config/backgroundMusic";
+import {
+  BACKGROUND_MUSIC_TRACKS,
+  NO_MUSIC_TRACK_ID,
+  findMusicTrack,
+} from "@/config/backgroundMusic";
 import { DEFAULT_ELEVENLABS_VOICE_ID, type ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { Platform, PLATFORM_ASPECT_RATIOS } from "@/domain/enums/Platform";
@@ -46,6 +53,8 @@ import {
   scenesFromScenePlan,
   scenesFromStoryboard,
   scenesPlaySeconds,
+  shotPlaySeconds,
+  stretchScenesToLength,
   storyboardFromScenes,
   submissionProblems,
   validateDocument,
@@ -57,6 +66,14 @@ import {
   type EditorSource,
 } from "./editorState";
 import { subjectCentre } from "@/lib/mobile/shotFraming";
+import { preloadVoiceSamples } from "./voiceSamples";
+import {
+  clearDraftSources,
+  loadDraftSources,
+  saveDraftSources,
+  sweepOrphanStudioCopies,
+} from "./studioDraftMedia";
+import { estimateVoiceSeconds, type ScriptLanguage } from "@/lib/ai/scriptLength";
 import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import {
   materialSeconds,
@@ -102,6 +119,9 @@ import {
   fetchStudioFraming,
   generateStudioChannels,
   regenerateStudioVoice,
+  buyStudioVoiceMakes,
+  fitStudioScriptToStoryboard,
+  shortenStudioScript,
   reopenStudioProduction,
   restoreStudioSources,
   submitStudioRequest,
@@ -743,6 +763,12 @@ function StudioEditor({
     }
   }, [requestId]);
 
+  // Download the speaker samples as soon as the studio has a request, so ▶ in
+  // the Sound step plays at once instead of waiting on the network.
+  useEffect(() => {
+    if (requestId) preloadVoiceSamples();
+  }, [requestId]);
+
   // Read where the request is whenever the studio attaches to one — including
   // a studio reopened on a request that was submitted days ago.
   useEffect(() => {
@@ -785,6 +811,39 @@ function StudioEditor({
     const timer = setInterval(() => void refreshContent(), analysing ? 4_000 : 15_000);
     return () => clearInterval(timer);
   }, [analysing, refreshContent, requestId, submitted]);
+
+  // BEFORE Submit: the picked media of this request, read back from the app's
+  // private copies when the studio reopens (studioDraftMedia.ts), and the list
+  // kept current as media is added or removed. The list is only written once
+  // the read-back has been tried, so a studio that opens empty never erases a
+  // list it has not looked at yet.
+  const draftChecked = useRef(false);
+  useEffect(() => {
+    void sweepOrphanStudioCopies();
+  }, []);
+  useEffect(() => {
+    draftChecked.current = false;
+  }, [requestId]);
+  useEffect(() => {
+    if (!requestId || !content || draftChecked.current) return;
+    if (content.submitted || document.sources.length > 0) {
+      draftChecked.current = true;
+      return;
+    }
+    draftChecked.current = true;
+    void loadDraftSources(requestId).then((sources) => {
+      if (sources.length === 0) return;
+      setDocument((current) =>
+        current.sources.length > 0 ? current : { ...current, sources }
+      );
+      setMessage(t("studio.msg.mediaRestored", { count: sources.length }));
+    });
+  }, [content, document.sources.length, requestId, t]);
+  useEffect(() => {
+    if (!requestId || !draftChecked.current) return;
+    if (submitted) clearDraftSources(requestId);
+    else saveDraftSources(requestId, document.sources);
+  }, [document.sources, requestId, submitted]);
 
   // A reopened studio has no picked files in memory. The originals it kept at
   // submission are still in private storage; bring them back so the storyboard
@@ -1014,7 +1073,7 @@ function StudioEditor({
     }
   }, [content?.script?.text, document.scenes, indexOfSource, refreshContent, requestId, script, t, voiceId]);
 
-  const scriptStatus: ScriptStatus = !submitted
+  const pipelineScriptStatus: ScriptStatus = !submitted
     ? "not_submitted"
     : analysisFailed
       ? "failed"
@@ -1025,6 +1084,19 @@ function StudioEditor({
           : script
             ? "review"
             : "writing";
+  // The script is written FROM the approved storyboard (2026-10-11): until
+  // that has happened the Sound step asks for the storyboard instead of
+  // showing the draft written at submission.
+  const [scriptWrittenHere, setScriptWrittenHere] = useState(false);
+  const [fittingScript, setFittingScript] = useState(false);
+  const scriptReady =
+    contentApproved || Boolean(content?.scriptFromStoryboard) || scriptWrittenHere;
+  const scriptStatus: ScriptStatus =
+    pipelineScriptStatus === "review" && !scriptReady
+      ? fittingScript
+        ? "writing"
+        : "waiting_storyboard"
+      : pipelineScriptStatus;
 
   // ── voice, production, and the storyboard's approval ─────────────────────
   const step_ = content?.currentStep ?? null;
@@ -1085,7 +1157,17 @@ function StudioEditor({
     Boolean(content?.contentApproved) &&
     script != null &&
     script.text.trim() !== (content?.script?.text ?? "").trim();
-  const requiredSeconds = voiceSeconds != null ? minMontageTotalSeconds(voiceSeconds) : null;
+  // The least picture that keeps every word of the voice on screen — the
+  // renderers' own rule (voice starts after the music lead-in, which only
+  // exists with music), plus a short tail. "Not chosen yet" counts as music,
+  // the stricter case. The server's gates use the same rule
+  // (config/montage.ts minVoiceCoverSeconds).
+  const requiredSeconds =
+    voiceSeconds != null
+      ? minVoiceCoverSeconds(voiceSeconds, document.musicTrackId !== NO_MUSIC_TRACK_ID)
+      : null;
+  // What "Fit to the voice" aims for: the comfortable intro and ending.
+  const recommendedSeconds = voiceSeconds != null ? minMontageTotalSeconds(voiceSeconds) : null;
   const storyboardSeconds = scenesPlaySeconds(document.scenes);
   const covered = requiredSeconds == null || storyboardSeconds + 1 / 30 >= requiredSeconds;
   // The voice against the storyboard's combined scene length, for the Sound
@@ -1115,7 +1197,14 @@ function StudioEditor({
     setVoiceBusy(true);
     setVoiceError(null);
     try {
-      await approveStudioVoice({ requestId, jobId: content.jobId, platforms: orderedPlatforms, t });
+      await approveStudioVoice({
+        requestId,
+        jobId: content.jobId,
+        platforms: orderedPlatforms,
+        storyboardSeconds: hasShots ? storyboardSeconds : null,
+        musicSelected: document.musicTrackId !== NO_MUSIC_TRACK_ID,
+        t,
+      });
       await refreshContent();
       setMessage(t("studio.msg.voiceApproved"));
     } catch (failure) {
@@ -1123,7 +1212,16 @@ function StudioEditor({
     } finally {
       setVoiceBusy(false);
     }
-  }, [content?.jobId, orderedPlatforms, refreshContent, requestId, t]);
+  }, [
+    content?.jobId,
+    document.musicTrackId,
+    hasShots,
+    orderedPlatforms,
+    refreshContent,
+    requestId,
+    storyboardSeconds,
+    t,
+  ]);
 
   const regenerateVoice = useCallback(async () => {
     if (!requestId || !content?.jobId) return;
@@ -1146,6 +1244,34 @@ function StudioEditor({
       setVoiceBusy(false);
     }
   }, [content?.jobId, refreshContent, requestId, script?.text, scriptEdited, t, voiceId]);
+
+  /**
+   * Spend credits on more voice makes for this request, after the requester
+   * confirmed the price in the Sound panel. The server sells a pack only while
+   * the makes are used up, so a second tap buys nothing.
+   */
+  const [buyingVoiceMakes, setBuyingVoiceMakes] = useState(false);
+  const buyVoiceMakes = useCallback(async () => {
+    if (!requestId || !content?.jobId) return;
+    setBuyingVoiceMakes(true);
+    setVoiceError(null);
+    try {
+      const result = await buyStudioVoiceMakes({ requestId, jobId: content.jobId, t });
+      await refreshContent();
+      if (result.creditsSpent > 0) {
+        setMessage(
+          t("studio.audio.topUpDone", {
+            makes: content.voiceMakeTopUp?.makes ?? 5,
+            credits: result.creditsSpent,
+          })
+        );
+      }
+    } catch (failure) {
+      setVoiceError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setBuyingVoiceMakes(false);
+    }
+  }, [content?.jobId, content?.voiceMakeTopUp?.makes, refreshContent, requestId, t]);
 
   /**
    * Make the voice again AFTER it was approved.
@@ -1238,6 +1364,54 @@ function StudioEditor({
    * Approve the storyboard and move on to Sound. Approving never starts the
    * render: that is Render's own button, once Sound and Graphic are confirmed.
    */
+  /**
+   * Write the speaking script again from the storyboard as it is now — scene by
+   * scene, each line about that scene's pictures and held to that scene's
+   * time, so the voice follows the pictures and fits the combined length.
+   * Replaces the script on screen; only before the script is approved.
+   */
+  const writeScriptFromStoryboard = useCallback(
+    async (scenes: EditorScene[]) => {
+      if (!requestId || !content?.jobId) return;
+      const plan = scenes
+        .map((scene) => ({
+          summary: scene.summary,
+          shots: scene.shots
+            .map((shot) => ({
+              assetIndex: indexOfSource(shot.sourceId),
+              seconds: Math.round(shotPlaySeconds(shot) * 100) / 100,
+            }))
+            .filter((shot) => shot.assetIndex >= 0 && shot.seconds > 0),
+        }))
+        .filter((scene) => scene.shots.length > 0);
+      if (plan.length === 0) return;
+      setFittingScript(true);
+      setApproveError(null);
+      try {
+        const result = await fitStudioScriptToStoryboard({
+          requestId,
+          jobId: content.jobId,
+          scenes: plan,
+          // "Not chosen yet" counts as music: the stricter, shorter script.
+          musicSelected: document.musicTrackId !== NO_MUSIC_TRACK_ID,
+          t,
+        });
+        setScript((current) =>
+          current ? { ...current, text: result.scriptThai, english: "" } : current
+        );
+        setScriptEdited(false);
+        setScriptWrittenHere(true);
+        await refreshContent();
+        setMessage(t("studio.msg.scriptFitted"));
+      } catch (failure) {
+        setApproveError(failure instanceof Error ? failure.message : String(failure));
+      } finally {
+        setFittingScript(false);
+      }
+    },
+    [content?.jobId, document.musicTrackId, indexOfSource, refreshContent, requestId, t]
+  );
+
   const approveStoryboard = useCallback(() => {
     setApprovedScenes(document.scenes);
     setStep("audio");
@@ -1246,7 +1420,24 @@ function StudioEditor({
         ? t("studio.msg.storyboardApprovedSound")
         : t("studio.msg.storyboardApprovedScript")
     );
-  }, [contentApproved, document.scenes, t]);
+    // The script was written before the scenes were arranged. Write it again
+    // from the approved storyboard — unless the person has already rewritten
+    // it by hand, in which case the Sound step offers it instead.
+    // Approving the storyboard is what writes the script. A script already
+    // written from an earlier approval and then edited by hand is kept; the
+    // Sound step offers to write it again instead.
+    if (!contentApproved && pipelineScriptStatus === "review" && !(scriptReady && scriptEdited)) {
+      void writeScriptFromStoryboard(document.scenes);
+    }
+  }, [
+    contentApproved,
+    document.scenes,
+    pipelineScriptStatus,
+    scriptEdited,
+    scriptReady,
+    t,
+    writeScriptFromStoryboard,
+  ]);
 
   const fitStoryboard = useCallback(
     (seconds: number) => {
@@ -1261,6 +1452,117 @@ function StudioEditor({
     },
     [update]
   );
+
+  /**
+   * AUTO-FIT: make the storyboard and the voice agree, in one tap from Sound.
+   *
+   * 1. Lengthen the scenes (stretchScenesToLength): every shot grows with its
+   *    own length so the edit's rhythm stays; clips use unused footage first,
+   *    then play no slower than 0.8×; photos hold up to 2.5× / 8 s. Aimed at
+   *    the comfortable length (voice + music intro + ending).
+   * 2. Only if the scenes cannot stretch far enough, shorten the script by
+   *    exactly the remainder — sized from the voice actually made — and put it
+   *    in the script box. The voice has to be made again from it (one make),
+   *    which the "voice still reads the old script" note then asks for.
+   * A storyboard that was approved stays approved: only shot lengths changed.
+   */
+  const [autoFitting, setAutoFitting] = useState(false);
+  const fitScenesToVoice = useCallback(async () => {
+    if (recommendedSeconds == null || requiredSeconds == null || voiceSeconds == null) return;
+    const sourceOf = (sourceId: string) => {
+      const source = findSource(document, sourceId);
+      return source ? { kind: source.kind, durationSeconds: source.durationSeconds ?? null } : null;
+    };
+    const stretched = stretchScenesToLength(
+      document.scenes,
+      Math.ceil(recommendedSeconds * 10) / 10,
+      sourceOf
+    );
+    if (stretched.totalSeconds > storyboardSeconds + 0.01) {
+      update((current) => ({ ...current, scenes: stretched.scenes }));
+      if (storyboardApproved) setApprovedScenes(stretched.scenes);
+    }
+    const added = Math.max(0, stretched.totalSeconds - storyboardSeconds);
+    const covers = stretched.totalSeconds + 1 / 30 >= requiredSeconds;
+    if (covers) {
+      setMessage(
+        t("studio.msg.autoFitScenes", {
+          added: added.toFixed(1),
+          total: stretched.totalSeconds.toFixed(1),
+        })
+      );
+      return;
+    }
+
+    // Still short: the scenes are as long as they can sensibly go. Shorten the
+    // script so the next voice fits the stretched scenes with the ending kept.
+    if (!requestId || !content?.jobId || !script) return;
+    const musicSelected = document.musicTrackId !== NO_MUSIC_TRACK_ID;
+    const targetVoice =
+      stretched.totalSeconds - (musicSelected ? MONTAGE_INTRO_SECONDS : 0) - MONTAGE_ENDING_SECONDS;
+    if (!(targetVoice > 1)) {
+      setVoiceError(t("studio.audio.autoFitTooShort"));
+      return;
+    }
+    setAutoFitting(true);
+    setVoiceError(null);
+    try {
+      const text = await shortenStudioScript({
+        requestId,
+        jobId: content.jobId,
+        text: script.text,
+        voiceSeconds,
+        targetVoiceSeconds: targetVoice,
+        t,
+      });
+      setScriptEdited(true);
+      setScript((current) => (current ? { ...current, text, english: "" } : current));
+      setMessage(
+        t("studio.msg.autoFitScript", {
+          added: added.toFixed(1),
+          cut: Math.max(0, voiceSeconds - targetVoice).toFixed(1),
+        })
+      );
+    } catch (failure) {
+      setVoiceError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setAutoFitting(false);
+    }
+  }, [
+    content?.jobId,
+    document,
+    recommendedSeconds,
+    requestId,
+    requiredSeconds,
+    script,
+    storyboardApproved,
+    storyboardSeconds,
+    t,
+    update,
+    voiceSeconds,
+  ]);
+
+  // ── how long the script will read, against what the scenes carry ──
+  const scriptLanguage: ScriptLanguage = /[\u0E00-\u0E7F]/.test(script?.text ?? "")
+    ? "th"
+    : /[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i.test(script?.text ?? "")
+      ? "vi"
+      : "en";
+  const scriptBudget =
+    script && hasShots
+      ? {
+          estimateSeconds: estimateVoiceSeconds(script.text, scriptLanguage),
+          carrySeconds: Math.max(
+            0,
+            storyboardSeconds -
+              (document.musicTrackId !== NO_MUSIC_TRACK_ID ? MONTAGE_INTRO_SECONDS : 0) -
+              MONTAGE_ENDING_SECONDS
+          ),
+          // Spoken letters per second, to say "about N letters" when trimming.
+          unitsPerSecond: scriptLanguage === "th" ? 10.3 : scriptLanguage === "vi" ? 3.6 : 2.6,
+          unit: scriptLanguage,
+        }
+      : null;
 
   const coverageHint = covered
     ? null
@@ -1850,8 +2152,15 @@ function StudioEditor({
             onMoveScene={moveScene}
             onRemoveScene={removeScene}
             onSceneSummary={setSceneSummary}
-            onFit={fitStoryboard}
-            targetSeconds={document.brief.targetSeconds}
+            onFit={(seconds) =>
+              // With a voice, aim for the comfortable length, not the floor.
+              fitStoryboard(
+                recommendedSeconds != null
+                  ? Math.max(seconds, Math.ceil(recommendedSeconds * 10) / 10)
+                  : seconds
+              )
+            }
+            targetSeconds={STUDIO_MAX_DURATION_SECONDS}
             requiredSeconds={requiredSeconds}
             approval={storyboardApproval}
             onApprove={approveStoryboard}
@@ -1881,6 +2190,12 @@ function StudioEditor({
             scriptStatus={scriptStatus}
             script={script}
             currentStep={content?.currentStep ?? null}
+            scriptFitting={fittingScript}
+            onFitScript={
+              scriptStatus === "review" && hasShots
+                ? () => void writeScriptFromStoryboard(document.scenes)
+                : null
+            }
             onScriptChange={(change) => {
               setScriptEdited(true);
               setScript((current) => (current ? { ...current, ...change } : current));
@@ -1888,9 +2203,12 @@ function StudioEditor({
             voiceScriptStale={voiceScriptStale}
             materialSeconds={materialTotal}
             maxVoiceSeconds={maxVoiceSeconds}
-            voiceTooLong={voiceTooLong}
+            voiceTooLong={voiceTooLong && !(storyboardFit?.fits ?? false)}
             storyboardFit={storyboardFit}
             onOpenStoryboard={editLocked ? null : () => setStep("scenes")}
+            onFitToVoice={editLocked ? null : () => void fitScenesToVoice()}
+            autoFitting={autoFitting}
+            scriptBudget={scriptBudget}
             voiceId={voiceId}
             onVoice={setVoiceId}
             onApprove={() => void approveScript()}
@@ -1916,6 +2234,9 @@ function StudioEditor({
             }
             remakeDiscardsVideo={step_ === VideoGenerationStep.AwaitingOverlayApproval}
             voiceMakes={content?.voiceMakes ?? null}
+            voiceMakeTopUp={content?.voiceMakeTopUp ?? null}
+            onBuyVoiceMakes={() => void buyVoiceMakes()}
+            buyingVoiceMakes={buyingVoiceMakes}
             voiceBusy={voiceBusy}
             voiceError={voiceError}
             onLanguages={(languages: CaptionLanguage[]) => {
@@ -1931,7 +2252,9 @@ function StudioEditor({
             confirmBlocker={
               productionStarted || voiceStatus === "approved"
                 ? null
-                : scriptStatus === "review"
+                : scriptStatus === "waiting_storyboard"
+                  ? t("studio.blocker.approveStoryboard")
+                  : scriptStatus === "review"
                   ? t("studio.blocker.approveScript")
                   : voiceStatus === "review"
                     ? t("studio.blocker.listenVoice")
