@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { aspectRatioClass } from "@/lib/aspectRatio";
 
 /**
@@ -92,6 +92,11 @@ export interface ClipTrimBarProps {
    *  "9:16" for TikTok, "16:9" for YouTube). The preview is framed to this so it
    *  matches how the clip will appear in the final channel-shaped video. */
   aspectRatio?: string | null;
+  /**
+   * Where the clip sits in that frame (the studio's zoom / focus framing, from
+   * `framingStyle`). Absent = the plain cover crop.
+   */
+  mediaStyle?: CSSProperties;
   onChange: (trim: { start: number; end: number }) => void;
   /** Screen words. Defaults are the request page's Thai; the English studio
    *  passes `CLIP_TRIM_LABELS_EN`. */
@@ -147,6 +152,18 @@ export const CLIP_TRIM_LABELS_EN: ClipTrimLabels = {
   lengthUnit: "s",
 };
 
+/** The preview box: exactly `ratio`, at most 240px tall and the column wide. */
+function frameBoxStyle(ratio: string | null | undefined): CSSProperties {
+  const [w, h] = (ratio ?? "").split(":").map(Number);
+  const width = w > 0 && h > 0 ? w : 9;
+  const height = w > 0 && h > 0 ? h : 16;
+  return {
+    aspectRatio: `${width} / ${height}`,
+    width: `min(100%, calc(240px * ${width} / ${height}))`,
+    height: "auto",
+  };
+}
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -162,6 +179,7 @@ export function ClipTrimBar({
   trimStartSeconds,
   trimEndSeconds,
   aspectRatio,
+  mediaStyle,
   onChange,
   labels,
 }: ClipTrimBarProps) {
@@ -608,8 +626,13 @@ export function ClipTrimBar({
       {/* Preview framed to the selected primary channel's aspect ratio, so the
           clip is shown cropped exactly as it will appear in the final video. */}
       <div className="mb-2 flex justify-center">
+        {/* Width-driven so the box is always the ratio: a fixed h-60 with
+            max-w-full let a wide shape (16:9 needs 427px at 240px tall) be
+            squeezed by a narrow phone into a box that was NOT the video's
+            shape. Now: at most 240px tall, never wider than the column. */}
         <div
-          className={`relative ${aspectRatioClass(aspectRatio)} h-60 max-w-full overflow-hidden rounded-md bg-black`}
+          className={`relative ${aspectRatioClass(aspectRatio)} overflow-hidden rounded-md bg-black`}
+          style={frameBoxStyle(aspectRatio)}
         >
           <video
             ref={previewRef}
@@ -648,6 +671,11 @@ export function ClipTrimBar({
               void el.play().catch(() => undefined);
             }}
             className="h-full w-full object-cover"
+            style={
+              mediaStyle
+                ? { position: "absolute", ...mediaStyle }
+                : undefined
+            }
           />
 
           {/* Poster stand-in while nothing is decoded yet. The generated JPEG is

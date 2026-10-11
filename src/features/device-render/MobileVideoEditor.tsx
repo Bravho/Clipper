@@ -46,6 +46,7 @@ import {
   emptyDocument,
   findSource,
   nextId,
+  measureClipAspect,
   measurePictureAspect,
   readImagePoster,
   retimeScenes,
@@ -929,14 +930,24 @@ function StudioEditor({
   // much of a tall clip a wide video can show (see shotFraming.ts).
   useEffect(() => {
     const unmeasured = document.sources.filter(
-      (source) => source.aspect === undefined && (source.posterUrl || source.kind === "image")
+      (source) =>
+        source.aspect === undefined &&
+        (source.posterUrl || source.kind === "image" || (source.kind === "clip" && source.previewUrl))
     );
     if (unmeasured.length === 0) return;
     let cancelled = false;
     void Promise.all(
       unmeasured.map(async (source) => ({
         id: source.id,
-        aspect: await measurePictureAspect(source.posterUrl ?? source.previewUrl),
+        aspect:
+          (source.posterUrl || source.kind === "image"
+            ? await measurePictureAspect(source.posterUrl ?? source.previewUrl)
+            : null) ??
+          // No poster (common for iOS clips), or it would not load: ask the
+          // video itself, so the clip still gets framed and a zoom bar.
+          (source.kind === "clip" && source.previewUrl
+            ? await measureClipAspect(source.previewUrl)
+            : null),
       }))
     ).then((measured) => {
       if (cancelled) return;

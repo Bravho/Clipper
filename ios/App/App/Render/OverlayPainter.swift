@@ -955,9 +955,10 @@ enum OverlayPainter {
             at: CGPoint(x: inset + 34 * s, y: inset + 42 * s))
         dot.fillColor = palette.accent.cgColor
         dot.add(track("transform", clock) { t in
-            let k = CGFloat(max(0.0001, TM.easeOutBack(TM.ramp(t, 0.35, 0.45))
-                * (1 + 0.6 * TM.beatEnvelope(t, tl.beats, 0.05, 0.45))
-                * (1 + 0.25 * TM.wave(t, 1.6) * TM.ramp(t, 0.9, 0.5))))
+            let pop: Double = Double(TM.easeOutBack(TM.ramp(t, 0.35, 0.45)))
+            let beat: Double = 1 + 0.6 * Double(TM.beatEnvelope(t, tl.beats, 0.05, 0.45))
+            let pulse: Double = 1 + 0.25 * Double(TM.wave(t, 1.6)) * Double(TM.ramp(t, 0.9, 0.5))
+            let k = CGFloat(max(0.0001, pop * beat * pulse))
             return transformValue(sx: k, sy: k)
         }, forKey: "t")
         container.addSublayer(dot)

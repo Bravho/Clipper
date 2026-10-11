@@ -112,6 +112,38 @@ export function measurePictureAspect(url: string): Promise<number | null> {
   });
 }
 
+/**
+ * Read a clip's shape from the video itself, for clips with no poster frame.
+ *
+ * iOS often cannot capture a poster from a picked clip (HEVC in a blob: URL),
+ * and without a shape the clip was never framed: no zoom bar, and the
+ * previews fell back to a plain cover crop. `videoWidth/videoHeight` are the
+ * DISPLAY size (rotation applied), which is the shape the renderer frames.
+ */
+export function measureClipAspect(url: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    if (typeof document === "undefined") return resolve(null);
+    const video = document.createElement("video");
+    let settled = false;
+    const finish = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      video.removeAttribute("src");
+      video.load();
+      resolve(value);
+    };
+    const timer = window.setTimeout(() => finish(null), 8000);
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.onloadedmetadata = () =>
+      finish(video.videoWidth > 0 && video.videoHeight > 0 ? video.videoWidth / video.videoHeight : null);
+    video.onerror = () => finish(null);
+    video.src = url;
+  });
+}
+
 export interface EditorScene {
   id: string;
   transitionIn: MontageTransition;

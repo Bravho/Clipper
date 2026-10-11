@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import type { MotionPreset } from "@/config/montage";
-import { aspectOfRatio, framePlacement } from "@/lib/mobile/shotFraming";
+import { aspectOfRatio, fillCoverage, framePlacement } from "@/lib/mobile/shotFraming";
 import { useStudioT } from "./studioI18n";
 import {
   findSource,
@@ -71,6 +71,8 @@ export function framingStyle(
  */
 
 interface PreviewShot {
+  sceneId: string;
+  shotId: string;
   source: EditorSource;
   durationSeconds: number;
   trimStartSeconds: number;
@@ -101,18 +103,46 @@ function motionFrames(motion: MotionPreset): [string, string] {
   }
 }
 
-function ratioValue(ratio: string): string {
-  const [w, h] = ratio.split(":");
-  return `${w} / ${h}`;
+/**
+ * The box a preview is drawn in: EXACTLY the Main Video Shape, as large as fits.
+ *
+ * It used to be `aspect-ratio` plus a fixed height for portrait shapes and a
+ * max-height for the rest. Whenever that height asked for more width than the
+ * panel had (4:5 at 62vh is ~420px wide on a ~340px phone column; 1:1 on a
+ * tablet hit the max-height), the browser kept the size limit and dropped the
+ * ratio, so the preview was not the video's shape — and the framed picture,
+ * positioned in percentages of that box, was squeezed with it. Driving only
+ * the width (the smaller of "full width" and "the width the height cap
+ * allows") and letting `aspect-ratio` derive the height cannot break the shape.
+ */
+export function previewBoxStyle(ratio: string, maxHeight: string): CSSProperties {
+  const [w, h] = ratio.split(":").map(Number);
+  const width = w > 0 && h > 0 ? w : 9;
+  const height = w > 0 && h > 0 ? h : 16;
+  return {
+    aspectRatio: `${width} / ${height}`,
+    width: `min(100%, calc(${maxHeight} * ${width} / ${height}))`,
+    height: "auto",
+    maxHeight: "none",
+  };
 }
 
 export function StoryboardPreview({
   document,
   jump,
+  onFrameZoom,
+  disabled = false,
 }: {
   document: EditorDocument;
   /** Start playback at this flat shot index; `nonce` makes a repeat tap count. */
   jump: { index: number; nonce: number } | null;
+  /**
+   * Set the shown shot's zoom (0 = whole picture, 1 = fill the frame). When
+   * given, a zoom bar appears under the preview for any shot whose picture is
+   * not (nearly) the Main Video Shape — the same control as Framing.
+   */
+  onFrameZoom?: (sceneId: string, shotId: string, frameZoom: number) => void;
+  disabled?: boolean;
 }) {
   const t = useStudioT();
   const shots = useMemo<PreviewShot[]>(() => {
@@ -123,6 +153,8 @@ export function StoryboardPreview({
         const source = findSource(document, shot.sourceId);
         if (!source || !(shot.durationSeconds > 0)) return;
         list.push({
+          sceneId: scene.id,
+          shotId: shot.id,
           source,
           durationSeconds: shot.durationSeconds,
           trimStartSeconds: shot.trimStartSeconds,
@@ -272,6 +304,30 @@ export function StoryboardPreview({
 
   useEffect(() => stop, [stop]);
 
+  // A clip with no poster frame (common on iOS) had nothing to show while the
+  // preview was stopped — a black box, so its framing could not be judged or
+  // zoomed. Cue the one video element on the shot's first kept frame instead.
+  const idleCue =
+    !playing && current?.source.kind === "clip" && !current.source.posterUrl ? current : null;
+  useEffect(() => {
+    if (!idleCue) return;
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.getAttribute("src") !== idleCue.source.previewUrl) {
+      video.preload = "auto";
+      video.src = idleCue.source.previewUrl;
+    }
+    const cue = () => {
+      try {
+        video.currentTime = idleCue.trimStartSeconds + 0.01;
+      } catch {
+        /* not seekable yet */
+      }
+    };
+    if (video.readyState >= 1) cue();
+    else video.onloadedmetadata = cue;
+  }, [idleCue]);
+
   if (shots.length === 0) return null;
 
   const placement = current
@@ -284,12 +340,18 @@ export function StoryboardPreview({
       )
     : undefined;
 
+  // Same rule as Framing: a picture within 3% of the video's shape loses
+  // nothing to the crop, so there is nothing to zoom.
+  const zoomable =
+    current?.source.aspect != null &&
+    fillCoverage(current.source.aspect, aspectOfRatio(document.ratio)) < 0.97;
+
   return (
     <div className="studio-preview">
       <div
         ref={frameRef}
         className="studio-preview-frame"
-        style={{ aspectRatio: ratioValue(document.ratio) }}
+        style={previewBoxStyle(document.ratio, "62vh")}
       >
         <video
           ref={videoRef}
@@ -299,7 +361,7 @@ export function StoryboardPreview({
           className="studio-preview-media"
           style={{
             ...placement,
-            display: current?.source.kind === "clip" && playing ? "block" : "none",
+            display: current?.source.kind === "clip" && (playing || idleCue) ? "block" : "none",
           }}
         />
         {/* Always mounted, so a photo's camera move can start on the same
@@ -360,6 +422,36 @@ export function StoryboardPreview({
           </button>
         ))}
       </div>
+      {onFrameZoom && current && zoomable && (
+        <label className="studio-framing-zoom studio-preview-zoom">
+          <span className="studio-shot-meta">
+            {t("studio.preview.zoomFor", { shot: index + 1, ratio: document.ratio })}
+            {" · "}
+            {current.frameZoom <= 0.02
+              ? t("studio.framing.whole")
+              : current.frameZoom >= 0.98
+                ? t("studio.framing.fills")
+                : t("studio.framing.zoom", { percent: Math.round(current.frameZoom * 100) })}
+          </span>
+          <span className="studio-framing-ends">
+            <span>{t("studio.framing.wholeShort")}</span>
+            <input
+              className="studio-range"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={current.frameZoom}
+              disabled={disabled}
+              aria-label={t("studio.framing.zoomAria")}
+              onChange={(event) =>
+                onFrameZoom(current.sceneId, current.shotId, Number(event.target.value))
+              }
+            />
+            <span>{t("studio.framing.fillShort")}</span>
+          </span>
+        </label>
+      )}
       <p className="studio-counter" style={{ textAlign: "left", marginTop: 6 }}>
         {elapsed.toFixed(1)}s / {total.toFixed(1)}s · picture only — the voice, captions and
         template are added when it renders.

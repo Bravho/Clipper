@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { EditorDocument } from "./editorState";
 import { useStudioT } from "./studioI18n";
-import { framingStyle } from "./StoryboardPreview";
+import { framingStyle, previewBoxStyle } from "./StoryboardPreview";
 import {
   buildSoundPreviewTimeline,
   clipRateFor,
@@ -38,14 +38,33 @@ import {
  */
 
 const DRIFT_SECONDS = 0.25;
+/**
+ * WHY THE VOICE IS THE CLOCK (the iOS "voice cuts in and out" bug).
+ *
+ * The preview used to run its own wall clock and, every animation frame, SEEK
+ * the voice back onto it whenever they differed by more than 0.25 s. On
+ * Android that never fires. On iOS it fires constantly: WebKit's audio
+ * (AVFoundation) takes a few hundred ms to actually start — longer here, as
+ * the voice streams through /stream's Range proxy to object storage — and
+ * `currentTime` does not move in that time. The wall clock does, so the drift
+ * passed 0.25 s, the voice was seeked, the seek flushed the buffer and
+ * stalled it again, the drift grew again, it was seeked again… sound in short
+ * bursts with gaps: exactly what was heard.
+ *
+ * Now: while the voice is playing, the CLOCK FOLLOWS THE VOICE (the picture
+ * waits for it, never the other way round), and the voice is only ever
+ * positioned while it is paused (start, scrub). The voice file is also played
+ * from memory (fetched once into a blob:), so a scrub on iOS does not wait on
+ * a fresh network range request.
+ */
+const VOICE_FOLLOW_SECONDS = 0.05;
+/** Only a real desync (not start-up latency) may move a playing voice. */
+const VOICE_HARD_DRIFT_SECONDS = 1.5;
+/** Music is a looped bed: re-place it only when clearly off. */
+const MUSIC_DRIFT_SECONDS = 1.0;
 /** Music bed level, and its level under speech (renderer: 0.3, ducked). */
 const MUSIC_BED = 0.3;
 const MUSIC_UNDER_VOICE = 0.18;
-
-function ratioValue(ratio: string): string {
-  const [w, h] = ratio.split(":");
-  return `${w} / ${h}`;
-}
 
 function fmt(seconds: number): string {
   return seconds.toFixed(1);
@@ -80,10 +99,38 @@ export function SoundSyncPreview({
   const rafRef = useRef<number | null>(null);
   const clockRef = useRef({ startedAtWall: 0, startedAtClock: 0 });
   const clipIdRef = useRef<string | null>(null);
+  const lastClockRef = useRef(0);
+
+  // The voice, played from memory once it has been fetched (see above).
+  const [voiceBlobUrl, setVoiceBlobUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let made: string | null = null;
+    setVoiceBlobUrl(null);
+    void fetch(voiceUrl, { credentials: "same-origin" })
+      .then((response) => (response.ok ? response.blob() : null))
+      .then((blob) => {
+        if (cancelled || !blob || blob.size === 0) return;
+        made = URL.createObjectURL(blob);
+        setVoiceBlobUrl(made);
+      })
+      .catch(() => undefined); // keep streaming from voiceUrl
+    return () => {
+      cancelled = true;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [voiceUrl]);
 
   const [clock, setClock] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [voiceFailed, setVoiceFailed] = useState(false);
+
+  // Switch to the in-memory copy only while stopped, so a playing voice is
+  // never reloaded under the listener.
+  const [voiceSrc, setVoiceSrc] = useState(voiceUrl);
+  useEffect(() => {
+    if (!playing) setVoiceSrc(voiceBlobUrl ?? voiceUrl);
+  }, [playing, voiceBlobUrl, voiceUrl]);
 
   const current = shotAt(timeline, clock);
   const inBlackTail = timeline.blackTail != null && clock >= timeline.blackTail.start;
@@ -138,9 +185,16 @@ export function SoundSyncPreview({
           if (!voice.paused) voice.pause();
           if (want != null && Math.abs(voice.currentTime - want) > 0.05) voice.currentTime = want;
           if (want == null && at < timeline.voiceStart && voice.currentTime !== 0) voice.currentTime = 0;
-        } else {
-          if (Math.abs(voice.currentTime - want) > DRIFT_SECONDS) voice.currentTime = want;
-          if (voice.paused) void voice.play().catch(() => undefined);
+        } else if (voice.paused) {
+          // Positioned only while paused — never seeked under its own feet.
+          if (Math.abs(voice.currentTime - want) > 0.05) voice.currentTime = want;
+          void voice.play().catch(() => undefined);
+        } else if (
+          !voice.seeking &&
+          voice.readyState >= 3 &&
+          Math.abs(voice.currentTime - want) > VOICE_HARD_DRIFT_SECONDS
+        ) {
+          voice.currentTime = want;
         }
       }
 
@@ -149,13 +203,18 @@ export function SoundSyncPreview({
       if (music) {
         const length = Number.isFinite(music.duration) && music.duration > 0 ? music.duration : null;
         const want = length ? at % length : at;
-        music.volume = voiceTimeAt(timeline, at) != null ? MUSIC_UNDER_VOICE : MUSIC_BED;
+        const level = voiceTimeAt(timeline, at) != null ? MUSIC_UNDER_VOICE : MUSIC_BED;
+        if (Math.abs(music.volume - level) > 0.001) music.volume = level;
         if (!play) {
           if (!music.paused) music.pause();
           if (Math.abs(music.currentTime - want) > 0.05) music.currentTime = want;
         } else {
-          if (Math.abs(music.currentTime - want) > DRIFT_SECONDS * 2) music.currentTime = want;
-          if (music.paused) void music.play().catch(() => undefined);
+          if (music.paused) {
+            if (Math.abs(music.currentTime - want) > 0.05) music.currentTime = want;
+            void music.play().catch(() => undefined);
+          } else if (!music.seeking && Math.abs(music.currentTime - want) > MUSIC_DRIFT_SECONDS) {
+            music.currentTime = want;
+          }
         }
       }
     },
@@ -179,32 +238,61 @@ export function SoundSyncPreview({
     (from?: number) => {
       stopClock();
       const start = from ?? (clock >= total - 0.05 ? 0 : clock);
-      // WebViews only let an element start sound from inside a tap. The voice
-      // may not be due for 0.6 s (the music lead-in), so unlock it now —
-      // muted, and paused again at once if it is not its turn yet.
-      for (const element of [voiceRef.current, musicRef.current]) {
-        if (!element || !element.paused) continue;
-        element.muted = true;
-        void element
-          .play()
-          .then(() => {
-            if (rafRef.current == null || (element === voiceRef.current && voiceTimeAt(timeline, start) == null)) {
-              element.pause();
-            }
-          })
-          .catch(() => undefined)
-          .finally(() => {
-            element.muted = false;
-          });
+      // Place the voice BEFORE it is started: once playing it is not seeked.
+      const voiceAtStart = voiceTimeAt(timeline, start);
+      const voiceEl = voiceRef.current;
+      if (voiceEl) {
+        const want = voiceAtStart ?? 0;
+        if (Math.abs(voiceEl.currentTime - want) > 0.05) {
+          // A scrub while playing: stop it, place it, and let syncMedia start
+          // it again — never move a voice that is playing.
+          if (!voiceEl.paused) voiceEl.pause();
+          voiceEl.currentTime = want;
+        }
+      }
+      // WebViews only let an element start sound from inside a tap. Whatever
+      // is due now is started by syncMedia below, still inside this tap. The
+      // voice may not be due for 0.6 s (the music lead-in), so it is unlocked
+      // here: play() then pause() at once — WebKit lifts the gesture rule on
+      // the play() call itself. (It used to be left playing muted and paused
+      // when the play() promise settled; on iOS that can be AFTER the lead-in,
+      // so it either paused a voice that had just become due — a cut — or the
+      // voice had silently run ahead and the first words were skipped.)
+      if (voiceEl && voiceEl.paused && voiceAtStart == null) {
+        voiceEl.muted = true;
+        const attempt = voiceEl.play();
+        voiceEl.pause();
+        voiceEl.muted = false;
+        if (voiceEl.currentTime !== 0) voiceEl.currentTime = 0;
+        void attempt?.catch(() => undefined);
       }
       clockRef.current = { startedAtWall: performance.now(), startedAtClock: start };
+      lastClockRef.current = start;
       setClock(start);
       setPlaying(true);
       syncMedia(start, true);
       const tick = () => {
-        const now =
-          clockRef.current.startedAtClock +
-          (performance.now() - clockRef.current.startedAtWall) / 1000;
+        const wallNow = performance.now();
+        let now =
+          clockRef.current.startedAtClock + (wallNow - clockRef.current.startedAtWall) / 1000;
+        // While the voice is talking, it IS the clock: hold the picture while
+        // the voice starts up or buffers, catch up if the voice is ahead.
+        const voice = voiceRef.current;
+        if (
+          voice &&
+          !voice.paused &&
+          !voice.ended &&
+          !voice.muted &&
+          voiceTimeAt(timeline, lastClockRef.current) != null
+        ) {
+          const fromVoice = timeline.voiceStart + voice.currentTime;
+          if (Math.abs(fromVoice - now) > VOICE_FOLLOW_SECONDS) {
+            // Never run the picture backwards: if the voice is behind, wait.
+            now = Math.max(fromVoice, lastClockRef.current);
+            clockRef.current = { startedAtWall: wallNow, startedAtClock: now };
+          }
+        }
+        lastClockRef.current = now;
         if (now >= total) {
           setClock(total);
           pause();
@@ -269,7 +357,7 @@ export function SoundSyncPreview({
     <div className="studio-preview studio-sync-preview">
       <audio
         ref={voiceRef}
-        src={voiceUrl}
+        src={voiceSrc}
         preload="auto"
         onLoadedMetadata={(event) => {
           const d = event.currentTarget.duration;
@@ -279,7 +367,7 @@ export function SoundSyncPreview({
       />
       {musicUrl && <audio ref={musicRef} src={musicUrl} preload="auto" loop />}
 
-      <div className="studio-preview-frame" style={{ aspectRatio: ratioValue(document.ratio) }}>
+      <div className="studio-preview-frame" style={previewBoxStyle(document.ratio, "46vh")}>
         <div style={{ position: "absolute", inset: 0, opacity: dissolveOpacity }}>
           <video
             ref={videoRef}

@@ -808,12 +808,16 @@
   background: #000;
 }
 
-/* A portrait frame at full width would be taller than the phone; cap it and
-   let the aspect ratio set the width instead. */
-.studio-preview-frame[style*="9 / 16"],
-.studio-preview-frame[style*="4 / 5"] {
-  width: auto;
-  height: 62vh;
+/* Size and shape come from previewBoxStyle() (StoryboardPreview.tsx): the
+   width is the smaller of the column and what the height cap allows, and
+   aspect-ratio derives the height — so the box is always the Main Video
+   Shape. (A fixed portrait height used to overflow narrow phones and lose
+   the ratio.) */
+
+/* Zoom bar under the storyboard preview, for the shot on screen. */
+.studio-preview-zoom {
+  margin: 10px auto 0;
+  max-width: 420px;
 }
 
 .studio-preview-media {
@@ -888,10 +892,6 @@
 
 /* ── Sound step: voice + storyboard on one clock ─────────────────────────── */
 
-.studio-sync-preview .studio-preview-frame[style*="9 / 16"],
-.studio-sync-preview .studio-preview-frame[style*="4 / 5"] {
-  height: 46vh;
-}
 
 .studio-sync-black {
   position: absolute;
@@ -1424,8 +1424,9 @@
 .studio-framing-frame {
   position: relative;
   display: block;
-  width: 100%;
-  max-width: 320px;
+  /* Width comes from the inline style (see FramingControl); the inner box
+     carries the aspect-ratio, because iOS WebKit does not reliably size a
+     <button> from aspect-ratio. */
   padding: 0;
   overflow: hidden;
   border-radius: 10px;
@@ -1438,13 +1439,15 @@
   cursor: default;
 }
 
-.studio-framing-frame[style*="9 / 16"],
-.studio-framing-frame[style*="4 / 5"] {
-  width: auto;
-  height: 240px;
+.studio-framing-box {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
 }
 
-.studio-framing-frame img {
+.studio-framing-box img,
+.studio-framing-box video {
   position: absolute;
   inset: 0;
   width: 100%;

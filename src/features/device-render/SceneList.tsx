@@ -16,7 +16,7 @@ import {
   type EditorSource,
 } from "./editorState";
 import { MediaThumb } from "./MediaThumb";
-import { framingStyle, StoryboardPreview } from "./StoryboardPreview";
+import { framingStyle, previewBoxStyle, StoryboardPreview } from "./StoryboardPreview";
 import { useStudioT, type StudioT } from "./studioI18n";
 
 const motionLabel = (t: StudioT, motion: MotionPreset) => t(`studio.motion.${motion}`);
@@ -184,7 +184,12 @@ export function SceneList({
         </p>
       )}
 
-      <StoryboardPreview document={document} jump={null} />
+      <StoryboardPreview
+        document={document}
+        jump={null}
+        disabled={disabled}
+        onFrameZoom={(sceneId, shotId, frameZoom) => onPatchShot(sceneId, shotId, { frameZoom })}
+      />
 
       <div className="studio-fit" role="status">
         <span>
@@ -364,6 +369,13 @@ export function SceneList({
                         trimStartSeconds={shot.trimStartSeconds}
                         trimEndSeconds={shot.trimEndSeconds ?? undefined}
                         aspectRatio={document.ratio}
+                        mediaStyle={framingStyle(
+                          source.aspect,
+                          document.ratio,
+                          shotFrameZoom(shot, source, document.ratio),
+                          shot.focusX,
+                          shot.focusY
+                        )}
                         labels={trimLabels(t)}
                         onChange={({ start, end }) => {
                           // The kept window is the shot: drag a handle and the
@@ -549,7 +561,9 @@ function FramingControl({
   const sameShape =
     source.aspect != null && fillCoverage(source.aspect, aspectOfRatio(ratio)) >= 0.97;
   const imageUrl = source.posterUrl ?? (source.kind === "image" ? source.previewUrl : null);
-  const [w, h] = ratio.split(":");
+  // Exactly the video's shape, at most 240px tall and 320px wide (see
+  // previewBoxStyle for why the width, not the height, is what is set).
+  const box = previewBoxStyle(ratio, "240px");
 
   return (
     <div className="studio-framing">
@@ -558,7 +572,7 @@ function FramingControl({
         <button
           type="button"
           className="studio-framing-frame"
-          style={{ aspectRatio: `${w} / ${h}` }}
+          style={{ width: `min(320px, ${box.width})` }}
           disabled={disabled}
           aria-label={t("studio.framing.aria")}
           onClick={(event) => {
@@ -584,13 +598,15 @@ function FramingControl({
             });
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element -- a local poster frame */}
-          <img
-            src={imageUrl}
-            alt=""
-            draggable={false}
-            style={framingStyle(source.aspect, ratio, zoom, shot.focusX, shot.focusY)}
-          />
+          <span className="studio-framing-box" style={{ aspectRatio: box.aspectRatio }}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- a local poster frame */}
+            <img
+              src={imageUrl}
+              alt=""
+              draggable={false}
+              style={framingStyle(source.aspect, ratio, zoom, shot.focusX, shot.focusY)}
+            />
+          </span>
         </button>
       )}
       <p className="studio-shot-meta" style={{ margin: 0 }}>
