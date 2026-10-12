@@ -1,5 +1,6 @@
 "use client";
 
+import type { VideoAccessView } from "@/services/VideoAccessService";
 import type { TextGraphicChoice } from "@/config/textGraphicStyles";
 import type { TextGraphicsPreviewResult } from "./TextStylePicker";
 import {
@@ -13,12 +14,13 @@ import type { ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import type { Platform } from "@/domain/enums/Platform";
 import { describeDeviceRenderCapability } from "@/lib/mobile/deviceRenderBridge";
 import type { LocalAnalysisFrame, LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
-import type { SubjectBox } from "@/lib/mobile/shotFraming";
+import { readShotFocusBoxes, type ShotFocusBoxes, type SubjectBox } from "@/lib/mobile/shotFraming";
 import { isUnreadableFileError } from "@/features/requests/uploadDiagnostics";
 import { supportsManifestRender } from "@/lib/mobile/deviceRenderBridge";
 import { prepareClip } from "./clipPreview";
 import { studioEnglish, type StudioT } from "./studioText";
-import { FREE_REQUESTS_PER_WINDOW, FREE_WINDOW_DAYS } from "@/config/videoPackages";
+import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
+import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import {
   readImagePoster,
   type EditorSource,
@@ -89,6 +91,11 @@ export interface StudioContent {
   chain: StudioChain | null;
   /** The request has been delivered at least once (its videos can go to Channel Management). */
   delivered?: boolean;
+  /**
+   * May the finished videos leave the app (download, Channel Management), and
+   * until when they are kept (VideoAccessService). Absent from an older server.
+   */
+  access?: VideoAccessView;
   /**
    * Voice makes used and allowed for this request (config/requestLimits.ts).
    * Absent from an older server.
@@ -256,7 +263,7 @@ export class StudioQuotaError extends Error {
  * knows it.
  */
 export function quotaMessage(t: StudioT, nextFreeSlotAt: string | null): string {
-  const values = { count: FREE_REQUESTS_PER_WINDOW, days: FREE_WINDOW_DAYS };
+  const values = { count: FREE_REQUESTS_TOTAL, days: VIDEO_LIFETIME_DAYS };
   const when = nextFreeSlotAt ? new Date(nextFreeSlotAt) : null;
   if (!when || Number.isNaN(when.getTime())) return t("studio.pipe.quotaNoDate", values);
   return t("studio.pipe.quota", {
@@ -283,6 +290,58 @@ export async function fetchStudioFraming(requestId: string): Promise<(SubjectBox
   } catch {
     return [];
   }
+}
+
+/**
+ * Where the AI sees the subject in each shot, from small frames taken inside
+ * the shot (see `shotFrames.ts`), in the same order. Sent in batches that keep
+ * each request well under a proxy's body limit. Never throws: a shot the AI
+ * could not look at answers null, and that shot keeps its earlier framing.
+ */
+export async function fetchShotFraming(
+  requestId: string,
+  shots: { frames: string[] }[]
+): Promise<(ShotFocusBoxes | null)[]> {
+  const BATCH_BYTES = 600_000;
+  const batches: number[][] = [];
+  let current: number[] = [];
+  let bytes = 0;
+  shots.forEach((shot, index) => {
+    const size = shot.frames.reduce((sum, frame) => sum + frame.length, 0);
+    if (current.length > 0 && (bytes + size > BATCH_BYTES || current.length >= 20)) {
+      batches.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(index);
+    bytes += size;
+  });
+  if (current.length > 0) batches.push(current);
+
+  const answers: (ShotFocusBoxes | null)[] = shots.map(() => null);
+  await Promise.all(
+    batches.map(async (batch) => {
+      try {
+        const response = await fetch("/api/device-render/framing", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestId,
+            shots: batch.map((index) => ({ frames: shots[index].frames })),
+          }),
+        });
+        if (!response.ok) return;
+        const body = (await response.json()) as { boxes?: unknown[] };
+        if (!Array.isArray(body.boxes)) return;
+        batch.forEach((index, slot) => {
+          answers[index] = readShotFocusBoxes(body.boxes?.[slot]);
+        });
+      } catch {
+        // Fail open: these shots keep their framing.
+      }
+    })
+  );
+  return answers;
 }
 
 export async function fetchStudioContent(requestId: string): Promise<StudioContent> {
@@ -804,11 +863,17 @@ export function generateStudioChannels(input: {
   requestId: string;
   jobId: string;
   ratios: string[];
+  /** Every shot framed for every shape (`scenePlanFromScenes`); framing only is saved. */
+  framings?: StudioScenePlan[];
   t?: StudioT;
 }): Promise<void> {
   return postJson(
     `/api/requests/${input.requestId}/generate-additional-ratios`,
-    { jobId: input.jobId, ratios: input.ratios },
+    {
+      jobId: input.jobId,
+      ratios: input.ratios,
+      ...(input.framings ? { framings: input.framings } : {}),
+    },
     (input.t ?? studioEnglish)("studio.pipe.channelsFailed")
   );
 }

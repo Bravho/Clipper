@@ -1839,3 +1839,35 @@ a.studio-button {
   width: 100%;
   aspect-ratio: 9 / 8;
 }
+
+/* Channels: every scene framed in each extra shape (ChannelFraming). */
+.studio-channel-framing-strip {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.studio-channel-framing-tile {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: center;
+  cursor: pointer;
+}
+
+.studio-channel-framing-tile .studio-framing-box {
+  border-radius: 8px;
+  border: 1px solid var(--s-border);
+  background: #000;
+}
+
+.studio-channel-framing-tile[aria-pressed="true"] .studio-framing-box {
+  outline: 2px solid var(--s-accent);
+  outline-offset: 1px;
+}

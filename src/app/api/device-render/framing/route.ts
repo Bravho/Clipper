@@ -2,10 +2,24 @@ import { NextResponse } from "next/server";
 
 import { authorizeDeviceRenderRequest, readJsonBody } from "../_guard";
 import { clipRequestRepository } from "@/repositories/index";
-import { subjectFromThousandths, type SubjectBox } from "@/lib/mobile/shotFraming";
+import { createHash } from "node:crypto";
+
+import {
+  subjectFromThousandths,
+  type ShotFocusBoxes,
+  type SubjectBox,
+} from "@/lib/mobile/shotFraming";
 
 /**
  * POST /api/device-render/framing   { requestId }
+ * POST /api/device-render/framing   { requestId, shots: [{ frames: [dataUrl, …] }, …] }
+ *
+ * With `shots` (the Channels step): where the subject is in each SHOT, from
+ * small frames the phone takes inside the shot's own trimmed window, answered
+ * as `{ boxes }` in the same order — see `lib/ai/shotFramingAi.ts`. The studio
+ * frames every channel shape from these. Frames are looked at, never stored.
+ *
+ * Without `shots`:
  *
  * Where the main subject is in each of a request's photos and clips, so the
  * studio can frame every shot automatically: zoomed out just far enough that a
@@ -39,6 +53,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Request not found." }, { status: 404 });
   }
 
+  if (Array.isArray(parsed.body.shots)) {
+    return answerShots(requestId, parsed.body.shots);
+  }
+
   const cached = cache.get(requestId);
   if (cached && Date.now() - cached.at < CACHE_MS) {
     return NextResponse.json({ subjects: cached.subjects });
@@ -58,5 +76,73 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error("[device-render/framing] subject detection failed:", err);
     return NextResponse.json({ subjects: [] });
+  }
+}
+
+// ─── Per-shot framing (Channels step) ────────────────────────────────────────
+
+/** Bounds on what a phone may send: a storyboard is at most a few dozen shots. */
+const MAX_SHOTS = 40;
+const MAX_FRAMES_PER_SHOT = 3;
+const MAX_FRAMES = 60;
+/** A ~480px JPEG is 20–60 KB; anything far bigger is not a framing thumbnail. */
+const MAX_FRAME_BASE64 = 300_000;
+
+const shotCache = new Map<string, { at: number; boxes: (ShotFocusBoxes | null)[] }>();
+
+function readFrame(value: unknown): { data: string; mimeType: string } | null {
+  if (typeof value !== "string") return null;
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(value);
+  if (!match || match[2].length > MAX_FRAME_BASE64) return null;
+  return { mimeType: match[1], data: match[2] };
+}
+
+async function answerShots(requestId: string, rawShots: unknown[]) {
+  if (rawShots.length === 0 || rawShots.length > MAX_SHOTS) {
+    return NextResponse.json({ error: "Too many or no shots." }, { status: 400 });
+  }
+  const shots = rawShots.map((shot) => {
+    const frames = Array.isArray((shot as { frames?: unknown })?.frames)
+      ? ((shot as { frames: unknown[] }).frames)
+      : [];
+    return {
+      frames: frames
+        .slice(0, MAX_FRAMES_PER_SHOT)
+        .map(readFrame)
+        .filter((frame): frame is { data: string; mimeType: string } => frame !== null),
+    };
+  });
+  const total = shots.reduce((sum, shot) => sum + shot.frames.length, 0);
+  if (total === 0) return NextResponse.json({ boxes: shots.map(() => null) });
+  if (total > MAX_FRAMES) {
+    return NextResponse.json({ error: "Too many frames." }, { status: 400 });
+  }
+
+  // The same frames (a reopened Channels step) are answered once per process.
+  const hash = createHash("sha1");
+  hash.update(requestId);
+  for (const shot of shots) {
+    hash.update("|");
+    for (const frame of shot.frames) hash.update(frame.data);
+  }
+  const key = hash.digest("hex");
+  const cached = shotCache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_MS) {
+    return NextResponse.json({ boxes: cached.boxes });
+  }
+
+  try {
+    const { detectShotFocusBoxes } = await import("@/lib/ai/shotFramingAi");
+    const boxes = await detectShotFocusBoxes(shots);
+    shotCache.set(key, { at: Date.now(), boxes });
+    if (shotCache.size > 500) {
+      const oldest = shotCache.keys().next().value;
+      if (oldest) shotCache.delete(oldest);
+    }
+    return NextResponse.json({ boxes });
+  } catch (err) {
+    // Fail open: the studio keeps the framing it had.
+    console.error("[device-render/framing] shot framing failed:", err);
+    return NextResponse.json({ boxes: [] });
   }
 }

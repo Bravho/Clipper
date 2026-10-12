@@ -34,9 +34,8 @@ jest.mock("@/repositories", () => {
 import { VideoQuotaService, QuotaExhaustedError } from "@/services/VideoQuotaService";
 import { VideoPackagePurchaseService } from "@/services/VideoPackagePurchaseService";
 import {
-  FREE_REQUESTS_PER_WINDOW,
+  FREE_REQUESTS_TOTAL,
   REQUESTS_PER_PAID_MONTH,
-  FREE_WINDOW_DAYS,
   findVideoPackage,
 } from "@/config/videoPackages";
 import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
@@ -115,11 +114,12 @@ beforeEach(() => {
 });
 
 describe("free allowance", () => {
-  it("gives 3 videos per rolling 30 days, then refuses", async () => {
-    for (let n = 0; n < FREE_REQUESTS_PER_WINDOW; n++) {
+  it("gives 2 free videos per account, then refuses", async () => {
+    expect(FREE_REQUESTS_TOTAL).toBe(2);
+    for (let n = 0; n < FREE_REQUESTS_TOTAL; n++) {
       const q = await quota.getQuota(USER);
       expect(q.tier).toBe(RequestPricingTier.Free);
-      expect(q.remaining).toBe(FREE_REQUESTS_PER_WINDOW - n);
+      expect(q.remaining).toBe(FREE_REQUESTS_TOTAL - n);
       await quota.consume(USER);
       await submitted(USER);
     }
@@ -130,40 +130,41 @@ describe("free allowance", () => {
     await expect(quota.consume(USER)).rejects.toBeInstanceOf(QuotaExhaustedError);
   });
 
-  it("slides: a submission older than the window stops counting", async () => {
+  it("never comes back: a free video from a year ago still counts", async () => {
     const now = new Date();
-    // Three submissions, but the oldest is 31 days back and has aged out.
-    await submitted(USER, { at: new Date(now.getTime() - 31 * DAY) });
-    await submitted(USER, { at: new Date(now.getTime() - 2 * DAY) });
-    await submitted(USER, { at: new Date(now.getTime() - 1 * DAY) });
+    await submitted(USER, { at: new Date(now.getTime() - 365 * DAY) });
+    await submitted(USER, { at: new Date(now.getTime() - 200 * DAY) });
 
     const q = await quota.getQuota(USER, now);
-    expect(q.remaining).toBe(1);
-    expect(q.canSubmit).toBe(true);
+    expect(q.remaining).toBe(0);
+    expect(q.canSubmit).toBe(false);
+    // Nothing renews, so there is no date to promise.
+    expect(q.renewsAt).toBeNull();
   });
 
-  it("tells the user when their next free video arrives", async () => {
-    const now = new Date("2026-09-08T12:00:00Z");
-    const oldest = new Date(now.getTime() - 10 * DAY);
-    await submitted(USER, { at: oldest });
-    await submitted(USER, { at: new Date(now.getTime() - 5 * DAY) });
-    await submitted(USER, { at: new Date(now.getTime() - 1 * DAY) });
+  it("refuses with no next-free date", async () => {
+    await submitted(USER);
+    await submitted(USER);
+    const refusal = await quota.consume(USER).catch((err: unknown) => err);
+    expect(refusal).toBeInstanceOf(QuotaExhaustedError);
+    expect((refusal as QuotaExhaustedError).nextFreeSlotAt).toBeNull();
+  });
 
-    const q = await quota.getQuota(USER, now);
-    expect(q.canSubmit).toBe(false);
-    // A slot opens exactly 30 days after the oldest counted submission.
-    expect(q.renewsAt?.getTime()).toBe(oldest.getTime() + FREE_WINDOW_DAYS * DAY);
+  it("does not count requests a package paid for", async () => {
+    await submitted(USER, { windowId: "window-1" });
+    await submitted(USER, { windowId: "window-1" });
+    expect((await quota.getQuota(USER)).remaining).toBe(FREE_REQUESTS_TOTAL);
   });
 
   it("counts only submitted requests — a draft never burns a slot", async () => {
     await repos.clipRequestRepository.create({ userId: USER, ...FORM });
     await repos.clipRequestRepository.create({ userId: USER, ...FORM });
-    expect((await quota.getQuota(USER)).remaining).toBe(FREE_REQUESTS_PER_WINDOW);
+    expect((await quota.getQuota(USER)).remaining).toBe(FREE_REQUESTS_TOTAL);
   });
 
   it("does not count another user's submissions", async () => {
     await submitted("someone-else");
-    expect((await quota.getQuota(USER)).remaining).toBe(FREE_REQUESTS_PER_WINDOW);
+    expect((await quota.getQuota(USER)).remaining).toBe(FREE_REQUESTS_TOTAL);
   });
 });
 
@@ -246,7 +247,7 @@ describe("purchased allowance", () => {
 
     const q = await quota.getQuota(USER, afterExpiry);
     expect(q.tier).toBe(RequestPricingTier.Free);
-    expect(q.remaining).toBe(FREE_REQUESTS_PER_WINDOW);
+    expect(q.remaining).toBe(FREE_REQUESTS_TOTAL);
   });
 
   it("cannot be driven below zero by simultaneous submissions", async () => {

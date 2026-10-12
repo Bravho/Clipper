@@ -26,10 +26,10 @@ import {
 } from "@/features/pricing/components/PurchaseHistory";
 import { managementPackageCopy } from "@/features/pricing/packageCopy";
 import {
-  FREE_REQUESTS_PER_WINDOW,
-  FREE_WINDOW_DAYS,
+  FREE_REQUESTS_TOTAL,
   findVideoPackage,
 } from "@/config/videoPackages";
+import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { getServerI18n } from "@/i18n/server";
 
 export const metadata: Metadata = { title: "แพ็กเกจและราคา — RClipper" };
@@ -189,8 +189,8 @@ export default async function PricingPage() {
   // publishing-only passes are retired; the ones people hold still show in the
   // status card and the history below.
   const ladderVars = {
-    freeTotal: FREE_REQUESTS_PER_WINDOW,
-    days: FREE_WINDOW_DAYS,
+    freeTotal: FREE_REQUESTS_TOTAL,
+    days: VIDEO_LIFETIME_DAYS,
     starterTotal: PACKAGE_TIER_REQUESTS.starter,
     proTotal: PACKAGE_TIER_REQUESTS.pro,
   };
@@ -235,7 +235,7 @@ export default async function PricingPage() {
           remaining: quota.remaining,
           total: quota.total,
           activeUntil: videoActiveUntil,
-          freeWindowDays: FREE_WINDOW_DAYS,
+          freeWindowDays: VIDEO_LIFETIME_DAYS,
         }}
         management={managementStatus}
       />

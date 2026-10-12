@@ -9,6 +9,8 @@ import { videoGenerationJobRepository } from "@/repositories";
 import { clipRequestService } from "@/services/ClipRequestService";
 import { eligibleExportAssetIds } from "@/services/management/ManagementEntitlementService";
 import { buildDistributionTransferView } from "@/features/management/server/buildDistributionTransferView";
+import { videoAccessService } from "@/services/VideoAccessService";
+import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import {
   StudioTransferScreen,
   type TransferVideo,
@@ -21,7 +23,7 @@ export const dynamic = "force-dynamic";
  *
  * The hand-over from the studio's Channels step to Channel Management, as a
  * page of its own: every finished video of the request is sent one by one
- * (`POST /api/management/transfers`, free and idempotent) with a row per video
+ * (`POST /api/management/transfers`, idempotent; needs a package) with a row per video
  * that goes Waiting → Sending → In Channel Management, then the library opens
  * with the new videos highlighted.
  *
@@ -70,6 +72,10 @@ export default async function ManagementTransferPage({
     ? eligibleExportAssetIds(job).filter((entry) => finished.has(entry.assetId))
     : [];
   const view = await buildDistributionTransferView(user, request.id);
+  // Sending needs a live package and unexpired videos (VideoAccessService);
+  // when it is refused, the screen says why instead of trying and failing.
+  const access = await videoAccessService.accessFor(request).catch(() => null);
+  const blocked = access?.transferBlock ?? null;
 
   const platforms = request.targetPlatforms ?? [];
   const channelsFor = (ratio: string | null) =>
@@ -90,6 +96,8 @@ export default async function ManagementTransferPage({
       requestId={request.id}
       title={request.title || request.placeName || ""}
       videos={videos}
+      blocked={blocked}
+      lifetimeDays={VIDEO_LIFETIME_DAYS}
     />
   );
 }

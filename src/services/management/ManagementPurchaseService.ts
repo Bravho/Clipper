@@ -23,6 +23,10 @@
  * absent from the input type, so it cannot be plumbed through by accident.
  */
 
+import {
+  videoAccessService,
+  type VideoAccessService,
+} from "@/services/VideoAccessService";
 import { createHash } from "crypto";
 import { pool } from "@/lib/db";
 import type { PoolClient } from "pg";
@@ -88,7 +92,8 @@ export class ManagementPurchaseService {
     private passes = managementAccessPassRepository,
     private bundles = managementUploadBundleRepository,
     private jobs = managementJobRepository,
-    private audit = managementAuditService
+    private audit = managementAuditService,
+    private videoAccess: Pick<VideoAccessService, "unlockForPackage"> = videoAccessService
   ) {}
 
   /**
@@ -529,6 +534,18 @@ export class ManagementPurchaseService {
           "[management purchase] failed to enqueue upload-retention extension",
           err
         );
+      }
+
+      // A package (a pass) unlocks the buyer's free videos and gives each a
+      // fresh 30 days (Tho, 2026-10-12). Upload-token bundles do not. Never
+      // fails a purchase that has already been charged: the next look at a
+      // locked video unlocks it anyway (VideoAccessService.accessFor).
+      if (accessPass || videoWindows.length > 0) {
+        try {
+          await this.videoAccess.unlockForPackage(params.userId, now);
+        } catch (err) {
+          console.error("[management purchase] unlocking free videos failed", err);
+        }
       }
 
       if (videoWindows.length > 0) {

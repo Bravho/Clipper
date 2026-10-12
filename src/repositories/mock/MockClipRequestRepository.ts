@@ -7,6 +7,7 @@ import {
 } from "@/domain/models/ClipRequest";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
+import { addDays, lifetimeDaysAtDelivery } from "@/config/retention";
 import { SEED_CLIP_REQUESTS } from "@/seed/requestSeedData";
 import { ADMIN_SEED_CLIP_REQUESTS } from "@/seed/adminSeedData";
 
@@ -61,6 +62,16 @@ export class MockClipRequestRepository implements IClipRequestRepository {
         request.userId === userId &&
         request.submittedAt !== null &&
         (!since || request.submittedAt.getTime() >= since.getTime())
+    ).length;
+  }
+
+  async countFreeRequestsByUserId(userId: string): Promise<number> {
+    return [...this.store.values()].filter(
+      (request) =>
+        request.userId === userId &&
+        request.submittedAt !== null &&
+        (request.pricingTier ?? RequestPricingTier.Free) === RequestPricingTier.Free &&
+        !request.allowanceRefundedAt
     ).length;
   }
 
@@ -180,9 +191,10 @@ export class MockClipRequestRepository implements IClipRequestRepository {
       discountBaht: 0,
       amountPaidBaht: 0,
       revisionCount: 0,
-      // Nothing is watermark-locked any more; the flag stays only so the
-      // capability can be switched back on (see ClipRequest.downloadUnlocked).
-      downloadUnlocked: true,
+      // Mirrors the column default: nothing leaves the app until submission
+      // decides (paid → unlocked) or a package purchase unlocks it.
+      downloadUnlocked: false,
+      videosExpireAt: null,
       isTrialRequest: false,
       pricingTier: RequestPricingTier.Free,
       videoAllowanceWindowId: null,
@@ -255,16 +267,32 @@ export class MockClipRequestRepository implements IClipRequestRepository {
         | "pricingTier"
         | "videoAllowanceWindowId"
         | "allowanceRefundedAt"
+        | "videosExpireAt"
       >
     >
   ): Promise<ClipRequest> {
     const existing = this.store.get(id);
     if (!existing) throw new Error(`ClipRequest not found: ${id}`);
+    const now = new Date();
+    // Same rule as the Postgres repository: the lifetime starts at the first
+    // delivery and a later re-delivery does not move it.
+    const lifetime =
+      status === RequestStatus.Delivered &&
+      extra?.videosExpireAt === undefined &&
+      !existing.videosExpireAt
+        ? {
+            videosExpireAt: addDays(
+              now,
+              lifetimeDaysAtDelivery(extra?.downloadUnlocked ?? existing.downloadUnlocked)
+            ),
+          }
+        : {};
     const updated: ClipRequest = {
       ...existing,
       status,
+      ...lifetime,
       ...(extra ?? {}),
-      updatedAt: new Date(),
+      updatedAt: now,
     };
     this.store.set(id, updated);
     return { ...updated };

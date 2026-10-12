@@ -6,6 +6,8 @@ import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, uploadedAssetRepository } from "@/repositories/index";
 import { spacesClient } from "@/lib/spaces";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { AssetType } from "@/domain/enums/AssetType";
+import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +25,9 @@ export const dynamic = "force-dynamic";
  * inline playback and seeking work reliably.
  *
  * Access: the owning requester, or any Editor/Admin. The asset must belong to
- * the request in the URL (prevents cross-request asset access).
+ * the request in the URL (prevents cross-request asset access). A free
+ * request's finished video plays only inside the app, and no finished video
+ * plays after it expires (see the check below).
  */
 export async function GET(
   request: NextRequest,
@@ -52,6 +56,31 @@ export async function GET(
   const asset = await uploadedAssetRepository.findById(assetId);
   if (!asset || asset.requestId !== id) {
     return new NextResponse("Asset not found", { status: 404 });
+  }
+
+  // A finished video of a FREE request is for watching in the app only
+  // (VideoAccessService): outside the app — a signed-in desktop browser — this
+  // route would otherwise be a download in all but name. An expired video is
+  // gone everywhere. Admin bypasses for QA.
+  if (isOwner && !isStaff && asset.assetType === AssetType.FinalClip) {
+    const expired =
+      clipRequest.videosExpireAt != null &&
+      clipRequest.videosExpireAt.getTime() <= Date.now();
+    if (expired) {
+      return new NextResponse("This video has expired.", { status: 410 });
+    }
+    // iOS plays <video> through AVPlayer, whose requests carry its own
+    // "AppleCoreMedia" user agent rather than the app's — let those through or
+    // a free video made on another device would not play in the iOS app. This
+    // is a speed bump, not a lock: a user agent can be faked. The real lock is
+    // the download route and the transfer gate.
+    const userAgent = request.headers.get("user-agent");
+    const inApp = isAppUserAgent(userAgent) || /AppleCoreMedia/i.test(userAgent ?? "");
+    if (!clipRequest.downloadUnlocked && !inApp) {
+      return new NextResponse("Free videos can be watched in the RClipper app.", {
+        status: 402,
+      });
+    }
   }
 
   const range = request.headers.get("range") ?? undefined;

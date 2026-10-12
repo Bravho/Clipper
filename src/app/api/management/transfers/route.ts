@@ -22,10 +22,10 @@ const bodySchema = z.object({
  * Copies a completed generation project's channel videos into RClipper
  * Management.
  *
- * FREE AND OPTIONAL. No payment is taken, quoted or required here — the user is
- * simply choosing to keep these videos in Management. Payment happens later, at
- * publish time. A user who never calls this keeps the existing download
- * experience unchanged.
+ * NEEDS A PACKAGE (2026-10-12). Nothing is charged here, but the account must
+ * hold a live package and the request must be unlocked and unexpired
+ * (ManagementEntitlementService.checkTransferEligibility). Refusals: 402
+ * `package_required`, 410 `videos_expired`, 409 for anything else.
  *
  * Idempotent: transferring an already-transferred project returns the existing
  * content item with `created: false` rather than erroring or duplicating.
@@ -83,8 +83,21 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     if (err instanceof ManagementTransferNotAllowedError) {
+      const reason = err.eligibility.reason;
+      if (reason === "package_required") {
+        return NextResponse.json(
+          { error: "Buy a package to send this video to Channel Management.", reason },
+          { status: 402 }
+        );
+      }
+      if (reason === "videos_expired") {
+        return NextResponse.json(
+          { error: "This video has expired and is no longer available.", reason },
+          { status: 410 }
+        );
+      }
       return NextResponse.json(
-        { error: "Transfer not available.", reason: err.eligibility.reason },
+        { error: "Transfer not available.", reason },
         { status: 409 }
       );
     }

@@ -48,10 +48,19 @@ export function StudioTransferScreen({
   requestId,
   title,
   videos,
+  blocked = null,
+  lifetimeDays = 30,
 }: {
   requestId: string;
   title: string;
   videos: TransferVideo[];
+  /**
+   * Why nothing may be sent (VideoAccessService): no package, or the videos
+   * expired. Nothing is attempted then — the screen says why instead.
+   */
+  blocked?: "package_required" | "expired" | null;
+  /** VIDEO_LIFETIME_DAYS, for the expired message. */
+  lifetimeDays?: number;
 }) {
   const { t } = useI18n();
   const router = useRouter();
@@ -115,7 +124,7 @@ export function StudioTransferScreen({
   );
 
   useEffect(() => {
-    if (started.current) return;
+    if (started.current || blocked) return;
     started.current = true;
     const waiting = rows.filter((row) => row.state !== "done").map((row) => row.assetId);
     if (waiting.length > 0) void sendAll(waiting);
@@ -149,7 +158,8 @@ export function StudioTransferScreen({
   const total = rows.length;
   const done = rows.filter((row) => row.state === "done").length;
   const failed = rows.filter((row) => row.state === "failed");
-  const working = rows.some((row) => row.state === "sending" || row.state === "waiting");
+  const working =
+    !blocked && rows.some((row) => row.state === "sending" || row.state === "waiting");
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
   const studioPath = `${ROUTES.STUDIO}?request=${encodeURIComponent(requestId)}`;
 
@@ -159,15 +169,43 @@ export function StudioTransferScreen({
         {t("mgmt.transfer.eyebrow")}
       </p>
       <h1 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">
-        {working
-          ? t("mgmt.transfer.sendingTitle")
-          : failed.length > 0
-            ? t("mgmt.transfer.partTitle")
-            : t("mgmt.transfer.doneTitle")}
+        {blocked === "expired"
+          ? t("mgmt.transfer.expiredTitle")
+          : blocked
+            ? t("mgmt.transfer.lockedTitle")
+            : working
+              ? t("mgmt.transfer.sendingTitle")
+              : failed.length > 0
+                ? t("mgmt.transfer.partTitle")
+                : t("mgmt.transfer.doneTitle")}
       </h1>
       {title && <p className="mt-1 truncate text-sm text-slate-500">{title}</p>}
 
-      {total === 0 ? (
+      {blocked ? (
+        <div
+          className={
+            "mt-6 rounded-xl border p-5 text-sm " +
+            (blocked === "expired"
+              ? "border-red-200 bg-red-50 text-red-800"
+              : "border-amber-200 bg-amber-50 text-amber-900")
+          }
+          role="status"
+        >
+          <p>
+            {blocked === "expired"
+              ? t("mgmt.transfer.expiredBody", { days: lifetimeDays })
+              : t("mgmt.transfer.lockedBody")}
+          </p>
+          {blocked === "package_required" && (
+            <Link
+              href={ROUTES.PRICING}
+              className="mt-3 inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              {t("mgmt.transfer.seePackages")}
+            </Link>
+          )}
+        </div>
+      ) : total === 0 ? (
         <div className="mt-6 rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
           {t("mgmt.transfer.none")}
         </div>

@@ -252,6 +252,9 @@ export function buildSceneMontageAssets(
     if (Number.isFinite(existing?.focusX)) asset.focusX = existing!.focusX;
     if (Number.isFinite(existing?.focusY)) asset.focusY = existing!.focusY;
     if (Number.isFinite(existing?.frameZoom)) asset.frameZoom = existing!.frameZoom;
+    if (existing?.framings) asset.framings = existing.framings;
+    if (existing?.aiFraming) asset.aiFraming = existing.aiFraming;
+    if (existing?.shapeFraming) asset.shapeFraming = existing.shapeFraming;
 
     return asset;
   });

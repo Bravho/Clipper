@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { getServerI18n } from "@/i18n/server";
 import type { MessageKey } from "@/i18n/messages";
-import { FREE_REQUESTS_PER_WINDOW, FREE_WINDOW_DAYS } from "@/config/videoPackages";
+import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
+import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { MANAGEMENT_PACKAGES_ON_SALE, managementPriceCredits } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS, PACKAGE_TIERS } from "@/config/packageTiers";
 import { tierPackageOptions } from "@/features/pricing/tierOptions";
@@ -73,7 +74,7 @@ export default function PlansPage() {
               "free",
               t("mkt.plans.freeName"),
               0,
-              t("mkt.plans.freeBody", { freeTotal: FREE_REQUESTS_PER_WINDOW, days: FREE_WINDOW_DAYS })
+              t("mkt.plans.freeBody", { freeTotal: FREE_REQUESTS_TOTAL, days: VIDEO_LIFETIME_DAYS })
             )}
           </div>
         </section>

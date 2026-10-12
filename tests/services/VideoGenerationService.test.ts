@@ -685,6 +685,10 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
 
   it("approveFinalVideoByRequester persists languages and renders the PRIMARY captioned preview (no align/detect, lead-in shifted)", async () => {
     const request = await createRequestWithPlatforms([Platform.TikTok, Platform.TravyApp]);
+    // A package request: unlocked at submission, so it ships clean.
+    await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {
+      downloadUnlocked: true,
+    });
     const master = await createMaster(request.id, "9:16");
     getRequiredRatiosForPlatformsMock.mockReturnValue(["9:16"]);
 
@@ -725,20 +729,18 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingOverlayApproval);
     expect(updated?.captionedExport_9_16_assetId).toBeTruthy();
 
-    // Watermarking is RETAINED BUT DORMANT. Access is a monthly quota now, so
-    // every request is created `downloadUnlocked: true` and the delivered master
-    // ships clean — no watermark encode, which is also two to three minutes of
-    // worker time saved per ratio.
+    // An unlocked (package) request ships clean — no watermark encode, which is
+    // also two to three minutes of worker time saved per ratio.
     expect(applyTiledWatermarkMock).not.toHaveBeenCalled();
     const cleanId = updated?.captionedExport_9_16_assetId as string;
     expect(await mockAssetRepo.findWatermarkedPreviewFor(cleanId)).toBeNull();
   });
 
   it("still renders a watermarked sibling when a request IS download-locked", async () => {
-    // The watermark machinery is kept working on purpose, so a future
-    // watermarked tier is a configuration change rather than a rebuild. Nothing
-    // in the product locks a request today, so without this test the capability
-    // would rot silently and the "retained" comments would become a lie.
+    // Since 2026-10-12 a FREE request is download-locked until a package is
+    // bought. Phone renders never reach this path; a free request rendered by
+    // the server (the backup pipeline) gets the watermarked sibling, so the
+    // web request page previews it watermarked.
     const request = await createRequestWithPlatforms([Platform.TikTok]);
     await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {
       downloadUnlocked: false,

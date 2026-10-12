@@ -16,7 +16,13 @@ import { studioEnglish, type StudioT } from "./studioText";
 import type { CaptionLanguage } from "@/lib/mobile/deviceRenderCaptions";
 import {
   aspectOfRatio,
+  readShapeFraming,
+  readShotFocusBoxes,
+  resolveShapeFraming,
   suggestFrameZoom,
+  type ManualShapeFraming,
+  type ShapeFraming,
+  type ShotFocusBoxes,
   type SubjectBox,
 } from "@/lib/mobile/shotFraming";
 
@@ -30,6 +36,9 @@ import {
  */
 
 export type EditorRatio = "9:16" | "16:9" | "1:1" | "4:5";
+
+/** Every channel shape a video can be made in. */
+export const EDITOR_RATIOS: readonly EditorRatio[] = ["9:16", "16:9", "1:1", "4:5"];
 
 export interface EditorSource {
   /** Stable within this editing session. */
@@ -81,6 +90,18 @@ export interface EditorShot {
    * picture's shape and, when known, where the AI found the subject.
    */
   frameZoom?: number | null;
+  /**
+   * Where the AI saw the subject in THIS shot — from frames inside its trimmed
+   * window (see `shotFrames.ts`) — used to frame the other channel shapes.
+   * Valid only while `aiFramingKey` still matches the shot (`shotFramesKey`).
+   */
+  aiFraming?: ShotFocusBoxes | null;
+  aiFramingKey?: string | null;
+  /**
+   * The person's own framing of this shot in another channel shape, from the
+   * Channels step. A shape without an entry is framed automatically.
+   */
+  shapeFraming?: Partial<Record<EditorRatio, ManualShapeFraming>>;
 }
 
 /**
@@ -97,6 +118,43 @@ export function shotFrameZoom(
   }
   if (!source?.aspect) return 1;
   return suggestFrameZoom(source.aspect, aspectOfRatio(ratio), source.subject ?? null);
+}
+
+/** Identifies what a shot shows: its AI framing is retaken only when this changes. */
+export function shotFramesKey(shot: Pick<EditorShot, "sourceId" | "trimStartSeconds" | "trimEndSeconds">) {
+  return [
+    shot.sourceId,
+    shot.trimStartSeconds.toFixed(2),
+    shot.trimEndSeconds == null ? "-" : shot.trimEndSeconds.toFixed(2),
+  ].join("|");
+}
+
+/** What the AI saw for a shot: its own frames when still current, else the picture's. */
+export function shotFocusBoxes(
+  shot: Pick<EditorShot, "sourceId" | "trimStartSeconds" | "trimEndSeconds" | "aiFraming" | "aiFramingKey">,
+  source: Pick<EditorSource, "subject"> | null | undefined
+): ShotFocusBoxes | null {
+  if (shot.aiFraming && shot.aiFramingKey === shotFramesKey(shot)) return shot.aiFraming;
+  return source?.subject ? { subject: source.subject } : null;
+}
+
+/**
+ * How a shot is framed in a channel shape that is NOT the main video's: the
+ * person's own choice for that shape, else automatic from the AI's boxes —
+ * never the main shape's zoom reused (see `frameForShape`).
+ */
+export function shotShapeFraming(
+  shot: EditorShot,
+  source: Pick<EditorSource, "aspect" | "subject"> | null | undefined,
+  ratio: EditorRatio
+): ShapeFraming & { automatic: boolean } {
+  return resolveShapeFraming({
+    pictureAspect: source?.aspect ?? null,
+    ratio,
+    boxes: shotFocusBoxes(shot, source),
+    primary: { focusX: shot.focusX, focusY: shot.focusY },
+    manual: shot.shapeFraming?.[ratio] ?? null,
+  });
 }
 
 /** Read a picture's shape from its poster. Null when it will not load. */
@@ -888,6 +946,11 @@ export function scenesFromScenePlan(
         focusX: Number.isFinite(asset.focusX) ? asset.focusX : 0.5,
         focusY: Number.isFinite(asset.focusY) ? asset.focusY : 0.5,
         frameZoom: Number.isFinite(asset.frameZoom) ? asset.frameZoom : null,
+        ...restoredShapeFields(asset, {
+          sourceId: source.id,
+          trimStartSeconds: isClip ? asset.trimStartSeconds ?? 0 : 0,
+          trimEndSeconds: isClip ? asset.trimEndSeconds ?? null : null,
+        }),
       });
     }
     if (shots.length === 0) continue;
@@ -1038,6 +1101,14 @@ export interface StudioScenePlan {
     focusX: number;
     focusY: number;
     frameZoom: number;
+    /**
+     * The shot framed for every OTHER channel shape — what the renderer uses
+     * for that shape instead of the main shape's focusX/focusY/frameZoom.
+     */
+    framings?: Partial<Record<EditorRatio, ShapeFraming>>;
+    /** Kept so a reopened studio still knows what the AI saw and what the person chose. */
+    aiFraming?: ShotFocusBoxes;
+    shapeFraming?: Partial<Record<EditorRatio, ManualShapeFraming>>;
   }[];
 }
 
@@ -1081,6 +1152,7 @@ export function scenePlanFromScenes(
         focusX: shot.focusX,
         focusY: shot.focusY,
         frameZoom: round(shotFrameZoom(shot, source, document.ratio)),
+        ...shapeFramingFields(shot, source, document.ratio),
       });
     }
     if (assets.length === 0) continue;
@@ -1099,4 +1171,49 @@ export function scenePlanFromScenes(
     });
   }
   return plan;
+}
+
+/** The plan fields that carry a shot's framing in the other channel shapes. */
+export function shapeFramingFields(
+  shot: EditorShot,
+  source: EditorSource,
+  primaryRatio: EditorRatio
+): Pick<StudioScenePlan["assets"][number], "framings" | "aiFraming" | "shapeFraming"> {
+  const framings: Partial<Record<EditorRatio, ShapeFraming>> = {};
+  for (const ratio of EDITOR_RATIOS) {
+    if (ratio === primaryRatio) continue;
+    const { focusX, focusY, frameZoom } = shotShapeFraming(shot, source, ratio);
+    framings[ratio] = { focusX, focusY, frameZoom: Math.round(frameZoom * 100) / 100 };
+  }
+  const boxes = shot.aiFraming && shot.aiFramingKey === shotFramesKey(shot) ? shot.aiFraming : null;
+  const manual = shot.shapeFraming && Object.keys(shot.shapeFraming).length > 0 ? shot.shapeFraming : null;
+  return {
+    framings,
+    ...(boxes ? { aiFraming: boxes } : {}),
+    ...(manual ? { shapeFraming: manual } : {}),
+  };
+}
+
+function restoredShapeFields(
+  asset: StudioScenePlan["assets"][number],
+  shot: Pick<EditorShot, "sourceId" | "trimStartSeconds" | "trimEndSeconds">
+): Pick<EditorShot, "aiFraming" | "aiFramingKey" | "shapeFraming"> {
+  const out: Pick<EditorShot, "aiFraming" | "aiFramingKey" | "shapeFraming"> = {};
+  const boxes = readShotFocusBoxes(asset.aiFraming);
+  if (boxes) {
+    out.aiFraming = boxes;
+    out.aiFramingKey = shotFramesKey(shot);
+  }
+  if (asset.shapeFraming && typeof asset.shapeFraming === "object") {
+    const manual: Partial<Record<EditorRatio, ManualShapeFraming>> = {};
+    for (const ratio of EDITOR_RATIOS) {
+      const raw = asset.shapeFraming[ratio] as unknown;
+      if (!raw || typeof raw !== "object") continue;
+      const zoomRaw = (raw as { frameZoom?: unknown }).frameZoom;
+      const read = readShapeFraming({ ...(raw as object), frameZoom: zoomRaw ?? 0 });
+      if (read) manual[ratio] = { focusX: read.focusX, focusY: read.focusY, frameZoom: zoomRaw == null ? null : read.frameZoom };
+    }
+    if (Object.keys(manual).length > 0) out.shapeFraming = manual;
+  }
+  return out;
 }

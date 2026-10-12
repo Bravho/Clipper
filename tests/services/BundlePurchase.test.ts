@@ -120,7 +120,8 @@ function build(
     } as never,
     { findByPurchaseId: async () => null } as never,
     { enqueue: jest.fn() } as never,
-    { record: jest.fn() } as never
+    { record: jest.fn() } as never,
+    { unlockForPackage: jest.fn(async () => 0) } as never
   );
 
   return { service, client, log };

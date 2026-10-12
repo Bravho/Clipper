@@ -539,28 +539,46 @@ export function SceneList({
  * Left alone, it is framed automatically: zoomed out just enough to keep what
  * the AI found as the subject (or most of the picture when it found nothing).
  */
-function FramingControl({
+export function FramingControl({
   source,
   shot,
   ratio,
   disabled,
   onChange,
+  resolved,
+  onAuto,
+  imageUrl: imageOverride,
+  autoLabel,
 }: {
   source: EditorSource;
   shot: EditorShot;
   ratio: string;
   disabled: boolean;
   onChange: (change: Partial<EditorShot>) => void;
+  /**
+   * The framing to show and edit, when it is not the shot's main-shape framing
+   * (the Channels step frames each other shape on its own).
+   */
+  resolved?: { focusX: number; focusY: number; frameZoom: number; automatic: boolean };
+  /** What "frame it automatically" does, when not the main-shape reset. */
+  onAuto?: () => void;
+  /** A picture of the shot to frame (a frame from inside it), if better than the poster. */
+  imageUrl?: string | null;
+  /** The label of the automatic-framing button, when not the main-shape one. */
+  autoLabel?: string;
 }) {
   const t = useStudioT();
   // iOS app: no "Frame it automatically" / "Back to the centre" buttons — the
   // tap-to-focus picture and the zoom slider are the only framing controls.
   const isIosApp = useIsIosApp();
-  const zoom = shotFrameZoom(shot, source, ratio);
-  const automatic = shot.frameZoom == null;
+  const zoom = resolved ? resolved.frameZoom : shotFrameZoom(shot, source, ratio);
+  const automatic = resolved ? resolved.automatic : shot.frameZoom == null;
+  const focusX = resolved ? resolved.focusX : shot.focusX;
+  const focusY = resolved ? resolved.focusY : shot.focusY;
   const sameShape =
     source.aspect != null && fillCoverage(source.aspect, aspectOfRatio(ratio)) >= 0.97;
-  const imageUrl = source.posterUrl ?? (source.kind === "image" ? source.previewUrl : null);
+  const imageUrl =
+    imageOverride ?? source.posterUrl ?? (source.kind === "image" ? source.previewUrl : null);
   // Exactly the video's shape, at most 240px tall and 320px wide (see
   // previewBoxStyle for why the width, not the height, is what is set).
   const box = previewBoxStyle(ratio, "240px");
@@ -586,8 +604,8 @@ function FramingControl({
               { width: source.aspect, height: 1 },
               { width: canvasAspect, height: 1 },
               zoom,
-              shot.focusX,
-              shot.focusY
+              focusX,
+              focusY
             );
             const cx = ((event.clientX - box.left) / box.width) * canvasAspect;
             const cy = (event.clientY - box.top) / box.height;
@@ -604,7 +622,7 @@ function FramingControl({
               src={imageUrl}
               alt=""
               draggable={false}
-              style={framingStyle(source.aspect, ratio, zoom, shot.focusX, shot.focusY)}
+              style={framingStyle(source.aspect, ratio, zoom, focusX, focusY)}
             />
           </span>
         </button>
@@ -650,18 +668,21 @@ function FramingControl({
               style={{ marginTop: 6, width: "auto", minHeight: 36, padding: "6px 12px", fontSize: 13 }}
               disabled={disabled}
               onClick={() =>
-                onChange({
-                  frameZoom: null,
-                  ...(source.subject ? subjectCentre(source.subject) : {}),
-                })
+                onAuto
+                  ? onAuto()
+                  : onChange({
+                      frameZoom: null,
+                      ...(source.subject ? subjectCentre(source.subject) : {}),
+                    })
               }
             >
-              {source.subject ? t("studio.framing.autoAi") : t("studio.framing.autoPlain")}
+              {autoLabel ??
+                (source.subject ? t("studio.framing.autoAi") : t("studio.framing.autoPlain"))}
             </button>
           )}
         </>
       )}
-      {!isIosApp && (Math.abs(shot.focusX - 0.5) > 0.01 || Math.abs(shot.focusY - 0.5) > 0.01) && (
+      {!isIosApp && !resolved && (Math.abs(shot.focusX - 0.5) > 0.01 || Math.abs(shot.focusY - 0.5) > 0.01) && (
         <button
           type="button"
           className="studio-button studio-button-ghost"

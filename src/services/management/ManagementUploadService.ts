@@ -6,8 +6,10 @@
  * Management purely as a convenient way to publish to several channels at once
  * and keep track of what went where.
  *
- * UPLOADING IS FREE. Collecting and organising content costs nothing; payment is
- * required only when a video is actually published to social channels.
+ * UPLOADING NEEDS A PACKAGE (2026-10-12). Only an account holding a live
+ * package may upload, up to MANAGEMENT_UPLOAD_KEEP_LIMIT (50) videos kept at
+ * once; each upload is kept VIDEO_LIFETIME_DAYS (30). A free account uploads
+ * nothing.
  *
  * Two-step flow, mirroring the existing clip-request upload:
  *   1. `begin()`   — validate, create the content item, return a presigned PUT
@@ -24,7 +26,12 @@
 import { HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { spacesClient, SPACES_BUCKET } from "@/lib/spaces";
-import { buildManagementUploadKey } from "@/lib/spacesKeys";
+import { buildManagementRetainedKey } from "@/lib/spacesKeys";
+import { VIDEO_LIFETIME_DAYS, addDays } from "@/config/retention";
+import {
+  videoAccessService,
+  type VideoAccessService,
+} from "@/services/VideoAccessService";
 import { managementContentRepository } from "@/repositories";
 import { managementAuditService } from "@/services/management/ManagementAuditService";
 import {
@@ -53,25 +60,22 @@ export const MANAGEMENT_UPLOAD_MAX_BYTES = Number(
 );
 
 /**
- * Free self-upload allowance: how many uploaded videos a user may keep at once.
- * Uploading is free up to this many; deleting one frees a slot.
+ * How many uploaded videos a package holder may keep at once (Tho,
+ * 2026-10-12). High enough that a business posting every day never meets it;
+ * it only stops the bucket being used as free video hosting. Deleting one, or
+ * one expiring, frees a place. Env-overridable.
  */
-export const MANAGEMENT_FREE_UPLOAD_LIMIT = Number(
-  process.env.RCLIPPER_MANAGEMENT_FREE_UPLOAD_LIMIT ?? "4"
+export const MANAGEMENT_UPLOAD_KEEP_LIMIT = Number(
+  process.env.RCLIPPER_MANAGEMENT_UPLOAD_KEEP_LIMIT ?? "50"
 );
 
 /**
- * How long an uploaded file is kept, in days. Uploads live under
- * `management_uploads/` which has no Spaces lifecycle rule, so this window is
- * enforced by the application (see the purge job / bucket backstop discussion).
+ * Expiry for an uploaded file created now: VIDEO_LIFETIME_DAYS (30), the same
+ * as every other video. The file is written straight into
+ * `management_retained/`, whose bucket lifecycle rule is the 30-day backstop.
  */
-export const MANAGEMENT_UPLOAD_RETENTION_DAYS = Number(
-  process.env.RCLIPPER_MANAGEMENT_UPLOAD_RETENTION_DAYS ?? "7"
-);
-
-/** Expiry for an uploaded file created now. */
 export function managementUploadExpiryFrom(from: Date = new Date()): Date {
-  return new Date(from.getTime() + MANAGEMENT_UPLOAD_RETENTION_DAYS * 86_400_000);
+  return addDays(from, VIDEO_LIFETIME_DAYS);
 }
 
 /** How long the presigned PUT stays usable. Generous, for slow mobile uploads. */
@@ -87,7 +91,8 @@ export class ManagementUploadError extends Error {
       | "not_uploading"
       | "object_missing"
       | "size_mismatch"
-      | "quota_exceeded",
+      | "quota_exceeded"
+      | "package_required",
     message: string
   ) {
     super(message);
@@ -107,7 +112,8 @@ export class ManagementUploadService {
   constructor(
     private content = managementContentRepository,
     private audit = managementAuditService,
-    private s3 = spacesClient
+    private s3 = spacesClient,
+    private access: Pick<VideoAccessService, "hasActivePackage"> = videoAccessService
   ) {}
 
   /**
@@ -143,16 +149,31 @@ export class ManagementUploadService {
       );
     }
 
-    // Free self-upload allowance: cap how many uploaded videos a user keeps at
-    // once. Transfers from the generator do not count — only user uploads.
+    // Uploading is part of a package: no package, no upload.
+    if (!(await this.access.hasActivePackage(params.userId))) {
+      throw new ManagementUploadError(
+        "package_required",
+        "Buy a package to upload videos to Channel Management."
+      );
+    }
+
+    // Cap how many uploaded videos are kept at once. Only uploads still holding
+    // media count — an expired, purged or cancelled one has freed its place.
+    // Transfers from the studio do not count.
     const live = await this.content.findByUserId(params.userId);
-    const uploadCount = live.filter(
-      (i) => i.sourceType === ManagementSourceType.UserUpload
+    const now = Date.now();
+    const keptCount = live.filter(
+      (i) =>
+        i.sourceType === ManagementSourceType.UserUpload &&
+        i.mediaDeletedAt === null &&
+        i.status !== ManagementContentStatus.Cancelled &&
+        i.status !== ManagementContentStatus.MediaExpired &&
+        (!i.mediaExpiresAt || i.mediaExpiresAt.getTime() > now)
     ).length;
-    if (uploadCount >= MANAGEMENT_FREE_UPLOAD_LIMIT) {
+    if (keptCount >= MANAGEMENT_UPLOAD_KEEP_LIMIT) {
       throw new ManagementUploadError(
         "quota_exceeded",
-        `You can keep up to ${MANAGEMENT_FREE_UPLOAD_LIMIT} uploaded videos. Delete one to upload another.`
+        `You can keep up to ${MANAGEMENT_UPLOAD_KEEP_LIMIT} uploaded videos at once. Delete one to upload another.`
       );
     }
 
@@ -160,12 +181,12 @@ export class ManagementUploadService {
       userId: params.userId,
       title: params.title.trim() || params.fileName,
       description: params.description ?? null,
-      // Uploaded files are kept for a short window (default 7 days), unlike the
-      // longer window used for transferred generator media.
       mediaExpiresAt: managementUploadExpiryFrom(),
     });
 
-    const storageKey = buildManagementUploadKey(
+    // Straight into the paid prefix (30-day bucket rule): every uploader holds
+    // a package, so there is no free 7-day stage to move it out of later.
+    const storageKey = buildManagementRetainedKey(
       params.userId,
       item.id,
       params.fileName
@@ -230,8 +251,12 @@ export class ManagementUploadService {
 
     // The key must be the one we issued for THIS item, or a user could point a
     // content item at somebody else's object.
-    const expectedPrefix = `management_uploads/${params.userId}/${item.id}/`;
-    if (!params.storageKey.startsWith(expectedPrefix)) {
+    // `management_uploads/` is what uploads begun before 2026-10-12 were given.
+    const expectedPrefixes = [
+      `management_retained/${params.userId}/${item.id}/`,
+      `management_uploads/${params.userId}/${item.id}/`,
+    ];
+    if (!expectedPrefixes.some((prefix) => params.storageKey.startsWith(prefix))) {
       throw new ManagementUploadError("not_owner", "Storage key does not belong to this upload.");
     }
 

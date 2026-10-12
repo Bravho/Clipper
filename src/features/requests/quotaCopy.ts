@@ -1,8 +1,8 @@
 import {
-  FREE_REQUESTS_PER_WINDOW,
-  FREE_WINDOW_DAYS,
+  FREE_REQUESTS_TOTAL,
   REQUESTS_PER_PAID_MONTH,
 } from "@/config/videoPackages";
+import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { ENTRY_PACKAGE, managementPriceCredits } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
@@ -42,8 +42,8 @@ export function quotaCopyVars(quota: VideoQuota, locale: AppLocale) {
   return {
     remaining: quota.remaining,
     total: quota.total,
-    days: FREE_WINDOW_DAYS,
-    freeTotal: FREE_REQUESTS_PER_WINDOW,
+    days: VIDEO_LIFETIME_DAYS,
+    freeTotal: FREE_REQUESTS_TOTAL,
     paidTotal: REQUESTS_PER_PAID_MONTH,
     starterTotal: PACKAGE_TIER_REQUESTS.starter,
     proTotal: PACKAGE_TIER_REQUESTS.pro,

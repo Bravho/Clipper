@@ -2,12 +2,11 @@
  * ManagementEntitlementService — the single authority on whether a user may
  * PUBLISH from RClipper Management.
  *
- * WHERE THE GATE SITS. Getting content into Management is free: transferring a
- * finished generation project and uploading your own video both cost nothing.
- * Money is required immediately before a video is submitted to social channels
- * and nowhere else. `checkTransferEligibility` therefore answers only
- * "is this project ready and yours?", while `evaluateForPublish` is the paid
- * gate.
+ * WHERE THE GATES SIT (2026-10-12). Getting content INTO Management needs a
+ * live package: `checkTransferEligibility` refuses a free request's videos
+ * (and any expired video) via VideoAccessService, and ManagementUploadService
+ * refuses uploads without one. Publishing is gated again by
+ * `evaluateForPublish` — pass first, then upload tokens.
  *
  * THE FRONTEND IS NEVER THE AUTHORITY. The UI receives an already-evaluated
  * result purely so it can render the right panel; every mutating route calls
@@ -47,6 +46,10 @@ import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import { isManagementEnabledFor } from "@/config/management";
+import {
+  videoAccessService,
+  type VideoAccessService,
+} from "@/services/VideoAccessService";
 
 /** A denial, expressed as an entitlement so callers have one shape to handle. */
 function deny(reason: ManagementDenialReason): ManagementEntitlement {
@@ -124,7 +127,8 @@ export class ManagementEntitlementService {
     private jobs = videoGenerationJobRepository,
     private passes = managementAccessPassRepository,
     private bundles = managementUploadBundleRepository,
-    private content = managementContentRepository
+    private content = managementContentRepository,
+    private access: Pick<VideoAccessService, "accessFor" | "hasActivePackage"> = videoAccessService
   ) {}
 
   /**
@@ -145,9 +149,9 @@ export class ManagementEntitlementService {
   /**
    * May this completed generation project be transferred into Management?
    *
-   * FREE — no payment is considered here. Only: the feature is on, the project
-   * is theirs, the generation finished, and it produced media. Transfer is also
-   * optional: nothing in the download flow depends on the answer.
+   * The feature is on, the project is theirs, the generation finished and
+   * produced media — and (2026-10-12) the account holds a live package, the
+   * request is unlocked and its videos have not expired.
    */
   async checkTransferEligibility(
     user: { id: string; email?: string | null; role?: string | null },
@@ -183,6 +187,18 @@ export class ManagementEntitlementService {
 
     const videoCount = eligibleExportAssetIds(job).length;
     if (videoCount === 0) return no("no_eligible_media");
+
+    // The paid gate: a package live now, the request unlocked (paid for, or
+    // unlocked by a purchase) and its videos not expired. Checked BEFORE the
+    // already-transferred answer, because transferring one video finds the
+    // item of another and would otherwise let a new video through on it.
+    const access = await this.access.accessFor(request);
+    if (access.transferBlock) {
+      return {
+        ...no(access.transferBlock === "expired" ? "videos_expired" : "package_required"),
+        videoCount,
+      };
+    }
 
     const existing = await this.content.findBySource(user.id, sourceGenerationId);
     if (existing) {

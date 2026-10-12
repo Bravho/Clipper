@@ -1,8 +1,4 @@
-import {
-  FREE_REQUESTS_PER_WINDOW,
-  FREE_WINDOW_DAYS,
-  freeWindowStart,
-} from "@/config/videoPackages";
+import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
 import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 import {
   clipRequestRepository,
@@ -12,10 +8,8 @@ import {
 /**
  * Thrown when an account has neither a free slot nor a paid one left.
  *
- * Carries when the free allowance next frees a slot, so the UI can say "your
- * next free video is available on 14 October" instead of a bare refusal. Null
- * when the account has never submitted anything (which cannot happen here) or
- * the date is unknown.
+ * `nextFreeSlotAt` is kept for older app builds that read it; it is always null
+ * now, because the free allowance never comes back (2 requests per account).
  */
 export class QuotaExhaustedError extends Error {
   constructor(
@@ -32,10 +26,10 @@ export interface VideoQuota {
   tier: RequestPricingTier;
   /** Requests left in the allowance the next request would use. */
   remaining: number;
-  /** Size of that allowance, for "2 of 3 left". */
+  /** Size of that allowance, for "1 of 2 left". */
   total: number;
-  /** When the current allowance lapses: the paid window's expiry, or the date
-   *  the oldest counted free request falls out of the rolling window. */
+  /** When the current allowance lapses: the paid window's expiry. Null on the
+   *  free tier, which never renews. */
   renewsAt: Date | null;
   /** The paid window that would pay for the next request, if any. */
   allowanceWindowId: string | null;
@@ -46,19 +40,17 @@ export interface VideoQuota {
 /**
  * VideoQuotaService — how many videos an account may make, and on whose ticket.
  *
- * THE MODEL. Render capacity is the scarce resource (one clip is 2–3 hours on a
- * single worker), so access is a monthly quota rather than a per-request price:
+ * THE MODEL (2026-10-12):
  *
- *   Free — 3 requests per rolling 30 days, LOW render priority.
- *   Paid — a prepaid package grants 10 requests per month, HIGH priority.
+ *   Free — 2 requests per account, ever. Their videos stay in the app until a
+ *          package is bought (VideoAccessService).
+ *   Paid — a prepaid package grants 5 or 10 requests per month.
  *
- * Paid is always preferred while a window is live: a subscriber who has paid for
- * this month should get the faster queue, and their free allowance is still there
- * afterwards.
+ * Paid is always preferred while a window is live: a subscriber's monthly
+ * requests are used first and the free ones are left for later.
  *
- * The free side stores nothing. It is derived from submitted requests in the last
- * 30 days, so there is no anchor date, no reset job, no per-user bookkeeping, and
- * nothing to drift out of sync.
+ * The free side stores nothing. It is counted from the account's submitted
+ * free requests, so there is no reset job and nothing to drift out of sync.
  */
 export class VideoQuotaService {
   /**
@@ -85,17 +77,14 @@ export class VideoQuotaService {
       };
     }
 
-    const usedFree = await clipRequestRepository.countSubmittedRequestsByUserId(
-      userId,
-      freeWindowStart(now)
-    );
-    const remaining = Math.max(0, FREE_REQUESTS_PER_WINDOW - usedFree);
+    const usedFree = await clipRequestRepository.countFreeRequestsByUserId(userId);
+    const remaining = Math.max(0, FREE_REQUESTS_TOTAL - usedFree);
 
     return {
       tier: RequestPricingTier.Free,
       remaining,
-      total: FREE_REQUESTS_PER_WINDOW,
-      renewsAt: remaining > 0 ? null : await this.nextFreeSlotAt(userId, now),
+      total: FREE_REQUESTS_TOTAL,
+      renewsAt: null,
       allowanceWindowId: null,
       canSubmit: remaining > 0,
     };
@@ -123,17 +112,14 @@ export class VideoQuotaService {
       return { tier: RequestPricingTier.Paid, allowanceWindowId: windowId };
     }
 
-    const usedFree = await clipRequestRepository.countSubmittedRequestsByUserId(
-      userId,
-      freeWindowStart(now)
-    );
-    if (usedFree < FREE_REQUESTS_PER_WINDOW) {
+    const usedFree = await clipRequestRepository.countFreeRequestsByUserId(userId);
+    if (usedFree < FREE_REQUESTS_TOTAL) {
       return { tier: RequestPricingTier.Free, allowanceWindowId: null };
     }
 
     throw new QuotaExhaustedError(
-      `Monthly limit reached: ${FREE_REQUESTS_PER_WINDOW} free videos per ${FREE_WINDOW_DAYS} days.`,
-      await this.nextFreeSlotAt(userId, now)
+      `Free limit reached: ${FREE_REQUESTS_TOTAL} free videos per account. Buy a package to make more.`,
+      null
     );
   }
 
@@ -141,9 +127,10 @@ export class VideoQuotaService {
    * Give a request back after a failed render.
    *
    * A job that dies two hours in must not also cost a monthly slot — that is a
-   * support ticket every time. Free-tier requests need nothing: their allowance
-   * is derived from submissions, and the failed one ages out of the rolling
-   * window on its own.
+   * support ticket every time. Free requests are not given back: a failed
+   * request can still be retried or resumed, so refunding it would hand out a
+   * third free video. (The free count does skip any request that WAS stamped
+   * refunded, should support ever do that by hand.)
    *
    * Idempotent via `allowanceRefundedAt`, so a retry that fails again cannot
    * refund the same request twice.
@@ -162,38 +149,6 @@ export class VideoQuotaService {
       allowanceRefundedAt: new Date(),
     });
     return true;
-  }
-
-  /**
-   * When the oldest counted free submission falls out of the rolling window —
-   * i.e. the moment a free slot reappears.
-   *
-   * Only meaningful once the allowance is spent, which is the only time it is
-   * called.
-   */
-  private async nextFreeSlotAt(
-    userId: string,
-    now: Date
-  ): Promise<Date | null> {
-    const submitted = (await clipRequestRepository.findByUserId(userId))
-      .filter((r) => r.submittedAt !== null)
-      .sort(
-        (a, b) =>
-          (a.submittedAt as Date).getTime() - (b.submittedAt as Date).getTime()
-      );
-
-    const windowStart = freeWindowStart(now);
-    const inWindow = submitted.filter(
-      (r) => (r.submittedAt as Date).getTime() >= windowStart.getTime()
-    );
-    if (inWindow.length < FREE_REQUESTS_PER_WINDOW) return null;
-
-    // The n-th most recent request is what is holding the allowance down; a slot
-    // opens exactly 30 days after it.
-    const blocking = inWindow[inWindow.length - FREE_REQUESTS_PER_WINDOW];
-    return new Date(
-      (blocking.submittedAt as Date).getTime() + FREE_WINDOW_DAYS * 86_400_000
-    );
   }
 }
 

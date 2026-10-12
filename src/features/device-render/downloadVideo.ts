@@ -37,6 +37,13 @@ export async function downloadStudioVideo(input: {
   channel?: string;
   /** The sentence shown when the server gives no reason, in the screen's language. */
   failedMessage?: string;
+  /**
+   * The server said, when the studio last asked, that this video may be
+   * downloaded. Only then may a video this phone made be saved without
+   * asking again when there is no connection — otherwise switching to
+   * airplane mode would get a locked free video out of the app.
+   */
+  allowedOffline?: boolean;
   /** Share downloaded so far, 0..1 (phone only, when the size is known). */
   onProgress?: (fraction: number) => void;
   /** Which part is running: fetching the file, or writing it into the gallery. */
@@ -53,8 +60,9 @@ export async function downloadStudioVideo(input: {
       cache: "no-store",
     });
   } catch (error) {
-    // No connection: a video this phone made can still be saved.
-    if (!kept) throw error;
+    // No connection: a video this phone made can still be saved — but only one
+    // the server already said may be downloaded (a free video stays locked).
+    if (!kept || !input.allowedOffline) throw error;
   }
   const body = (response ? await response.json().catch(() => ({})) : {}) as {
     url?: string;

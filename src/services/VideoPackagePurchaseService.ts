@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { videoAccessService } from "@/services/VideoAccessService";
 import {
   findVideoPackage,
   expandPackageWindows,
@@ -150,6 +151,16 @@ export class VideoPackagePurchaseService {
           console.error("[VideoPackagePurchase] refund after failed grant failed", refundErr)
         );
       throw err;
+    }
+
+    // A package unlocks the buyer's free videos and gives each a fresh 30 days
+    // (VideoAccessService). Never fails a purchase already charged.
+    if (granted.created) {
+      await videoAccessService
+        .unlockForPackage(userId, now)
+        .catch((err) =>
+          console.error("[VideoPackagePurchase] unlocking free videos failed", err)
+        );
     }
 
     return {

@@ -1,5 +1,6 @@
 "use client";
 
+import type { VideoAccessView } from "@/services/VideoAccessService";
 import { Capacitor } from "@capacitor/core";
 import {
   explainRefusal,
@@ -88,6 +89,7 @@ export function RenderPanel({
   serverOutcome,
   pipelineStatus = null,
   main = null,
+  access = null,
 }: {
   problems: string[];
   totalSeconds: number;
@@ -102,6 +104,8 @@ export function RenderPanel({
   pipelineStatus?: string | null;
   /** Present when the studio is attached to a request. */
   main?: MainVideoControls | null;
+  /** May the video leave the app, and until when (VideoAccessService). */
+  access?: VideoAccessView | null;
 }) {
   const t = useStudioT();
   const ready = main ? main.checklist.every((item) => item.done) : false;
@@ -293,6 +297,7 @@ export function RenderPanel({
             assetId={main.video.assetId}
             channel={main.channel}
             label={t("studio.render.downloadMain", { ratio: main.video.ratio })}
+            access={access}
           />
           {main.atReview && (
             <>

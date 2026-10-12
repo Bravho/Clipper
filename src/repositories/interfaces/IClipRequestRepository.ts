@@ -28,6 +28,13 @@ export interface IClipRequestRepository {
    * days". Drafts do not count, so an abandoned draft never burns a free slot.
    */
   countSubmittedRequestsByUserId(userId: string, since?: Date): Promise<number>;
+  /**
+   * How many FREE requests the requester has ever submitted — the free
+   * allowance (config/videoPackages.ts FREE_REQUESTS_TOTAL). Drafts do not
+   * count, and neither does a free request given back after a failed render
+   * (`allowanceRefundedAt` set).
+   */
+  countFreeRequestsByUserId(userId: string): Promise<number>;
   findByUserIdAndStatus(
     userId: string,
     statuses: RequestStatus[]
@@ -132,6 +139,7 @@ export interface IClipRequestRepository {
         | "pricingTier"
         | "videoAllowanceWindowId"
         | "allowanceRefundedAt"
+        | "videosExpireAt"
       >
     >
   ): Promise<ClipRequest>;

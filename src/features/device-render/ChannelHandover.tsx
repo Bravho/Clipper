@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { ROUTES } from "@/config/routes";
+import type { VideoAccessView } from "@/services/VideoAccessService";
 import { managementArrivalPath } from "@/features/management/components/StudioTransferScreen";
 import type { StudioOutput } from "./studioPipeline";
 import { useStudioT } from "./studioI18n";
@@ -16,7 +17,9 @@ export interface StudioManagement {
 
 /**
  * The studio's last stage: one button, "Migrate to Channel Management", that
- * takes the finished videos not yet there to Channel Management.
+ * takes the finished videos not yet there to Channel Management. Since
+ * 2026-10-12 it needs a package: without one (or once the videos expired) the
+ * button is off and says why.
  *
  * Tho, 26 Sep: the studio no longer runs its own "Publish to your channels"
  * block with Connected accounts / Posts and schedule links — publishing lives
@@ -33,12 +36,19 @@ export function ChannelHandover({
   outputs,
   labelFor,
   management,
+  access = null,
 }: {
   requestId: string;
   outputs: StudioOutput[];
   /** The channels a shape serves, for the per-video row. */
   labelFor: (ratio: string) => string;
   management: StudioManagement;
+  /**
+   * What the server allows for this request: sending needs a live package, an
+   * unlocked request and unexpired videos (VideoAccessService). Null from an
+   * older server, which decides on the transfer page instead.
+   */
+  access?: VideoAccessView | null;
 }) {
   const t = useStudioT();
   if (outputs.length === 0) return null;
@@ -49,6 +59,7 @@ export function ChannelHandover({
     .map((output) => transferred[output.assetId])
     .filter((id): id is string => Boolean(id));
   const transferPath = `${ROUTES.MANAGEMENT}/transfer?request=${encodeURIComponent(requestId)}`;
+  const blocked = access != null && !access.canSendToManagement ? access.transferBlock : null;
 
   return (
     <section className="studio-panel">
@@ -76,7 +87,32 @@ export function ChannelHandover({
           left to move it is disabled — also when the originals are gone and
           every video made is already there. */}
       <div className="studio-approve">
-        {pending.length > 0 ? (
+        {blocked && (
+          <div
+            className={
+              blocked === "expired"
+                ? "studio-note studio-note-danger"
+                : "studio-note studio-note-warning"
+            }
+            role="status"
+          >
+            <p style={{ margin: 0 }}>
+              {blocked === "expired"
+                ? t("studio.handover.expired")
+                : t("studio.handover.needsPackage")}
+            </p>
+            {blocked === "package_required" && (
+              <Link
+                href={ROUTES.PRICING}
+                className="studio-button studio-button-primary"
+                style={{ marginTop: 10, display: "inline-block" }}
+              >
+                {t("studio.access.seePackages")}
+              </Link>
+            )}
+          </div>
+        )}
+        {pending.length > 0 && !blocked ? (
           <Link href={transferPath} className="studio-button studio-button-primary">
             {t("studio.handover.migrate")}
           </Link>

@@ -146,7 +146,7 @@ export class ClipRequestService {
     }
 
     // Take a quota slot: a paid month's request if the account has a live
-    // package, otherwise one of the 3 free per rolling 30 days. Throws
+    // package, otherwise one of the account's 2 free requests. Throws
     // QuotaExhaustedError when neither is available, which the API turns into a
     // 402 pointing at the pricing page.
     //
@@ -155,6 +155,10 @@ export class ClipRequestService {
     // one slot until the render fails or the user resubmits — the safe direction,
     // since the alternative oversells the worker.
     const consumed = await videoQuotaService.consume(userId);
+    // Only a request a package paid for is unlocked. A package holder whose
+    // month is used up falls back to a free request, and that one stays locked
+    // until their next purchase (Tho, 2026-10-12).
+    const unlocked = consumed.tier === RequestPricingTier.Paid;
 
     const now = new Date();
     const queuePos = await this.estimateQueuePosition();
@@ -174,14 +178,15 @@ export class ClipRequestService {
         aiConsentAcceptedAt: now,
         pricingTier: consumed.tier,
         // Which purchased month paid for this, so a failed render can give it
-        // back. Null on the free tier — that allowance simply ages out.
+        // back. Null on the free tier.
         videoAllowanceWindowId: consumed.allowanceWindowId,
         // Historical field from the per-request pricing era; nothing is charged
         // at submission any more.
         isTrialRequest: consumed.tier === RequestPricingTier.Free,
-        // No paywall: every request is downloadable once produced. The flag and
-        // the watermark machinery behind it are retained, not used.
-        downloadUnlocked: true,
+        // A free request's videos stay in the app until a package is bought
+        // (VideoAccessService). Paid ones can be downloaded and sent to
+        // Channel Management as soon as they are made.
+        downloadUnlocked: unlocked,
       }
     );
 

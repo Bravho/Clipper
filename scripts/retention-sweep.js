@@ -4,9 +4,12 @@
  * Implements the application-level retention rules from
  * docs/storage-lifecycle-design.md (Addendum A):
  *
- *   A. Final-clip window: a request that has been delivered/published for more
- *      than FINAL_CLIP_DAYS (default 7) has its media purged (final clips +
- *      all processed intermediates + raw uploads). Thumbnails are kept.
+ *   A. Video lifetime: a delivered/published request whose videos have expired
+ *      — `clip_requests.videos_expire_at` (30 days from first delivery, or
+ *      from the package purchase that unlocked a free request; migration 040),
+ *      falling back to updated_at + FINAL_CLIP_DAYS for a row without one —
+ *      has its media purged (final clips + all processed intermediates + raw
+ *      uploads). Thumbnails are kept. REQUIRES migration 040.
  *
  *   B. Inactivity auto-cancel: a non-terminal, non-draft request with no
  *      activity for more than INACTIVE_DAYS (default 30) is marked
@@ -20,7 +23,7 @@
  *   D. Orphan reconciliation: lists every media prefix and deletes objects
  *      whose requestId no longer exists in the DB, or belongs to a request
  *      that is terminal (rejected / auto_cancelled / delivered / published)
- *      and past the FINAL_CLIP_DAYS grace window. Catches strays left by
+ *      and past its videos' expiry (the same rule as [A]). Catches strays left by
  *      partial failures, deleted drafts, and lifecycle-driven deletions that
  *      removed request_mat/ but not the processed artefacts.
  *      Skip with --skip-reconcile.
@@ -35,7 +38,7 @@
  * Usage:
  *   node scripts/retention-sweep.js                 # live run
  *   node scripts/retention-sweep.js --dry-run       # log only, delete nothing
- *   node scripts/retention-sweep.js --clip-days=7 --inactive-days=30
+ *   node scripts/retention-sweep.js --clip-days=30 --inactive-days=30
  */
 
 const { Client } = require("pg");
@@ -55,7 +58,13 @@ const argVal = (name, def) => {
   const hit = args.find((a) => a.startsWith(`--${name}=`));
   return hit ? Number(hit.split("=")[1]) : def;
 };
-const FINAL_CLIP_DAYS = argVal("clip-days", 7);
+// Fallback lifetime for a request with no videos_expire_at. Keep equal to
+// VIDEO_LIFETIME_DAYS in src/config/retention.ts.
+const FINAL_CLIP_DAYS = argVal("clip-days", 30);
+
+// "This request's videos have expired" — one SQL rule for [A] and [D].
+const VIDEOS_EXPIRED_SQL =
+  "COALESCE(videos_expire_at, updated_at + ($1 || ' days')::interval) < NOW()";
 const INACTIVE_DAYS = argVal("inactive-days", 30);
 
 // ── Env ──────────────────────────────────────────────────────────────────────
@@ -231,10 +240,10 @@ async function sweepDeliveredClips() {
   const { rows } = await db.query(
     `SELECT id, user_id FROM clip_requests
        WHERE status IN ('delivered','published')
-         AND updated_at < NOW() - ($1 || ' days')::interval`,
+         AND ${VIDEOS_EXPIRED_SQL}`,
     [String(FINAL_CLIP_DAYS)]
   );
-  console.log(`\n[A] Delivered > ${FINAL_CLIP_DAYS}d — ${rows.length} request(s)`);
+  console.log(`\n[A] Videos expired — ${rows.length} request(s)`);
   let total = 0;
   for (const r of rows) total += await purge("clip-window", r.user_id, r.id);
   return total;
@@ -341,9 +350,9 @@ async function sweepOrphans() {
   const ids = [...keysByRequest.keys()];
   const { rows } = await db.query(
     `SELECT id::text AS id, status,
-            (updated_at < NOW() - ($2 || ' days')::interval) AS past_grace
-       FROM clip_requests WHERE id::text = ANY($1::text[])`,
-    [ids, String(FINAL_CLIP_DAYS)]
+            (${VIDEOS_EXPIRED_SQL}) AS past_grace
+       FROM clip_requests WHERE id::text = ANY($2::text[])`,
+    [String(FINAL_CLIP_DAYS), ids]
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
 
@@ -369,7 +378,7 @@ async function sweepOrphans() {
     if (!req) {
       reason = "request not in DB";
     } else if (PURGEABLE_TERMINAL.has(req.status) && req.past_grace) {
-      reason = `terminal '${req.status}' past ${FINAL_CLIP_DAYS}d grace`;
+      reason = `terminal '${req.status}', videos expired`;
     }
     if (!reason) continue;
     const n = await deleteKeys(keys);

@@ -39,15 +39,14 @@ const LIFECYCLE_RULES: readonly { prefix: string; days: number }[] = [
   { prefix: "animated_overlays/", days: 7 },
   { prefix: "processed_audio/", days: 7 },
   { prefix: "voice_recordings/", days: 7 },
-  // final_exports/ is the delivered clip. Nominal 14 (bucket rule 14 + 1): the
-  // user is TOLD 7 days (deliveredAt + FINAL_CLIP_AVAILABILITY_DAYS, enforced by
-  // the app sweep), while the age-based bucket keeps ~2x that as headroom because
-  // the S3 clock counts from object CREATION, which happens a few approval-gates
-  // BEFORE delivery. A distribution payment moves the clip into paid_exports/,
-  // and a paid RClipper Management transfer copies it into management_retained/.
-  { prefix: "final_exports/", days: 14 },
-  // preview_exports/ — watermarked sibling of final_exports/, disposable once the
-  // download unlocks. Never longer than the master it previews.
+  // final_exports/ is the delivered clip. The user is TOLD 30 days
+  // (clip_requests.videos_expire_at, enforced by the download route and the
+  // app sweep) — and a package bought on day 29 restarts a free video's 30
+  // days, so a clip can legitimately live ~60 days from creation. The bucket
+  // rule is therefore 62 days (61 + 1): a backstop that never fires first.
+  { prefix: "final_exports/", days: 61 },
+  // preview_exports/ — watermarked sibling of final_exports/ (retired server
+  // pipeline only). Never longer than the master it previews.
   { prefix: "preview_exports/", days: 14 },
   { prefix: "clips/", days: 60 },
   { prefix: "thumbnails/", days: 730 },

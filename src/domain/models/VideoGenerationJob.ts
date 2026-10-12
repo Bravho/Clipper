@@ -416,6 +416,18 @@ export interface MontageSceneAsset {
    * default). See `src/lib/mobile/shotFraming.ts`.
    */
   frameZoom?: number;
+  /**
+   * Device renders only: this shot framed for each OTHER channel shape, keyed
+   * by ratio ("16:9", …). A shape rendered from this plan uses its entry here
+   * instead of the main shape's focusX/focusY/frameZoom, which were chosen for
+   * the main shape only (see `frameForShape`). Absent on plans approved before
+   * Oct 2026; those shapes fall back to the main framing.
+   */
+  framings?: Partial<Record<string, { focusX: number; focusY: number; frameZoom: number }>>;
+  /** Studio bookkeeping, round-tripped untouched: what the AI saw in this shot. */
+  aiFraming?: unknown;
+  /** Studio bookkeeping, round-tripped untouched: the person's own per-shape framing. */
+  shapeFraming?: unknown;
 }
 
 /**

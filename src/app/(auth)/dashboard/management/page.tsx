@@ -1,3 +1,5 @@
+import { videoAccessService } from "@/services/VideoAccessService";
+import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
@@ -15,8 +17,7 @@ import { managementEntitlementService } from "@/services/management/ManagementEn
 import { managementConnectionService } from "@/services/management/ManagementConnectionService";
 import {
   MANAGEMENT_UPLOAD_MAX_BYTES,
-  MANAGEMENT_FREE_UPLOAD_LIMIT,
-  MANAGEMENT_UPLOAD_RETENTION_DAYS,
+  MANAGEMENT_UPLOAD_KEEP_LIMIT,
 } from "@/services/management/ManagementUploadService";
 import { spacesSignedUrl, spacesPublicUrl } from "@/lib/spaces";
 import { estimatedSpaceExpiry } from "@/config/spacesLifecycle";
@@ -219,11 +220,12 @@ export default async function ManagementOverviewPage() {
         publishedUrl: tg.publishedUrl,
       }));
 
+      // The app's own expiry is the real date (it is enforced, and it is the
+      // date the studio shows); the storage estimate only covers old items
+      // that never had one.
       const spaceExpiry =
-        estimatedSpaceExpiry(
-          primary?.storageKey ?? null,
-          item.transferredAt ?? item.createdAt
-        ) ?? item.mediaExpiresAt;
+        item.mediaExpiresAt ??
+        estimatedSpaceExpiry(primary?.storageKey ?? null, item.transferredAt ?? item.createdAt);
 
       return {
         id: item.id,
@@ -256,9 +258,20 @@ export default async function ManagementOverviewPage() {
     })
   );
 
-  const uploadCount = items.filter((i) => i.sourceType === "user_upload").length;
-  const uploadsLeft = Math.max(0, MANAGEMENT_FREE_UPLOAD_LIMIT - uploadCount);
-  const canUpload = uploadsLeft > 0;
+  // Uploading needs a live package (2026-10-12), up to
+  // MANAGEMENT_UPLOAD_KEEP_LIMIT videos kept at once — the same rule
+  // ManagementUploadService enforces; this only decides what the button says.
+  const hasPackage = await videoAccessService.hasActivePackage(user.id).catch(() => false);
+  const nowMs = Date.now();
+  const uploadCount = items.filter(
+    (i) =>
+      i.sourceType === "user_upload" &&
+      hasUsableMedia(i) &&
+      (!i.mediaExpiresAt || i.mediaExpiresAt.getTime() > nowMs)
+  ).length;
+  const uploadsLeft = Math.max(0, MANAGEMENT_UPLOAD_KEEP_LIMIT - uploadCount);
+  const canUpload = hasPackage && uploadsLeft > 0;
+  const uploadBlockedReason = !hasPackage ? "package_required" : uploadsLeft > 0 ? null : "full";
   const uploadMaxMB = Math.round(MANAGEMENT_UPLOAD_MAX_BYTES / (1024 * 1024));
 
   return (
@@ -307,7 +320,12 @@ export default async function ManagementOverviewPage() {
           tokensRemaining={tokensRemaining}
           canUpload={canUpload}
           uploadMaxMB={uploadMaxMB}
-          quotaNote={`free · ${uploadsLeft} of ${MANAGEMENT_FREE_UPLOAD_LIMIT} upload slots left · kept ${MANAGEMENT_UPLOAD_RETENTION_DAYS} days`}
+          quotaNote={
+          hasPackage
+            ? `${uploadsLeft} of ${MANAGEMENT_UPLOAD_KEEP_LIMIT} upload places left · each video kept ${VIDEO_LIFETIME_DAYS} days`
+            : `included with a package · each video kept ${VIDEO_LIFETIME_DAYS} days`
+        }
+        uploadBlockedReason={uploadBlockedReason}
         />
       </section>
     </div>

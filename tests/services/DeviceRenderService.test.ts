@@ -499,6 +499,94 @@ describe("DeviceRenderService", () => {
       expect(manifest.captionLanguages).toEqual(["th", "en"]);
     });
 
+    it("frames an extra channel shape with that shape's own framing, not the main one", async () => {
+      // A tall clip framed to fill the 9:16 main video must not be reused to
+      // fill a 16:9 one — that cut the product off. The plan carries a framing
+      // per shape, and the 16:9 render uses it.
+      const { request, job } = await seed({ withMaster: false });
+      await clipRequestRepository.update(request.id, {
+        targetPlatforms: [Platform.TikTok, Platform.YouTube],
+      } as never);
+      await uploadedAssetRepository.create({
+        requestId: request.id,
+        userId: OWNER,
+        fileName: "photo.jpg",
+        assetType: AssetType.Image,
+        fileSizeBytes: 1_000_000,
+        mimeType: "image/jpeg",
+        storageKey: "request_mat/photo.jpg",
+        storageUrl: "https://cdn.example.com/photo.jpg",
+        thumbnailKey: "",
+        thumbnailUrl: "",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        scheduledDeletionAt: new Date("2030-01-01"),
+      } as never);
+      const voice = await uploadedAssetRepository.create({
+        requestId: request.id,
+        userId: OWNER,
+        fileName: "voice.mp3",
+        assetType: AssetType.StaffVoiceRecording,
+        fileSizeBytes: 200_000,
+        mimeType: "audio/mpeg",
+        storageKey: "voice/voice.mp3",
+        storageUrl: "https://cdn.example.com/voice.mp3",
+        thumbnailKey: "",
+        thumbnailUrl: "",
+        uploadStatus: AssetUploadStatus.Uploaded,
+        scheduledDeletionAt: new Date("2030-01-01"),
+      } as never);
+      await videoGenerationJobRepository.update(job.id, {
+        currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
+        processedVoiceAssetId: voice.id,
+        approvedScenePlan: JSON.stringify([
+          {
+            sceneNumber: 1,
+            durationSeconds: 16,
+            visualDescriptionThai: "ฉาก",
+            imageIndexes: [0],
+            transitionIn: "fade",
+            assets: [
+              {
+                assetIndex: 0,
+                kind: "image",
+                motion: "static",
+                durationSeconds: 16,
+                focusX: 0.5,
+                focusY: 0.5,
+                frameZoom: 1,
+                framings: { "16:9": { focusX: 0.5, focusY: 0.76, frameZoom: 0.45 } },
+              },
+            ],
+          },
+        ]),
+      } as never);
+      const queued = await renderTaskRepository.findActiveByJob(job.id);
+      if (queued) await renderTaskRepository.complete(queued.id, "done");
+      await renderTaskRepository.enqueue({
+        jobId: job.id,
+        requestId: request.id,
+        requesterId: OWNER,
+        step: RenderStep.AdditionalRatios,
+        deviceOnly: true,
+        payload: { deviceChain: true, ratio: "16:9", stage: "montage", queue: [] },
+      } as never);
+      process.env.NEXTAUTH_URL = "https://app.example.com";
+
+      const result = await service.claim({
+        requestId: request.id,
+        userId: OWNER,
+        capabilities: { ...capabilities, nativePluginVersion: 6 },
+      });
+      expect("claimed" in result).toBe(false);
+      if ("claimed" in result) return;
+      expect(result.manifest.ratio).toBe("16:9");
+      expect(result.manifest.scenes[0].assets[0]).toMatchObject({
+        focusX: 0.5,
+        focusY: 0.76,
+        frameZoom: 0.45,
+      });
+    });
+
     it("reports availability without taking a lease", async () => {
       const { request, job } = await seed();
 

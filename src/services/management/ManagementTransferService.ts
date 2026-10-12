@@ -266,7 +266,10 @@ export class ManagementTransferService {
         title: request.title,
         description: request.description ?? null,
         thumbnailStorageKey: thumbnailKey,
-        mediaExpiresAt: freeExpiry ?? managementRetainedExpiryFrom(),
+        // One video, one date: the item lives exactly as long as the request's
+        // videos (VIDEO_LIFETIME_DAYS, shown to the user on both screens).
+        mediaExpiresAt:
+          request.videosExpireAt ?? freeExpiry ?? managementRetainedExpiryFrom(),
       });
 
       // replaceAssets is a full replace inside one transaction, so re-running
@@ -413,7 +416,11 @@ export class ManagementTransferService {
         // media only lives as long as that clip's own (short) storage window.
         // Reflect that honestly; a paid promotion into management_retained/ later
         // pushes this out to the 30-day window.
+        // One video, one date: the request's own expiry (VIDEO_LIFETIME_DAYS),
+        // which the studio shows too. The storage estimate only covers a
+        // request delivered before that date was recorded.
         mediaExpiresAt:
+          request.videosExpireAt ??
           estimatedSpaceExpiry(asset.storageKey, asset.createdAt) ??
           managementRetainedExpiryFrom(),
       });

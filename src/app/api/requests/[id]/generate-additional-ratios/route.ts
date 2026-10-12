@@ -54,7 +54,9 @@ export async function POST(
     const updated = await videoGenerationService.generateAdditionalRatiosByRequester(
       jobId,
       session.user.id,
-      ratios
+      ratios,
+      // The studio's per-shape framing of each shot (phone renders only).
+      Array.isArray(body?.framings) ? body.framings : undefined
     );
     return NextResponse.json({ currentStep: updated.currentStep });
   } catch (err) {

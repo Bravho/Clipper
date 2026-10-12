@@ -29,6 +29,8 @@ export interface RetentionNote {
 interface RequestLike {
   status: RequestStatus;
   updatedAt: Date;
+  /** The recorded video expiry (migration 040); preferred when present. */
+  videosExpireAt?: Date | null;
 }
 
 function formatThaiDate(date: Date): string {
@@ -44,7 +46,7 @@ function daysUntil(target: Date, now: Date): number {
 }
 
 /**
- * Note for the final video / download button — the 7-day availability window.
+ * Note for the final video / download button — the video's expiry date.
  * Returns null when the request is not in a delivered/published state.
  */
 export function finalClipAvailabilityNote(
@@ -56,7 +58,8 @@ export function finalClipAvailabilityNote(
     request.status === RequestStatus.Published;
   if (!delivered) return null;
 
-  const expiresAt = addDays(request.updatedAt, FINAL_CLIP_AVAILABILITY_DAYS);
+  const expiresAt =
+    request.videosExpireAt ?? addDays(request.updatedAt, FINAL_CLIP_AVAILABILITY_DAYS);
   const remaining = daysUntil(expiresAt, now);
 
   if (remaining <= 0) {

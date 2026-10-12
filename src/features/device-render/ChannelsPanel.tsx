@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { PLATFORM_ASPECT_RATIOS, PLATFORM_LABELS, type Platform } from "@/domain/enums/Platform";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -12,6 +12,7 @@ import { DownloadVideoButton, ResumeCallout, type ResumeControls } from "./Downl
 import { useStudioT } from "./studioI18n";
 import { ChannelHandover, type StudioManagement } from "./ChannelHandover";
 import { StudioVideo } from "./StudioVideo";
+import type { VideoAccessView } from "@/services/VideoAccessService";
 
 const STAGES: ("montage" | "master" | "final")[] = ["montage", "master", "final"];
 
@@ -56,6 +57,8 @@ export function ChannelsPanel({
   management = null,
   delivered = false,
   originalsGone = false,
+  access = null,
+  renderFraming,
 }: {
   requestId: string | null;
   /** Present while the shapes' render is paused (app was closed, Stop, or a failure). */
@@ -88,6 +91,10 @@ export function ChannelsPanel({
    * videos already made can still be downloaded and migrated.
    */
   originalsGone?: boolean;
+  /** May these videos leave the app, and until when (VideoAccessService). */
+  access?: VideoAccessView | null;
+  /** How each scene will be framed in the shapes about to be made (ChannelFraming). */
+  renderFraming?: (ratios: string[]) => ReactNode;
 }) {
   const t = useStudioT();
   const shapes = useMemo(() => channelShapes(platforms), [platforms]);
@@ -201,12 +208,15 @@ export function ChannelsPanel({
                     assetId={output.assetId}
                     channel={shape.channels.join(", ")}
                     label={t("studio.channels.download", { ratio: shape.ratio })}
+                    access={access}
                   />
                 )}
               </li>
             );
           })}
         </ul>
+
+        {(choosing || addingLater) && !originalsGone && toMake.length > 0 && renderFraming?.(toMake)}
 
         {choosing && (
           <div className="studio-approve">
@@ -269,6 +279,7 @@ export function ChannelsPanel({
             shapes.find((shape) => shape.ratio === ratio)?.channels.join(", ") ?? ""
           }
           management={management}
+          access={access}
         />
       )}
     </>

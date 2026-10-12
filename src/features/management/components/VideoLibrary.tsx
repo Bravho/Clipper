@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { ROUTES } from "@/config/routes";
 import {
   managementPaymentsPath,
   managementPublishReturnPath,
@@ -65,14 +66,16 @@ interface VideoLibraryProps {
   /** May the user upload their own video right now (has paid entitlement)? */
   canUpload: boolean;
   uploadMaxMB: number;
-  /** e.g. "4 videos (one-time) / 100 videos (monthly)". */
+  /** e.g. "12 of 50 upload places left · each video kept 30 days". */
   quotaNote: string;
+  /** Why the upload button is off: no package, or every place is taken. */
+  uploadBlockedReason?: "package_required" | "full" | null;
 }
 
 /**
  * The user's video library ("วิดิโอของคุณ").
  *
- * Each card carries the thumbnail, a player, the estimated Space expiry, the
+ * Each card carries the thumbnail, a player, the date the video expires, the
  * channels it has gone out to, an inline editor for the title/default copy
  * (pre-filled into the composer at publish time), and a soft-delete. Uploading
  * your own video is gated on having paid — the button is disabled otherwise.
@@ -87,6 +90,7 @@ export function VideoLibrary({
   canUpload,
   uploadMaxMB,
   quotaNote,
+  uploadBlockedReason = null,
 }: VideoLibraryProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -195,9 +199,18 @@ export function VideoLibrary({
               <Button size="sm" disabled>
                 Upload video
               </Button>
-              <p className="mt-1 text-xs text-amber-700">
-                All upload slots are full — delete a video to free one.
-              </p>
+              {uploadBlockedReason === "package_required" ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  Uploading is included with a package.{" "}
+                  <Link href={ROUTES.PRICING} className="font-medium underline">
+                    See packages
+                  </Link>
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-amber-700">
+                  All upload places are full — delete a video to free one.
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -452,8 +465,10 @@ function VideoRow({
     video.sourceType === "user_upload" ? "Uploaded" : "Transferred",
     ...formatMetadata,
     video.spaceExpiry
-      ? `kept until ~${new Date(video.spaceExpiry).toLocaleDateString("en-GB")}`
-      : "storage expiry not set",
+      ? `${new Date(video.spaceExpiry).getTime() <= Date.now() ? "Expired" : "Expires"} ${new Date(
+          video.spaceExpiry
+        ).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
+      : "expiry not set",
   ];
 
   useEffect(() => {

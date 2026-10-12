@@ -1,12 +1,10 @@
 import {
   VIDEO_PACKAGES,
-  FREE_REQUESTS_PER_WINDOW,
-  FREE_WINDOW_DAYS,
+  FREE_REQUESTS_TOTAL,
   REQUESTS_PER_PAID_MONTH,
   findVideoPackage,
   creditsPerMonth,
   expandPackageWindows,
-  freeWindowStart,
 } from "@/config/videoPackages";
 
 /**
@@ -19,8 +17,8 @@ const DAY = 86_400_000;
 
 describe("catalogue", () => {
   it("matches the advertised ladder", () => {
-    expect(FREE_REQUESTS_PER_WINDOW).toBe(3);
-    expect(FREE_WINDOW_DAYS).toBe(30);
+    // Two free requests per account, ever (2026-10-12).
+    expect(FREE_REQUESTS_TOTAL).toBe(2);
     expect(REQUESTS_PER_PAID_MONTH).toBe(10);
 
     expect(
@@ -107,12 +105,5 @@ describe("expandPackageWindows", () => {
     const windows = expandPackageWindows(pkg, new Date("2028-02-29T00:00:00Z"));
     // 2029 has no 29 Feb, so the anniversary clamps to the 28th.
     expect(windows[11].expiresAt.toISOString()).toBe("2029-02-28T00:00:00.000Z");
-  });
-});
-
-describe("freeWindowStart", () => {
-  it("is a sliding 30-day window, not a fixed reset date", () => {
-    const now = new Date("2026-09-08T12:00:00Z");
-    expect(freeWindowStart(now).toISOString()).toBe("2026-08-09T12:00:00.000Z");
   });
 });

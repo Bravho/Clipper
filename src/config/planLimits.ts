@@ -22,7 +22,8 @@ import {
   MAX_VOICE_MAKES_PER_REQUEST,
 } from "@/config/requestLimits";
 import { FINAL_CLIP_AVAILABILITY_DAYS } from "@/config/retention";
-import { FREE_REQUESTS_PER_WINDOW, FREE_WINDOW_DAYS } from "@/config/videoPackages";
+import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
+import { FREE_VIDEO_LIFETIME_DAYS, VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
 import type { MessageKey } from "@/i18n/messages";
 
@@ -50,8 +51,11 @@ export function tierFacts(tier: PackageTier): TierFacts {
 
 /** The free allowance. */
 export const FREE_FACTS = {
-  videos: FREE_REQUESTS_PER_WINDOW,
-  days: FREE_WINDOW_DAYS,
+  videos: FREE_REQUESTS_TOTAL,
+  /** Days an unlocked (package) video is kept. */
+  days: VIDEO_LIFETIME_DAYS,
+  /** Days a free (locked) video is kept, waiting for a package. */
+  freeDays: FREE_VIDEO_LIFETIME_DAYS,
 } as const;
 
 /**

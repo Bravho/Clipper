@@ -3518,12 +3518,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // never throws, so a poster failure cannot discard the finished render.
     await ensureAssetPoster(asset.id, `poster-${ratio.replace(":", "x")}`);
 
-    // RETAINED CAPABILITY, CURRENTLY DORMANT. This pre-rendered the watermarked
-    // sibling that the pay-to-download paywall served. Every request is now
-    // created `downloadUnlocked: true`, so the guard inside returns immediately
-    // and no watermark is ever encoded. Kept wired up — not deleted — so
-    // watermarking can be switched back on by changing what sets that flag,
-    // rather than being rebuilt from scratch.
+    // A FREE request is download-locked until a package is bought (2026-10-12,
+    // VideoAccessService), so on this server pipeline it gets a watermarked
+    // sibling for the web request page's preview. A package request is
+    // unlocked and the guard inside returns immediately. Phone renders never
+    // come through here — the studio shows locked videos only in the app.
     await this._renderWatermarkedSibling(asset.id, userId, job.requestId, ratio);
 
     return asset.id;
@@ -3746,7 +3745,13 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
      * Phone-rendered requests only: which of the remaining shapes to make.
      * Omitted means all of them, which is what the server path always does.
      */
-    ratios?: VideoRatio[]
+    ratios?: VideoRatio[],
+    /**
+     * Phone-rendered requests only: the studio's framing of every shot in each
+     * channel shape (`scenePlanFromScenes` output). Merged into the approved
+     * plan — framing only, see `mergeShapeFramings` — before the shapes start.
+     */
+    framings?: unknown
   ): Promise<VideoGenerationJob> {
     // A phone-rendered request may also make a shape it skipped AFTER the
     // others were delivered: the Channels step keeps every unmade shape
@@ -3787,11 +3792,26 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
             actor: this._actorFor(jobId, userId),
           });
         }
+        let reframedPlan: string | null = null;
+        if (framings !== undefined && gated.approvedScenePlan) {
+          try {
+            const { mergeShapeFramings } = await import("@/lib/mobile/planFramings");
+            const merged = mergeShapeFramings(
+              JSON.parse(gated.approvedScenePlan) as ScenePlan[],
+              framings
+            );
+            if (merged.changed > 0) reframedPlan = JSON.stringify(merged.plan);
+          } catch (err) {
+            // Framing is an improvement, never a reason not to render.
+            console.error(`[VideoGeneration] job ${jobId}: channel framing not saved:`, err);
+          }
+        }
         const started = await videoGenerationJobRepository.update(
           jobId,
           {
             currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
             ...(userId ? { finalApprovedBy: userId } : {}),
+            ...(reframedPlan ? { approvedScenePlan: reframedPlan } : {}),
           },
           this._actorFor(jobId, userId)
         );

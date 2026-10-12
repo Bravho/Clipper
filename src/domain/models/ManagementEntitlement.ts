@@ -128,5 +128,9 @@ export interface ManagementTransferEligibility {
     | "feature_disabled"
     | "not_owner"
     | "generation_incomplete"
-    | "no_eligible_media";
+    | "no_eligible_media"
+    /** A free request, or no live package: buy one to send it. */
+    | "package_required"
+    /** The videos are past their 30 days. */
+    | "videos_expired";
 }

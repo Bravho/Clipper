@@ -12,6 +12,7 @@ import {
 } from "@/lib/spaces";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { attachmentContentDisposition } from "@/lib/downloadHeaders";
+import { videoAccessService } from "@/services/VideoAccessService";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,14 +23,13 @@ const DOWNLOAD_URL_TTL_SECONDS = 5 * 60;
 /**
  * GET /api/requests/[id]/download?assetId=...
  *
- * Returns download metadata or, with `direct=1`, streams the clean
- * (non-watermarked) final master as a same-origin attachment — but ONLY when the
- * request's download is unlocked (paid). This is the paywall: the clean master
- * is never handed out until `downloadUnlocked` is true.
+ * Returns download metadata or, with `direct=1`, streams the final video as a
+ * same-origin attachment — but ONLY when VideoAccessService says the video may
+ * leave the app: a free request needs a package (402, `reason:
+ * "package_required"`), and every video stops being available on its
+ * `videosExpireAt` (410, `reason: "expired"`).
  *
- * The requester may still WATCH the preview via /stream while locked; downloading
- * the clean file requires payment. (Watermarking the streamed preview so the
- * preview itself is worthless to rip is the remaining render-pipeline work.)
+ * The requester may still WATCH a locked video in the app via /stream.
  */
 export async function GET(
   request: NextRequest,
@@ -52,15 +52,25 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  // Paywall: owners must have unlocked the download. Staff/Admin bypass for QA.
-  if (isOwner && !isStaff && !clipRequest.downloadUnlocked) {
-    return NextResponse.json(
-      {
-        error: "Download locked. Pay to unlock the clean video.",
-        locked: true,
-      },
-      { status: 402 }
-    );
+  // Owners may take a video out of the app only when it is unlocked (a package
+  // paid for it, or a purchase since unlocked it) and not expired. Admin
+  // bypasses for QA. See VideoAccessService.
+  if (isOwner && !isStaff) {
+    const access = await videoAccessService.accessFor(clipRequest);
+    if (!access.canDownload) {
+      const expired = access.downloadBlock === "expired";
+      return NextResponse.json(
+        {
+          error: expired
+            ? "This video has expired and is no longer available."
+            : "Buy a package to download this video.",
+          locked: !expired,
+          reason: access.downloadBlock,
+          expiresAt: access.expiresAt?.toISOString() ?? null,
+        },
+        { status: expired ? 410 : 402 }
+      );
+    }
   }
 
   const assetId = request.nextUrl.searchParams.get("assetId");

@@ -2,9 +2,9 @@
  * Entitlement evaluation, transfer eligibility, status aggregation, idempotency
  * keys and the product catalogue.
  *
- * The central rule these guard: COLLECTING CONTENT IS FREE, PUBLISHING IS PAID.
- * Transferring a finished project and uploading your own video must never ask
- * for money; publishing must never happen without it.
+ * The central rules these guard (2026-10-12): getting a studio video INTO
+ * Management needs a live package and an unlocked, unexpired request;
+ * publishing must never happen without a pass or tokens.
  *
  * Repositories are stubbed in-memory (the same spirit as the other service
  * tests, which construct fresh Mock repositories rather than touching the global
@@ -39,6 +39,8 @@ import {
 } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { isManagementProductCode } from "@/domain/enums/ManagementProductCode";
+import { describeAccess } from "@/services/VideoAccessService";
+import type { ClipRequest } from "@/domain/models/ClipRequest";
 
 // The feature flag is read from the environment on each call, so setting it here
 // is enough — no module re-import needed.
@@ -97,13 +99,17 @@ interface Stubs {
   tokensRemaining?: number;
   content?: unknown;
   contentById?: unknown;
+  /** Does the account hold a live package (VideoAccessService)? Default true. */
+  hasPackage?: boolean;
 }
 
 function serviceWith(stubs: Stubs) {
   return new ManagementEntitlementService(
     {
       findById: async () =>
-        stubs.request === undefined ? { id: SOURCE, userId: USER.id } : stubs.request,
+        stubs.request === undefined
+          ? { id: SOURCE, userId: USER.id, downloadUnlocked: true, videosExpireAt: null }
+          : stubs.request,
     } as never,
     { findByRequestId: async () => stubs.job ?? null } as never,
     {
@@ -115,7 +121,13 @@ function serviceWith(stubs: Stubs) {
       findBySource: async () => stubs.content ?? null,
       findById: async () =>
         stubs.contentById === undefined ? contentItem() : stubs.contentById,
-    } as never
+    } as never,
+    // The real decision, with the package answer stubbed.
+    {
+      accessFor: async (request: ClipRequest) =>
+        describeAccess(request, stubs.hasPackage ?? true),
+      hasActivePackage: async () => stubs.hasPackage ?? true,
+    }
   );
 }
 
@@ -262,32 +274,60 @@ describe("hasUsableMedia", () => {
   });
 });
 
-describe("transfer eligibility — always free", () => {
-  it("allows a completed, owned project with no payment involved", async () => {
+describe("transfer eligibility — needs a package (2026-10-12)", () => {
+  it("allows a completed, owned, unlocked project while a package is live", async () => {
     const service = serviceWith({ job: completedJob() });
     const result = await service.checkTransferEligibility(USER, SOURCE);
     expect(result.allowed).toBe(true);
     expect(result.alreadyTransferred).toBe(false);
     expect(result.videoCount).toBe(1);
-    // The shape carries no price, product or entitlement field at all.
+    // Nothing is charged here: the shape carries no price or product.
     expect(result).not.toHaveProperty("priceCredits");
     expect(result).not.toHaveProperty("entitlementType");
   });
 
-  it("allows transfer even for a user who has never paid for anything", async () => {
-    // No pass, no unlock, no credits — transfer must still be permitted.
-    const service = serviceWith({ job: completedJob(), effectiveExpiry: null, passes: [] });
-    expect((await service.checkTransferEligibility(USER, SOURCE)).allowed).toBe(true);
-  });
-
-  it("allows transfer after an access pass has lapsed", async () => {
-    const past = new Date(Date.now() - 86_400_000);
+  it("refuses a free (locked) request when the account has no package", async () => {
     const service = serviceWith({
       job: completedJob(),
-      effectiveExpiry: { passId: "p", startsAt: past, expiresAt: past },
-      passes: [{ expiresAt: past }],
+      hasPackage: false,
+      request: { id: SOURCE, userId: USER.id, downloadUnlocked: false, videosExpireAt: null },
     });
-    expect((await service.checkTransferEligibility(USER, SOURCE)).allowed).toBe(true);
+    const result = await service.checkTransferEligibility(USER, SOURCE);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("package_required");
+  });
+
+  it("refuses a paid request once the package has lapsed", async () => {
+    const service = serviceWith({ job: completedJob(), hasPackage: false });
+    expect((await service.checkTransferEligibility(USER, SOURCE)).reason).toBe(
+      "package_required"
+    );
+  });
+
+  it("refuses videos past their expiry, package or not", async () => {
+    const service = serviceWith({
+      job: completedJob(),
+      request: {
+        id: SOURCE,
+        userId: USER.id,
+        downloadUnlocked: true,
+        videosExpireAt: new Date(Date.now() - 1000),
+      },
+    });
+    expect((await service.checkTransferEligibility(USER, SOURCE)).reason).toBe(
+      "videos_expired"
+    );
+  });
+
+  it("does not let a NEW video through on an earlier transfer once the package lapsed", async () => {
+    const service = serviceWith({
+      job: completedJob(),
+      content: { id: CONTENT },
+      hasPackage: false,
+    });
+    expect((await service.checkTransferEligibility(USER, SOURCE)).reason).toBe(
+      "package_required"
+    );
   });
 
   it("refuses a project belonging to someone else", async () => {
@@ -473,7 +513,7 @@ describe("feature flag", () => {
     expect(isManagementEnabledFor(USER)).toBe(true);
   });
 
-  it("blocks even the free transfer when the feature is off", async () => {
+  it("blocks the transfer when the feature is off", async () => {
     process.env.RCLIPPER_MANAGEMENT_ENABLED = "false";
     const service = serviceWith({ job: completedJob() });
     expect((await service.checkTransferEligibility(USER, SOURCE)).reason).toBe(

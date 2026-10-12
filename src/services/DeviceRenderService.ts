@@ -39,6 +39,7 @@ import type { VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 import type { RenderTask } from "@/domain/models/RenderTask";
 import { readDeviceRatioLink, type DeviceRatioLink } from "@/lib/mobile/deviceRatioChain";
 import { canRenderFromSources } from "@/lib/mobile/deviceRenderPluginVersion";
+import { readShapeFraming } from "@/lib/mobile/shotFraming";
 
 /**
  * Phone rendering, server side: the lease, the manifest, the upload
@@ -1024,19 +1025,26 @@ export class DeviceRenderService {
       )
     );
 
+    // Each channel shape is framed for ITSELF: a shot's focusX/focusY/frameZoom
+    // were chosen for the main shape, and reusing them for another shape cut
+    // the product off (a tall clip filling a 16:9 frame). `framings` carries
+    // the studio's per-shape framing; a plan without one keeps the old reuse.
     const scenes = scenePlan.map((scene, index) => ({
       sceneNumber: scene.sceneNumber ?? index,
       transitionIn: scene.transitionIn ?? null,
-      assets: (scene.assets ?? []).map((shot) => ({
-        sourceAssetId: ordered[shot.assetIndex]?.id ?? "",
-        durationSeconds: shot.durationSeconds,
-        motion: shot.motion,
-        trimStartSeconds: shot.trimStartSeconds ?? null,
-        trimEndSeconds: shot.trimEndSeconds ?? null,
-        focusX: shot.focusX ?? null,
-        focusY: shot.focusY ?? null,
-        frameZoom: shot.frameZoom ?? null,
-      })),
+      assets: (scene.assets ?? []).map((shot) => {
+        const framing = readShapeFraming(shot.framings?.[ratio]);
+        return {
+          sourceAssetId: ordered[shot.assetIndex]?.id ?? "",
+          durationSeconds: shot.durationSeconds,
+          motion: shot.motion,
+          trimStartSeconds: shot.trimStartSeconds ?? null,
+          trimEndSeconds: shot.trimEndSeconds ?? null,
+          focusX: framing?.focusX ?? shot.focusX ?? null,
+          focusY: framing?.focusY ?? shot.focusY ?? null,
+          frameZoom: framing?.frameZoom ?? shot.frameZoom ?? null,
+        };
+      }),
     }));
 
     let inputVideoUrl: string | null = null;

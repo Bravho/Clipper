@@ -11,6 +11,7 @@ import { Platform } from "@/domain/enums/Platform";
 import { EditorType } from "@/domain/enums/EditorType";
 import { EffortClass } from "@/domain/enums/EffortClass";
 import { pool } from "@/lib/db";
+import { FREE_VIDEO_LIFETIME_DAYS, VIDEO_LIFETIME_DAYS } from "@/config/retention";
 
 const LEGACY_TRAVY_PLATFORM = `${["tv", "ent"].join("")}_app`;
 
@@ -69,6 +70,9 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     allowanceRefundedAt: row.allowance_refunded_at
       ? new Date(row.allowance_refunded_at as string)
       : null,
+    videosExpireAt: row.videos_expire_at
+      ? new Date(row.videos_expire_at as string)
+      : null,
     submittedAt: row.submitted_at
       ? new Date(row.submitted_at as string)
       : null,
@@ -121,6 +125,7 @@ const STATUS_EXTRA_COLS: Record<string, string> = {
   pricingTier: "pricing_tier",
   videoAllowanceWindowId: "video_allowance_window_id",
   allowanceRefundedAt: "allowance_refunded_at",
+  videosExpireAt: "videos_expire_at",
 };
 
 export class PostgresClipRequestRepository
@@ -157,6 +162,19 @@ export class PostgresClipRequestRepository
           AND submitted_at IS NOT NULL
           AND ($2::timestamptz IS NULL OR submitted_at >= $2)`,
       [userId, since ?? null]
+    );
+    return (rows[0]?.count as number) ?? 0;
+  }
+
+  async countFreeRequestsByUserId(userId: string): Promise<number> {
+    const { rows } = await this.db.query(
+      `SELECT COUNT(*)::int AS count
+         FROM clip_requests
+        WHERE user_id = $1
+          AND submitted_at IS NOT NULL
+          AND pricing_tier = 'free'
+          AND allowance_refunded_at IS NULL`,
+      [userId]
     );
     return (rows[0]?.count as number) ?? 0;
   }
@@ -372,12 +390,29 @@ export class PostgresClipRequestRepository
         | "pricingTier"
         | "videoAllowanceWindowId"
         | "allowanceRefundedAt"
+        | "videosExpireAt"
       >
     >
   ): Promise<ClipRequest> {
     const sets = [`status = $1`, `updated_at = NOW()`];
     const values: unknown[] = [status];
     let idx = 2;
+
+    // The video lifetime starts at the FIRST delivery and is never pushed out by
+    // a later one (an extra channel shape made afterwards re-delivers the same
+    // request). Done here so every path to Delivered — the phone studio, the
+    // server pipeline, a human editor — stamps it. An explicit
+    // `extra.videosExpireAt` (a package unlock) is applied below and wins.
+    if (status === RequestStatus.Delivered && extra?.videosExpireAt === undefined) {
+      // 30 days for an unlocked (package) request, 14 for a free one
+      // (config/retention.ts lifetimeDaysAtDelivery).
+      const paidDays = idx++;
+      const freeDays = idx++;
+      sets.push(
+        `videos_expire_at = COALESCE(videos_expire_at, NOW() + ((CASE WHEN download_unlocked THEN $${paidDays} ELSE $${freeDays} END) || ' days')::interval)`
+      );
+      values.push(String(VIDEO_LIFETIME_DAYS), String(FREE_VIDEO_LIFETIME_DAYS));
+    }
 
     if (extra) {
       for (const [key, value] of Object.entries(extra)) {

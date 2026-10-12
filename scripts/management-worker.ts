@@ -24,7 +24,6 @@ import * as os from "os";
 import { managementJobRepository } from "@/repositories/index";
 import { managementReconcileService } from "@/services/management/ManagementReconcileService";
 import { managementUploadRetentionService } from "@/services/management/ManagementUploadRetentionService";
-import { managementTransferRetentionService } from "@/services/management/ManagementTransferRetentionService";
 import { ManagementJobKind } from "@/domain/enums/ManagementStatus";
 import type { ManagementJob } from "@/domain/models/ManagementJob";
 
@@ -95,17 +94,17 @@ async function runJob(job: ManagementJob): Promise<void> {
       return;
     }
     try {
+      // Uploads begun before 2026-10-12 may still sit in the 7-day
+      // management_uploads/ prefix; a purchase moves them to the 30-day one.
+      //
+      // Transferred studio videos are NOT extended any more (2026-10-12): a
+      // transferred video lives exactly as long as its request's videos
+      // (clip_requests.videos_expire_at, 30 days), the date the studio and the
+      // library both show. A purchase renews only FREE requests' dates, and
+      // that is VideoAccessService.unlockForPackage's job, at checkout.
       const moved = await managementUploadRetentionService.extendForUser(userId, now);
-      // A management purchase also promotes the buyer's transferred generation
-      // videos from the short free window into the paid management_retained/ one.
-      const movedTransfers =
-        await managementTransferRetentionService.extendForUser(userId, now);
       await managementJobRepository.complete(job.id);
-      log("retention extended", {
-        userId,
-        movedUploadFiles: moved,
-        movedTransferFiles: movedTransfers,
-      });
+      log("retention extended", { userId, movedUploadFiles: moved });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await managementJobRepository.fail(job.id, message, {

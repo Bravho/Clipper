@@ -7,7 +7,8 @@ import { FREE_FACTS, perVideoLimits, tierFacts } from "@/config/planLimits";
 import { MAX_CHANNEL_SHAPES_PER_REQUEST, MAX_VOICE_MAKES_PER_REQUEST } from "@/config/requestLimits";
 import { STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
 import { MAX_UPLOAD_COUNT } from "@/domain/enums/AssetType";
-import { FREE_REQUESTS_PER_WINDOW, FREE_WINDOW_DAYS } from "@/config/videoPackages";
+import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
+import { FREE_VIDEO_LIFETIME_DAYS, VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { perVideoLimitsSummary } from "@/config/planLimits";
 import { translate } from "@/i18n/messages";
 
@@ -23,7 +24,13 @@ describe("plan limits shown to users", () => {
   it("describes the tiers and the free allowance from the catalogue", () => {
     expect(tierFacts("starter")).toEqual({ videosPerMonth: 5, monthlyPrice: 190, lowestPerMonth: 158 });
     expect(tierFacts("pro")).toEqual({ videosPerMonth: 10, monthlyPrice: 350, lowestPerMonth: 291 });
-    expect(FREE_FACTS).toEqual({ videos: FREE_REQUESTS_PER_WINDOW, days: FREE_WINDOW_DAYS });
+    // `days` is now how long a video is kept — the free allowance has no window.
+    expect(FREE_FACTS).toEqual({
+      videos: FREE_REQUESTS_TOTAL,
+      days: VIDEO_LIFETIME_DAYS,
+      freeDays: FREE_VIDEO_LIFETIME_DAYS,
+    });
+    expect(FREE_VIDEO_LIFETIME_DAYS).toBe(14);
   });
 
   it("fills every number into the one-line summary in each language", () => {

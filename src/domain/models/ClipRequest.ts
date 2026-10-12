@@ -105,18 +105,21 @@ export interface ClipRequest {
   // ── Trial / pay-to-download entitlement ────────────────────────────────────
 
   /**
-   * RETAINED CAPABILITY — currently always true.
+   * May the requester take this request's videos OUT of the app — download them
+   * or send them to Channel Management? (Tho, 2026-10-12.)
    *
-   * When the pay-to-download paywall existed, a locked request was served as a
-   * watermarked preview and this flag released the clean master. That paywall is
-   * withdrawn (migration 033 unlocked every row), but the flag, the watermark
-   * renderer and the preview-serving swap are deliberately kept so the
-   * capability can be switched back on by configuration rather than rebuilt.
-   * Do not delete as dead code.
+   * True from submission for a request a package paid for. False for a free
+   * request until the account buys a package, which unlocks every free request
+   * that has not expired yet (VideoAccessService.unlockForPackage). Never set
+   * back to false.
    *
    * Persisted as `download_unlocked BOOLEAN NOT NULL DEFAULT false`. Optional in
    * the type only so legacy object literals compile; repositories always
    * populate it. Read it as `!!request.downloadUnlocked`.
+   *
+   * The watermark renderer that once served locked requests is still wired to
+   * this flag but only runs on the retired server pipeline; phone renders are
+   * never watermarked, so a locked video is simply not handed out.
    */
   /**
    * Where this request's heavy render steps may run.
@@ -138,6 +141,18 @@ export interface ClipRequest {
   renderLocation?: "server" | "device";
 
   downloadUnlocked?: boolean;
+
+  /**
+   * When this request's finished videos expire (are no longer downloadable or
+   * sendable, and get purged). Null until the request is first delivered.
+   *
+   * Stamped once, on the first move to Delivered, as delivery +
+   * VIDEO_LIFETIME_DAYS; moved to purchase + VIDEO_LIFETIME_DAYS when a package
+   * purchase unlocks a free request. See config/retention.ts.
+   *
+   * Persisted as `videos_expire_at TIMESTAMPTZ NULL` (migration 040).
+   */
+  videosExpireAt?: Date | null;
 
   /**
    * @deprecated Historical billing field from the per-request pricing era, when

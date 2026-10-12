@@ -3,10 +3,12 @@ import type { VideoProductCode } from "@/domain/enums/VideoProductCode";
 /**
  * RClipper Video — the quota model.
  *
- * WHAT IS FREE AND WHAT COSTS MONEY
- *   Free:  3 video requests per rolling 30 days, rendered at LOW queue priority.
- *          The deliverable is the real thing — no watermark, fully downloadable.
- *   Paid:  a prepaid package grants 10 requests per month at HIGH queue priority.
+ * WHAT IS FREE AND WHAT COSTS MONEY (set 2026-10-12)
+ *   Free:  2 video requests per account, EVER. The videos are made and can be
+ *          watched in the app, but they cannot be downloaded or sent to Channel
+ *          Management until the account buys a package (VideoAccessService).
+ *   Paid:  a prepaid package grants 5 (Starter) or 10 (Pro) requests per month;
+ *          its videos download and go to Channel Management straight away.
  *
  * WHY A QUOTA AND NOT A PER-REQUEST PRICE. One render costs 2–3 hours on a
  * single worker, so the scarce resource is the render line, not money. A monthly
@@ -24,18 +26,14 @@ import type { VideoProductCode } from "@/domain/enums/VideoProductCode";
  * absorbed (see src/config/mobilePurchases.ts).
  */
 
-/** Requests a free account may submit per rolling window. */
-export const FREE_REQUESTS_PER_WINDOW = 3;
-
 /**
- * The free allowance window, in days.
+ * Free requests an account may submit in its whole life (Tho, 2026-10-12).
  *
- * A SLIDING window: the allowance is "requests submitted in the last 30 days",
- * not a bucket that refills on a fixed date. That needs no anchor date, no reset
- * job and no per-user bookkeeping, and it cannot be gamed by timing submissions
- * around a boundary.
+ * Not a rolling window: once an account has submitted this many free requests
+ * it must buy a package to make more. A free request whose render failed and
+ * was given back (`allowance_refunded_at`) does not count.
  */
-export const FREE_WINDOW_DAYS = 30;
+export const FREE_REQUESTS_TOTAL = 2;
 
 /**
  * Requests one purchased month is worth on the retired video packages and on a
@@ -250,9 +248,4 @@ export function videoWindowLayoutForMonths(months: number): {
 export function expandVideoMonths(months: number, from: Date): AllowanceWindowSpec[] {
   const { windowKind, windowDays } = videoWindowLayoutForMonths(months);
   return expandWindows(months, windowKind, windowDays, from);
-}
-
-/** The start of the free allowance's sliding window, relative to `now`. */
-export function freeWindowStart(now: Date = new Date()): Date {
-  return new Date(now.getTime() - FREE_WINDOW_DAYS * 86_400_000);
 }

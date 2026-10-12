@@ -8,6 +8,7 @@ import {
   VOICE_MAKE_TOP_UP,
 } from "@/config/requestLimits";
 import { creditService } from "@/services/CreditService";
+import { toVideoAccessView, videoAccessService } from "@/services/VideoAccessService";
 import { textGraphicChoiceOf } from "@/services/TextGraphicsService";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
 import { VideoGenerationStep } from "@/domain/enums/VideoGenerationStep";
@@ -180,10 +181,19 @@ export async function GET(request: Request) {
   const link = activeTask ? readDeviceRatioLink(activeTask.payload) : null;
   const chain = link ? { ratio: link.ratio, stage: link.stage, queue: link.queue } : null;
 
+  // May the videos leave the app, and until when — every finished video in the
+  // studio shows this (VideoAccessService). Also unlocks a free request whose
+  // owner has since bought a package.
+  const access = await videoAccessService
+    .accessFor(clipRequest)
+    .then(toVideoAccessView)
+    .catch(() => undefined);
+
   return NextResponse.json(
     {
       submitted,
       delivered: clipRequest.status === RequestStatus.Delivered,
+      access,
       jobId: job.id,
       currentStep: job.currentStep,
       failedAtStep: job.failedAtStep ?? null,

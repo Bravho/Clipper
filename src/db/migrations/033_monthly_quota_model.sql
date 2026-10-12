@@ -108,9 +108,22 @@ ALTER TABLE clip_requests
 -- ── 4. Retire the paywall ───────────────────────────────────────────────────
 -- The ฿50 unlock no longer exists, so a request left download-locked could never
 -- be unlocked by anyone. Unlock them all rather than strand users mid-flow.
-UPDATE clip_requests
-   SET download_unlocked = true
- WHERE download_unlocked = false;
+--
+-- GUARDED (2026-10-12): migration 040 brought the lock back — a free request now
+-- stays locked until the account buys a package. This file is re-run to update
+-- prices, so the blanket unlock only runs on a database that predates 040;
+-- otherwise every re-run would unlock every free video for nothing.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'clip_requests' AND column_name = 'videos_expire_at'
+  ) THEN
+    UPDATE clip_requests
+       SET download_unlocked = true
+     WHERE download_unlocked = false;
+  END IF;
+END $$;
 
 -- Collapse the three-value tier to the two allowances. `paid_upfront` was money
 -- received; both free rungs become the free allowance.

@@ -30,7 +30,7 @@ export function PlanComparison({ t }: { t: Translate }) {
       lines: [
         t("limits.free.videos", { videos: FREE_FACTS.videos, days: FREE_FACTS.days }),
         t("limits.free.posting"),
-        t("limits.free.window", { days: FREE_FACTS.days }),
+        t("limits.free.window", { days: FREE_FACTS.days, freeDays: FREE_FACTS.freeDays }),
       ],
     },
     {

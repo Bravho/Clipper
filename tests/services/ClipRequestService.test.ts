@@ -251,13 +251,60 @@ describe("Quota bookkeeping (repo-level)", () => {
   // The quota rules live in tests/config/videoPackages.test.ts and their
   // end-to-end behaviour in tests/services/VideoQuota.test.ts. These cover only
   // what the repository must store for those to work.
-  it("new drafts default to the free tier and are not download-locked", async () => {
+  it("new drafts default to the free tier, locked, with no video expiry yet", async () => {
     const { requestRepo } = makeIsolatedDeps();
     const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
-    // Nothing is watermark-locked any more; the flag is a retained capability.
-    expect(req.downloadUnlocked).toBe(true);
+    // Submission decides: a package request is unlocked, a free one stays
+    // locked until a package is bought (VideoAccessService).
+    expect(req.downloadUnlocked).toBe(false);
+    expect(req.videosExpireAt ?? null).toBeNull();
     expect(req.pricingTier).toBe(RequestPricingTier.Free);
     expect(req.videoAllowanceWindowId ?? null).toBeNull();
+  });
+
+  it("gives a free (locked) video 14 days at its first delivery", async () => {
+    const { requestRepo } = makeIsolatedDeps();
+    const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    const before = Date.now();
+    const delivered = await requestRepo.updateStatus(req.id, RequestStatus.Delivered);
+    const days = ((delivered.videosExpireAt as Date).getTime() - before) / 86_400_000;
+    expect(days).toBeGreaterThan(13.99);
+    expect(days).toBeLessThan(14.01);
+  });
+
+  it("stamps a package video's 30 days at the FIRST delivery and never pushes it out", async () => {
+    const { requestRepo } = makeIsolatedDeps();
+    const req = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    await requestRepo.updateStatus(req.id, RequestStatus.Submitted, { downloadUnlocked: true });
+    const before = Date.now();
+    const delivered = await requestRepo.updateStatus(req.id, RequestStatus.Delivered);
+    const first = delivered.videosExpireAt as Date;
+    expect(first).toBeInstanceOf(Date);
+    const days = (first.getTime() - before) / 86_400_000;
+    expect(days).toBeGreaterThan(29.99);
+    expect(days).toBeLessThan(30.01);
+
+    // A later re-delivery (an extra channel shape) keeps the first date.
+    await requestRepo.updateStatus(req.id, RequestStatus.Editing);
+    const again = await requestRepo.updateStatus(req.id, RequestStatus.Delivered);
+    expect(again.videosExpireAt).toEqual(first);
+  });
+
+  it("countFreeRequestsByUserId counts free submissions only, ever", async () => {
+    const { requestRepo } = makeIsolatedDeps();
+    const free = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    await requestRepo.updateStatus(free.id, RequestStatus.Submitted, {
+      submittedAt: new Date("2020-01-01T00:00:00Z"),
+      pricingTier: RequestPricingTier.Free,
+    });
+    const paid = await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" });
+    await requestRepo.updateStatus(paid.id, RequestStatus.Submitted, {
+      submittedAt: new Date(),
+      pricingTier: RequestPricingTier.Paid,
+      videoAllowanceWindowId: "window-1",
+    });
+    await requestRepo.create({ ...VALID_FORM_DATA, userId: "u-1" }); // a draft
+    expect(await requestRepo.countFreeRequestsByUserId("u-1")).toBe(1);
   });
 
   it("persists the tier and the window that paid for a submission", async () => {

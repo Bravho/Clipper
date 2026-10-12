@@ -54,6 +54,7 @@ import {
   scenesFromScenePlan,
   scenesFromStoryboard,
   scenesPlaySeconds,
+  shotFramesKey,
   shotPlaySeconds,
   stretchScenesToLength,
   storyboardFromScenes,
@@ -92,7 +93,7 @@ import { QuotaDialog, QuotaStatus, type StudioQuota } from "./QuotaPrompt";
 import { BriefPanel } from "./BriefPanel";
 import { SourcePicker, type PendingMedia } from "./SourcePicker";
 import { MissingOriginals } from "./MissingOriginals";
-import { sweepFinishedVideos } from "@/lib/mobile/finishedVideoCache";
+import { setFinishedVideoExpiry, sweepFinishedVideos } from "@/lib/mobile/finishedVideoCache";
 import type { LocalMediaDescriptor } from "@/lib/mobile/localMediaContract";
 import { prepareClip } from "./clipPreview";
 import { buildRenderTimeline } from "./renderTimeline";
@@ -102,6 +103,8 @@ import { AudioPanel, type ScriptStatus, type VoiceStatus } from "./AudioPanel";
 import { StylePanel } from "./StylePanel";
 import { RenderPanel, type MainVideoControls } from "./RenderPanel";
 import { ChannelsPanel, channelShapes } from "./ChannelsPanel";
+import { ChannelFraming, type ChannelFramingStatus } from "./ChannelFraming";
+import { captureShotFrames } from "./shotFrames";
 import type { StudioManagement } from "./ChannelHandover";
 import {
   pipelineStepText,
@@ -117,6 +120,7 @@ import {
   approveStudioVideo,
   approveStudioVoice,
   fetchStudioContent,
+  fetchShotFraming,
   fetchStudioFraming,
   generateStudioChannels,
   regenerateStudioVoice,
@@ -349,6 +353,10 @@ function StudioEditor({
   const [channelChoice, setChannelChoice] = useState<string[] | null>(null);
   const [channelsStarting, setChannelsStarting] = useState(false);
   const [channelsError, setChannelsError] = useState<string | null>(null);
+  // Channels: each scene framed for each extra shape (ChannelFraming).
+  const [channelFramingStatus, setChannelFramingStatus] = useState<ChannelFramingStatus>("idle");
+  const [channelThumbs, setChannelThumbs] = useState<Record<string, string>>({});
+  const channelFramingRun = useRef<string | null>(null);
   // The storyboard the person approved, by identity. Any edit makes a new
   // scenes array, so "approved" quietly lapses the moment it is changed — an
   // approval of a storyboard that no longer exists is not an approval.
@@ -1603,6 +1611,18 @@ function StudioEditor({
   const primaryRatio =
     (orderedPlatforms[0] && PLATFORM_ASPECT_RATIOS[orderedPlatforms[0]]) || document.ratio;
   const outputs = useMemo(() => content?.outputs ?? [], [content]);
+
+  // The phone's copies of these videos are deleted on the same date as the
+  // server's (14 days free, 30 with a package, renewed by a purchase): record
+  // it each time the server says what it is.
+  const videosExpireAt = content?.access?.expiresAt ?? null;
+  useEffect(() => {
+    if (!videosExpireAt || outputs.length === 0) return;
+    void setFinishedVideoExpiry(
+      outputs.map((output) => output.assetId),
+      videosExpireAt
+    );
+  }, [outputs, videosExpireAt]);
   const atVideoGate = step_ === VideoGenerationStep.AwaitingOverlayApproval;
   const mainApproved = step_ !== null && AFTER_MAIN_APPROVAL.includes(step_);
   const mainVideoOutput =
@@ -1674,7 +1694,15 @@ function StudioEditor({
           ratios.length > 0 &&
           (current === VideoGenerationStep.AwaitingAdditionalRatios || delivered);
         if (current === VideoGenerationStep.AwaitingAdditionalRatios || (delivered && making)) {
-          await generateStudioChannels({ requestId, jobId, ratios, t });
+          await generateStudioChannels({
+            requestId,
+            jobId,
+            ratios,
+            // Each shot framed for each shape — what the AI saw in it, and any
+            // shot the person fixed — so no shape reuses the main video's crop.
+            framings: scenePlanFromScenes(document, indexOfSource),
+            t,
+          });
         }
         userStopped.current = false;
         await refreshContent();
@@ -1690,13 +1718,118 @@ function StudioEditor({
         setChannelsStarting(false);
       }
     },
-    [content?.currentStep, content?.jobId, refreshContent, requestId, t]
+    [content?.currentStep, content?.jobId, document, indexOfSource, refreshContent, requestId, t]
   );
 
   // The photos and clips the video is made from must still be in the app
   // (kept ORIGINALS_KEPT_DAYS days). Without them nothing can be rendered, so
   // Render, Resume and the extra channel shapes are all disabled.
   const originalsGone = missingOriginals.length > 0;
+
+  // Channels: before any extra shape is made, the AI looks at a few small
+  // frames from inside each shot (its trimmed window, not the clip's first
+  // frame) and every shot is framed for each shape on its own, so a wide video
+  // keeps the product whole and centred instead of reusing the main video's
+  // crop. Once per set of shots; a failure keeps the picture-level framing.
+  const channelFramingWanted =
+    step === "channels" &&
+    !originalsGone &&
+    otherShapes.length > 0 &&
+    (step_ === VideoGenerationStep.AwaitingOverlayApproval ||
+      step_ === VideoGenerationStep.AwaitingAdditionalRatios ||
+      step_ === VideoGenerationStep.AwaitingDistributionReview ||
+      step_ === VideoGenerationStep.Complete);
+  const channelShotKeys = useMemo(
+    () =>
+      document.scenes
+        .flatMap((scene) => scene.shots.map((shot) => `${shot.id}:${shotFramesKey(shot)}`))
+        .join(","),
+    [document.scenes]
+  );
+  useEffect(() => {
+    if (!channelFramingWanted || !requestId || channelShotKeys === "") return;
+    if (channelFramingRun.current === channelShotKeys) return;
+    channelFramingRun.current = channelShotKeys;
+    const shots = document.scenes.flatMap((scene) => scene.shots);
+    const sources = document.sources;
+    let cancelled = false;
+    setChannelFramingStatus("checking");
+    void (async () => {
+      const asks: { shotId: string; key: string; frames: string[] }[] = [];
+      for (const shot of shots) {
+        if (cancelled) return;
+        const source = sources.find((entry) => entry.id === shot.sourceId);
+        if (!source) continue;
+        const taken = await captureShotFrames(source, shot);
+        if (cancelled) return;
+        if (taken.thumbnail) {
+          const thumbnail = taken.thumbnail;
+          setChannelThumbs((current) => ({ ...current, [shot.id]: thumbnail }));
+        }
+        const key = shotFramesKey(shot);
+        if (taken.frames.length > 0 && !(shot.aiFraming && shot.aiFramingKey === key)) {
+          asks.push({ shotId: shot.id, key, frames: taken.frames });
+        }
+      }
+      if (asks.length === 0) {
+        if (!cancelled) setChannelFramingStatus("done");
+        return;
+      }
+      const boxes = await fetchShotFraming(
+        requestId,
+        asks.map((ask) => ({ frames: ask.frames }))
+      );
+      if (cancelled) return;
+      const found = new Map<string, { key: string; boxes: NonNullable<(typeof boxes)[number]> }>();
+      asks.forEach((ask, index) => {
+        const answer = boxes[index];
+        if (answer) found.set(ask.shotId, { key: ask.key, boxes: answer });
+      });
+      if (found.size > 0) {
+        setDocument((current) => ({
+          ...current,
+          scenes: current.scenes.map((scene) => ({
+            ...scene,
+            shots: scene.shots.map((shot) => {
+              const hit = found.get(shot.id);
+              return hit ? { ...shot, aiFraming: hit.boxes, aiFramingKey: hit.key } : shot;
+            }),
+          })),
+        }));
+      }
+      setChannelFramingStatus(found.size > 0 ? "done" : "failed");
+    })();
+    return () => {
+      cancelled = true;
+      // Unmounted or the shots changed mid-run: let the next run start afresh.
+      channelFramingRun.current = null;
+    };
+    // `document` is read once per set of shots; the key covers what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelFramingWanted, channelShotKeys, requestId]);
+
+  const patchShapeFraming = useCallback(
+    (
+      shotId: string,
+      ratio: EditorRatio,
+      framing: { focusX: number; focusY: number; frameZoom: number | null } | null
+    ) => {
+      update((current) => ({
+        ...current,
+        scenes: current.scenes.map((scene) => ({
+          ...scene,
+          shots: scene.shots.map((shot) => {
+            if (shot.id !== shotId) return shot;
+            const shapeFraming = { ...(shot.shapeFraming ?? {}) };
+            if (framing) shapeFraming[ratio] = framing;
+            else delete shapeFraming[ratio];
+            return { ...shot, shapeFraming };
+          }),
+        })),
+      }));
+    },
+    [update]
+  );
 
   const renderChecklist = [
     {
@@ -2331,6 +2464,7 @@ function StudioEditor({
             serverOutcome={serverOutcome}
             pipelineStatus={pipelineStepText(t, step_)}
             main={mainControls}
+            access={content?.access ?? null}
           />
         )}
 
@@ -2362,6 +2496,17 @@ function StudioEditor({
             management={management}
             delivered={content?.delivered === true}
             originalsGone={originalsGone}
+            access={content?.access ?? null}
+            renderFraming={(ratios) => (
+              <ChannelFraming
+                document={document}
+                ratios={ratios}
+                status={channelFramingStatus}
+                thumbnails={channelThumbs}
+                disabled={channelsStarting || busy}
+                onChange={patchShapeFraming}
+              />
+            )}
           />
         )}
 

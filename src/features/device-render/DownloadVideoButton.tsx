@@ -2,20 +2,30 @@
 
 import { useState } from "react";
 
+import type { VideoAccessView } from "@/services/VideoAccessService";
 import { downloadStudioVideo } from "./downloadVideo";
 import { useStudioT } from "./studioI18n";
+import { VideoAccessNote } from "./VideoAccessNote";
 
-/** A finished video's download button, with its own busy and error state. */
+/**
+ * A finished video's download button, with its own busy and error state, and
+ * under it the video's expiry date — or, for a free video, why it cannot be
+ * downloaded yet (VideoAccessNote). The button is off while the server says
+ * the video may not leave the app; the server checks again on download.
+ */
 export function DownloadVideoButton({
   requestId,
   assetId,
   channel,
   label,
+  access = null,
 }: {
   requestId: string;
   assetId: string;
   channel?: string;
   label?: string;
+  /** What the server allows for this request; null from an older server. */
+  access?: VideoAccessView | null;
 }) {
   const t = useStudioT();
   const [downloading, setDownloading] = useState(false);
@@ -36,6 +46,7 @@ export function DownloadVideoButton({
         assetId,
         channel,
         failedMessage: t("studio.download.failed"),
+        allowedOffline: access?.canDownload === true,
         onProgress: (fraction) => setPercent(Math.round(fraction * 100)),
         onStage: setStage,
       });
@@ -69,7 +80,7 @@ export function DownloadVideoButton({
       <button
         type="button"
         className="studio-button studio-button-ghost"
-        disabled={downloading}
+        disabled={downloading || (access != null && !access.canDownload)}
         onClick={() => void download()}
       >
         {downloading
@@ -80,6 +91,7 @@ export function DownloadVideoButton({
               : t("studio.download.preparing")
           : (label ?? t("studio.download.default"))}
       </button>
+      <VideoAccessNote access={access} />
       {savedNote && (
         <p className="studio-note studio-note-positive" role="status" style={{ marginTop: 8 }}>
           {savedNote}

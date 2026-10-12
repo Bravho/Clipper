@@ -10,9 +10,9 @@ import { getServerI18n } from "@/i18n/server";
 import type { MessageKey } from "@/i18n/messages";
 import { isAppUserAgent } from "@/lib/mobile/appUserAgent";
 import {
-  FREE_REQUESTS_PER_WINDOW,
-  FREE_WINDOW_DAYS,
+  FREE_REQUESTS_TOTAL,
 } from "@/config/videoPackages";
+import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { ENTRY_PACKAGE, managementPriceCredits } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
@@ -88,7 +88,7 @@ export default async function HomePage() {
           <p className="mx-auto mb-10 max-w-2xl text-lg text-slate-700">{t("mkt.hero.body")}</p>
           <StoreButtons t={t} />
           <p className="mt-6 text-sm text-slate-500">
-            {t("mkt.hero.free", { freeTotal: FREE_REQUESTS_PER_WINDOW, days: FREE_WINDOW_DAYS })}
+            {t("mkt.hero.free", { freeTotal: FREE_REQUESTS_TOTAL, days: VIDEO_LIFETIME_DAYS })}
           </p>
         </div>
       </section>
@@ -156,8 +156,8 @@ export default async function HomePage() {
           <h2 className="mb-3 text-2xl font-bold text-slate-900">{t("mkt.pricing.title")}</h2>
           <p className="mb-6 text-slate-600">
             {t("mkt.pricing.body", {
-              freeTotal: FREE_REQUESTS_PER_WINDOW,
-              days: FREE_WINDOW_DAYS,
+              freeTotal: FREE_REQUESTS_TOTAL,
+              days: VIDEO_LIFETIME_DAYS,
               starterTotal: PACKAGE_TIER_REQUESTS.starter,
               proTotal: PACKAGE_TIER_REQUESTS.pro,
               price: entryPrice,
