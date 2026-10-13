@@ -6,8 +6,11 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { ROUTES } from "@/config/routes";
 import { fetchWithTimeout, RequestTimeoutError } from "@/lib/fetchWithTimeout";
+import { useI18n } from "@/i18n/client";
+import { rich } from "@/i18n/rich";
 
 export default function VerifyEmailPage() {
+  const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get("email") ?? "";
@@ -23,7 +26,7 @@ export default function VerifyEmailPage() {
   async function handleVerify(event: React.FormEvent) {
     event.preventDefault();
     if (!/^\d{6}$/.test(code)) {
-      setVerifyError("Enter the six-digit code from your email.");
+      setVerifyError(t("verify.enterCode"));
       return;
     }
 
@@ -37,20 +40,16 @@ export default function VerifyEmailPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setVerifyError(data.error ?? "Verification failed.");
+        setVerifyError(data.error ?? t("verify.failed"));
         setVerifyState("error");
         return;
       }
-      router.push(
-        `${ROUTES.LOGIN}?message=${encodeURIComponent(
-          "Email verified! You can now sign in."
-        )}`
-      );
+      router.push(`${ROUTES.LOGIN}?notice=email-verified`);
     } catch (error) {
       setVerifyError(
         error instanceof RequestTimeoutError
-          ? "The server took too long to respond. Please try again."
-          : "An unexpected error occurred. Please try again."
+          ? t("common.timeout")
+          : t("common.errorRetry")
       );
       setVerifyState("error");
     }
@@ -69,7 +68,7 @@ export default function VerifyEmailPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setResendError(data.error ?? "Failed to resend. Please try again.");
+        setResendError(data.error ?? t("verify.resendFailed"));
         setResendState("error");
       } else {
         setResendState("sent");
@@ -77,8 +76,8 @@ export default function VerifyEmailPage() {
     } catch (error) {
       setResendError(
         error instanceof RequestTimeoutError
-          ? "The server took too long to respond. Please try again in a moment."
-          : "An unexpected error occurred."
+          ? t("common.timeout")
+          : t("common.errorRetry")
       );
       setResendState("error");
     }
@@ -94,33 +93,41 @@ export default function VerifyEmailPage() {
           </svg>
         </div>
 
-        <h1 className="text-2xl font-bold text-slate-900">Check your inbox</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{t("verify.title")}</h1>
         <p className="mt-3 text-sm text-slate-500 leading-relaxed">
-          {existingAccount
-            ? "An account with this email already exists but may still need verification: "
-            : initialDeliveryFailed
-            ? "Your account was created, but we could not send the verification email to "
-            : "We sent a six-digit verification code to "}
-          {email ? (
-            <span className="font-medium text-slate-700">{email}</span>
-          ) : (
-            "your email address"
+          {rich(
+            t(
+              existingAccount
+                ? "verify.leadExisting"
+                : initialDeliveryFailed
+                  ? "verify.leadFailed"
+                  : "verify.leadSent"
+            ),
+            {
+              email: email ? (
+                <span className="font-medium text-slate-700">{email}</span>
+              ) : (
+                t("verify.yourEmail")
+              ),
+            }
           )}
-          .<br />
-          {existingAccount
-            ? "Use the button below to send a fresh verification link, or sign in if you have already verified it."
-            : initialDeliveryFailed
-            ? "Use the button below to try sending it again."
-            : "Enter the code below to activate your account."}
+          <br />
+          {t(
+            existingAccount
+              ? "verify.nextExisting"
+              : initialDeliveryFailed
+                ? "verify.nextFailed"
+                : "verify.nextSent"
+          )}
         </p>
 
         <p className="mt-2 text-xs text-slate-400">
-          The code expires in 10 minutes.
+          {t("verify.expires")}
         </p>
 
         <form onSubmit={handleVerify} className="mt-6">
           <label htmlFor="verification-code" className="sr-only">
-            Six-digit verification code
+            {t("verify.codeLabel")}
           </label>
           <input
             id="verification-code"
@@ -145,7 +152,7 @@ export default function VerifyEmailPage() {
               loading={verifyState === "verifying"}
               disabled={!email || code.length !== 6}
             >
-              Verify email
+              {t("verify.submit")}
             </Button>
           </div>
         </form>
@@ -153,12 +160,12 @@ export default function VerifyEmailPage() {
         <div className="mt-8 border-t border-slate-100 pt-6">
           {resendState === "sent" ? (
             <p className="text-sm text-green-700 font-medium">
-              A new verification code was sent. Check your inbox.
+              {t("verify.resent")}
             </p>
           ) : (
             <>
               <p className="text-sm text-slate-500 mb-3">
-                Didn&rsquo;t receive it? Check your spam folder, or:
+                {t("verify.notReceived")}
               </p>
               {resendError && (
                 <p className="mb-3 text-sm text-red-600">{resendError}</p>
@@ -170,16 +177,16 @@ export default function VerifyEmailPage() {
                 onClick={handleResend}
                 disabled={!email}
               >
-                Resend verification code
+                {t("verify.resend")}
               </Button>
             </>
           )}
         </div>
 
         <p className="mt-4 text-sm text-slate-400">
-          Already verified?{" "}
+          {t("verify.already")}{" "}
           <Link href={ROUTES.LOGIN} className="text-blue-700 font-medium hover:underline">
-            Sign in
+            {t("nav.signIn")}
           </Link>
         </p>
       </div>

@@ -1,4 +1,5 @@
 import { RequestStatus, ACTIVE_STATUSES } from "@/domain/enums/RequestStatus";
+import type { AppLocale } from "@/i18n/config";
 import { ClipRequest } from "@/domain/models/ClipRequest";
 import {
   clipRequestRepository,
@@ -55,7 +56,7 @@ export interface DashboardDeliveredRow {
 }
 
 export class RequesterDashboardService {
-  async getDashboardSummary(userId: string): Promise<DashboardSummary> {
+  async getDashboardSummary(userId: string, locale: AppLocale = "th"): Promise<DashboardSummary> {
     const [balance, allRequests, quota] = await Promise.all([
       creditService.getBalance(userId),
       clipRequestRepository.findByUserId(userId),
@@ -90,14 +91,14 @@ export class RequesterDashboardService {
     const recentRequests = allRequests
       .filter((r) => r.status !== RequestStatus.Draft)
       .slice(0, 5)
-      .map((r) => this.toRow(r));
+      .map((r) => this.toRow(r, locale));
 
     // Dashboard "in progress" section shows the latest 5 requests of ANY status
     // (drafts, pending, and failed-upload requests included). allRequests is
     // already sorted newest-first by the repository. To see the rest, the user
     // clicks "view all". The activeRequestCount stat card still reflects only
     // truly-active statuses.
-    const activeRows = allRequests.slice(0, 5).map((r) => this.toRow(r));
+    const activeRows = allRequests.slice(0, 5).map((r) => this.toRow(r, locale));
 
     return {
       creditBalance: balance,
@@ -110,16 +111,17 @@ export class RequesterDashboardService {
     };
   }
 
-  private toRow(request: ClipRequest): DashboardRequestRow {
+  private toRow(request: ClipRequest, locale: AppLocale = "th"): DashboardRequestRow {
     return {
       id: request.id,
       title: request.title,
       status: request.status,
       statusPresentation: requestPresentationService.getStatusPresentation(
-        request.status
+        request.status,
+        locale
       ),
-      dueDateDisplay: requestPresentationService.getDueDateDisplay(request),
-      queueDisplay: requestPresentationService.getQueueDisplay(request),
+      dueDateDisplay: requestPresentationService.getDueDateDisplay(request, locale),
+      queueDisplay: requestPresentationService.getQueueDisplay(request, locale),
       submittedAt: request.submittedAt,
       updatedAt: request.updatedAt,
     };

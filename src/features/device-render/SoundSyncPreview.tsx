@@ -62,9 +62,9 @@ const VOICE_FOLLOW_SECONDS = 0.05;
 const VOICE_HARD_DRIFT_SECONDS = 1.5;
 /** Music is a looped bed: re-place it only when clearly off. */
 const MUSIC_DRIFT_SECONDS = 1.0;
-/** Music bed level, and its level under speech (renderer: 0.3, ducked). */
-const MUSIC_BED = 0.3;
-const MUSIC_UNDER_VOICE = 0.18;
+/** Music bed level, and its level under speech (renderer: 0.4, ducked). */
+const MUSIC_BED = 0.4;
+const MUSIC_UNDER_VOICE = 0.24;
 
 function fmt(seconds: number): string {
   return seconds.toFixed(1);

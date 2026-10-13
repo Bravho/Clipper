@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { ROUTES } from "@/config/routes";
+import { usePricingHref } from "./usePricingHref";
 import type { VideoAccessView } from "@/services/VideoAccessService";
 import { managementArrivalPath } from "@/features/management/components/StudioTransferScreen";
 import type { StudioOutput } from "./studioPipeline";
@@ -51,6 +52,7 @@ export function ChannelHandover({
   access?: VideoAccessView | null;
 }) {
   const t = useStudioT();
+  const pricingHref = usePricingHref();
   if (outputs.length === 0) return null;
 
   const transferred = management.transferredByAssetId;
@@ -103,9 +105,9 @@ export function ChannelHandover({
             </p>
             {blocked === "package_required" && (
               <Link
-                href={ROUTES.PRICING}
+                href={pricingHref}
                 className="studio-button studio-button-primary"
-                style={{ marginTop: 10, display: "inline-block" }}
+                style={{ marginTop: 10 }}
               >
                 {t("studio.access.seePackages")}
               </Link>

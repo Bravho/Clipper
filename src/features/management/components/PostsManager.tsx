@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
+import { intlLocale } from "@/i18n/config";
+import type { MessageKey } from "@/i18n/messages";
 
 /** One post = one channel destination of a publication. */
 export interface ManagedPost {
@@ -34,21 +37,21 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: "bg-slate-100 text-slate-500",
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  published: "เผยแพร่แล้ว",
-  scheduled: "ตั้งเวลาไว้",
-  publishing: "กำลังเผยแพร่",
-  draft: "ฉบับร่าง",
-  failed: "ล้มเหลว",
-  cancelled: "ยกเลิกแล้ว",
+const STATUS_LABELS: Record<string, MessageKey> = {
+  published: "posts.status.published",
+  scheduled: "posts.status.scheduled",
+  publishing: "posts.status.publishing",
+  draft: "posts.status.draft",
+  failed: "posts.status.failed",
+  cancelled: "posts.status.cancelled",
 };
 
-function formatDate(iso: string | null): string {
+function formatDate(iso: string | null, dateTag = "en-GB"): string {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? "—"
-    : d.toLocaleString("en-GB", {
+    : d.toLocaleString(dateTag, {
         day: "2-digit",
         month: "short",
         year: "numeric",
@@ -65,13 +68,14 @@ function formatDate(iso: string | null): string {
  * appear on a scheduled post, which the provider can still change or cancel.
  */
 export function PostsManager({ posts }: { posts: ManagedPost[] }) {
+  const { t } = useI18n();
   const [list, setList] = useState(posts);
 
   if (list.length === 0) {
     return (
       <Card>
         <p className="text-sm text-slate-500">
-          ยังไม่มีโพสต์ — เผยแพร่วิดิโอจากหน้า “วิดิโอของคุณ” แล้วโพสต์จะมาปรากฏที่นี่
+          {t("posts.empty")}
         </p>
       </Card>
     );
@@ -110,6 +114,7 @@ function PostRow({
     updated: Pick<ManagedPost, "caption" | "title" | "hashtags">
   ) => void;
 }) {
+  const { t, locale } = useI18n();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [caption, setCaption] = useState(post.caption);
@@ -144,7 +149,7 @@ function PostRow({
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || "Could not save.");
+        throw new Error(body?.error || t("posts.saveFailed"));
       }
       onSaved({
         caption,
@@ -154,14 +159,14 @@ function PostRow({
       setEditing(false);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save.");
+      setError(err instanceof Error ? err.message : t("posts.saveFailed"));
     } finally {
       setBusy("idle");
     }
   }
 
   async function remove() {
-    if (!confirm(`ยกเลิกโพสต์ที่ตั้งเวลาไว้บน ${post.platformLabel}?`)) return;
+    if (!confirm(t("posts.confirmCancel", { channel: post.platformLabel }))) return;
     setBusy("deleting");
     setError(null);
     try {
@@ -171,12 +176,12 @@ function PostRow({
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || "Could not delete.");
+        throw new Error(body?.error || t("posts.deleteFailed"));
       }
       onRemoved();
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete.");
+      setError(err instanceof Error ? err.message : t("posts.deleteFailed"));
       setBusy("idle");
     }
   }
@@ -196,7 +201,7 @@ function PostRow({
               />
             ) : (
               <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-slate-100 text-xs text-slate-400">
-                No thumbnail
+                {t("posts.noThumbnail")}
               </div>
             )}
           </div>
@@ -213,7 +218,7 @@ function PostRow({
                   {post.accountName ? ` · ${post.accountName}` : ""}
                 </p>
                 <p className="mt-0.5 text-xs text-slate-400">
-                  {formatDate(post.dateIso)}
+                  {formatDate(post.dateIso, intlLocale(locale))}
                 </p>
               </div>
               <span
@@ -221,7 +226,7 @@ function PostRow({
                   STATUS_STYLES[post.status] ?? "bg-slate-100 text-slate-600"
                 }`}
               >
-                {STATUS_LABELS[post.status] ?? post.status}
+                {STATUS_LABELS[post.status] ? t(STATUS_LABELS[post.status]) : post.status}
               </span>
             </div>
 
@@ -234,7 +239,7 @@ function PostRow({
                   rel="noopener noreferrer"
                   className="text-sm font-medium text-blue-600 hover:underline"
                 >
-                  ดูโพสต์ →
+                  {t("posts.view")}
                 </a>
               )}
 
@@ -245,7 +250,7 @@ function PostRow({
                     variant="outline"
                     onClick={() => setEditing((v) => !v)}
                   >
-                    {editing ? "ปิด" : "แก้ไข"}
+                    {editing ? t("common.close") : t("common.edit")}
                   </Button>
                   <Button
                     size="sm"
@@ -253,12 +258,12 @@ function PostRow({
                     onClick={remove}
                     loading={busy === "deleting"}
                   >
-                    ลบ
+                    {t("common.delete")}
                   </Button>
                 </>
               ) : (
                 <span className="text-xs text-slate-400">
-                  โพสต์ที่เผยแพร่แล้วไม่สามารถแก้ไข/ลบผ่านระบบได้
+                  {t("posts.cannotManage")}
                 </span>
               )}
             </div>
@@ -269,26 +274,26 @@ function PostRow({
             {editing && post.canManage && (
               <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <label className="block text-xs font-medium text-slate-600">
-                  Caption
+                  {t("posts.caption")}
                   <textarea
                     rows={2}
                     value={caption}
                     onChange={(e) => setCaption(e.target.value)}
                     className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                    placeholder="Caption for this channel…"
+                    placeholder={t("posts.captionPlaceholder")}
                   />
                 </label>
                 <label className="block text-xs font-medium text-slate-600">
-                  Title (YouTube)
+                  {t("posts.titleYoutube")}
                   <input
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                    placeholder="Optional title"
+                    placeholder={t("posts.titlePlaceholder")}
                   />
                 </label>
                 <label className="block text-xs font-medium text-slate-600">
-                  Hashtags (space or comma separated)
+                  {t("posts.hashtagsLabel")}
                   <input
                     value={hashtags}
                     onChange={(e) => setHashtags(e.target.value)}
@@ -298,10 +303,10 @@ function PostRow({
                 </label>
                 <div className="flex items-center gap-3">
                   <Button size="sm" onClick={save} loading={busy === "saving"}>
-                    บันทึกและอัปเดตโพสต์
+                    {t("posts.save")}
                   </Button>
                   <span className="text-xs text-slate-400">
-                    อัปเดตโพสต์ที่ตั้งเวลาไว้ก่อนเผยแพร่
+                    {t("posts.saveHint")}
                   </span>
                 </div>
               </div>

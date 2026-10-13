@@ -2,6 +2,7 @@ import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
 import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 import {
   clipRequestRepository,
+  userRepository,
   videoAllowanceWindowRepository,
 } from "@/repositories";
 
@@ -54,6 +55,24 @@ export interface VideoQuota {
  */
 export class VideoQuotaService {
   /**
+   * Free requests this PERSON has used: this account's, plus those carried
+   * over from an earlier account of theirs that was deleted
+   * (`users.prior_trial_requests_used`, written by AccountService at
+   * deletion and copied onto a re-created account). Deleting and signing up
+   * again therefore does not give two more free videos.
+   */
+  private async freeUsed(userId: string): Promise<number> {
+    const own = await clipRequestRepository.countFreeRequestsByUserId(userId);
+    let carried = 0;
+    try {
+      carried = (await userRepository.findById(userId))?.priorTrialRequestsUsed ?? 0;
+    } catch {
+      carried = 0;
+    }
+    return own + carried;
+  }
+
+  /**
    * What the next request would draw on, without consuming anything.
    *
    * Read-only — safe for dashboards and the pricing page. `consume()` re-checks
@@ -77,7 +96,7 @@ export class VideoQuotaService {
       };
     }
 
-    const usedFree = await clipRequestRepository.countFreeRequestsByUserId(userId);
+    const usedFree = await this.freeUsed(userId);
     const remaining = Math.max(0, FREE_REQUESTS_TOTAL - usedFree);
 
     return {
@@ -112,7 +131,7 @@ export class VideoQuotaService {
       return { tier: RequestPricingTier.Paid, allowanceWindowId: windowId };
     }
 
-    const usedFree = await clipRequestRepository.countFreeRequestsByUserId(userId);
+    const usedFree = await this.freeUsed(userId);
     if (usedFree < FREE_REQUESTS_TOTAL) {
       return { tier: RequestPricingTier.Free, allowanceWindowId: null };
     }

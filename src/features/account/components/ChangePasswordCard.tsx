@@ -4,12 +4,14 @@ import { useState } from "react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { useI18n } from "@/i18n/client";
 
 /**
  * Change-password card — rendered only for credentials (email/password)
  * accounts. OAuth accounts (Google/Apple) have no password.
  */
 export function ChangePasswordCard() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -31,11 +33,11 @@ export function ChangePasswordCard() {
     setSuccess(false);
 
     if (newPassword.length < 8) {
-      setError("รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร");
+      setError(t("password.tooShort"));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setError("รหัสผ่านใหม่และการยืนยันไม่ตรงกัน");
+      setError(t("password.mismatch"));
       return;
     }
 
@@ -48,14 +50,14 @@ export function ChangePasswordCard() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+        setError(data.error ?? t("common.errorRetry"));
         return;
       }
       setSuccess(true);
       setOpen(false);
       reset();
     } catch {
-      setError("ไม่สามารถเชื่อมต่อได้ กรุณาลองอีกครั้ง");
+      setError(t("common.networkError"));
     } finally {
       setLoading(false);
     }
@@ -64,28 +66,28 @@ export function ChangePasswordCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>รหัสผ่าน</CardTitle>
+        <CardTitle>{t("password.title")}</CardTitle>
       </CardHeader>
 
       {success && (
         <div className="mb-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          เปลี่ยนรหัสผ่านเรียบร้อยแล้ว
+          {t("password.changed")}
         </div>
       )}
 
       {!open ? (
         <div className="flex items-center justify-between">
           <p className="text-sm text-slate-500">
-            เปลี่ยนรหัสผ่านสำหรับการเข้าสู่ระบบด้วยอีเมล
+            {t("password.changeHint")}
           </p>
           <Button variant="outline" onClick={() => setOpen(true)}>
-            เปลี่ยนรหัสผ่าน
+            {t("password.change")}
           </Button>
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Input
-            label="รหัสผ่านปัจจุบัน"
+            label={t("password.current")}
             type="password"
             autoComplete="current-password"
             value={currentPassword}
@@ -93,16 +95,16 @@ export function ChangePasswordCard() {
             required
           />
           <Input
-            label="รหัสผ่านใหม่"
+            label={t("password.new")}
             type="password"
             autoComplete="new-password"
-            hint="อย่างน้อย 8 ตัวอักษร"
+            hint={t("password.min8")}
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             required
           />
           <Input
-            label="ยืนยันรหัสผ่านใหม่"
+            label={t("password.confirmNew")}
             type="password"
             autoComplete="new-password"
             value={confirmPassword}
@@ -128,10 +130,10 @@ export function ChangePasswordCard() {
                 reset();
               }}
             >
-              ยกเลิก
+              {t("common.cancel")}
             </Button>
             <Button type="submit" loading={loading}>
-              บันทึกรหัสผ่านใหม่
+              {t("password.save")}
             </Button>
           </div>
         </form>

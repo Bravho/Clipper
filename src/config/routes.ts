@@ -149,3 +149,22 @@ export const PROTECTED_ROUTE_PREFIXES = [
   ROUTES.ADMIN,
   ROUTES.ACCOUNT,
 ];
+
+/**
+ * A `returnTo` query value that is safe to navigate to: a same-origin path in
+ * the studio or the dashboard. Anything else (absolute URLs, `//host`,
+ * backslashes, other sections) is dropped, so `?returnTo=` cannot be used as an
+ * open redirect.
+ */
+export function safeReturnPath(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
+  if (
+    !value.startsWith("/studio") &&
+    !value.startsWith("/device-render-lab") &&
+    !value.startsWith("/dashboard/")
+  ) {
+    return null;
+  }
+  return value;
+}

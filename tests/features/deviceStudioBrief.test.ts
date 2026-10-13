@@ -198,6 +198,16 @@ describe("scenesFromStoryboard", () => {
     expect(scenes[0].summary).toBe("Real");
   });
 
+  it("uses each photo or clip once, even when the plan repeats it", () => {
+    const scenes = scenesFromStoryboard(document, [
+      { sceneNumber: 1, summary: "", assetIndexes: [0, 1] },
+      { sceneNumber: 2, summary: "", assetIndexes: [1, 0] },
+      { sceneNumber: 3, summary: "", assetIndexes: [2, 0] },
+    ]);
+    const ids = scenes.flatMap((scene) => scene.shots.map((shot) => shot.sourceId));
+    expect(ids).toEqual(["a", "b", "c"]);
+  });
+
   it("ignores an index that addresses material that is not there", () => {
     const scenes = scenesFromStoryboard(document, [
       { sceneNumber: 1, summary: "", assetIndexes: [0, 99] },

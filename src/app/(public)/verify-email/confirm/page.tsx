@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ROUTES } from "@/config/routes";
+import { useI18n } from "@/i18n/client";
 
 type State = "verifying" | "success" | "error";
 
 export default function VerifyEmailConfirmPage() {
+  const { t } = useI18n();
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token");
@@ -17,7 +19,7 @@ export default function VerifyEmailConfirmPage() {
 
   useEffect(() => {
     if (!token) {
-      setError("No verification token provided.");
+      setError(t("verify.noToken"));
       setState("error");
       return;
     }
@@ -33,17 +35,18 @@ export default function VerifyEmailConfirmPage() {
           setState("success");
           // Redirect to login after a short delay so the user sees the success message
           setTimeout(() => {
-            router.push(`${ROUTES.LOGIN}?message=Email verified! You can now sign in.`);
+            router.push(`${ROUTES.LOGIN}?notice=email-verified`);
           }, 2500);
         } else {
-          setError(data.error ?? "Verification failed.");
+          setError(data.error ?? t("verify.failed"));
           setState("error");
         }
       })
       .catch(() => {
-        setError("An unexpected error occurred. Please try again.");
+        setError(t("common.errorRetry"));
         setState("error");
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, router]);
 
   return (
@@ -52,7 +55,7 @@ export default function VerifyEmailConfirmPage() {
         {state === "verifying" && (
           <>
             <div className="mx-auto mb-6 h-10 w-10 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600" />
-            <p className="text-slate-600">Verifying your email address&hellip;</p>
+            <p className="text-slate-600">{t("verify.verifying")}</p>
           </>
         )}
 
@@ -63,9 +66,9 @@ export default function VerifyEmailConfirmPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-slate-900">Email verified!</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{t("verify.done")}</h1>
             <p className="mt-2 text-sm text-slate-500">
-              Your account is now active. Redirecting you to sign in&hellip;
+              {t("verify.doneBody")}
             </p>
           </>
         )}
@@ -77,20 +80,20 @@ export default function VerifyEmailConfirmPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-slate-900">Verification failed</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{t("verify.failedTitle")}</h1>
             <p className="mt-2 text-sm text-slate-500">{error}</p>
             <div className="mt-6 flex flex-col gap-2">
               <Link
                 href={ROUTES.VERIFY_EMAIL}
                 className="text-sm text-blue-700 font-medium hover:underline"
               >
-                Request a new verification email
+                {t("verify.requestNew")}
               </Link>
               <Link
                 href={ROUTES.LOGIN}
                 className="text-sm text-slate-500 hover:underline"
               >
-                Back to sign in
+                {t("forgot.backToLogin")}
               </Link>
             </div>
           </>

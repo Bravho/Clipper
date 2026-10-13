@@ -135,7 +135,7 @@ Requirements:
 - Product accuracy: only reference products, items, and details that are visibly present in the uploaded images or clearly provided by the requester.
 - Do NOT create the final scene plan, hook field, or detailed visual design in this step (that happens later).
 - Also produce a ROUGH STORYBOARD: a sequence of scenes, each with a short one-line Thai summary and the zero-based indexes of the uploaded images/clips that scene will draw from. This is a rough visual outline for the requester to approve alongside the script — no motion, timing, or detailed direction yet.
-- IMPORTANT: every uploaded image/clip (indexes 0 to N-1, where N is the number of uploaded files) MUST appear in at least one scene's "assetIndexes". Do not leave any uploaded file unused. Create as many scenes as needed (typically around 3, but more if there are many files) so that all uploaded media is covered. Use only valid indexes in range 0 to N-1.
+- IMPORTANT: every uploaded image/clip (indexes 0 to N-1, where N is the number of uploaded files) MUST appear in EXACTLY ONE scene's "assetIndexes" — use each file once, never in two scenes and never twice in one scene. Do not leave any uploaded file unused, and do not repeat a file to make the video longer. Create as many scenes as needed (typically around 3, but more if there are many files) so that all uploaded media is covered. Use only valid indexes in range 0 to N-1.
 - Extract business details into businessProfile when possible.
 
 Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.

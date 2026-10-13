@@ -221,8 +221,9 @@ public final class ManifestRenderer {
         }
 
         // Ping-pong: shot i goes on sequence (i % 2), with a gap on the other
-        // sequence for the time it is on screen. Sequence 1 overlays sequence 0,
-        // so the compositor's alpha on input 1 is the whole dissolve.
+        // sequence for the time it is on screen. Media3 draws sequence 0 ON TOP
+        // of sequence 1, so the compositor fades lane 0 (see
+        // CrossDissolveCompositorSettings) and lane 1 stays opaque below it.
         // FORCING THE VIDEO TRACK IS NOT OPTIONAL HERE. Lane 1's first entry is
         // shot 1, which only appears once shot 0 has been on screen for a
         // while, so that sequence ALWAYS opens with a gap. Since Media3 1.8 a
@@ -230,9 +231,10 @@ public final class ManifestRenderer {
         // and `build()` throws "If the first item in the sequence is a Gap,
         // then forceAudioTrack or forceVideoTrack flag must be set" before a
         // single frame is encoded. The picture is video only, so the gap is
-        // filled with blank frames — invisible in the result, because
-        // CrossDissolveCompositorSettings holds lane 1 at alpha 0 for exactly
-        // the span the gap covers.
+        // filled with blank frames: 16x16 black bitmaps that Media3 does NOT
+        // scale to the canvas, i.e. a black square in the centre unless hidden.
+        // Lane 1's gaps sit under an opaque lane 0; lane 0's gaps are held at
+        // alpha 0 by CrossDissolveCompositorSettings.
         EditedMediaItemSequence.Builder[] sequences = new EditedMediaItemSequence.Builder[] {
             new EditedMediaItemSequence.Builder().experimentalSetForceVideoTrack(true),
             new EditedMediaItemSequence.Builder().experimentalSetForceVideoTrack(true),

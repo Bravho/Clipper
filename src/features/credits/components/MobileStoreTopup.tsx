@@ -11,6 +11,7 @@ import { storeProductsFor } from "@/config/mobilePurchases";
 import { getMobilePlatform } from "@/lib/mobile/platform";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
 
 interface Props {
   returnTo?: string;
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
+  const { t } = useI18n();
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -122,7 +124,7 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
           name: err instanceof Error ? err.name : "UnknownError",
           message: err instanceof Error ? err.message : String(err),
         });
-        if (active) setError("ไม่สามารถโหลดแพ็กเกจจาก Store ได้");
+        if (active) setError(t("store.loadFailed"));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -152,7 +154,7 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
           window.localStorage.setItem(pendingKey, JSON.stringify(pending));
           try {
             const { creditsGranted } = await verifyTransaction(pending);
-            setSuccess(`กู้คืนรายการซื้อ ${creditsGranted} เครดิตเรียบร้อยแล้ว`);
+            setSuccess(t("store.restored", { count: creditsGranted }));
             router.refresh();
           } catch (err) {
             console.error("[Clipper][iap] unfinished transaction recovery failed", {
@@ -183,7 +185,7 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
       void verifyTransaction(pending)
         .then(({ creditsGranted }) => {
           setSuccess(
-            `กู้คืนรายการซื้อ ${creditsGranted} เครดิตเรียบร้อยแล้ว กรุณากดยืนยันการใช้เครดิตเพื่อปลดล็อกวิดีโอ`
+            t("store.restoredUnlock", { count: creditsGranted })
           );
           router.refresh();
         })
@@ -223,7 +225,7 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
       };
       window.localStorage.setItem(pendingKey, JSON.stringify(pending));
       const { creditsGranted } = await verifyTransaction(pending);
-      setSuccess(`เพิ่ม ${creditsGranted} เครดิตเรียบร้อยแล้ว`);
+      setSuccess(t("store.added", { count: creditsGranted }));
       if (safeReturnTo) router.push(safeReturnTo);
       else router.refresh();
     } catch (err) {
@@ -231,8 +233,8 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
       if (!/cancel|canceled|cancelled/i.test(message)) {
         setError(
           /pending/i.test(message)
-            ? "การชำระเงินกำลังรอดำเนินการ เครดิตจะเพิ่มเมื่อ Store ยืนยัน"
-            : "ไม่สามารถยืนยันการซื้อได้ กรุณาลองอีกครั้ง"
+            ? t("store.pending")
+            : t("store.verifyFailed")
         );
       }
     } finally {
@@ -243,18 +245,18 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
   return (
     <Card>
       <h2 className="text-base font-semibold text-slate-900">
-        เติมเครดิตผ่าน {getMobilePlatform() === "ios" ? "App Store" : "Google Play"}
+        {t("store.title", { store: getMobilePlatform() === "ios" ? "App Store" : "Google Play" })}
       </h2>
       <p className="mt-1 text-sm text-slate-500">
-        การซื้อดำเนินการและยืนยันโดย Store ของอุปกรณ์
+        {t("store.subtitle")}
       </p>
       {getMobilePlatform() === "ios" && (
         <p className="mt-1 text-xs text-slate-500">
-          เมื่อเลือกแพ็กเกจ ระบบต้องแสดงหน้าต่างยืนยันการซื้อของ Apple ก่อนดำเนินการ
+          {t("store.appleConfirm")}
         </p>
       )}
       {loading ? (
-        <p className="mt-4 text-sm text-slate-500">กำลังโหลดแพ็กเกจ…</p>
+        <p className="mt-4 text-sm text-slate-500">{t("store.loading")}</p>
       ) : (
         <>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -276,7 +278,7 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
               }`}
             >
               <span className="block text-sm font-semibold text-slate-900">
-                {configured.credits} เครดิต
+                {t("dashboard.credits", { count: configured.credits })}
               </span>
               {/* The STORE's own localized price string, or nothing.
                   There used to be a `฿${configured.priceBaht}` fallback here,
@@ -290,7 +292,7 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
               </span>
               {!product && (
                 <span className="mt-1 block text-[11px] text-amber-700">
-                  ยังไม่พร้อมจำหน่ายใน Store
+                  {t("store.notOnSale")}
                 </span>
               )}
             </button>
@@ -310,14 +312,14 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
             }}
           >
             {getMobilePlatform() === "ios"
-              ? "ชำระด้วย Apple Account"
-              : "ชำระผ่าน Google Play"}
+              ? t("store.payApple")
+              : t("store.payGoogle")}
           </Button>
         </>
       )}
       {!loading && products.length === 0 && !error && (
         <p className="mt-4 text-sm text-amber-700">
-          ยังไม่มีแพ็กเกจที่พร้อมจำหน่ายใน Store
+          {t("store.noneOnSale")}
         </p>
       )}
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
@@ -328,7 +330,7 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
         className="mt-4"
         onClick={() => router.refresh()}
       >
-        รีเฟรชยอดเครดิต
+        {t("store.refresh")}
       </Button>
     </Card>
   );

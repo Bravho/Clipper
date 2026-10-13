@@ -11,8 +11,12 @@ import { Button } from "@/components/ui/Button";
 import { SocialSignInButtons } from "./SocialSignInButtons";
 import { ROUTES } from "@/config/routes";
 import { fetchWithTimeout, RequestTimeoutError } from "@/lib/fetchWithTimeout";
+import { useI18n } from "@/i18n/client";
+import { localizeValidation } from "@/i18n/validationMessages";
 
 export function SignupForm() {
+  const { t } = useI18n();
+  const v = (message: string | undefined) => localizeValidation(t, message);
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -40,11 +44,9 @@ export function SignupForm() {
       if (!response.ok) {
         if (response.status === 409) {
           if (result.data?.existingAccountVerified === true) {
-            router.push(
-              `${ROUTES.LOGIN}?message=${encodeURIComponent(
-                "อีเมลนี้มีบัญชีที่ยืนยันแล้ว กรุณาเข้าสู่ระบบ"
-              )}`
-            );
+            // A code, not a sentence: the login page words it in the
+            // language picked in the menu.
+            router.push(`${ROUTES.LOGIN}?notice=account-exists`);
             return;
           }
 
@@ -71,7 +73,7 @@ export function SignupForm() {
             }
           }
         }
-        setServerError(result.error ?? "การสมัครสมาชิกล้มเหลว กรุณาลองอีกครั้ง");
+        setServerError(result.error ?? t("signup.failed"));
         return;
       }
 
@@ -87,8 +89,8 @@ export function SignupForm() {
       // walk them into a duplicate-email error on the next attempt.
       setServerError(
         error instanceof RequestTimeoutError
-          ? "เซิร์ฟเวอร์ใช้เวลานานเกินไป บัญชีของคุณอาจถูกสร้างแล้ว กรุณาลองเข้าสู่ระบบ หรือลองสมัครใหม่อีกครั้ง"
-          : "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง"
+          ? t("signup.timeout")
+          : t("common.errorRetry")
       );
     }
   };
@@ -106,78 +108,77 @@ export function SignupForm() {
 
       <SocialSignInButtons
         callbackUrl={ROUTES.DASHBOARD}
-        dividerLabel="หรือสมัครด้วยอีเมล"
+        dividerLabel={t("signup.orEmail")}
         dividerPlacement="after"
-        googleLabel="สมัครด้วย Google"
-        appleLabel="สมัครด้วย Apple"
+        googleLabel={t("signup.google")}
+        appleLabel={t("signup.apple")}
       />
 
       <Input
-        label="ชื่อ-นามสกุล"
+        label={t("account.name")}
         type="text"
         autoComplete="name"
-        placeholder="สมชาย ใจดี"
-        error={errors.name?.message}
+        placeholder={t("signup.namePlaceholder")}
+        error={v(errors.name?.message)}
         {...register("name")}
       />
 
       <Input
-        label="อีเมล"
+        label={t("account.email")}
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
-        error={errors.email?.message}
+        error={v(errors.email?.message)}
         {...register("email")}
       />
 
       <Input
-        label="รหัสผ่าน"
+        label={t("password.title")}
         type="password"
         autoComplete="new-password"
         placeholder="••••••••"
-        hint="อย่างน้อย 8 ตัวอักษร ต้องมีตัวพิมพ์ใหญ่ พิมพ์เล็ก และตัวเลข"
-        error={errors.password?.message}
+        hint={t("signup.passwordHint")}
+        error={v(errors.password?.message)}
         {...register("password")}
       />
 
       <Input
-        label="ยืนยันรหัสผ่าน"
+        label={t("signup.confirmPassword")}
         type="password"
         autoComplete="new-password"
         placeholder="••••••••"
-        error={errors.confirmPassword?.message}
+        error={v(errors.confirmPassword?.message)}
         {...register("confirmPassword")}
       />
 
       <Button type="submit" fullWidth loading={isSubmitting} size="lg">
-        สร้างบัญชี
+        {t("signup.submit")}
       </Button>
 
       <p className="text-center text-xs text-slate-500 leading-relaxed">
-        การคลิก &ldquo;สร้างบัญชี&rdquo; หรือ &ldquo;สมัครด้วย Google&rdquo; ถือว่าคุณยอมรับ{" "}
+        {t("signup.consentLead")}{" "}
         <Link href={ROUTES.TERMS} className="underline hover:text-slate-700">
-          ข้อกำหนดการใช้งาน
-        </Link>{" "}
-        และ{" "}
-        <Link href={ROUTES.PRIVACY} className="underline hover:text-slate-700">
-          นโยบายความเป็นส่วนตัว
-        </Link>{" "}
-        และ{" "}
-        <Link href={ROUTES.OWNERSHIP} className="underline hover:text-slate-700">
-          นโยบายสิทธิ์ในเนื้อหาและการเผยแพร่
+          {t("account.policyTerms")}
         </Link>
-        ซึ่งอธิบายการคัดเลือกวิดีโอบางรายการเพื่อเผยแพร่ผ่านช่องทางของ RClipper
-        รวมถึงแอป Travy เว็บไซต์ Travy.buzz และบัญชีโซเชียลมีเดียอย่างเป็นทางการ
+        {t("common.listComma")}
+        <Link href={ROUTES.PRIVACY} className="underline hover:text-slate-700">
+          {t("legal.privacy")}
+        </Link>{" "}
+        {t("common.and")}{" "}
+        <Link href={ROUTES.OWNERSHIP} className="underline hover:text-slate-700">
+          {t("legal.ownership")}
+        </Link>
+        {t("signup.consentTail")}
       </p>
 
       <div className="border-t border-slate-100 pt-2">
         <p className="text-center text-sm text-slate-500">
-          มีบัญชีอยู่แล้ว?{" "}
+          {t("signup.haveAccount")}{" "}
           <Link
             href={ROUTES.LOGIN}
             className="text-blue-700 font-medium hover:underline"
           >
-            เข้าสู่ระบบ
+            {t("nav.signIn")}
           </Link>
         </p>
       </div>

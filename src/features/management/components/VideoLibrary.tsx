@@ -12,6 +12,8 @@ import {
 } from "@/config/routes";
 import { UploadVideoButton } from "@/features/management/components/UploadVideoButton";
 import { useI18n } from "@/i18n/client";
+import { intlLocale } from "@/i18n/config";
+import type { MessageKey } from "@/i18n/messages";
 import {
   PublishFlowModal,
   type PublishFlowAsset,
@@ -179,7 +181,7 @@ export function VideoLibrary({
             onClick={() => setNotice(null)}
             className="font-medium text-emerald-900 hover:underline"
           >
-            Dismiss
+            {t("common.dismiss")}
           </button>
         </div>
       )}
@@ -187,9 +189,9 @@ export function VideoLibrary({
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-slate-900">Upload your own video</p>
+            <p className="text-sm font-medium text-slate-900">{t("library.uploadOwn")}</p>
             <p className="text-xs text-slate-500">
-              Max {uploadMaxMB} MB per file · {quotaNote}
+              {t("library.maxPerFile", { max: uploadMaxMB })} · {quotaNote}
             </p>
           </div>
           {canUpload ? (
@@ -197,18 +199,18 @@ export function VideoLibrary({
           ) : (
             <div className="text-right">
               <Button size="sm" disabled>
-                Upload video
+                {t("upload.button")}
               </Button>
               {uploadBlockedReason === "package_required" ? (
                 <p className="mt-1 text-xs text-amber-700">
-                  Uploading is included with a package.{" "}
+                  {t("library.uploadNeedsPackage")}{" "}
                   <Link href={ROUTES.PRICING} className="font-medium underline">
-                    See packages
+                    {t("studio.access.seePackages")}
                   </Link>
                 </p>
               ) : (
                 <p className="mt-1 text-xs text-amber-700">
-                  All upload places are full — delete a video to free one.
+                  {t("library.full")}
                 </p>
               )}
             </div>
@@ -219,7 +221,7 @@ export function VideoLibrary({
       {list.length === 0 ? (
         <Card>
           <p className="text-sm text-slate-500">
-            No videos yet. Transfer a finished generation, or upload your own.
+            {t("library.empty")}
           </p>
         </Card>
       ) : (
@@ -287,7 +289,7 @@ export function VideoLibrary({
             const channelLabel =
               connections.find((item) => item.platform === channel.platform)?.label ??
               channel.platform;
-            setNotice(`Post submitted to ${channelLabel}.`);
+            setNotice(t("library.submittedTo", { channel: channelLabel }));
             setList((current) =>
               current.map((item) =>
                 item.id === publishingVideo.id
@@ -357,24 +359,24 @@ function videoFormatMetadata(assets: PublishFlowAsset[]): string[] {
 /** Colour + label for a per-channel publishing status. */
 const STATUS_STYLES: Record<
   string,
-  { label: string; badge: string; dot: string }
+  { label: MessageKey; badge: string; dot: string }
 > = {
-  published: { label: "Published", badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
-  partially_published: { label: "Partly published", badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-400" },
-  publishing: { label: "Publishing", badge: "border-blue-200 bg-blue-50 text-blue-700", dot: "bg-blue-500 animate-pulse" },
-  scheduled: { label: "Scheduled", badge: "border-amber-200 bg-amber-50 text-amber-700", dot: "bg-amber-500" },
-  failed: { label: "Failed", badge: "border-red-200 bg-red-50 text-red-700", dot: "bg-red-500" },
-  draft: { label: "Draft", badge: "border-slate-200 bg-slate-50 text-slate-600", dot: "bg-slate-400" },
+  published: { label: "posts.status.published", badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
+  partially_published: { label: "library.status.partly", badge: "border-emerald-200 bg-emerald-50 text-emerald-700", dot: "bg-emerald-400" },
+  publishing: { label: "posts.status.publishing", badge: "border-blue-200 bg-blue-50 text-blue-700", dot: "bg-blue-500 animate-pulse" },
+  scheduled: { label: "posts.status.scheduled", badge: "border-amber-200 bg-amber-50 text-amber-700", dot: "bg-amber-500" },
+  failed: { label: "posts.status.failed", badge: "border-red-200 bg-red-50 text-red-700", dot: "bg-red-500" },
+  draft: { label: "posts.status.draft", badge: "border-slate-200 bg-slate-50 text-slate-600", dot: "bg-slate-400" },
 };
 
-function statusStyle(status: string) {
-  return (
-    STATUS_STYLES[status.toLowerCase()] ?? {
-      label: status.charAt(0).toUpperCase() + status.slice(1),
-      badge: "border-slate-200 bg-slate-50 text-slate-600",
-      dot: "bg-slate-400",
-    }
-  );
+function statusStyle(status: string, t: (key: MessageKey) => string) {
+  const known = STATUS_STYLES[status.toLowerCase()];
+  if (known) return { ...known, label: t(known.label) };
+  return {
+    label: status.charAt(0).toUpperCase() + status.slice(1),
+    badge: "border-slate-200 bg-slate-50 text-slate-600",
+    dot: "bg-slate-400",
+  };
 }
 
 /**
@@ -383,7 +385,8 @@ function statusStyle(status: string) {
  * scheduled, red failed, grey draft).
  */
 function ChannelStatusBadge({ platform, status }: { platform: string; status: string }) {
-  const s = statusStyle(status);
+  const { t } = useI18n();
+  const s = statusStyle(status, t);
   return (
     <span
       title={`${platformLabel(platform)} · ${s.label}`}
@@ -442,6 +445,7 @@ function VideoRow({
   ) => void;
   onPublish: (video: PublishFlowVideo) => void;
 }) {
+  const { t, locale } = useI18n();
   const router = useRouter();
   const formatMetadata = videoFormatMetadata(video.assets);
   const quotaTooltipId = useId();
@@ -462,13 +466,17 @@ function VideoRow({
    * the name the user publishes under.
    */
   const metaParts = [
-    video.sourceType === "user_upload" ? "Uploaded" : "Transferred",
+    video.sourceType === "user_upload" ? t("library.uploaded") : t("library.transferred"),
     ...formatMetadata,
     video.spaceExpiry
-      ? `${new Date(video.spaceExpiry).getTime() <= Date.now() ? "Expired" : "Expires"} ${new Date(
-          video.spaceExpiry
-        ).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`
-      : "expiry not set",
+      ? t(new Date(video.spaceExpiry).getTime() <= Date.now() ? "library.expired" : "library.expires", {
+          date: new Date(video.spaceExpiry).toLocaleDateString(intlLocale(locale), {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          }),
+        })
+      : t("library.noExpiry"),
   ];
 
   useEffect(() => {
@@ -480,7 +488,7 @@ function VideoRow({
   async function save() {
     const normalizedTitle = title.trim();
     if (!normalizedTitle) {
-      setError("Video title is required.");
+      setError(t("library.titleRequired"));
       return;
     }
 
@@ -505,14 +513,14 @@ function VideoRow({
       });
       setSavedAt(Date.now());
     } catch {
-      setError("Could not save. Try again.");
+      setError(t("library.saveFailed"));
     } finally {
       setBusy("idle");
     }
   }
 
   async function remove() {
-    if (!confirm(`Remove "${video.title}" from your library?`)) return;
+    if (!confirm(t("library.confirmRemove", { title: video.title }))) return;
     setBusy("deleting");
     setError(null);
     try {
@@ -521,7 +529,7 @@ function VideoRow({
       onRemoved();
       router.refresh();
     } catch {
-      setError("Could not remove. Try again.");
+      setError(t("library.removeFailed"));
       setBusy("idle");
     }
   }
@@ -559,14 +567,14 @@ function VideoRow({
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={video.thumbnailUrl}
-                  alt={`${video.title} preview`}
+                  alt={video.title}
                   className="aspect-video w-full rounded-lg border border-slate-200 object-cover"
                 />
-                <figcaption className="text-center text-[11px] text-slate-400">Preview</figcaption>
+                <figcaption className="text-center text-[11px] text-slate-400">{t("library.preview")}</figcaption>
               </figure>
             ) : (
               <div className="flex aspect-video w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400">
-                {video.usable ? "No preview image" : "Media unavailable"}
+                {video.usable ? t("library.noPreview") : t("library.mediaUnavailable")}
               </div>
             )}
           </div>
@@ -581,7 +589,7 @@ function VideoRow({
               single wrapping bar at the foot of the card instead.
             */}
             <label className="block text-xs font-medium text-slate-600">
-              Video title
+              {t("library.videoTitle")}
               <input
                 value={title}
                 onChange={(event) => {
@@ -609,7 +617,7 @@ function VideoRow({
             {/* Editable default caption / hashtags */}
             <div className="space-y-2">
               <label className="block text-xs font-medium text-slate-600">
-                Default caption
+                {t("library.defaultCaption")}
                 <textarea
                   rows={2}
                   value={caption}
@@ -618,11 +626,11 @@ function VideoRow({
                     setSavedAt(null);
                   }}
                   className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
-                  placeholder="Caption pre-filled into every channel…"
+                  placeholder={t("library.captionPlaceholder")}
                 />
               </label>
               <label className="block text-xs font-medium text-slate-600">
-                Hashtags (space or comma separated)
+                {t("posts.hashtagsLabel")}
                 <input
                   value={hashtags}
                   onChange={(e) => {
@@ -638,9 +646,9 @@ function VideoRow({
             {/* Action bar — wraps rather than overlaps on a narrow screen. */}
             <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
               <Button size="sm" onClick={save} loading={busy === "saving"}>
-                Save
+                {t("common.save")}
               </Button>
-              {savedAt && <span className="text-xs text-emerald-700">Saved</span>}
+              {savedAt && <span className="text-xs text-emerald-700">{t("common.saved")}</span>}
               {error && <span className="text-xs text-red-600">{error}</span>}
 
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -657,7 +665,7 @@ function VideoRow({
                     )}
                   >
                     <Button size="sm" variant="secondary">
-                      เติมเงินเพื่อใช้งาน
+                      {t("library.topUp")}
                     </Button>
                   </Link>
                 )}
@@ -676,8 +684,8 @@ function VideoRow({
                       publishBlockedByQuota
                         ? undefined
                         : video.usable
-                          ? "Publish to a connected channel"
-                          : "Media unavailable"
+                          ? t("library.publishHint")
+                          : t("library.mediaUnavailable")
                     }
                     onClick={() =>
                       onPublish({
@@ -691,7 +699,7 @@ function VideoRow({
                       })
                     }
                   >
-                    Publish
+                    {t("library.publish")}
                   </Button>
                   {publishBlockedByQuota && (
                     <span
@@ -699,13 +707,13 @@ function VideoRow({
                       role="tooltip"
                       className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg group-hover:block group-focus:block"
                     >
-                      Please use or top up credits.
+                      {t("library.topUpHint")}
                       <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
                     </span>
                   )}
                 </span>
                 <Button size="sm" variant="danger" onClick={remove} loading={busy === "deleting"}>
-                  Delete
+                  {t("common.delete")}
                 </Button>
               </div>
             </div>

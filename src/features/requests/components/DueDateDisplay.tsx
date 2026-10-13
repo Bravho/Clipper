@@ -1,4 +1,5 @@
 import { DueDateDisplay as DueDateDisplayType } from "@/services/RequestPresentationService";
+import { getServerI18n } from "@/i18n/server";
 
 interface DueDateDisplayProps {
   display: DueDateDisplayType;
@@ -15,13 +16,14 @@ interface DueDateDisplayProps {
  */
 export function DueDateDisplay({ display, className }: DueDateDisplayProps) {
   if (!display.show) return null;
+  const { t } = getServerI18n();
 
   return (
     <div className={className}>
       {display.formattedDate ? (
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Expected Completion
+            {t("requests.expectedCompletion")}
           </p>
           <p className="mt-0.5 text-sm font-semibold text-slate-900">
             {display.formattedDate}

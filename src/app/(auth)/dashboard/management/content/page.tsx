@@ -1,3 +1,4 @@
+import { getServerI18n } from "@/i18n/server";
 import { videoAccessService } from "@/services/VideoAccessService";
 import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import Link from "next/link";
@@ -38,6 +39,7 @@ export const dynamic = "force-dynamic";
  * and a soft-delete. Uploading your own video is gated on having a paid plan.
  */
 export default async function ManagementContentPage() {
+  const { t } = getServerI18n();
   const session = await getServerSession(authOptions);
   if (!session?.user) notFound();
 
@@ -151,20 +153,20 @@ export default async function ManagementContentPage() {
     <div className="mx-auto w-full min-w-0 max-w-4xl px-4 py-8">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">วิดิโอของคุณ</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{t("mgmt.yourVideos")}</h1>
           <p className="mt-1 text-sm text-slate-500">
             {access
-              ? "Unlimited publishing is active."
+              ? t("mgmt.unlimitedActive")
               : tokensRemaining > 0
-                ? `${tokensRemaining} upload token${tokensRemaining === 1 ? "" : "s"} remaining.`
-                : "Buy a plan to upload and publish."}
+                ? t("mgmt.tokensLeft", { count: tokensRemaining })
+                : t("mgmt.needPlan")}
           </p>
         </div>
         <Link
           href={ROUTES.MANAGEMENT_CONNECTIONS}
           className="shrink-0 text-sm font-medium text-blue-600 hover:underline"
         >
-          ตั้งค่าช่องทาง →
+          {t("sidebar.channels")} →
         </Link>
       </header>
 
@@ -177,8 +179,8 @@ export default async function ManagementContentPage() {
         uploadMaxMB={uploadMaxMB}
         quotaNote={
           hasPackage
-            ? `${uploadsLeft} of ${MANAGEMENT_UPLOAD_KEEP_LIMIT} upload places left · each video kept ${VIDEO_LIFETIME_DAYS} days`
-            : `included with a package · each video kept ${VIDEO_LIFETIME_DAYS} days`
+            ? t("mgmt.uploadPlaces", { left: uploadsLeft, total: MANAGEMENT_UPLOAD_KEEP_LIMIT, days: VIDEO_LIFETIME_DAYS })
+            : t("mgmt.uploadIncluded", { days: VIDEO_LIFETIME_DAYS })
         }
         uploadBlockedReason={uploadBlockedReason}
       />
@@ -186,8 +188,7 @@ export default async function ManagementContentPage() {
       {videos.length === 0 && (
         <Card className="mt-4">
           <p className="text-sm text-slate-500">
-            Tip: finish a video in คำขอของฉัน, then use the transfer button to bring each
-            format here.
+            {t("mgmt.tipTransfer")}
           </p>
         </Card>
       )}

@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
+import type { MessageKey } from "@/i18n/messages";
+import { rich } from "@/i18n/rich";
+
+type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 import {
   managementPaymentsPath,
   managementPublishReturnPath,
@@ -100,7 +105,6 @@ interface PublishFlowModalProps {
 type Phase = "channels" | "form" | "confirm" | "update" | "complete";
 type Busy = "idle" | "publishing" | "updating";
 
-const VIDEO_LIBRARY_LABEL = "\u0e27\u0e34\u0e14\u0e35\u0e42\u0e2d\u0e02\u0e2d\u0e07\u0e04\u0e38\u0e13";
 const LEGACY_TRAVY_VARIANT = ["tv", "ent"].join("");
 
 function videoVariantLabel(variant: string): string {
@@ -158,6 +162,8 @@ export function PublishFlowModal({
   onPublished,
   onDefaultsUpdated,
 }: PublishFlowModalProps) {
+  const { t } = useI18n();
+  const VIDEO_LIBRARY_LABEL = t("mgmt.yourVideos");
   const [phase, setPhase] = useState<Phase>("channels");
   const [connection, setConnection] = useState<PublishFlowConnection | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -229,8 +235,8 @@ export function PublishFlowModal({
     );
   }
 
-  const config = channelFormConfig(connection?.platform ?? "");
-  const titleLabel = config.hasTitle ? config.titleLabel : "Video title";
+  const config = channelFormConfig(connection?.platform ?? "", t);
+  const titleLabel = config.hasTitle ? config.titleLabel : t("library.videoTitle");
   const titleMaximum = Math.min(
     CHANNEL_COPY_POLICIES[connection?.platform ?? ""]?.titleMaximum ?? 200,
     200
@@ -252,7 +258,7 @@ export function PublishFlowModal({
     const preferredRatio = defaultVariantForPlatform(nextConnection.platform);
     const preferredAsset =
       assets.find((asset) => asset.aspectRatio === preferredRatio) ?? assets[0] ?? null;
-    const nextConfig = channelFormConfig(nextConnection.platform);
+    const nextConfig = channelFormConfig(nextConnection.platform, t);
     const suggestion = suggestionFor(nextConnection.platform);
     const copiedDefaults = resolvePublishingCopyDefaults({
       defaultCaption: video.defaultCaption,
@@ -281,25 +287,25 @@ export function PublishFlowModal({
   }
 
   function validateForm(): string | null {
-    if (!connection || !form) return "Choose a connected channel.";
-    if (!form.assetId) return `No compatible video format is available for ${connection.label}.`;
-    if (!form.title.trim()) return `${titleLabel} is required.`;
-    if (!form.caption.trim()) return `${config.captionLabel} is required.`;
-    if (hashtags.length > 60) return "Use no more than 60 hashtags.";
+    if (!connection || !form) return t("publish.chooseChannel");
+    if (!form.assetId) return t("publish.noFormat", { channel: connection.label });
+    if (!form.title.trim()) return t("publish.fieldRequired", { field: titleLabel });
+    if (!form.caption.trim()) return t("publish.fieldRequired", { field: config.captionLabel });
+    if (hashtags.length > 60) return t("publish.maxHashtags", { max: 60 });
     if (hashtags.some((hashtag) => hashtag.length > 100)) {
-      return "Each hashtag must be 100 characters or fewer.";
+      return t("publish.hashtagLength");
     }
     if (copyValidation && !copyValidation.valid) {
-      return copyLimitMessage(connection.platform, copyValidation, hashtags.length);
+      return copyLimitMessage(connection.platform, copyValidation, hashtags.length, t);
     }
     if (form.publishMode === "schedule") {
-      if (!form.scheduledAtLocal) return "Choose a date and time.";
+      if (!form.scheduledAtLocal) return t("publish.chooseTime");
       const scheduled = new Date(form.scheduledAtLocal);
       if (
         Number.isNaN(scheduled.getTime()) ||
         scheduled.getTime() < Date.now() + 60_000
       ) {
-        return "The scheduled time must be at least one minute in the future.";
+        return t("publish.timeFuture");
       }
     }
     return null;
@@ -357,12 +363,12 @@ export function PublishFlowModal({
       const data = (await response.json().catch(() => ({}))) as PublishResponse;
 
       if (response.status === 402) {
-        setError("Publishing access is required. Add publish tokens or activate a plan.");
+        setError(t("publish.accessRequired"));
         setPhase("form");
         return;
       }
       if (!response.ok || !data.publication) {
-        setError(data.error ?? "The post could not be submitted. Please try again.");
+        setError(data.error ?? t("publish.submitFailed"));
         setPhase("form");
         return;
       }
@@ -377,7 +383,7 @@ export function PublishFlowModal({
       });
       setPhase("update");
     } catch {
-      setError("The post could not be submitted. Please check your connection and try again.");
+      setError(t("publish.submitNetwork"));
       setPhase("form");
     } finally {
       setBusy("idle");
@@ -406,7 +412,7 @@ export function PublishFlowModal({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(data.error ?? "The post was submitted, but the video defaults were not updated.");
+        setError(data.error ?? t("publish.defaultsFailed"));
         return;
       }
       onDefaultsUpdated({
@@ -418,7 +424,7 @@ export function PublishFlowModal({
       setDefaultsUpdated(true);
       setPhase("complete");
     } catch {
-      setError("The post was submitted, but the video defaults were not updated.");
+      setError(t("publish.defaultsFailed"));
     } finally {
       setBusy("idle");
     }
@@ -446,10 +452,10 @@ export function PublishFlowModal({
         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-100 bg-white px-5 py-4 sm:px-6">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
-              {phaseLabel(phase)}
+              {phaseLabel(phase, t)}
             </p>
             <h2 id="publish-flow-title" className="mt-0.5 text-lg font-semibold text-slate-950">
-              {phaseTitle(phase, connection)}
+              {phaseTitle(phase, connection, t)}
             </h2>
             {phase !== "complete" && (
               <p className="mt-1 line-clamp-1 text-sm text-slate-500">
@@ -460,7 +466,7 @@ export function PublishFlowModal({
           <button
             ref={closeButtonRef}
             type="button"
-            aria-label="Close publishing window"
+            aria-label={t("publish.close")}
             disabled={busy !== "idle"}
             onClick={onClose}
             className="flex h-9 w-9 flex-none items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"
@@ -472,8 +478,7 @@ export function PublishFlowModal({
         {phase === "channels" && (
           <div className="app-safe-bottom px-5 pt-5 sm:px-6 sm:pt-6">
             <p className="text-sm leading-6 text-slate-600">
-              Suggested channels from video generation appear first. You may still
-              choose any compatible connected account.
+              {t("publish.channelsIntro")}
             </p>
             {connections.length > 0 ? (
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -492,12 +497,12 @@ export function PublishFlowModal({
                         {item.label}
                         {suggested && (
                           <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
-                            Suggested
+                            {t("publish.suggested")}
                           </span>
                         )}
                       </span>
                       <span className="mt-0.5 block truncate text-xs text-slate-500">
-                        {item.accountName || "Connected account"}
+                        {item.accountName || t("publish.connectedAccount")}
                       </span>
                     </span>
                     <ChevronRightIcon />
@@ -510,25 +515,23 @@ export function PublishFlowModal({
               <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
                 <p className="text-sm font-medium text-slate-800">
                   {incompleteConnections > 0
-                    ? `${incompleteConnections} connection${
-                        incompleteConnections === 1 ? "" : "s"
-                      } not finished`
-                    : "No connected channels yet"}
+                    ? t("publish.unfinished", { count: incompleteConnections })
+                    : t("publish.noChannels")}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   {incompleteConnections > 0
-                    ? "Those accounts have not been confirmed by the publishing provider yet, so we cannot post through them. Open channel settings and press Refresh on each one."
-                    : "Connect an account first, then return here to publish this video."}
+                    ? t("publish.unfinishedBody")
+                    : t("publish.noChannelsBody")}
                 </p>
                 <Link href={ROUTES.MANAGEMENT_CONNECTIONS} className="mt-3 inline-block">
-                  <Button size="sm">Open channel settings</Button>
+                  <Button size="sm">{t("publish.openSettings")}</Button>
                 </Link>
               </div>
             )}
             {unavailableChannels.length > 0 && (
               <div className="mt-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Needs attention
+                  {t("publish.needsAttention")}
                 </p>
                 <div className="mt-2 grid gap-3 sm:grid-cols-2">
                   {unavailableChannels.map((item) => (
@@ -546,10 +549,10 @@ export function PublishFlowModal({
                         </span>
                         <span className="mt-0.5 block text-xs leading-5 text-amber-800">
                           {item.reason === "disconnected"
-                            ? "Disconnected. Sign in again in channel settings to publish here."
+                            ? t("publish.reasonDisconnected")
                             : item.reason === "not_connected"
-                              ? "Not connected. Connect it in channel settings to publish here."
-                              : "Connection not finished. Open channel settings and press Refresh, or connect again."}
+                              ? t("publish.reasonNotConnected")
+                              : t("publish.reasonPending")}
                         </span>
                       </span>
                       <ChevronRightIcon />
@@ -570,15 +573,15 @@ export function PublishFlowModal({
               {compatibleAssets.length === 0 ? (
                 <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                   <p className="text-sm font-medium text-amber-900">
-                    No compatible video format is available for {connection.label}.
+                    {t("publish.noFormat", { channel: connection.label })}
                   </p>
                   <p className="mt-1 text-xs leading-5 text-amber-800">
-                    Choose another channel or add a video in a supported aspect ratio.
+                    {t("publish.noFormatHint")}
                   </p>
                 </div>
               ) : (
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-800">Video format</span>
+                  <span className="text-sm font-medium text-slate-800">{t("publish.videoFormat")}</span>
                   <select
                     value={form.assetId}
                     onChange={(event) => patchForm({ assetId: event.target.value })}
@@ -608,8 +611,7 @@ export function PublishFlowModal({
                 <FieldCount value={form.title.length} maximum={titleMaximum} />
                 {!config.hasTitle && (
                   <p className="mt-1 text-xs leading-5 text-slate-500">
-                    This title identifies the item in {VIDEO_LIBRARY_LABEL}. {connection.label}{" "}
-                    uses the caption as its public post text.
+                    {t("publish.titleNote", { library: VIDEO_LIBRARY_LABEL, channel: connection.label })}
                   </p>
                 )}
               </label>
@@ -634,7 +636,7 @@ export function PublishFlowModal({
               </label>
 
               <label className="block">
-                <span className="text-sm font-medium text-slate-800">Hashtags</span>
+                <span className="text-sm font-medium text-slate-800">{t("publish.hashtags")}</span>
                 <input
                   value={form.hashtags}
                   onChange={(event) => patchForm({ hashtags: event.target.value })}
@@ -642,21 +644,21 @@ export function PublishFlowModal({
                   className="mt-1.5 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
                 <p className="mt-1 text-xs text-slate-500">
-                  Separate hashtags with spaces or commas
+                  {t("publish.hashtagsHint")}
                   {CHANNEL_COPY_POLICIES[connection.platform]?.maximumHashtags
-                    ? ` · up to ${CHANNEL_COPY_POLICIES[connection.platform]?.maximumHashtags}`
+                    ? ` · ${t("publish.upTo", { max: CHANNEL_COPY_POLICIES[connection.platform]?.maximumHashtags ?? 0 })}`
                     : ""}
                 </p>
               </label>
 
               <fieldset>
-                <legend className="text-sm font-medium text-slate-800">Publish timing</legend>
+                <legend className="text-sm font-medium text-slate-800">{t("publish.timing")}</legend>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <TimingButton
                     active={form.publishMode === "now"}
                     onClick={() => patchForm({ publishMode: "now" })}
                   >
-                    Publish now
+                    {t("publish.now")}
                   </TimingButton>
                 </div>
               </fieldset>
@@ -666,7 +668,7 @@ export function PublishFlowModal({
               {!canPublish && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                   <p className="text-sm font-medium text-amber-900">
-                    You need one publish token or an active plan to submit this post.
+                    {t("publish.needAccess")}
                   </p>
                   <Link
                     href={managementPaymentsPath(
@@ -674,7 +676,7 @@ export function PublishFlowModal({
                     )}
                     className="mt-3 inline-block"
                   >
-                    <Button size="sm">Add publishing access</Button>
+                    <Button size="sm">{t("publish.addAccess")}</Button>
                   </Link>
                 </div>
               )}
@@ -689,13 +691,13 @@ export function PublishFlowModal({
                   setError(null);
                 }}
               >
-                Back
+                {t("common.back")}
               </Button>
               <Button
                 onClick={reviewSubmission}
                 disabled={!canPublish || compatibleAssets.length === 0}
               >
-                Review submission
+                {t("publish.review")}
               </Button>
             </ModalFooter>
           </>
@@ -705,23 +707,23 @@ export function PublishFlowModal({
           <>
             <div className="px-5 pb-5 pt-5 sm:px-6 sm:pt-6">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <SummaryRow label="Channel" value={`${connection.label}${connection.accountName ? ` · ${connection.accountName}` : ""}`} />
+                <SummaryRow label={t("publish.channel")} value={`${connection.label}${connection.accountName ? ` · ${connection.accountName}` : ""}`} />
                 <SummaryRow
-                  label="Timing"
+                  label={t("publish.timingShort")}
                   value={
                     form.publishMode === "schedule"
                       ? new Date(form.scheduledAtLocal).toLocaleString()
-                      : "Publish now"
+                      : t("publish.now")
                   }
                 />
                 <SummaryRow
-                  label={config.hasTitle ? config.titleLabel : "Video title (video library)"}
+                  label={config.hasTitle ? config.titleLabel : t("publish.libraryTitle")}
                   value={form.title}
                 />
                 <SummaryRow label={config.captionLabel} value={form.caption} multiline />
                 {hashtags.length > 0 && (
                   <SummaryRow
-                    label="Hashtags"
+                    label={t("publish.hashtags")}
                     value={hashtags.map((tag) => `#${tag}`).join(" ")}
                     multiline
                   />
@@ -729,21 +731,20 @@ export function PublishFlowModal({
               </div>
               <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
                 <p className="text-sm font-medium text-blue-950">
-                  Confirm this posting submission?
+                  {t("publish.confirmQ")}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-blue-800">
-                  RClipper will send this video and the information above to the selected
-                  connected channel.
+                  {t("publish.confirmBody")}
                 </p>
               </div>
               {error && <div className="mt-4"><ErrorNotice message={error} /></div>}
             </div>
             <ModalFooter align="end">
               <Button variant="outline" onClick={() => setPhase("form")} disabled={busy !== "idle"}>
-                Edit form
+                {t("publish.editForm")}
               </Button>
               <Button onClick={submitPublication} loading={busy === "publishing"}>
-                Confirm and submit
+                {t("publish.confirmSubmit")}
               </Button>
             </ModalFooter>
           </>
@@ -756,32 +757,32 @@ export function PublishFlowModal({
                 <SuccessIcon />
                 <div>
                   <p className="text-sm font-semibold text-emerald-950">
-                    Post submitted to {connection.label}
+                    {t("library.submittedTo", { channel: connection.label })}
                   </p>
                   <p className="mt-1 text-xs leading-5 text-emerald-800">
-                    Current status: {humanizeStatus(submittedStatus)}. Your submission is
-                    already confirmed.
+                    {t("publish.currentStatus", { status: humanizeStatus(submittedStatus, t) })}
                   </p>
                 </div>
               </div>
 
               <div className="mt-5">
                 <h3 className="text-base font-semibold text-slate-950">
-                  Save these edited details to the original video?
+                  {t("publish.saveQ")}
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  This optional step only updates the item in{" "}
-                  <strong className="font-semibold text-slate-800">
-                    {VIDEO_LIBRARY_LABEL}
-                  </strong>
-                  . It will not change the {connection.label} post you just submitted.
+                  {rich(t("publish.saveBody"), {
+                    library: (
+                      <strong className="font-semibold text-slate-800">{VIDEO_LIBRARY_LABEL}</strong>
+                    ),
+                    channel: connection.label,
+                  })}
                 </p>
               </div>
 
               <div className="mt-4 grid items-stretch gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-3">
                 <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    Edited details for {connection.label}
+                    {t("publish.editedFor", { channel: connection.label })}
                   </p>
                   {form.title.trim() && (
                     <p className="mt-2 truncate text-sm font-semibold text-slate-900">
@@ -808,7 +809,7 @@ export function PublishFlowModal({
 
                 <div className="min-w-0 rounded-xl border border-blue-200 bg-blue-50 p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-                    Save as default text in
+                    {t("publish.saveAsDefault")}
                   </p>
                   <p className="mt-2 text-sm font-semibold text-blue-950">
                     {VIDEO_LIBRARY_LABEL}
@@ -820,12 +821,7 @@ export function PublishFlowModal({
               </div>
 
               <p className="mt-4 text-xs leading-5 text-slate-500">
-                Saving will replace{" "}
-                {connection.platform === "youtube"
-                  ? "this video's saved title, description, caption, and hashtags"
-                  : "this video's saved title, caption, and hashtags"}
-                . The submitted text will be pre-filled the next time you publish this
-                video.
+                {t(connection.platform === "youtube" ? "publish.replaceYoutube" : "publish.replace")}
               </p>
 
               {error && <div className="mt-4"><ErrorNotice message={error} /></div>}
@@ -836,10 +832,10 @@ export function PublishFlowModal({
                 onClick={keepExistingDefaults}
                 disabled={busy !== "idle"}
               >
-                Keep existing text
+                {t("publish.keep")}
               </Button>
               <Button onClick={updateVideoDefaults} loading={busy === "updating"}>
-                Save edited details
+                {t("publish.saveEdited")}
               </Button>
             </ModalFooter>
           </>
@@ -851,16 +847,16 @@ export function PublishFlowModal({
               <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
                 <SuccessIcon large />
               </span>
-              <h3 className="mt-4 text-lg font-semibold text-slate-950">All done</h3>
+              <h3 className="mt-4 text-lg font-semibold text-slate-950">{t("publish.allDone")}</h3>
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-600">
-                Your {connection.label} post was submitted
-                {defaultsUpdated
-                  ? `, and its text is now saved to the original video in ${VIDEO_LIBRARY_LABEL}.`
-                  : `. The original video's saved text in ${VIDEO_LIBRARY_LABEL} was left unchanged.`}
+                {t(defaultsUpdated ? "publish.doneSaved" : "publish.doneKept", {
+                  channel: connection.label,
+                  library: VIDEO_LIBRARY_LABEL,
+                })}
               </p>
             </div>
             <ModalFooter align="center">
-              <Button onClick={onClose}>Done</Button>
+              <Button onClick={onClose}>{t("publish.done")}</Button>
             </ModalFooter>
           </>
         )}
@@ -900,27 +896,27 @@ function ModalFooter({
   );
 }
 
-function channelFormConfig(platform: string): FormConfig {
+function channelFormConfig(platform: string, t: Translate): FormConfig {
   if (platform === "youtube") {
     return {
-      titleLabel: "Video title",
-      captionLabel: "Description",
-      captionPlaceholder: "Describe the video for YouTube",
+      titleLabel: t("library.videoTitle"),
+      captionLabel: t("publish.description"),
+      captionPlaceholder: t("publish.descYoutube"),
       hasTitle: true,
     };
   }
   if (platform === "pinterest") {
     return {
-      titleLabel: "Pin title",
-      captionLabel: "Description",
-      captionPlaceholder: "Describe this video pin",
+      titleLabel: t("publish.pinTitle"),
+      captionLabel: t("publish.description"),
+      captionPlaceholder: t("publish.descPin"),
       hasTitle: true,
     };
   }
   return {
-    titleLabel: "Title",
-    captionLabel: "Caption",
-    captionPlaceholder: `Write a caption for ${platform || "this channel"}`,
+    titleLabel: t("publish.title"),
+    captionLabel: t("posts.caption"),
+    captionPlaceholder: t("publish.captionFor", { channel: platform || t("publish.thisChannel") }),
     hasTitle: false,
   };
 }
@@ -928,46 +924,53 @@ function channelFormConfig(platform: string): FormConfig {
 function copyLimitMessage(
   platform: string,
   validation: NonNullable<ReturnType<typeof validateChannelCopy>>,
-  hashtagCount: number
+  hashtagCount: number,
+  t: Translate
 ): string {
   const policy = CHANNEL_COPY_POLICIES[platform] ?? {};
   if (policy.combinedMaximum && validation.combinedLength > policy.combinedMaximum) {
-    return `Caption and hashtags must be ${policy.combinedMaximum} characters or fewer for this channel.`;
+    return t("publish.limitCombined", { max: policy.combinedMaximum });
   }
   if (policy.titleMaximum && validation.titleLength > policy.titleMaximum) {
-    return `The title must be ${policy.titleMaximum} characters or fewer for this channel.`;
+    return t("publish.limitTitle", { max: policy.titleMaximum });
   }
   if (policy.captionMaximum && validation.captionLength > policy.captionMaximum) {
-    return `${channelFormConfig(platform).captionLabel} must be ${policy.captionMaximum} characters or fewer for this channel.`;
+    return t("publish.limitField", {
+      field: channelFormConfig(platform, t).captionLabel,
+      max: policy.captionMaximum,
+    });
   }
   if (policy.maximumHashtags && hashtagCount > policy.maximumHashtags) {
-    return `Use no more than ${policy.maximumHashtags} hashtags for this channel.`;
+    return t("publish.maxHashtags", { max: policy.maximumHashtags });
   }
-  return "One or more fields exceed this channel's publishing limits.";
+  return t("publish.limitGeneric");
 }
 
-function phaseLabel(phase: Phase): string {
-  if (phase === "channels") return "Step 1 of 3";
-  if (phase === "form") return "Step 2 of 3";
-  if (phase === "confirm") return "Step 3 of 3";
-  if (phase === "update") return "Post submitted · Optional next step";
-  return "Complete";
+function phaseLabel(phase: Phase, t: Translate): string {
+  if (phase === "channels") return t("publish.step", { n: 1 });
+  if (phase === "form") return t("publish.step", { n: 2 });
+  if (phase === "confirm") return t("publish.step", { n: 3 });
+  if (phase === "update") return t("publish.phaseUpdate");
+  return t("publish.phaseComplete");
 }
 
 function phaseTitle(
   phase: Phase,
-  connection: PublishFlowConnection | null
+  connection: PublishFlowConnection | null,
+  t: Translate
 ): string {
-  if (phase === "channels") return "Choose a connected channel";
-  if (phase === "form") return `Prepare ${connection?.label ?? "channel"} post`;
-  if (phase === "confirm") return "Confirm posting submission";
-  if (phase === "update") return "Save edited details to this video?";
-  return "Publishing submission complete";
+  if (phase === "channels") return t("publish.chooseChannelTitle");
+  if (phase === "form") return t("publish.prepare", { channel: connection?.label ?? t("publish.thisChannel") });
+  if (phase === "confirm") return t("publish.confirmTitle");
+  if (phase === "update") return t("publish.saveQ");
+  return t("publish.completeTitle");
 }
 
-function humanizeStatus(status: string | null): string {
-  if (!status) return "submitted";
-  return status.replace(/_/g, " ");
+function humanizeStatus(status: string | null, t: Translate): string {
+  if (!status) return t("publish.submitted");
+  const key = `posts.status.${status}` as MessageKey;
+  const label = t(key);
+  return label === key || !label ? status.replace(/_/g, " ") : label;
 }
 
 function AccessNote({
@@ -977,24 +980,26 @@ function AccessNote({
   unlimited: boolean;
   tokensRemaining: number;
 }) {
+  const { t } = useI18n();
   return (
     <div className="mt-5 flex items-center justify-between gap-4 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600">
-      <span>One submission publishes to one connected channel.</span>
+      <span>{t("publish.oneChannel")}</span>
       <span className="shrink-0 font-semibold text-slate-800">
-        {unlimited ? "Unlimited plan" : `${tokensRemaining} token${tokensRemaining === 1 ? "" : "s"}`}
+        {unlimited ? t("publish.unlimitedPlan") : t("publish.tokens", { count: tokensRemaining })}
       </span>
     </div>
   );
 }
 
 function SelectedChannel({ connection }: { connection: PublishFlowConnection }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3">
       <ChannelMark platform={connection.platform} label={connection.label} />
       <div className="min-w-0">
         <p className="text-sm font-semibold text-slate-950">{connection.label}</p>
         <p className="truncate text-xs text-slate-600">
-          {connection.accountName || "Connected account"}
+          {connection.accountName || t("publish.connectedAccount")}
         </p>
       </div>
     </div>

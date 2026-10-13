@@ -1,5 +1,6 @@
 "use client";
 
+import { translate, type MessageKey } from "@/i18n/messages";
 import { signIn } from "next-auth/react";
 import { isNativeMobile } from "@/lib/mobile/platform";
 import {
@@ -140,7 +141,12 @@ function sameOriginPath(url: string | null | undefined, fallback: string): strin
  * failures differ only by code, and a device-side string is the fastest way to
  * tell "this build's SHA-1 is not registered" from "no Google account here".
  */
-export function describeSignInFailure(error: unknown): string | null {
+export function describeSignInFailure(
+  error: unknown,
+  /** The menu language's translator; Thai when not given. */
+  t: (key: MessageKey, values?: Record<string, string | number>) => string = (key, values) =>
+    translate("th", key, values)
+): string | null {
   if (error instanceof NativeSignInCancelled) return null;
 
   // Apple answered and the answer was "no". The reason comes from our own
@@ -149,13 +155,13 @@ export function describeSignInFailure(error: unknown): string | null {
   // more importantly, it means this case is no longer silently misfiled as a
   // cancellation the way a dropped result used to be.
   if (error instanceof AppleReturnFailedError) {
-    return `เข้าสู่ระบบด้วย Apple ไม่สำเร็จ (${error.reason}) กรุณาลองใหม่หรือใช้อีเมลและรหัสผ่าน`;
+    return t("auth.fail.appleReason", { reason: error.reason });
   }
 
   // Not a misconfiguration the user can do anything about — point them at the
   // sign-in methods that do work in-app rather than showing a diagnostic.
   if (error instanceof NativeSignInUnavailableError) {
-    return "วิธีเข้าสู่ระบบนี้ยังใช้ไม่ได้บนอุปกรณ์นี้ กรุณาเข้าสู่ระบบด้วยอีเมลและรหัสผ่าน";
+    return t("auth.fail.unavailable");
   }
 
   const detail = error instanceof Error ? error.message : String(error ?? "");
@@ -166,13 +172,13 @@ export function describeSignInFailure(error: unknown): string | null {
   // so the only real remedy is a restart — say so plainly instead of showing the
   // raw string, which reads like a crash.
   if (/last call is not null/i.test(detail)) {
-    return "การเข้าสู่ระบบครั้งก่อนยังค้างอยู่ กรุณาปิดแอปแล้วเปิดใหม่อีกครั้ง";
+    return t("auth.fail.stuck");
   }
 
   // Apple's token exchange failed on our server — almost always the Services ID,
   // the Return URL, or an expired APPLE_CLIENT_SECRET. Nothing the user can fix.
   if (/apple/i.test(detail) && /auth code|invalid_client|exchange/i.test(detail)) {
-    return `เข้าสู่ระบบด้วย Apple ไม่สำเร็จ กรุณาลองใหม่หรือใช้อีเมลและรหัสผ่าน — ${detail}`;
+    return t("auth.fail.apple", { detail });
   }
 
   // Credential Manager's "developer console is not set up correctly": the
@@ -180,16 +186,16 @@ export function describeSignInFailure(error: unknown): string | null {
   // Android OAuth client. Debug builds from Android Studio are signed with the
   // debug keystore, so they need their own client even when release works.
   if (/developer console|DEVELOPER_ERROR|\b10:|\b28444\b/i.test(detail)) {
-    return `แอปเวอร์ชันนี้ยังไม่ได้ลงทะเบียนกับ Google (ลายนิ้วมือ SHA-1 ของบิลด์นี้ไม่ตรง) — ${detail}`;
+    return t("auth.fail.sha1", { detail });
   }
 
   if (/no credential|NoCredentialException|\b28433\b/i.test(detail)) {
-    return `ไม่พบบัญชี Google บนอุปกรณ์นี้ กรุณาเพิ่มบัญชีในการตั้งค่า Android ก่อน — ${detail}`;
+    return t("auth.fail.noAccount", { detail });
   }
 
   if (/not implemented|unavailable|UNIMPLEMENTED/i.test(detail)) {
-    return `แอปเวอร์ชันนี้ยังไม่รองรับการเข้าสู่ระบบแบบในแอป กรุณาอัปเดตแอป — ${detail}`;
+    return t("auth.fail.update", { detail });
   }
 
-  return `เข้าสู่ระบบไม่สำเร็จ — ${detail || "unknown error"}`;
+  return t("auth.fail.generic", { detail: detail || "unknown error" });
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ROUTES } from "@/config/routes";
 import { DeleteDraftButton } from "@/features/requests/components/DeleteDraftButton";
+import { useI18n } from "@/i18n/client";
 
 interface DraftRequest {
   id: string;
@@ -15,6 +16,7 @@ interface DraftRequestsBannerProps {
 }
 
 export function DraftRequestsBanner({ drafts }: DraftRequestsBannerProps) {
+  const { t } = useI18n();
   const [deletedDraftIds, setDeletedDraftIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -29,7 +31,7 @@ export function DraftRequestsBanner({ drafts }: DraftRequestsBannerProps) {
   return (
     <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-4">
       <p className="text-sm font-medium text-slate-700">
-        คุณมีแบบร่างที่ยังไม่ได้บันทึก {visibleDrafts.length} รายการ
+        {t("requests.draftsCount", { count: visibleDrafts.length })}
       </p>
       <div className="mt-3 flex flex-col gap-2">
         {visibleDrafts.map((draft) => (
@@ -38,7 +40,7 @@ export function DraftRequestsBanner({ drafts }: DraftRequestsBannerProps) {
             className="flex items-center justify-between rounded-lg bg-white border border-slate-200 px-4 py-2 hover:shadow-sm transition-shadow"
           >
             <span className="text-sm text-slate-800">
-              {draft.title || "แบบร่างไม่มีชื่อ"}
+              {draft.title || t("requests.untitledDraft")}
             </span>
             <div className="flex items-center gap-4">
               <DeleteDraftButton requestId={draft.id} onDeleted={handleDeleted} />
@@ -46,7 +48,7 @@ export function DraftRequestsBanner({ drafts }: DraftRequestsBannerProps) {
                 href={`${ROUTES.REQUESTS_NEW}?edit=${draft.id}`}
                 className="text-xs text-blue-600 hover:text-blue-800"
               >
-                ดำเนินการต่อ →
+                {t("dashboard.continue")}
               </Link>
             </div>
           </div>

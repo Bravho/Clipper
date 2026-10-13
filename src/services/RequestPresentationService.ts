@@ -3,6 +3,8 @@ import { RequestStatusHistory } from "@/domain/models/RequestStatusHistory";
 import { UploadedAsset } from "@/domain/models/UploadedAsset";
 import { PublishingLink } from "@/domain/models/PublishingLink";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
+import { translate, type MessageKey } from "@/i18n/messages";
+import { intlLocale, type AppLocale } from "@/i18n/config";
 import { PLATFORM_LABELS } from "@/domain/enums/Platform";
 import {
   VideoGenerationStep,
@@ -163,8 +165,14 @@ const STATUS_PRESENTATION: Record<RequestStatus, StatusPresentation> = {
 
 export class RequestPresentationService {
   /** Get the status presentation for a given status. */
-  getStatusPresentation(status: RequestStatus): StatusPresentation {
-    return STATUS_PRESENTATION[status];
+  getStatusPresentation(status: RequestStatus, locale: AppLocale = "th"): StatusPresentation {
+    const base = STATUS_PRESENTATION[status];
+    if (locale === "th") return base;
+    return {
+      ...base,
+      label: translate(locale, `status.${status}` as MessageKey),
+      description: translate(locale, `present.desc.${status}` as MessageKey),
+    };
   }
 
   /**
@@ -178,7 +186,8 @@ export class RequestPresentationService {
    * - Published / Delivered: Show confirmed date as reference.
    * - OnHold / Rejected: Due date not applicable.
    */
-  getDueDateDisplay(request: ClipRequest): DueDateDisplay {
+  getDueDateDisplay(request: ClipRequest, locale: AppLocale = "th"): DueDateDisplay {
+    const t = (key: MessageKey, values?: Record<string, string>) => translate(locale, key, values);
     const { status, dueDateConfirmed, confirmedDueDate } = request;
 
     // Draft and Submitted — too early to show anything
@@ -197,13 +206,13 @@ export class RequestPresentationService {
       return {
         show: false,
         formattedDate: null,
-        message: "ไม่มีกำหนดส่งสำหรับคำขอนี้",
+        message: t("present.due.none"),
       };
     }
 
     // Confirmed date available
     if (dueDateConfirmed && confirmedDueDate) {
-      const formatted = this.formatDate(confirmedDueDate);
+      const formatted = this.formatDate(confirmedDueDate, locale);
       const isPast = confirmedDueDate < new Date();
 
       if (
@@ -213,7 +222,7 @@ export class RequestPresentationService {
         return {
           show: true,
           formattedDate: formatted,
-          message: `เสร็จสิ้นเมื่อ ${formatted}`,
+          message: t("present.due.done", { date: formatted }),
         };
       }
 
@@ -221,8 +230,8 @@ export class RequestPresentationService {
         show: true,
         formattedDate: formatted,
         message: isPast
-          ? `คาดว่าเสร็จภายใน ${formatted} — ระบบกำลังสรุปคลิปของคุณ`
-          : `คาดว่าเสร็จภายใน: ${formatted}`,
+          ? t("present.due.pastExpected", { date: formatted })
+          : t("present.due.expected", { date: formatted }),
       };
     }
 
@@ -230,8 +239,7 @@ export class RequestPresentationService {
     return {
       show: true,
       formattedDate: null,
-      message:
-        "คำขอของคุณอยู่ระหว่างการประมวลผล วันที่คาดว่าจะเสร็จจะแสดงที่นี่เมื่อระบบยืนยันกำหนดการผลิต",
+      message: t("present.due.pending"),
     };
   }
 
@@ -239,7 +247,8 @@ export class RequestPresentationService {
    * Build the requester-facing queue display message.
    * Requesters see a simplified version — no internal queue depth or staff detail.
    */
-  getQueueDisplay(request: ClipRequest): QueueDisplay {
+  getQueueDisplay(request: ClipRequest, locale: AppLocale = "th"): QueueDisplay {
+    const t = (key: MessageKey) => translate(locale, key);
     const { status, queuePosition } = request;
 
     switch (status) {
@@ -253,13 +262,13 @@ export class RequestPresentationService {
         // processing). Just confirm the submission is received.
         return {
           show: true,
-          message: "คำขอของคุณถูกส่งแล้ว",
+          message: t("present.queue.submitted"),
         };
 
       case RequestStatus.UnderReview:
         return {
           show: true,
-          message: "ระบบกำลังประมวลผล brief และไฟล์ของคุณ",
+          message: t("present.queue.review"),
         };
 
       case RequestStatus.AcceptedForProduction:
@@ -267,20 +276,20 @@ export class RequestPresentationService {
           show: true,
           message:
             queuePosition === 1
-              ? "คำขอของคุณเป็นลำดับถัดไปในคิวการผลิต"
-              : "คำขอของคุณได้รับการยอมรับและอยู่ในคิวการผลิต",
+              ? t("present.queue.next")
+              : t("present.queue.accepted"),
         };
 
       case RequestStatus.Editing:
         return {
           show: true,
-          message: "คลิปของคุณกำลังถูกผลิต",
+          message: t("present.queue.editing"),
         };
 
       case RequestStatus.ScheduledForPublishing:
         return {
           show: true,
-          message: "การผลิตเสร็จสิ้นแล้ว กำลังจัดเตรียมการเผยแพร่",
+          message: t("present.queue.scheduled"),
         };
 
       case RequestStatus.Published:
@@ -290,7 +299,7 @@ export class RequestPresentationService {
       case RequestStatus.OnHold:
         return {
           show: true,
-          message: "คำขอของคุณถูกพักไว้ชั่วคราว การผลิตจะดำเนินต่อเมื่อแก้ไขปัญหาแล้ว",
+          message: t("present.queue.onHold"),
         };
 
       case RequestStatus.Rejected:
@@ -423,8 +432,8 @@ export class RequestPresentationService {
     );
   }
 
-  private formatDate(date: Date): string {
-    return date.toLocaleDateString("th-TH", {
+  private formatDate(date: Date, locale: AppLocale = "th"): string {
+    return date.toLocaleDateString(intlLocale(locale), {
       day: "numeric",
       month: "long",
       year: "numeric",

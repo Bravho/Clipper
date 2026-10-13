@@ -453,8 +453,10 @@ export function StoryboardPreview({
         </label>
       )}
       <p className="studio-counter" style={{ textAlign: "left", marginTop: 6 }}>
-        {elapsed.toFixed(1)}s / {total.toFixed(1)}s · picture only — the voice, captions and
-        template are added when it renders.
+        {t("studio.storyboard.pictureOnly", {
+          elapsed: elapsed.toFixed(1),
+          total: total.toFixed(1),
+        })}
       </p>
     </div>
   );

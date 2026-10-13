@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/i18n/client";
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { isNativeMobile } from "@/lib/mobile/platform";
@@ -50,6 +51,7 @@ async function postSubscription(sub: PushSubscription): Promise<void> {
 }
 
 export function WebPushRegistration() {
+  const { t } = useI18n();
   const { status } = useSession();
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -127,10 +129,10 @@ export function WebPushRegistration() {
   return (
     <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-lg rounded-xl border border-blue-200 bg-white p-4 shadow-lg">
       <p className="text-sm font-semibold text-slate-900">
-        แจ้งเตือนเมื่อวิดีโอพร้อมตรวจสอบ
+        {t("push.title")}
       </p>
       <p className="mt-1 text-xs text-slate-600">
-        รับการแจ้งเตือนบนเบราว์เซอร์นี้เมื่อแต่ละขั้นตอนการสร้างเสร็จและต้องการให้คุณตรวจสอบ
+        {t("push.webBody")}
       </p>
       <div className="mt-3 flex gap-2">
         <button
@@ -139,14 +141,14 @@ export function WebPushRegistration() {
           className="rounded-md bg-blue-700 px-3 py-2 text-xs font-medium text-white disabled:opacity-60"
           onClick={subscribe}
         >
-          {busy ? "กำลังเปิด..." : "เปิดการแจ้งเตือน"}
+          {busy ? t("push.enabling") : t("push.enable")}
         </button>
         <button
           type="button"
           className="rounded-md px-3 py-2 text-xs text-slate-600"
           onClick={() => setShow(false)}
         >
-          ไว้ภายหลัง
+          {t("push.later")}
         </button>
       </div>
     </div>

@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { clsx } from "clsx";
 import type { PortalNavSection } from "@/components/layout/PortalNav";
+import { useI18n } from "@/i18n/client";
 
 /**
  * Full-height slide-in navigation drawer for phones and small tablets.
@@ -32,6 +33,7 @@ export function MobileNavDrawer({
   /** Account / language controls rendered below the section links. */
   children: React.ReactNode;
 }) {
+  const { t } = useI18n();
   const pathname = usePathname();
 
   // Close whenever the route changes — otherwise the drawer stays open on top
@@ -94,7 +96,7 @@ export function MobileNavDrawer({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close menu"
+            aria-label={t("nav.closeMenu")}
             className="-mr-2 rounded p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

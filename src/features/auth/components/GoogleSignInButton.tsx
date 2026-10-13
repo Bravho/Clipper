@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
 import { describeSignInFailure, startOAuth } from "@/lib/mobile/oauth";
 import {
   isSignInOffered,
@@ -15,8 +16,9 @@ interface GoogleSignInButtonProps {
 
 export function GoogleSignInButton({
   callbackUrl = "/dashboard",
-  label = "ดำเนินการต่อด้วย Google",
+  label,
 }: GoogleSignInButtonProps) {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const availability = useSignInAvailability("google");
@@ -31,7 +33,7 @@ export function GoogleSignInButton({
       // exactly how a misconfigured Credential Manager client presents itself.
       // The console line is what shows up in `adb logcat` under `chromium:`.
       console.error("[auth] Google sign-in failed", cause);
-      setError(describeSignInFailure(cause));
+      setError(describeSignInFailure(cause, t));
       setLoading(false);
     }
   };
@@ -78,7 +80,7 @@ export function GoogleSignInButton({
             />
           </svg>
         )}
-        {label}
+        {label ?? t("auth.continueGoogle")}
       </Button>
     </div>
   );

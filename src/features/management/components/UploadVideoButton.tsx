@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/i18n/client";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -28,6 +29,7 @@ export function UploadVideoButton({
   maxMB: number;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -146,11 +148,11 @@ export function UploadVideoButton({
 
   async function submit() {
     if (!file) {
-      setError("Choose a video file first.");
+      setError(t("upload.chooseFile"));
       return;
     }
     if (file.size > maxMB * 1024 * 1024) {
-      setError(`That file is ${(file.size / 1024 / 1024).toFixed(0)} MB — the limit is ${maxMB} MB.`);
+      setError(t("upload.tooBig", { size: (file.size / 1024 / 1024).toFixed(0), max: maxMB }));
       return;
     }
     // Normalise exactly as the server does before presigning, so the PUT's
@@ -173,7 +175,7 @@ export function UploadVideoButton({
       });
       const begin = await beginRes.json();
       if (!beginRes.ok) {
-        setError(begin.error ?? "Could not start the upload.");
+        setError(begin.error ?? t("upload.startFailed"));
         setPhase("idle");
         return;
       }
@@ -186,7 +188,7 @@ export function UploadVideoButton({
         body: file,
       });
       if (!put.ok) {
-        setError("Upload to storage failed. Please try again.");
+        setError(t("upload.storageFailed"));
         setPhase("idle");
         return;
       }
@@ -208,7 +210,7 @@ export function UploadVideoButton({
       );
       if (!doneRes.ok) {
         const d = await doneRes.json().catch(() => ({}));
-        setError(d.error ?? "Could not finalize the upload.");
+        setError(d.error ?? t("upload.finalizeFailed"));
         setPhase("idle");
         return;
       }
@@ -221,7 +223,7 @@ export function UploadVideoButton({
       setPhase("idle");
       router.refresh();
     } catch {
-      setError("Upload failed. Please try again.");
+      setError(t("upload.failed"));
       setPhase("idle");
     }
   }
@@ -229,7 +231,7 @@ export function UploadVideoButton({
   if (disabled) {
     return (
       <Button size="sm" disabled>
-        Upload video
+        {t("upload.button")}
       </Button>
     );
   }
@@ -237,22 +239,22 @@ export function UploadVideoButton({
   return (
     <div className="text-right">
       <Button size="sm" onClick={() => setOpen((o) => !o)}>
-        Upload video
+        {t("upload.button")}
       </Button>
 
       {open && (
         <div className="mt-3 w-72 rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm">
           <label className="block text-xs font-medium text-slate-600">
-            Title (optional)
+            {t("upload.titleLabel")}
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Weekend promo"
+              placeholder={t("upload.titlePlaceholder")}
               className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
             />
           </label>
           <label className="mt-2 block text-xs font-medium text-slate-600">
-            Video file (max {maxMB} MB)
+            {t("upload.fileLabel", { max: maxMB })}
             <input
               ref={fileRef}
               type="file"
@@ -265,12 +267,12 @@ export function UploadVideoButton({
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" onClick={submit} loading={busy} disabled={busy}>
               {phase === "starting"
-                ? "Starting…"
+                ? t("upload.starting")
                 : phase === "uploading"
-                  ? "Uploading…"
+                  ? t("upload.uploading")
                   : phase === "finishing"
-                    ? "Finishing…"
-                    : "Start upload"}
+                    ? t("upload.finishing")
+                    : t("upload.start")}
             </Button>
             <Button
               size="sm"
@@ -278,7 +280,7 @@ export function UploadVideoButton({
               onClick={() => setOpen(false)}
               disabled={busy}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
           </div>
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ResetPasswordForm } from "@/features/auth/components/ResetPasswordForm";
+import { getServerI18n } from "@/i18n/server";
 
 export const metadata: Metadata = {
   title: "ตั้งรหัสผ่านใหม่",
@@ -23,13 +24,14 @@ export default function ResetPasswordPage({
 }: {
   searchParams?: { token?: string };
 }) {
+  const { t } = getServerI18n();
   return (
     <div className="flex min-h-[calc(100vh-128px)] items-center justify-center px-4 py-12">
       <div className="auth-card">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-slate-900">ตั้งรหัสผ่านใหม่</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{t("reset.title")}</h1>
           <p className="mt-2 text-sm text-slate-500">
-            กำหนดรหัสผ่านใหม่ แล้วเข้าสู่ระบบอีกครั้งด้วยรหัสผ่านนี้
+            {t("reset.subtitle")}
           </p>
         </div>
 

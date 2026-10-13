@@ -534,13 +534,13 @@ export function DistributionReviewPanel({
           </h3>
           {!mediaExpired && (
             <span className="text-sm font-medium text-amber-700">
-              (วิดีโอนี้จะถูกจัดเก็บเพียง 7 วัน)
+              (วิดีโอนี้จัดเก็บไว้ในระยะเวลาจำกัด — 14 วันสำหรับวิดีโอฟรี 30 วันสำหรับวิดีโอจากแพ็กเกจ)
             </span>
           )}
         </div>
         <p className="mb-4 text-sm text-slate-500">
           {mediaExpired
-            ? "ไฟล์วิดีโอถูกจัดเก็บไว้ 7 วันหลังส่งมอบและถูกลบออกจากระบบแล้ว จึงไม่สามารถดาวน์โหลดได้อีก"
+            ? "ไฟล์วิดีโอหมดระยะเวลาจัดเก็บและถูกลบออกจากระบบแล้ว จึงไม่สามารถดาวน์โหลดได้อีก"
             : "เราเตรียมแคปชัน แฮชแท็ก และภาพตัวอย่างสำหรับแต่ละช่องทางไว้ให้แล้ว ปรับแก้ได้ตามต้องการ คัดลอกข้อความและดาวน์โหลดวิดีโอ (พร้อมภาพปก) ไปโพสต์บนช่องทางของคุณได้ทันที"}
         </p>
 
@@ -587,7 +587,7 @@ export function DistributionReviewPanel({
                 {mediaExpired ? (
                   <div className="mb-3 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
                     <span aria-hidden>🗑️</span>
-                    <span>ไฟล์วิดีโอสำหรับช่องทางนี้ถูกลบแล้ว (จัดเก็บไว้ 7 วันหลังส่งมอบ)</span>
+                    <span>ไฟล์วิดีโอสำหรับช่องทางนี้ถูกลบแล้ว (หมดระยะเวลาจัดเก็บ)</span>
                   </div>
                 ) : (
                   <div className="grid gap-4 md:grid-cols-2">
@@ -842,7 +842,7 @@ export function DistributionReviewPanel({
           {mediaExpired && (
             <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-3 text-xs text-slate-500">
               <span aria-hidden>🗑️</span>
-              <span>ไฟล์วิดีโอ Travy ถูกลบแล้ว (จัดเก็บไว้ 7 วันหลังส่งมอบ)</span>
+              <span>ไฟล์วิดีโอ Travy ถูกลบแล้ว (หมดระยะเวลาจัดเก็บ)</span>
             </div>
           )}
           {!mediaExpired && travyVideoStatus === "generating" && (

@@ -23,7 +23,7 @@ export const metadata: Metadata = { title: "แดชบอร์ด — RClippe
 export default async function DashboardPage() {
   const { locale, t } = getServerI18n();
   const user = await requireRole(Role.Requester);
-  const summary = await requesterDashboardService.getDashboardSummary(user.id);
+  const summary = await requesterDashboardService.getDashboardSummary(user.id, locale);
 
   // Access is a monthly quota, not a per-request charge: a 0-credit user with
   // free allowance left can still submit, and a subscriber with a live package
@@ -110,20 +110,22 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Quota banner — how many videos are left this period and what happens
-          when they run out. Shown in every state: once the allowance is spent it
-          becomes the upgrade prompt, which is the answer to "why can't I submit?". */}
-      <div className={`mb-6 rounded-xl border p-4 ${tone.container}`}>
-        <p className={`text-sm font-medium ${tone.title}`}>{notice.title}</p>
-        <p className={`mt-1 text-sm ${tone.body}`}>{notice.body}</p>
-        {!canSubmit && (
+      {/* Quota banner — only when the allowance is spent, because then it is
+          the answer to "why is New request disabled?". The free / paid
+          "N of M videos left" status used to sit here permanently; it read as a
+          sales nudge on the home screen, so that status now lives only on the
+          pricing page (pricing.status.*). */}
+      {!canSubmit && (
+        <div className={`mb-6 rounded-xl border p-4 ${tone.container}`}>
+          <p className={`text-sm font-medium ${tone.title}`}>{notice.title}</p>
+          <p className={`mt-1 text-sm ${tone.body}`}>{notice.body}</p>
           <Link href={ROUTES.PRICING}>
             <p className={`mt-2 text-sm font-medium underline ${tone.title}`}>
               {t("quota.viewPricing")}
             </p>
           </Link>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Active Requests */}
       <div className="mb-8">

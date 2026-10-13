@@ -16,12 +16,25 @@ import java.util.List;
  * early, on top of the outgoing shot's tail, and fading it in — "a true
  * cross-dissolve (not a dip to black)", as `MontageScene.tsx` puts it. Media3
  * has no transition primitive at all. What it does have is multi-sequence
- * compositing: sequence 0 is the background, sequence 1 is drawn over it, and
- * {@link VideoCompositorSettings} is asked for input 1's alpha at every frame.
+ * compositing, and {@link VideoCompositorSettings} is asked for each input's
+ * alpha at every frame.
+ *
+ * LANE 0 IS ON TOP. `DefaultVideoCompositor` overlays inputs "in the reverse
+ * order of their registration order, so that the first registered source is on
+ * the very top". Lane 0 (sequence 0) is therefore the upper layer and lane 1
+ * the lower one. While a lane sits in a Gap, Media3 feeds it a 16x16 BLACK
+ * bitmap that is not scaled to the canvas, so it composites as a small black
+ * square in the dead centre of the frame. An earlier version held lane 0 at
+ * alpha 1 for the whole video, which (a) stamped that square over every shot
+ * that played on lane 1 and (b) hid lane 1 during every dissolve, turning the
+ * dissolves into hard cuts. So the fade lives on lane 0, the top layer, and
+ * lane 1 stays opaque underneath: whenever lane 0 is in a gap it is at alpha 0
+ * and its black filler cannot be seen.
  *
  * So {@link ManifestRenderer#buildMontage} ping-pongs the shots between the two
  * sequences — shot 0 on lane 0, shot 1 on lane 1, shot 2 on lane 0 — and this
- * class answers the only remaining question: how opaque is lane 1 right now.
+ * class answers the only remaining question: how much of lane 1 shows right
+ * now ({@link #overlayAlpha}). Lane 0, on top, is drawn at the complement.
  *
  *   - Outside any dissolve, lane 1 is fully opaque while it holds the current
  *     shot and fully transparent while lane 0 does.
@@ -70,7 +83,14 @@ public final class CrossDissolveCompositorSettings implements VideoCompositorSet
 
     @Override
     public OverlaySettings getOverlaySettings(int inputId, long presentationTimeUs) {
-        float alpha = inputId == 0 ? 1f : overlayAlpha(presentationTimeUs / 1_000_000d);
+        // Lane 0 is the TOP layer (see the class comment), so it carries the
+        // fade: transparent while lane 1 holds the shot (lane 0 is then in a
+        // Gap, whose 16x16 black filler would otherwise show as a dot in the
+        // centre), opaque while it holds the shot itself. Lane 1, under it,
+        // stays opaque; its own gap filler is always covered by lane 0.
+        float alpha = inputId == 0
+            ? 1f - overlayAlpha(presentationTimeUs / 1_000_000d)
+            : 1f;
         return new StaticOverlaySettings.Builder().setAlphaScale(alpha).build();
     }
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { forgetDeletedDraft } from "@/features/requests/draftStorage";
+import { useI18n } from "@/i18n/client";
 
 interface DeleteDraftButtonProps {
   requestId: string;
@@ -10,6 +11,7 @@ interface DeleteDraftButtonProps {
 }
 
 export function DeleteDraftButton({ requestId, onDeleted }: DeleteDraftButtonProps) {
+  const { t } = useI18n();
   const router = useRouter();
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -17,7 +19,7 @@ export function DeleteDraftButton({ requestId, onDeleted }: DeleteDraftButtonPro
     e.preventDefault();
     e.stopPropagation();
 
-    if (!confirm("ลบแบบร่างนี้? ไม่สามารถย้อนกลับได้")) return;
+    if (!confirm(t("requests.confirmDeleteDraft"))) return;
 
     setIsDeleting(true);
     try {
@@ -30,10 +32,10 @@ export function DeleteDraftButton({ requestId, onDeleted }: DeleteDraftButtonPro
         router.refresh();
       } else {
         const data = await res.json().catch(() => null);
-        alert(data?.error ?? "ไม่สามารถลบแบบร่างได้ กรุณาลองใหม่อีกครั้ง");
+        alert(data?.error ?? t("requests.deleteDraftFailed"));
       }
     } catch {
-      alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      alert(t("common.networkError"));
     } finally {
       setIsDeleting(false);
     }
@@ -45,7 +47,7 @@ export function DeleteDraftButton({ requestId, onDeleted }: DeleteDraftButtonPro
       disabled={isDeleting}
       className="text-xs text-red-400 hover:text-red-600 disabled:opacity-50 transition-colors"
     >
-      {isDeleting ? "กำลังลบ..." : "ลบ"}
+      {isDeleting ? t("common.deleting") : t("common.delete")}
     </button>
   );
 }

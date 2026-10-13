@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 
-import { ROUTES } from "@/config/routes";
 import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import type { VideoAccessView } from "@/services/VideoAccessService";
 import { useStudioLocale, useStudioT } from "./studioI18n";
+import { usePricingHref } from "./usePricingHref";
 
 const DAY_MS = 86_400_000;
 
@@ -29,6 +29,7 @@ export function daysLeft(iso: string, now: number = Date.now()): number {
 export function VideoAccessNote({ access }: { access: VideoAccessView | null | undefined }) {
   const t = useStudioT();
   const locale = useStudioLocale();
+  const pricingHref = usePricingHref();
   if (!access) return null;
 
   const formatDate = (iso: string) =>
@@ -59,9 +60,9 @@ export function VideoAccessNote({ access }: { access: VideoAccessView | null | u
             : t("studio.access.lockedBodyNoDate", { days: VIDEO_LIFETIME_DAYS })}
         </p>
         <Link
-          href={ROUTES.PRICING}
+          href={pricingHref}
           className="studio-button studio-button-primary"
-          style={{ marginTop: 10, display: "inline-block" }}
+          style={{ marginTop: 10 }}
         >
           {t("studio.access.seePackages")}
         </Link>

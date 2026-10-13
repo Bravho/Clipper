@@ -17,7 +17,7 @@ export default function OwnershipPage() {
           Content Ownership and Publication Rights
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.4.0 — Effective 3 August 2026
+          Version 1.5.0 — Effective 13 October 2026
         </p>
       </div>
 
@@ -79,13 +79,25 @@ export default function OwnershipPage() {
               4. Your delivered-video licence
             </h2>
             <p>
-              After the applicable download charge is paid or waived, RClipper grants
-              you a non-exclusive, worldwide, royalty-free licence to download,
-              reproduce, display, and publish the delivered video through websites,
-              applications, social-media accounts, and other channels you own or
-              control for your own business or non-commercial purposes. You may not
-              sell, sublicense, or supply the video as stock content, a template, or
-              an editable production asset without RClipper&apos;s written permission.
+              Once a video is available to you outside the app — because it was made
+              under a package, or because it was a free video unlocked by buying a
+              package, as described in the{" "}
+              <Link href={ROUTES.TERMS} className="text-blue-700 underline">
+                Terms and Conditions
+              </Link>{" "}
+              — RClipper grants you a non-exclusive, worldwide, royalty-free licence
+              to download, reproduce, display, and publish the delivered video
+              through websites, applications, social-media accounts, and other
+              channels you own or control for your own business or non-commercial
+              purposes. A free video that has not been unlocked may be watched in the
+              RClipper app only and may not be copied, recorded, or published.
+            </p>
+            <p>
+              This licence continues for copies you have downloaded, and for posts
+              you have published, after RClipper deletes its own copy at the end of
+              the video&apos;s storage period. You may not sell, sublicense, or supply
+              the video as stock content, a template, or an editable production asset
+              without RClipper&apos;s written permission.
             </p>
           </section>
 

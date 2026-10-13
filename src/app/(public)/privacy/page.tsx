@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { ROUTES } from "@/config/routes";
+import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
+import { FREE_VIDEO_LIFETIME_DAYS, VIDEO_LIFETIME_DAYS } from "@/config/retention";
 
 export const metadata: Metadata = {
   title: "Privacy Policy — RClipper",
@@ -17,7 +19,7 @@ export default function PrivacyPage() {
           RClipper Privacy Policy
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.5.0 — Effective 26 August 2026
+          Version 1.6.0 — Effective 13 October 2026
         </p>
       </div>
 
@@ -31,8 +33,9 @@ export default function PrivacyPage() {
               RClipper collects account and authentication information, request
               briefs, uploaded images and videos (including audio contained in those
               videos), user-entered text, place names, addresses, selected map locations or coordinates,
-              categories, production choices, approval history, credit and payment
-              records, support communications, and technical information needed to
+              categories, production choices, approval history, credit, package
+              and payment records (including App Store and Google Play purchase
+              receipts), support communications, and technical information needed to
               operate and secure the service. If you use Channel Management, we also
               collect the identifiers and display information for social accounts you
               choose to connect, publication settings, captions, hashtags, and post
@@ -74,9 +77,15 @@ export default function PrivacyPage() {
             <p>
               After you approve a script, we send the approved script and selected
               voice settings to <strong>ElevenLabs Inc.</strong> to generate the voice-over.
-              RClipper does not use Google Veo and does not send your data to Google
-              for generative video creation. The finished video is assembled from
-              your source media using RClipper&apos;s media-processing infrastructure.
+              To write the on-screen text graphics for each scene, we send{" "}
+              <strong>Anthropic PBC&apos;s Claude API</strong> a small preview image of each
+              scene, the voice-over timing and script, the business or place name,
+              the brief, and the chosen text style. RClipper does not use Google Veo
+              and does not send your data to Google for generative video creation.
+              The finished video is assembled on your phone from the photos and clips
+              you picked; your original photos and clips stay on your phone and are
+              not uploaded to RClipper — only small previews of them are sent to
+              RClipper for the steps above.
             </p>
             <p>
               These AI providers act as service providers for the stated production
@@ -169,27 +178,44 @@ export default function PrivacyPage() {
               6. Storage and retention
             </h2>
             <p>
-              Raw source uploads are associated with the request for which they were
-              supplied and are ordinarily scheduled for deletion within 90 days after
-              upload, subject to active production, security, legal, dispute, backup,
-              and technical requirements. Production records, approval evidence,
-              credit records, and policy-acceptance records may be retained for as
-              long as reasonably necessary to operate the service and establish the
-              parties&apos; rights.
+              The photos and clips you pick stay on your phone; the RClipper app keeps
+              a copy of them for {ORIGINALS_KEPT_DAYS} days to make the video. The
+              small previews sent to RClipper are linked to the request. Source
+              files uploaded to RClipper by older versions of the app are ordinarily
+              scheduled for deletion within 90 days after upload. Each of these is
+              subject to active production, security, legal, dispute, backup, and
+              technical requirements.
             </p>
             <p>
-              Finished videos may be retained for delivery, quality assurance, and,
-              where selected, for the duration of RClipper Channel publication plus reasonable
-              backup, audit, legal, and content-integrity retention.
+              Finished videos are kept for a limited time, shown on every video: a
+              free video for {FREE_VIDEO_LIFETIME_DAYS} days after it is finished, and
+              a video made under a package — or a free video unlocked by buying one —
+              for {VIDEO_LIFETIME_DAYS} days (counted from the purchase for an
+              unlocked free video). On that date RClipper deletes its copy, and the
+              copy kept inside the RClipper app on your phone is deleted on the same
+              date. Copies you have downloaded are not affected. Where RClipper
+              selects a video for the RClipper Channels, it may keep that video for
+              the duration of that publication plus reasonable backup, audit, legal,
+              and content-integrity retention.
+            </p>
+            <p>
+              Production records, approval evidence, credit, package and payment
+              records, and policy-acceptance records may be retained for as long as
+              reasonably necessary to operate the service and establish the
+              parties&apos; rights. When an account is deleted, RClipper keeps a record of
+              how many free videos the person has used, linked to a one-way hash of
+              the email address and sign-in identifiers, so that the free allowance
+              is not granted again to a re-created account.
             </p>
             <p>
               Content placed in Channel Management, connected-account records, and
               publication records are retained as needed to operate the feature,
               display history, enforce purchased entitlements, troubleshoot failed
               publications, and meet security, audit, payment, dispute, and legal
-              obligations. Media files may be deleted separately under the retention
-              period shown in the service even when a publication or purchase record
-              must be kept longer.
+              obligations. A video sent to Channel Management keeps the expiry date
+              of the original video, and a video you upload yourself is kept for{" "}
+              {VIDEO_LIFETIME_DAYS} days. Media files are deleted on those dates even
+              when a publication or purchase record must be kept longer.
             </p>
           </section>
 

@@ -3,8 +3,14 @@ import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
-import { isManagementEnabledFor, managementConnectablePlatforms } from "@/config/management";
+import {
+  findManagementProduct,
+  isManagementEnabledFor,
+  managementConnectablePlatforms,
+} from "@/config/management";
 import { getServerI18n } from "@/i18n/server";
+import { intlLocale } from "@/i18n/config";
+import type { MessageKey } from "@/i18n/messages";
 import { Card } from "@/components/ui/Card";
 import {
   managementAccessPassRepository,
@@ -65,7 +71,12 @@ export default async function ManagementOverviewPage() {
   };
   if (!isManagementEnabledFor(user)) notFound();
 
-  const { t } = getServerI18n();
+  const { t, locale } = getServerI18n();
+  // Package names in the menu language; the English table is the fallback.
+  const packageName = (code: ManagementProductCode): string => {
+    const definition = findManagementProduct(code);
+    return definition ? t(definition.nameKey as MessageKey) : PACKAGE_NAMES[code];
+  };
   const now = new Date();
 
   const [
@@ -94,7 +105,7 @@ export default async function ManagementOverviewPage() {
       const purchase = purchasesById.get(bundle.purchaseId);
       return {
         id: bundle.id,
-        name: PACKAGE_NAMES[bundle.productCode],
+        name: packageName(bundle.productCode),
         kind: "upload_bundle" as const,
         status: uploadBundleDisplayStatus(bundle, now),
         creditsUsed: purchase?.amountCredits ?? null,
@@ -109,7 +120,7 @@ export default async function ManagementOverviewPage() {
       const purchase = purchasesById.get(pass.purchaseId);
       return {
         id: pass.id,
-        name: PACKAGE_NAMES[pass.productCode],
+        name: packageName(pass.productCode),
         kind: "access_pass" as const,
         status: accessPassDisplayStatus(pass, now),
         creditsUsed: purchase?.amountCredits ?? null,
@@ -286,27 +297,28 @@ export default async function ManagementOverviewPage() {
       <ManagementPackageStatus packages={displayedPackages} />
 
       <div className="mb-6 grid grid-cols-3 gap-3">
-        <Stat label="Ready" value={counts.ready} />
-        <Stat label="Published" value={counts.published} />
-        <Stat label="Removed" value={counts.removed} />
+        <Stat label={t("mgmt.stat.ready")} value={counts.ready} />
+        <Stat label={t("mgmt.stat.published")} value={counts.published} />
+        <Stat label={t("mgmt.stat.removed")} value={counts.removed} />
       </div>
 
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-slate-900">วิดิโอของคุณ</h2>
+          <h2 className="text-base font-semibold text-slate-900">{t("mgmt.yourVideos")}</h2>
           {access ? (
             <span className="text-xs text-slate-500">
-              Unlimited publishing until{" "}
-              {access.expiresAt.toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-                timeZone: "UTC",
+              {t("mgmt.unlimitedUntil", {
+                date: access.expiresAt.toLocaleDateString(intlLocale(locale), {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                  timeZone: "UTC",
+                }),
               })}
             </span>
           ) : (
             <span className="text-xs text-slate-500">
-              {tokensRemaining} publish token{tokensRemaining === 1 ? "" : "s"} left
+              {t("mgmt.tokensLeft", { count: tokensRemaining })}
             </span>
           )}
         </div>
@@ -322,8 +334,8 @@ export default async function ManagementOverviewPage() {
           uploadMaxMB={uploadMaxMB}
           quotaNote={
           hasPackage
-            ? `${uploadsLeft} of ${MANAGEMENT_UPLOAD_KEEP_LIMIT} upload places left · each video kept ${VIDEO_LIFETIME_DAYS} days`
-            : `included with a package · each video kept ${VIDEO_LIFETIME_DAYS} days`
+            ? t("mgmt.uploadPlaces", { left: uploadsLeft, total: MANAGEMENT_UPLOAD_KEEP_LIMIT, days: VIDEO_LIFETIME_DAYS })
+            : t("mgmt.uploadIncluded", { days: VIDEO_LIFETIME_DAYS })
         }
         uploadBlockedReason={uploadBlockedReason}
         />

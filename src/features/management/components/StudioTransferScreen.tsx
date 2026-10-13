@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePricingHref } from "@/features/device-render/usePricingHref";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -63,6 +64,7 @@ export function StudioTransferScreen({
   lifetimeDays?: number;
 }) {
   const { t } = useI18n();
+  const pricingHref = usePricingHref();
   const router = useRouter();
   const [rows, setRows] = useState<Row[]>(() =>
     videos.map((video) => ({
@@ -198,7 +200,7 @@ export function StudioTransferScreen({
           </p>
           {blocked === "package_required" && (
             <Link
-              href={ROUTES.PRICING}
+              href={pricingHref}
               className="mt-3 inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
             >
               {t("mgmt.transfer.seePackages")}

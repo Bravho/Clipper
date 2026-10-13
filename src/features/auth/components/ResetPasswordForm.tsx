@@ -14,6 +14,9 @@ import {
   ResetPasswordInput,
 } from "@/features/auth/validation/passwordResetSchema";
 import { ResetTokenState } from "@/domain/enums/PasswordReset";
+import { useI18n } from "@/i18n/client";
+import type { MessageKey } from "@/i18n/messages";
+import { localizeValidation } from "@/i18n/validationMessages";
 
 /**
  * "ลืมรหัสผ่าน" step 2 — the screen the emailed link opens.
@@ -28,20 +31,11 @@ import { ResetTokenState } from "@/domain/enums/PasswordReset";
 
 const DEAD_LINK_COPY: Record<
   Exclude<ResetTokenState, ResetTokenState.Valid>,
-  { title: string; body: string }
+  { title: MessageKey; body: MessageKey }
 > = {
-  [ResetTokenState.Invalid]: {
-    title: "ลิงก์นี้ใช้งานไม่ได้",
-    body: "ลิงก์อาจไม่สมบูรณ์ หรือถูกแทนที่ด้วยลิงก์ใหม่ที่คุณขอภายหลัง กรุณาขอลิงก์ตั้งรหัสผ่านใหม่อีกครั้ง",
-  },
-  [ResetTokenState.Expired]: {
-    title: "ลิงก์นี้หมดอายุแล้ว",
-    body: "ลิงก์ตั้งรหัสผ่านใหม่มีอายุ 60 นาที กรุณาขอลิงก์ใหม่อีกครั้ง",
-  },
-  [ResetTokenState.Used]: {
-    title: "ลิงก์นี้ถูกใช้ไปแล้ว",
-    body: "รหัสผ่านถูกตั้งใหม่ด้วยลิงก์นี้ไปแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่ หากยังเข้าไม่ได้ กรุณาขอลิงก์ใหม่",
-  },
+  [ResetTokenState.Invalid]: { title: "reset.invalidTitle", body: "reset.invalidBody" },
+  [ResetTokenState.Expired]: { title: "reset.expiredTitle", body: "reset.expiredBody" },
+  [ResetTokenState.Used]: { title: "reset.usedTitle", body: "reset.usedBody" },
 };
 
 interface ValidateResponse {
@@ -51,6 +45,7 @@ interface ValidateResponse {
 }
 
 export function ResetPasswordForm({ token }: { token: string }) {
+  const { t } = useI18n();
   const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [tokenState, setTokenState] = useState<ResetTokenState>(
@@ -120,21 +115,17 @@ export function ResetPasswordForm({ token }: { token: string }) {
       const payload: { success: boolean; error?: string } = await res.json();
 
       if (!res.ok || !payload.success) {
-        setServerError(payload.error ?? "ตั้งรหัสผ่านใหม่ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+        setServerError(payload.error ?? t("reset.failed"));
         return;
       }
 
-      router.push(
-        `${ROUTES.LOGIN}?message=${encodeURIComponent(
-          "ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่"
-        )}`
-      );
+      router.push(`${ROUTES.LOGIN}?notice=password-reset`);
       router.refresh();
     } catch (error) {
       setServerError(
         error instanceof RequestTimeoutError
-          ? "เซิร์ฟเวอร์ใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง"
-          : "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง"
+          ? t("common.timeout")
+          : t("common.errorRetry")
       );
     }
   };
@@ -142,7 +133,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
   if (checking) {
     return (
       <p className="py-6 text-center text-sm text-slate-500">
-        กำลังตรวจสอบลิงก์…
+        {t("reset.checking")}
       </p>
     );
   }
@@ -155,17 +146,17 @@ export function ResetPasswordForm({ token }: { token: string }) {
           className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
           role="alert"
         >
-          <p className="font-semibold">{copy.title}</p>
-          <p className="mt-1">{copy.body}</p>
+          <p className="font-semibold">{t(copy.title)}</p>
+          <p className="mt-1">{t(copy.body)}</p>
         </div>
 
         <Link href={ROUTES.FORGOT_PASSWORD} className="w-full">
-          <Button fullWidth>ขอลิงก์ตั้งรหัสผ่านใหม่</Button>
+          <Button fullWidth>{t("reset.requestNew")}</Button>
         </Link>
 
         <p className="text-center text-sm text-slate-400">
           <Link href={ROUTES.LOGIN} className="font-medium text-blue-700 hover:underline">
-            กลับไปเข้าสู่ระบบ
+            {t("forgot.backToLogin")}
           </Link>
         </p>
       </div>
@@ -176,7 +167,7 @@ export function ResetPasswordForm({ token }: { token: string }) {
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5" noValidate>
       {maskedEmail && (
         <p className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          กำลังตั้งรหัสผ่านใหม่สำหรับบัญชี{" "}
+          {t("reset.forAccount")}{" "}
           <span className="font-medium text-slate-800">{maskedEmail}</span>
         </p>
       )}
@@ -191,31 +182,31 @@ export function ResetPasswordForm({ token }: { token: string }) {
       )}
 
       <Input
-        label="รหัสผ่านใหม่"
+        label={t("password.new")}
         type="password"
         autoComplete="new-password"
         placeholder="••••••••"
-        hint="อย่างน้อย 8 ตัวอักษร ประกอบด้วยตัวพิมพ์ใหญ่ ตัวพิมพ์เล็ก และตัวเลข"
-        error={errors.password?.message}
+        hint={t("signup.passwordHint")}
+        error={localizeValidation(t, errors.password?.message)}
         {...register("password")}
       />
 
       <Input
-        label="ยืนยันรหัสผ่านใหม่"
+        label={t("password.confirmNew")}
         type="password"
         autoComplete="new-password"
         placeholder="••••••••"
-        error={errors.confirmPassword?.message}
+        error={localizeValidation(t, errors.confirmPassword?.message)}
         {...register("confirmPassword")}
       />
 
       <Button type="submit" fullWidth loading={isSubmitting}>
-        บันทึกรหัสผ่านใหม่
+        {t("password.save")}
       </Button>
 
       <p className="text-center text-sm text-slate-400">
         <Link href={ROUTES.LOGIN} className="font-medium text-blue-700 hover:underline">
-          ยกเลิกและกลับไปเข้าสู่ระบบ
+          {t("reset.cancel")}
         </Link>
       </p>
     </form>

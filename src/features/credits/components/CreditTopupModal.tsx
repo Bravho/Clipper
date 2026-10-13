@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
+import { rich } from "@/i18n/rich";
 import { CreditPurchaseOptions } from "@/features/credits/components/CreditPurchaseOptions";
 
 interface CreditTopupModalProps {
@@ -17,6 +19,7 @@ export function CreditTopupModal({
   packageName,
   onClose,
 }: CreditTopupModalProps) {
+  const { t } = useI18n();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -58,17 +61,17 @@ export function CreditTopupModal({
               id="credit-topup-title"
               className="text-lg font-semibold text-slate-900"
             >
-              Purchase more credits
+              {t("topupModal.title")}
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Add credits here, then return to Publishing Packages to use them.
+              {t("topupModal.subtitle")}
             </p>
           </div>
           <button
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            aria-label="Close credit purchase window"
+            aria-label={t("topupModal.close")}
             className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             ×
@@ -78,12 +81,14 @@ export function CreditTopupModal({
         <div className="max-h-[calc(100vh-11rem)] overflow-y-auto p-4 sm:p-6">
           {minimumTopupCredits && minimumTopupCredits > 0 && (
             <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              Add at least{" "}
-              <span className="font-semibold">
-                {minimumTopupCredits.toLocaleString()} credit
-                {minimumTopupCredits === 1 ? "" : "s"}
-              </span>
-              {packageName ? ` to use the ${packageName} package.` : "."}
+              {rich(t(packageName ? "topupModal.minFor" : "topupModal.min"), {
+                credits: (
+                  <span className="font-semibold">
+                    {t("dashboard.credits", { count: minimumTopupCredits.toLocaleString() })}
+                  </span>
+                ),
+                pkg: packageName ?? "",
+              })}
             </div>
           )}
 
@@ -94,7 +99,7 @@ export function CreditTopupModal({
 
         <div className="border-t border-slate-200 bg-white px-5 py-4 text-right sm:px-6">
           <Button type="button" variant="outline" onClick={onClose}>
-            ← Back to Publishing Packages
+            {t("topupModal.back")}
           </Button>
         </div>
       </div>

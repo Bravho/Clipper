@@ -1,5 +1,5 @@
-RClipper update 1.0.10
+RClipper update 1.0.13
 
-- Improved mobile video rendering, audio mixing, and playback reliability.
-- Added more music, voice previews, and richer text and motion templates.
-- Improved storyboard timing, scene controls, and publishing workflows.
+- Expanded Thai and English localization across account, dashboard, and Studio flows.
+- Improved mobile navigation, offline messaging, and account recovery.
+- Improved video editing, rendering, publishing, and package access reliability.

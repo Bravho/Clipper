@@ -119,9 +119,9 @@ describe("MockTermsAcceptanceRepository", () => {
   });
 
   it("current policy versions are defined", () => {
-    expect(CURRENT_POLICY_VERSIONS[PolicyType.TermsOfService].version).toBe("1.5.0");
-    expect(CURRENT_POLICY_VERSIONS[PolicyType.OwnershipRights].version).toBe("1.4.0");
-    expect(CURRENT_POLICY_VERSIONS[PolicyType.PrivacyPolicy].version).toBe("1.5.0");
+    expect(CURRENT_POLICY_VERSIONS[PolicyType.TermsOfService].version).toBe("1.6.0");
+    expect(CURRENT_POLICY_VERSIONS[PolicyType.OwnershipRights].version).toBe("1.5.0");
+    expect(CURRENT_POLICY_VERSIONS[PolicyType.PrivacyPolicy].version).toBe("1.6.0");
   });
 
   it("Privacy Policy description reflects merged content", () => {

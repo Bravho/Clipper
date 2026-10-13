@@ -13,16 +13,19 @@ import { DueDateDisplay } from "@/features/requests/components/DueDateDisplay";
 import { DraftRequestsBanner } from "@/features/requests/components/DraftRequestsBanner";
 import { CancelRequestButton } from "@/features/requests/components/CancelRequestButton";
 import { videoQuotaService } from "@/services/VideoQuotaService";
+import { getServerI18n } from "@/i18n/server";
+import { intlLocale } from "@/i18n/config";
+import type { MessageKey } from "@/i18n/messages";
 
 export const metadata: Metadata = { title: "คำขอของฉัน — RClipper" };
 
 const STATUS_FILTERS = [
-  { label: "ทั้งหมด", value: "all" },
-  { label: "กำลังดำเนินการ", value: "active" },
-  { label: "ส่งมอบแล้ว", value: "delivered" },
-  { label: "พักไว้", value: "on_hold" },
-  { label: "ปฏิเสธ", value: "rejected" },
-] as const;
+  { label: "requests.filter.all", value: "all" },
+  { label: "requests.filter.active", value: "active" },
+  { label: "requests.filter.delivered", value: "delivered" },
+  { label: "requests.filter.onHold", value: "on_hold" },
+  { label: "requests.filter.rejected", value: "rejected" },
+] as const satisfies ReadonlyArray<{ label: MessageKey; value: string }>;
 
 type FilterValue = (typeof STATUS_FILTERS)[number]["value"];
 
@@ -52,6 +55,8 @@ export default async function RequestsPage({
 }: {
   searchParams: Promise<{ filter?: string }>;
 }) {
+  const { t, locale } = getServerI18n();
+  const dateTag = intlLocale(locale);
   const user = await requireRole(Role.Requester);
   const params = await searchParams;
   const filter = (params.filter ?? "all") as FilterValue;
@@ -74,15 +79,15 @@ export default async function RequestsPage({
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <h1 className="break-words text-xl font-bold text-slate-900 sm:text-2xl">
-            คำขอของฉัน
+            {t("sidebar.requests")}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {allRequests.length} คำขอทั้งหมด
+            {t("requests.total", { count: allRequests.length })}
           </p>
         </div>
         <Link href={ROUTES.REQUESTS_NEW} className="sm:flex-shrink-0">
           <Button fullWidth disabled={!quota.canSubmit} className="sm:w-auto">
-            + คำขอใหม่
+            {t("dashboard.newRequest")}
           </Button>
         </Link>
       </div>
@@ -102,7 +107,7 @@ export default async function RequestsPage({
                 : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
             }`}
           >
-            {f.label}
+            {t(f.label)}
           </Link>
         ))}
       </div>
@@ -114,23 +119,22 @@ export default async function RequestsPage({
             {allRequests.filter((r) => r.status !== RequestStatus.Draft).length === 0 ? (
               <>
                 <p className="text-slate-500 font-medium">
-                  คุณยังไม่มีคำขอที่ส่งแล้ว
+                  {t("requests.none")}
                 </p>
                 <p className="mt-2 text-sm text-slate-400">
-                  ส่งคำขอแรกเพื่อเริ่มต้น — คุณมีสิทธิ์สร้างวิดีโอเหลือ{" "}
-                  {quota.remaining} จาก {quota.total} คลิปในรอบนี้
+                  {t("requests.noneHint", { remaining: quota.remaining, total: quota.total })}
                 </p>
                 {quota.canSubmit && (
                   <Link href={ROUTES.REQUESTS_NEW}>
                     <Button className="mt-5" variant="primary">
-                      ส่งคำขอ
+                      {t("dashboard.firstRequest")}
                     </Button>
                   </Link>
                 )}
               </>
             ) : (
               <p className="text-slate-500">
-                ไม่มีคำขอที่ตรงกับตัวกรองที่เลือก
+                {t("requests.noMatch")}
               </p>
             )}
           </div>
@@ -139,9 +143,9 @@ export default async function RequestsPage({
         <div className="flex flex-col gap-3">
           {filtered.map((req) => {
             const dueDateDisplay =
-              requestPresentationService.getDueDateDisplay(req);
+              requestPresentationService.getDueDateDisplay(req, locale);
             const queueDisplay =
-              requestPresentationService.getQueueDisplay(req);
+              requestPresentationService.getQueueDisplay(req, locale);
 
             return (
               <Link
@@ -160,16 +164,20 @@ export default async function RequestsPage({
                       </p>
                       <p className="mt-0.5 break-words text-xs leading-5 text-slate-400">
                         {req.submittedAt
-                          ? `ส่งเมื่อ ${req.submittedAt.toLocaleDateString("th-TH", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric",
-                            })}`
-                          : `สร้างเมื่อ ${req.createdAt.toLocaleDateString("th-TH", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric",
-                            })}`}
+                          ? t("requests.submittedOn", {
+                              date: req.submittedAt.toLocaleDateString(dateTag, {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              }),
+                            })
+                          : t("requests.createdOn", {
+                              date: req.createdAt.toLocaleDateString(dateTag, {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              }),
+                            })}
                       </p>
                       {queueDisplay.show && (
                         <p className="mt-1.5 break-words text-xs leading-5 text-slate-500">
@@ -191,7 +199,7 @@ export default async function RequestsPage({
                         className="max-w-full break-words sm:max-w-64 sm:text-right"
                       />
                       <p className="text-xs text-slate-400">
-                        {req.creditsCost} เครดิต
+                        {t("dashboard.credits", { count: req.creditsCost })}
                       </p>
                       {req.status === RequestStatus.Submitted && (
                         <CancelRequestButton requestId={req.id} status={req.status} />

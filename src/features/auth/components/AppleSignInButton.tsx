@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { useI18n } from "@/i18n/client";
 import { describeSignInFailure, startOAuth } from "@/lib/mobile/oauth";
 import {
   isSignInOffered,
@@ -15,8 +16,9 @@ interface AppleSignInButtonProps {
 
 export function AppleSignInButton({
   callbackUrl = "/dashboard",
-  label = "ดำเนินการต่อด้วย Apple",
+  label,
 }: AppleSignInButtonProps) {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const availability = useSignInAvailability("apple");
@@ -30,7 +32,7 @@ export function AppleSignInButton({
       // Never swallow: a silent rejection makes the button look dead. The
       // console line is what shows up in `adb logcat` under `chromium:`.
       console.error("[auth] Apple sign-in failed", cause);
-      setError(describeSignInFailure(cause));
+      setError(describeSignInFailure(cause, t));
       setLoading(false);
     }
   };
@@ -67,7 +69,7 @@ export function AppleSignInButton({
             <path d="M17.05 20.28c-.98.95-2.05.86-3.08.44-1.09-.44-2.09-.46-3.24 0-1.44.6-2.2.44-3.06-.44C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.79 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09h.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
           </svg>
         )}
-        {label}
+        {label ?? t("auth.continueApple")}
       </Button>
     </div>
   );

@@ -28,6 +28,7 @@ jest.mock("@/repositories", () => {
     creditWalletRepository: new MockCreditWalletRepository(new Map()),
     creditTransactionRepository: new MockCreditTransactionRepository(new Map()),
     creditPurchaseLogRepository: { create: jest.fn(), findByUserId: jest.fn(async () => []) },
+    userRepository: { findById: jest.fn(async () => null) },
   };
 });
 
@@ -148,6 +149,17 @@ describe("free allowance", () => {
     const refusal = await quota.consume(USER).catch((err: unknown) => err);
     expect(refusal).toBeInstanceOf(QuotaExhaustedError);
     expect((refusal as QuotaExhaustedError).nextFreeSlotAt).toBeNull();
+  });
+
+  it("is per person: free videos used by a deleted earlier account carry over", async () => {
+    const users = (jest.requireMock("@/repositories") as {
+      userRepository: { findById: jest.Mock };
+    }).userRepository;
+    await submitted(USER);
+    users.findById.mockResolvedValueOnce({ id: USER, priorTrialRequestsUsed: 1 });
+    const q = await quota.getQuota(USER);
+    expect(q.remaining).toBe(0);
+    expect(q.canSubmit).toBe(false);
   });
 
   it("does not count requests a package paid for", async () => {

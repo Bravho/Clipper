@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useI18n } from "@/i18n/client";
 import {
   forceReloadFresh,
   isStaleShellError,
@@ -36,6 +37,7 @@ export default function AppError({
   // `true` until we know we are NOT auto-recovering, so a recoverable error
   // shows a neutral "reloading" screen rather than flashing an error at the
   // user right before the page reloads under them.
+  const { t } = useI18n();
   const [recovering, setRecovering] = useState(() => isStaleShellError(error));
 
   useEffect(() => {
@@ -57,17 +59,16 @@ export default function AppError({
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-6 text-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
-        <p className="text-sm text-slate-500">กำลังโหลดแอปเวอร์ชันล่าสุด…</p>
+        <p className="text-sm text-slate-500">{t("error.reloading")}</p>
       </div>
     );
   }
 
   return (
     <div className="mx-auto flex min-h-[60vh] w-full max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <h1 className="text-lg font-semibold text-slate-900">เกิดข้อผิดพลาด</h1>
+      <h1 className="text-lg font-semibold text-slate-900">{t("error.title")}</h1>
       <p className="text-sm text-slate-500">
-        หน้านี้โหลดไม่สำเร็จ ข้อมูลและไฟล์ที่อัปโหลดไว้แล้วยังอยู่ครบ
-        ลองใหม่อีกครั้งได้เลย
+        {t("error.body")}
       </p>
       <div className="flex flex-wrap items-center justify-center gap-2">
         <button
@@ -75,18 +76,18 @@ export default function AppError({
           onClick={() => reset()}
           className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white"
         >
-          ลองอีกครั้ง
+          {t("error.retry")}
         </button>
         <button
           type="button"
           onClick={() => void forceReloadFresh()}
           className="rounded-md border border-slate-300 px-4 py-2 text-sm text-slate-700"
         >
-          โหลดแอปใหม่ทั้งหมด
+          {t("error.reloadAll")}
         </button>
       </div>
       {error.digest && (
-        <p className="text-[11px] text-slate-400">รหัสอ้างอิง: {error.digest}</p>
+        <p className="text-[11px] text-slate-400">{t("error.ref", { ref: error.digest })}</p>
       )}
     </div>
   );

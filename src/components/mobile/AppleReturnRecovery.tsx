@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/i18n/client";
 import { useEffect, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import {
@@ -27,6 +28,7 @@ import { getMobilePlatform } from "@/lib/mobile/platform";
  * user nothing on an ordinary launch.
  */
 export function AppleReturnRecovery() {
+  const { t } = useI18n();
   const [state, setState] = useState<"idle" | "working" | "failed">("idle");
   // React 18 runs effects twice in development; the token must only be spent
   // once, and `takeLaunchAppleReturn` is itself one-shot per process.
@@ -99,11 +101,11 @@ export function AppleReturnRecovery() {
     >
       {state === "working" ? (
         <span className="inline-block rounded-md bg-slate-900/90 px-3 py-2 text-slate-100">
-          กำลังเข้าสู่ระบบด้วย Apple…
+          {t("apple.working")}
         </span>
       ) : (
         <span className="inline-block rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700">
-          เข้าสู่ระบบด้วย Apple ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง
+          {t("apple.failed")}
         </span>
       )}
     </div>

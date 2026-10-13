@@ -1,6 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isAppLocale, LOCALE_COOKIE, localeFromLanguageList, type AppLocale } from "@/i18n/config";
+import { translate, type MessageKey } from "@/i18n/messages";
+
+/**
+ * global-error replaces the root layout, so the language provider is gone.
+ * Read the same answer it would give: the menu's cookie, else the phone's
+ * languages, else Thai.
+ */
+function fallbackLocale(): AppLocale {
+  if (typeof document === "undefined") return "th";
+  const match = document.cookie.match(new RegExp(`(?:^|; )${LOCALE_COOKIE}=([^;]+)`));
+  const fromCookie = match ? decodeURIComponent(match[1]) : null;
+  if (isAppLocale(fromCookie)) return fromCookie;
+  return localeFromLanguageList(navigator.languages ?? [navigator.language]) ?? "th";
+}
 import {
   forceReloadFresh,
   isStaleShellError,
@@ -25,6 +40,8 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const [locale] = useState<AppLocale>(fallbackLocale);
+  const t = (key: MessageKey, values?: Record<string, string>) => translate(locale, key, values);
   const [recovering, setRecovering] = useState(() => isStaleShellError(error));
 
   useEffect(() => {
@@ -41,7 +58,7 @@ export default function GlobalError({
   }, [error]);
 
   return (
-    <html lang="th">
+    <html lang={locale}>
       <body
         style={{
           margin: 0,
@@ -58,15 +75,14 @@ export default function GlobalError({
       >
         <div style={{ maxWidth: 380, textAlign: "center" }}>
           {recovering ? (
-            <p style={{ fontSize: 14, color: "#64748b" }}>กำลังโหลดแอปเวอร์ชันล่าสุด…</p>
+            <p style={{ fontSize: 14, color: "#64748b" }}>{t("error.reloading")}</p>
           ) : (
             <>
               <h1 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 8px" }}>
-                เปิดแอปไม่สำเร็จ
+                {t("error.globalTitle")}
               </h1>
               <p style={{ fontSize: 14, color: "#64748b", margin: "0 0 20px" }}>
-                แอปโหลดไม่ครบ ข้อมูลและไฟล์ที่อัปโหลดไว้แล้วยังอยู่ครบ
-                กด &ldquo;โหลดแอปใหม่&rdquo; เพื่อดึงเวอร์ชันล่าสุด
+                {t("error.globalBody")}
               </p>
               <div
                 style={{
@@ -88,7 +104,7 @@ export default function GlobalError({
                     padding: "10px 16px",
                   }}
                 >
-                  โหลดแอปใหม่
+                  {t("error.reload")}
                 </button>
                 <button
                   type="button"
@@ -102,12 +118,12 @@ export default function GlobalError({
                     padding: "10px 16px",
                   }}
                 >
-                  ลองอีกครั้ง
+                  {t("error.retry")}
                 </button>
               </div>
               {error.digest && (
                 <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 16 }}>
-                  รหัสอ้างอิง: {error.digest}
+                  {t("error.ref", { ref: error.digest })}
                 </p>
               )}
             </>

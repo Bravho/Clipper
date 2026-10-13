@@ -37,3 +37,8 @@ export function localeFromAcceptLanguage(header: string | null | undefined): App
     .map((entry) => entry.tag);
   return localeFromLanguageList(tags) ?? "en";
 }
+
+/** The Intl / toLocaleDateString tag for an app locale. */
+export function intlLocale(locale: AppLocale): string {
+  return locale === "th" ? "th-TH" : locale === "vi" ? "vi-VN" : "en-GB";
+}

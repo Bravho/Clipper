@@ -3,7 +3,7 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
-import { ROUTES } from "@/config/routes";
+import { ROUTES, safeReturnPath } from "@/config/routes";
 import { Card } from "@/components/ui/Card";
 import { creditService } from "@/services/CreditService";
 import { videoQuotaService } from "@/services/VideoQuotaService";
@@ -60,8 +60,28 @@ export const dynamic = "force-dynamic";
  * copy, so a reprice cannot leave the page claiming a saving that no longer
  * exists.
  */
-export default async function PricingPage() {
+export default async function PricingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
   const { t, locale } = getServerI18n();
+  // Opened from the studio ("See packages"): the back link returns to that
+  // exact request (`/studio?request=…` reopens it at its step) instead of the
+  // dashboard, so leaving to look at prices does not drop the user into a new
+  // request.
+  const returnTo = safeReturnPath((await searchParams)?.returnTo);
+  const backHref = returnTo ?? ROUTES.DASHBOARD;
+  const backLabel = returnTo
+    ? returnTo.startsWith("/studio")
+      ? t("pricing.backToVideo")
+      : t("common.back")
+    : t("nav.dashboard");
+  // The pricing URL itself, carrying the returnTo on, so a detour through
+  // Credits comes back here and the back link still leads to the studio.
+  const pricingHere = returnTo
+    ? `${ROUTES.PRICING}?returnTo=${encodeURIComponent(returnTo)}`
+    : ROUTES.PRICING;
   const user = await requireRole(Role.Requester);
 
   const managementEnabled = isManagementEnabledFor({
@@ -199,10 +219,10 @@ export default async function PricingPage() {
     <div className="mx-auto w-full min-w-0 max-w-4xl px-4 py-8 sm:py-10">
       <header className="mb-6">
         <Link
-          href={ROUTES.DASHBOARD}
+          href={backHref}
           className="text-sm font-medium text-blue-600 hover:underline"
         >
-          ← {t("nav.dashboard")}
+          ← {backLabel}
         </Link>
         <h1 className="mt-2 text-2xl font-bold text-slate-900">{t("pricing.title")}</h1>
         <p className="mt-1 text-sm text-slate-500">{t("pricing.subtitle", ladderVars)}</p>
@@ -219,7 +239,7 @@ export default async function PricingPage() {
             <p className="mt-0.5 text-sm text-slate-500">{t("pricing.balanceHint")}</p>
           </div>
           <Link
-            href={`${ROUTES.CREDITS}?returnTo=${encodeURIComponent(ROUTES.PRICING)}`}
+            href={`${ROUTES.CREDITS}?returnTo=${encodeURIComponent(pricingHere)}`}
           >
             <button className="rounded-md bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800">
               {t("pricing.topUp")}

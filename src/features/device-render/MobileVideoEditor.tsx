@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import "./studio.css";
 
@@ -15,6 +16,7 @@ import {
   type MotionPreset,
 } from "@/config/montage";
 import { MOTION_TEMPLATES } from "@/config/motionTemplates";
+import { studioPath } from "@/config/routes";
 import { DEFAULT_TEXT_GRAPHIC_CHOICE, isTextGraphicChoice } from "@/config/textGraphicStyles";
 import {
   BACKGROUND_MUSIC_TRACKS,
@@ -301,6 +303,20 @@ function StudioEditor({
   // opened with and becomes the new id the moment the brief is saved — the
   // studio attaches to the request in place instead of navigating away.
   const [requestId, setRequestId] = useState<string | null>(initialRequestId ?? null);
+  // Coming BACK to the studio (the hardware/swipe back from Pricing, say) can
+  // replay the router's cached render of the first visit — `/studio` with no
+  // request — while the address bar already says `?request=<id>` (written by
+  // attachRequest's replaceState). That showed an empty new request instead of
+  // the one the user left (Tho, 13 Oct). When the page arrived without a
+  // request but the URL names one, load that request for real.
+  const router = useRouter();
+  useEffect(() => {
+    if (initialRequestId) return;
+    const fromUrl = new URLSearchParams(window.location.search).get("request");
+    if (fromUrl) router.replace(studioPath(fromUrl));
+    // Only on mount: after that the URL is changed by this component itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [availability, setAvailability] = useState<DeviceRenderAvailability | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgressState] = useState<DeviceRenderProgress | null>(null);

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getRoleHomePath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { SignupForm } from "@/features/auth/components/SignupForm";
+import { getServerI18n } from "@/i18n/server";
 
 export const metadata: Metadata = {
   title: "สร้างบัญชี",
@@ -12,6 +13,7 @@ export const metadata: Metadata = {
 };
 
 export default async function SignupPage() {
+  const { t } = getServerI18n();
   const session = await getServerSession(authOptions);
   if (session?.user) {
     redirect(getRoleHomePath(session.user.role as Role));
@@ -22,11 +24,11 @@ export default async function SignupPage() {
       <div className="auth-card">
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-bold text-slate-900">
-            สร้างบัญชี RClipper ของคุณ
+            {t("signup.title")}
           </h1>
           <p className="mt-2 text-sm text-slate-500">
-            สมัครด้วย Google หรืออีเมล{" "}
-            <span className="font-semibold text-blue-700">บัญชีใหม่เริ่มต้นที่ 0 เครดิต</span>
+            {t("signup.subtitle")}{" "}
+            <span className="font-semibold text-blue-700">{t("signup.zeroCredits")}</span>
           </p>
         </div>
 

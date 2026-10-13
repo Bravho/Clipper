@@ -7,7 +7,10 @@ import type { EditorRatio, EditorSource } from "./editorState";
 import { MediaThumb } from "./MediaThumb";
 import { useStudioT } from "./studioI18n";
 
-const RATIOS: EditorRatio[] = ["9:16", "16:9", "1:1", "4:5"];
+// 1:1 is left out on purpose: no publishing channel takes a square video
+// (see PLATFORM_ACCEPTED_RATIOS in config/managementPublishing.ts), so a square
+// master would have nowhere to go. The renderer still knows the shape.
+const RATIOS: EditorRatio[] = ["9:16", "16:9", "4:5"];
 
 /**
  * A picked photo or clip that is still being made ready, shown as its own tile

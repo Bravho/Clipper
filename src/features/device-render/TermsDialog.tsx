@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { ORIGINALS_KEPT_DAYS } from "@/config/localMedia";
+import { FREE_VIDEO_LIFETIME_DAYS, VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import type { MessageKey } from "@/i18n/messages";
 import { useStudioT } from "./studioI18n";
 
@@ -29,10 +30,10 @@ const SECTIONS: { title: MessageKey; body: MessageKey[]; list?: MessageKey[]; af
   {
     title: "studio.terms.s4.title",
     body: ["studio.terms.s4.p1"],
-    list: ["studio.terms.s4.gemini", "studio.terms.s4.elevenlabs"],
+    list: ["studio.terms.s4.gemini", "studio.terms.s4.elevenlabs", "studio.terms.s4.claude"],
     after: ["studio.terms.s4.p2"],
   },
-  { title: "studio.terms.s5.title", body: ["studio.terms.s5.p1"] },
+  { title: "studio.terms.s5.title", body: ["studio.terms.s5.p1", "studio.terms.s5.videos"] },
   { title: "studio.terms.s6.title", body: ["studio.terms.s6.p1"] },
 ];
 
@@ -57,7 +58,11 @@ export function TermsDialog({ open, onClose }: { open: boolean; onClose: () => v
   }, [onClose, open]);
 
   if (!open) return null;
-  const vars = { days: ORIGINALS_KEPT_DAYS };
+  const vars = {
+    days: ORIGINALS_KEPT_DAYS,
+    freeDays: FREE_VIDEO_LIFETIME_DAYS,
+    packageDays: VIDEO_LIFETIME_DAYS,
+  };
 
   return (
     <div className="studio-dialog-backdrop" onClick={onClose}>

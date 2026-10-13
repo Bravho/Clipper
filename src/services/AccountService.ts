@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
 import { AuthProvider } from "@/domain/enums/AuthProvider";
 import { Role } from "@/domain/enums/Role";
 import { User } from "@/domain/models/User";
@@ -280,13 +281,17 @@ export class AccountService {
     }
 
     // 2. Compute consumed entitlements at deletion time.
-    //    RETAINED, NOT CURRENTLY ENFORCED. Under the monthly quota model the free
-    //    allowance is 3 per rolling 30 days and refills regardless, so deleting
-    //    and re-registering wins nothing and nothing reads this for entitlement.
-    //    It is still recorded because it is the only history of how much free
-    //    capacity an identity has consumed, which a future abuse rule would need.
+    //    ENFORCED (2026-10-12): the free allowance is 2 requests per PERSON,
+    //    ever, so the free requests this identity used carry over to an account
+    //    re-created with the same email or sign-in (VideoQuotaService adds it).
+    //    Only free requests count — a package request never used the allowance.
     const requests = await clipRequestRepository.findByUserId(userId);
-    const submittedCount = requests.filter((r) => r.submittedAt !== null).length;
+    const submittedCount = requests.filter(
+      (r) =>
+        r.submittedAt !== null &&
+        (r.pricingTier ?? RequestPricingTier.Free) === RequestPricingTier.Free &&
+        !r.allowanceRefundedAt
+    ).length;
     const priorTrialRequestsUsed =
       (user.priorTrialRequestsUsed ?? 0) + submittedCount;
 

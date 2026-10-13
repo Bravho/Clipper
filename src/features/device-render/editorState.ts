@@ -864,12 +864,18 @@ export function scenesFromStoryboard(
     document.sources[assetIndex]
 ): EditorScene[] {
   const scenes: EditorScene[] = [];
+  // Each photo or clip is used ONCE in a generated storyboard (Tho, 13 Oct).
+  // The model, or an older server, may name the same material in several
+  // scenes; the first keeps it. Reusing material is the user's choice, made by
+  // adding a scene in the timeline — never something the plan does for them.
+  const used = new Set<string>();
 
   for (const [index, entry] of plan.entries()) {
     const shots: EditorShot[] = [];
     for (const assetIndex of entry.assetIndexes) {
       const source = sourceAt(assetIndex);
-      if (!source) continue;
+      if (!source || used.has(source.id)) continue;
+      used.add(source.id);
       const clipLength = source.durationSeconds ?? 0;
       shots.push({
         id: nextId("shot"),

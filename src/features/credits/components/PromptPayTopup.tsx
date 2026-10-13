@@ -5,6 +5,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { TOPUP_BUNDLES } from "@/config/credits";
+import { useI18n } from "@/i18n/client";
+import type { MessageKey } from "@/i18n/messages";
+
+/** What a bundle covers, by its credit amount (the config labels are Thai-only). */
+const BUNDLE_TAG: Record<number, MessageKey> = {
+  190: "topup.tag.starterMonth",
+  350: "topup.tag.proMonth",
+  3500: "topup.tag.proYear",
+};
 
 type Bundle = (typeof TOPUP_BUNDLES)[number];
 type PaymentMethod = "promptpay" | "card";
@@ -27,6 +36,7 @@ interface Props {
 }
 
 export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
+  const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -62,7 +72,7 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
           if (safeReturnTo) router.push(safeReturnTo);
         } else if (status === "expired" || status === "failed") {
           if (pollRef.current) clearInterval(pollRef.current);
-          setError("การชำระเงินหมดอายุหรือไม่สำเร็จ กรุณาลองใหม่");
+          setError(t("topup.expired"));
           setIntent(null);
         }
       } catch {
@@ -100,17 +110,17 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "ไม่สามารถเริ่มชำระเงินได้");
+      if (!res.ok) throw new Error(data.error ?? t("topup.startFailed"));
       const topup = data as TopupResult;
       if (method === "card") {
-        if (!topup.checkoutUrl) throw new Error("Stripe ไม่ได้ส่งหน้าชำระเงินกลับมา");
+        if (!topup.checkoutUrl) throw new Error(t("topup.noCheckout"));
         window.location.assign(topup.checkoutUrl);
         return;
       }
       setIntent(topup);
       startPolling(topup.intentId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาด");
+      setError(err instanceof Error ? err.message : t("common.errorRetry"));
     } finally {
       setLoading(false);
     }
@@ -118,14 +128,14 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
 
   return (
     <Card className="p-6">
-      <h2 className="text-base font-semibold text-slate-900">เติมเครดิต</h2>
+      <h2 className="text-base font-semibold text-slate-900">{t("topup.title")}</h2>
       <p className="mt-1 text-xs text-slate-500">
-        เลือกวิธีชำระเงิน · 1 เครดิต = 1 บาท · เครดิตเข้าหลัง Stripe ยืนยันการชำระ
+        {t("topup.subtitle")}
       </p>
 
       {paid ? (
         <div className="mt-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">
-          ชำระเงินสำเร็จ เครดิตถูกเพิ่มแล้ว
+          {t("topup.paid")}
         </div>
       ) : intent?.qrImageDataUrl ? (
         <div className="mt-5 flex flex-col items-center gap-3">
@@ -135,11 +145,10 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
           {intent.livemode === false && (
             <div className="w-full rounded-lg border border-amber-300 bg-amber-50 p-3 text-left">
               <p className="text-sm font-semibold text-amber-800">
-                โหมดทดสอบ (Stripe Test Mode)
+                {t("topup.testMode")}
               </p>
               <p className="mt-1 text-xs text-amber-700">
-                QR นี้เป็น QR จำลอง — แอปธนาคารจะสแกนไม่ได้
-                ให้สแกนด้วยแอปกล้องของโทรศัพท์ หรือกดปุ่มด้านล่างเพื่อจำลองการชำระเงิน
+                {t("topup.testModeBody")}
               </p>
               {intent.hostedInstructionsUrl && (
                 <a
@@ -148,7 +157,7 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
                   rel="noreferrer"
                   className="mt-2 inline-block rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
                 >
-                  เปิดหน้าจำลองการชำระเงิน →
+                  {t("topup.openSimulation")}
                 </a>
               )}
             </div>
@@ -156,14 +165,14 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={intent.qrImageDataUrl}
-            alt="PromptPay QR สำหรับชำระทันที"
+            alt={t("topup.qrAlt")}
             className="h-56 w-56 rounded-lg border border-slate-200"
           />
           <p className="text-sm font-medium text-slate-800">
-            ชำระ ฿{intent.amountBaht} เพื่อรับ {intent.creditsToAdd} เครดิต
+            {t("topup.payFor", { baht: intent.amountBaht, credits: intent.creditsToAdd })}
           </p>
           <p className="text-xs text-slate-500">
-            สแกนและชำระตอนนี้ · อ้างอิง {intent.referenceNo}
+            {t("topup.scanNow", { ref: intent.referenceNo })}
           </p>
           <button
             className="text-xs text-slate-500 underline"
@@ -172,16 +181,16 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
               setIntent(null);
             }}
           >
-            ยกเลิก
+            {t("common.cancel")}
           </button>
         </div>
       ) : (
         <>
           <fieldset className="mt-5 grid gap-3 sm:grid-cols-2">
-            <legend className="sr-only">เลือกวิธีชำระเงิน</legend>
+            <legend className="sr-only">{t("topup.chooseMethod")}</legend>
             {([
-              ["promptpay", "PromptPay QR", "สแกนจ่ายทันทีผ่านแอปธนาคาร"],
-              ["card", "Credit card", "ชำระทันทีบนหน้าชำระเงินที่ปลอดภัยของ Stripe"],
+              ["promptpay", "PromptPay QR", t("topup.promptpayHint")],
+              ["card", t("topup.card"), t("topup.cardHint")],
             ] as const).map(([value, label, description]) => (
               <label
                 key={value}
@@ -220,11 +229,12 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
                   ฿{bundle.baht}
                 </span>
                 <span className="block text-xs text-slate-500">
-                  {bundle.credits} เครดิต · {bundle.label}
+                  {t("dashboard.credits", { count: bundle.credits })}
+                  {BUNDLE_TAG[bundle.credits] ? ` · ${t(BUNDLE_TAG[bundle.credits])}` : ""}
                 </span>
                 {"popular" in bundle && bundle.popular && (
                   <span className="mt-1 block text-[10px] font-medium text-blue-600">
-                    ยอดนิยม
+                    {t("topup.popular")}
                   </span>
                 )}
               </button>
@@ -232,7 +242,7 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
           </div>
 
           {searchParams.get("card") === "cancelled" && !error && (
-            <p className="mb-3 text-sm text-amber-700">ยกเลิกการชำระด้วยบัตรแล้ว</p>
+            <p className="mb-3 text-sm text-amber-700">{t("topup.cardCancelled")}</p>
           )}
           {error && (
             <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -241,11 +251,11 @@ export function PromptPayTopup({ returnTo, minimumTopupCredits }: Props) {
           )}
           <Button onClick={startTopup} loading={loading} className="w-full">
             {method === "promptpay"
-              ? `สร้าง QR PromptPay และชำระทันที (฿${selected.baht})`
-              : `ไปยังหน้าชำระด้วย Credit card (฿${selected.baht})`}
+              ? t("topup.makeQr", { baht: selected.baht })
+              : t("topup.goCard", { baht: selected.baht })}
           </Button>
           <p className="mt-2 text-center text-[11px] text-slate-400">
-            เป็นการชำระครั้งเดียว ไม่มีการตั้งเวลาหรือตัดเงินภายหลัง
+            {t("topup.oneOff")}
           </p>
         </>
       )}

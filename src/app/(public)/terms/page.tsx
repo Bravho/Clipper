@@ -2,15 +2,23 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { ROUTES } from "@/config/routes";
+import { FREE_FACTS, perVideoLimits, tierFacts } from "@/config/planLimits";
+import { VOICE_MAKE_TOP_UP } from "@/config/requestLimits";
+import { MANAGEMENT_UPLOAD_KEEP_LIMIT } from "@/services/management/ManagementUploadService";
 
 export const metadata: Metadata = {
   title: "Terms and Conditions — RClipper",
-  description: "RClipper Terms and Conditions — Version 1.5.0",
+  description: "RClipper Terms and Conditions — Version 1.6.0",
 };
 
-const EFFECTIVE_DATE = "4 August 2026";
+const EFFECTIVE_DATE = "13 October 2026";
 
 export default function TermsPage() {
+  // Every number below is read from the configuration that enforces it, so
+  // these Terms cannot promise more (or less) than the service does.
+  const starter = tierFacts("starter");
+  const pro = tierFacts("pro");
+  const limits = perVideoLimits();
   return (
     <div className="mx-auto max-w-3xl px-4 py-16">
       <div className="mb-8">
@@ -19,7 +27,7 @@ export default function TermsPage() {
           RClipper Terms and Conditions
         </h1>
         <p className="mt-2 text-sm text-slate-500">
-          Version 1.5.0 — Effective {EFFECTIVE_DATE}
+          Version 1.6.0 — Effective {EFFECTIVE_DATE}
         </p>
       </div>
 
@@ -28,11 +36,15 @@ export default function TermsPage() {
           <section>
             <h2 className="text-base font-semibold text-slate-900">1. The service</h2>
             <p>
-              RClipper is a managed short-video production service. A requester
-              submits a brief and source materials, reviews production stages, and
-              receives a finished video subject to these Terms. RClipper may reject
-              or stop a request that is unlawful, unsafe, technically unsuitable, or
-              inconsistent with these Terms.
+              RClipper is a short-video production service. In the RClipper mobile
+              app, a requester writes a brief and picks photos and clips; RClipper
+              writes the storyboard, script and voice-over, and the video is made on
+              the requester&apos;s phone. The requester reviews each stage and receives
+              the finished video subject to these Terms. RClipper also offers
+              Channel Management, which lets a requester publish videos to social
+              accounts they connect. RClipper may reject or stop a request that is
+              unlawful, unsafe, technically unsuitable, or inconsistent with these
+              Terms.
             </p>
           </section>
 
@@ -52,30 +64,105 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              3. Trial videos and credits
+              3. Free videos
             </h2>
             <p>
-              Each eligible account receives a limited allowance of requests that are
-              not charged at submission. The first such request is created, previewed
-              and downloaded without consuming credits, and its delivered video does
-              not carry a watermark. The next three requests are likewise created and
-              previewed without consuming credits, but the video shown to you carries
-              a watermark; downloading the unwatermarked version costs the number of
-              credits shown beside the request confirmation and download control
-              (currently 50 credits). Once the allowance is used, each further request
-              is charged that amount before generation begins, and its delivered video
-              is unwatermarked. The interface states which of these applies to a
-              request before you submit it, and the allowance is granted per person
-              rather than per account: where we detect that an account was deleted and
-              re-created, the remaining allowance carries over rather than resetting.
-              Credits are personal, non-transferable, and have no cash value except
-              where applicable law requires otherwise.
+              Each person may make {FREE_FACTS.videos} videos free of charge in
+              total. This allowance does not renew, and it belongs to the person
+              rather than to the account: if an account is deleted and a new one is
+              created with the same email address or sign-in, the free videos
+              already used carry over.
+            </p>
+            <p>
+              A free video can be watched in the RClipper app only. It cannot be
+              downloaded or sent to Channel Management unless a package is bought.
+              A free video is kept for {FREE_FACTS.freeDays} days after it is
+              finished; the date is shown on the video. If a package is bought
+              within that time, every free video made before the purchase that has
+              not yet expired becomes downloadable and is kept for {FREE_FACTS.days}{" "}
+              days from the date of purchase. A free video that has expired is
+              deleted and cannot be restored by a later purchase.
             </p>
           </section>
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              4. Your uploaded materials
+              4. Packages and credits
+            </h2>
+            <p>
+              Packages are bought with RClipper credits and last 1, 3, 6 or 12
+              months. Every package includes video making and Channel Management for
+              its whole term. A Starter package includes {starter.videosPerMonth}{" "}
+              videos per month and a Pro package {pro.videosPerMonth} videos per
+              month. Current prices are shown on the{" "}
+              <Link href={ROUTES.PUBLIC_PRICING} className="text-blue-700 underline">
+                plans page
+              </Link>{" "}
+              and in the app before you buy.
+            </p>
+            <p>
+              A package is a one-time, prepaid purchase. It does not renew
+              automatically and nothing is charged again when it ends. Each month of
+              a package is a separate allowance: videos not used in a month do not
+              carry over to the next. Buying a package while another is active adds
+              the new time after the current one, so paid time is never lost. When a
+              package&apos;s videos for the current month are used up, a further
+              request uses the free allowance, if any remains, and is treated as a
+              free video under section 3.
+            </p>
+            <p>
+              Each video may use up to {limits.voiceMakes} voice-over generations;
+              more can be bought for that video ({VOICE_MAKE_TOP_UP.makes} for{" "}
+              {VOICE_MAKE_TOP_UP.priceCredits} credits). A video may be up to{" "}
+              {limits.maxSeconds} seconds long, use up to {limits.maxItems} photos
+              and clips, and be made in up to {limits.shapes} channel shapes. Once a
+              production step is approved it cannot be reopened or regenerated. If
+              the production of a package video fails, that video is returned to the
+              package&apos;s allowance.
+            </p>
+            <p>
+              Credits are bought on the RClipper website or through the App Store or
+              Google Play; the price of a credit may differ between them, but a
+              package costs the same number of credits everywhere. Credits are
+              personal, non-transferable, have no cash value, and credits spent on a
+              package cannot be refunded, except where applicable law requires
+              otherwise. Credits remaining when an account is deleted are cancelled.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-slate-900">
+              5. How long videos are kept
+            </h2>
+            <p>
+              RClipper keeps each finished video for a limited time: a video made
+              under a package for {FREE_FACTS.days} days after it is finished, and a
+              free video as set out in section 3. The date is shown on every video,
+              in the studio and in Channel Management. Until that date the video can
+              be downloaded (where section 3 allows) and, while a package is active,
+              sent to and published from Channel Management. On that date RClipper
+              deletes its copy, and the copy kept inside the RClipper app on your
+              phone is deleted on the same date. A video you have already downloaded
+              to your phone&apos;s gallery or elsewhere stays yours to keep and is not
+              affected. The photos and clips you pick are kept in the app for{" "}
+              {limits.originalsDays} days so that the video and its shapes can be
+              made.
+            </p>
+            <p>
+              Channel Management is available only while a package is active. A
+              video sent to it keeps the same expiry date. Videos you upload yourself
+              require an active package, are kept for {FREE_FACTS.days} days, and up
+              to {MANAGEMENT_UPLOAD_KEEP_LIMIT} uploaded videos may be kept at once.
+              When a package ends, videos already downloadable remain downloadable
+              until their date, but new publishing and uploads stop. Posts already
+              published on a social platform are not removed by RClipper when a video
+              or package expires.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold text-slate-900">
+              6. Your uploaded materials
             </h2>
             <p>
               You must own or have all licences, releases, consents, and permissions
@@ -91,7 +178,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              5. Ownership and licences
+              7. Ownership and licences
             </h2>
             <p>
               You retain ownership of your original uploaded materials. RClipper owns
@@ -108,7 +195,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              6. Selection for RClipper Channels
+              8. Selection for RClipper Channels
             </h2>
             <p>
               Not every generated video is published. RClipper may select certain
@@ -146,7 +233,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              7. Review, moderation, and removal
+              9. Review, moderation, and removal
             </h2>
             <p>
               RClipper may review, decline, unpublish, or remove content at any time
@@ -164,10 +251,12 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              8. Service availability and liability
+              10. Service availability and liability
             </h2>
             <p>
-              Production estimates are targets rather than guarantees. To the extent
+              Production estimates are targets rather than guarantees. Video
+              rendering depends on the capability of your phone and on the app
+              being kept open while it works. To the extent
               permitted by law, RClipper is not responsible for delays or failures
               caused by incomplete materials, third-party providers, platform
               outages, force majeure, or the requester&apos;s lack of necessary
@@ -178,7 +267,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-base font-semibold text-slate-900">
-              9. Privacy, changes, and contact
+              11. Privacy, changes, and contact
             </h2>
             <p>
               The{" "}

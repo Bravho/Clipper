@@ -10,6 +10,8 @@ import { Badge } from "@/components/ui/Badge";
 import { SignOutButton } from "./SignOutButton";
 import { ChangePasswordCard } from "@/features/account/components/ChangePasswordCard";
 import { DeleteAccountCard } from "@/features/account/components/DeleteAccountCard";
+import { getServerI18n } from "@/i18n/server";
+import { intlLocale } from "@/i18n/config";
 
 export const metadata: Metadata = { title: "บัญชีของฉัน" };
 
@@ -18,12 +20,9 @@ const roleBadge: Record<Role, "blue" | "green" | "red"> = {
   [Role.Admin]: "red",
 };
 
-const roleLabel: Record<Role, string> = {
-  [Role.Requester]: "ผู้ใช้งาน",
-  [Role.Admin]: "Admin",
-};
-
 export default async function AccountPage() {
+  const { t, locale } = getServerI18n();
+  const dateTag = intlLocale(locale);
   const user = await requireAuth();
   const profile = await accountService.getAccountProfile(user.id);
 
@@ -32,42 +31,42 @@ export default async function AccountPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-12">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">บัญชีของฉัน</h1>
-        <p className="mt-1 text-slate-500">ข้อมูลโปรไฟล์และบัญชีของคุณ</p>
+        <h1 className="text-2xl font-bold text-slate-900">{t("nav.account")}</h1>
+        <p className="mt-1 text-slate-500">{t("account.subtitle")}</p>
       </div>
 
       <div className="flex flex-col gap-6">
         {/* Profile */}
         <Card>
           <CardHeader>
-            <CardTitle>โปรไฟล์</CardTitle>
+            <CardTitle>{t("account.profile")}</CardTitle>
           </CardHeader>
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Row label="ชื่อ-นามสกุล" value={profile.user.name} />
-            <Row label="อีเมล" value={profile.user.email} />
+            <Row label={t("account.name")} value={profile.user.name} />
+            <Row label={t("account.email")} value={profile.user.email} />
             <Row
-              label="บทบาท"
+              label={t("account.role")}
               value={
                 <Badge variant={roleBadge[profile.user.role]}>
-                  {roleLabel[profile.user.role]}
+                  {profile.user.role === Role.Admin ? "Admin" : t("account.roleRequester")}
                 </Badge>
               }
             />
             <Row
-              label="วิธีเข้าสู่ระบบ"
+              label={t("account.signInMethod")}
               value={
                 <span>
                   {user.provider === AuthProvider.Google
                     ? "Google"
                     : user.provider === AuthProvider.Apple
                       ? "Apple"
-                      : "อีเมล / รหัสผ่าน"}
+                      : t("account.signInPassword")}
                 </span>
               }
             />
             <Row
-              label="สมาชิกตั้งแต่"
-              value={profile.user.createdAt.toLocaleDateString("th-TH", {
+              label={t("account.memberSince")}
+              value={profile.user.createdAt.toLocaleDateString(dateTag, {
                 day: "numeric",
                 month: "long",
                 year: "numeric",
@@ -80,7 +79,7 @@ export default async function AccountPage() {
         {profile.user.role === Role.Requester && (
           <Card>
             <CardHeader>
-              <CardTitle>เครดิต</CardTitle>
+              <CardTitle>{t("sidebar.credits")}</CardTitle>
             </CardHeader>
             {profile.wallet ? (
               <div className="flex items-center gap-4">
@@ -89,15 +88,12 @@ export default async function AccountPage() {
                 </div>
                 <div>
                   <p className="font-semibold text-slate-900">
-                    {profile.wallet.balance} เครดิต
-                  </p>
-                  <p className="text-sm text-slate-500">
-                    คำขอคลิปแต่ละรายการใช้ 10 เครดิต
+                    {t("dashboard.credits", { count: profile.wallet.balance })}
                   </p>
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-slate-500">ไม่พบกระเป๋าเครดิต</p>
+              <p className="text-sm text-slate-500">{t("account.noWallet")}</p>
             )}
           </Card>
         )}
@@ -105,10 +101,10 @@ export default async function AccountPage() {
         {/* Legal acceptances */}
         <Card>
           <CardHeader>
-            <CardTitle>การยอมรับนโยบาย</CardTitle>
+            <CardTitle>{t("account.policies")}</CardTitle>
           </CardHeader>
           {profile.acceptances.length === 0 ? (
-            <p className="text-sm text-slate-500">ไม่มีประวัติการยอมรับนโยบาย</p>
+            <p className="text-sm text-slate-500">{t("account.noPolicies")}</p>
           ) : (
             <div className="flex flex-col divide-y divide-slate-100">
               {policyTypes.map((policyType) => {
@@ -124,24 +120,26 @@ export default async function AccountPage() {
                     <div>
                       <p className="text-sm font-medium text-slate-700">
                         {policyType === PolicyType.TermsOfService
-                          ? "ข้อกำหนดการใช้งาน"
-                          : "นโยบายความเป็นส่วนตัว (รวมสิทธิ์และการจัดเก็บ)"}
+                          ? t("account.policyTerms")
+                          : t("account.policyPrivacy")}
                       </p>
                       {acceptance && (
                         <p className="text-xs text-slate-400">
-                          ยอมรับเวอร์ชัน {acceptance.policyVersion} เมื่อ{" "}
-                          {acceptance.acceptedAt.toLocaleDateString("th-TH")}
+                          {t("account.acceptedVersion", {
+                            version: acceptance.policyVersion,
+                            date: acceptance.acceptedAt.toLocaleDateString(dateTag),
+                          })}
                         </p>
                       )}
                     </div>
                     {acceptance ? (
                       acceptance.policyVersion === currentVersion ? (
-                        <Badge variant="green">เป็นปัจจุบัน</Badge>
+                        <Badge variant="green">{t("account.policyCurrent")}</Badge>
                       ) : (
-                        <Badge variant="yellow">ต้องอัปเดต</Badge>
+                        <Badge variant="yellow">{t("account.policyOutdated")}</Badge>
                       )
                     ) : (
-                      <Badge variant="red">ยังไม่ยอมรับ</Badge>
+                      <Badge variant="red">{t("account.policyNotAccepted")}</Badge>
                     )}
                   </div>
                 );

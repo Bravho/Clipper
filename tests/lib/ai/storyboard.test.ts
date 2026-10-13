@@ -90,3 +90,18 @@ describe("ensureAllAssetsUsed", () => {
     expect(ensureAllAssetsUsed(scenes, 0)).toBe(scenes);
   });
 });
+
+describe("sanitizeStoryboard — each asset once", () => {
+  it("keeps an asset only in the first scene that names it", () => {
+    const result = sanitizeStoryboard(
+      [
+        { summary: "A", assetIndexes: [0, 1] },
+        { summary: "B", assetIndexes: [1, 2] },
+        { summary: "C", assetIndexes: [0, 0] },
+      ],
+      3
+    );
+    expect(result.map((s) => s.assetIndexes)).toEqual([[0, 1], [2]]);
+    expect(result.map((s) => s.sceneNumber)).toEqual([1, 2]);
+  });
+});

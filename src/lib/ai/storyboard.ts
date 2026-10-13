@@ -41,14 +41,26 @@ export function buildFallbackStoryboard(assetCount: number, targetScenes = 3): S
 export function sanitizeStoryboard(raw: unknown, assetCount: number): StoryboardScene[] {
   if (!Array.isArray(raw)) return buildFallbackStoryboard(assetCount);
 
+  // Each asset is used ONCE by default (Tho, 13 Oct): the model sometimes
+  // repeats a photo across scenes to pad the length. The first scene that
+  // names an asset keeps it; later mentions are dropped, and a scene left with
+  // none of its material is dropped too. The user can still reuse material on
+  // purpose by adding scenes in the studio.
+  const seen = new Set<number>();
   const cleaned: StoryboardScene[] = raw
     .map((entry) => {
       const obj = (entry ?? {}) as Record<string, unknown>;
-      const assetIndexes = Array.isArray(obj.assetIndexes)
+      const named = Array.isArray(obj.assetIndexes)
         ? (obj.assetIndexes as unknown[]).filter(
             (n): n is number => Number.isInteger(n) && (n as number) >= 0 && (n as number) < assetCount
           )
         : [];
+      const assetIndexes = named.filter((n) => {
+        if (seen.has(n)) return false;
+        seen.add(n);
+        return true;
+      });
+      if (named.length > 0 && assetIndexes.length === 0) return null;
       const scene: StoryboardScene = {
         sceneNumber: 0, // renumbered below
         summary: typeof obj.summary === "string" ? obj.summary.trim() : "",
@@ -59,6 +71,7 @@ export function sanitizeStoryboard(raw: unknown, assetCount: number): Storyboard
       }
       return scene;
     })
+    .filter((s): s is StoryboardScene => s !== null)
     .filter((s) => s.summary.length > 0 || s.assetIndexes.length > 0)
     .map((s, i) => ({ ...s, sceneNumber: i + 1 }));
 

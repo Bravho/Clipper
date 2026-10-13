@@ -25,7 +25,7 @@ export const DEVICE_MIX_SAMPLE_RATE = 48_000;
 export const DEVICE_MUSIC_LEAD_IN_SECONDS = 0.6;
 
 /** Linear music bed level before ducking. `MUSIC_BED_VOLUME`. */
-export const DEVICE_MUSIC_BED_VOLUME = 0.3;
+export const DEVICE_MUSIC_BED_VOLUME = 0.4;
 
 /**
  * `sidechaincompress` ratio — how far the bed drops under speech.

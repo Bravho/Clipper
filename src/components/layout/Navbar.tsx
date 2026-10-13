@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { LanguageSelector } from "@/components/layout/LanguageSelector";
 import { MobileNavDrawer } from "@/components/layout/MobileNavDrawer";
+import { AppBackButton } from "@/components/mobile/AppBackButton";
 import { usePortalNav } from "@/components/layout/PortalNav";
 import { useI18n } from "@/i18n/client";
 
@@ -39,19 +40,23 @@ export function Navbar({ showStudio = false }: { showStudio?: boolean }) {
     <nav className="app-safe-top sticky top-0 z-30 border-b border-slate-200 bg-white">
       <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-14 items-center justify-between gap-3 sm:h-16">
-          {/* Logo — allowed to shrink so it never pushes the hamburger off-screen */}
-          <Link href={ROUTES.HOME} className="flex min-w-0 items-center gap-2">
-            <Image
-              src="/logo.png"
-              alt="RClipper logo"
-              width={36}
-              height={36}
-              className="h-8 w-8 flex-shrink-0 rounded sm:h-9 sm:w-9"
-            />
-            <span className="truncate text-lg font-bold tracking-tight text-slate-900 sm:text-xl">
-              RClipper
-            </span>
-          </Link>
+          {/* Back (iOS app only — no system back button there) + logo, allowed
+              to shrink so they never push the hamburger off-screen. */}
+          <div className="flex min-w-0 items-center gap-1">
+            <AppBackButton />
+            <Link href={ROUTES.HOME} className="flex min-w-0 items-center gap-2">
+              <Image
+                src="/logo.png"
+                alt="RClipper logo"
+                width={36}
+                height={36}
+                className="h-8 w-8 flex-shrink-0 rounded sm:h-9 sm:w-9"
+              />
+              <span className="truncate text-lg font-bold tracking-tight text-slate-900 sm:text-xl">
+                RClipper
+              </span>
+            </Link>
+          </div>
 
           {/* Desktop nav — only from lg up, because the tablet width still needs
               the drawer to reach the section links. */}
@@ -103,7 +108,7 @@ export function Navbar({ showStudio = false }: { showStudio?: boolean }) {
             type="button"
             className="-mr-2 flex-shrink-0 rounded p-2.5 text-slate-700 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
             onClick={() => setMobileOpen((v) => !v)}
-            aria-label="Toggle menu"
+            aria-label={t("nav.toggleMenu")}
             aria-expanded={mobileOpen}
           >
             <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">

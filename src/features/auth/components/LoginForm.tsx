@@ -13,8 +13,12 @@ import { SocialSignInButtons } from "./SocialSignInButtons";
 import { getRoleHomePath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES } from "@/config/routes";
+import { useI18n } from "@/i18n/client";
+import { localizeValidation } from "@/i18n/validationMessages";
 
 export function LoginForm() {
+  const { t } = useI18n();
+  const v = (message: string | undefined) => localizeValidation(t, message);
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -36,19 +40,17 @@ export function LoginForm() {
       });
 
       if (result?.error === "EmailNotVerified") {
-        setServerError(
-          "กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ ตรวจสอบกล่องจดหมายเพื่อรับลิงก์ยืนยัน"
-        );
+        setServerError(t("login.verifyFirst"));
         return;
       }
 
       if (result?.error === "CredentialsSignin") {
-        setServerError("อีเมลหรือรหัสผ่านไม่ถูกต้อง กรุณาลองอีกครั้ง");
+        setServerError(t("login.wrongCredentials"));
         return;
       }
 
       if (result?.error || !result?.ok) {
-        setServerError("ระบบเข้าสู่ระบบไม่พร้อมใช้งานชั่วคราว กรุณาลองอีกครั้งภายหลัง");
+        setServerError(t("login.unavailable"));
         return;
       }
 
@@ -61,7 +63,7 @@ export function LoginForm() {
         router.refresh();
       }
     } catch {
-      setServerError("เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+      setServerError(t("common.errorRetry"));
     }
   };
 
@@ -77,20 +79,20 @@ export function LoginForm() {
       )}
 
       <Input
-        label="อีเมล"
+        label={t("account.email")}
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
-        error={errors.email?.message}
+        error={v(errors.email?.message)}
         {...register("email")}
       />
 
       <Input
-        label="รหัสผ่าน"
+        label={t("password.title")}
         type="password"
         autoComplete="current-password"
         placeholder="••••••••"
-        error={errors.password?.message}
+        error={v(errors.password?.message)}
         {...register("password")}
       />
 
@@ -99,30 +101,30 @@ export function LoginForm() {
           href={ROUTES.FORGOT_PASSWORD}
           className="text-sm font-medium text-blue-700 hover:underline"
         >
-          ลืมรหัสผ่าน?
+          {t("login.forgot")}
         </Link>
       </div>
 
       <Button type="submit" fullWidth loading={isSubmitting}>
-        เข้าสู่ระบบ
+        {t("nav.signIn")}
       </Button>
 
       <SocialSignInButtons
-        dividerLabel="หรือ"
+        dividerLabel={t("login.or")}
         dividerPlacement="before"
-        googleLabel="เข้าสู่ระบบด้วย Google"
-        appleLabel="เข้าสู่ระบบด้วย Apple"
+        googleLabel={t("login.google")}
+        appleLabel={t("login.apple")}
       />
 
       <div className="relative flex items-center gap-3">
         <div className="flex-1 border-t border-slate-200" />
-        <span className="text-xs text-slate-400">ยังไม่มีบัญชี?</span>
+        <span className="text-xs text-slate-400">{t("login.noAccount")}</span>
         <div className="flex-1 border-t border-slate-200" />
       </div>
 
       <Link href={ROUTES.SIGNUP} className="w-full">
         <Button variant="outline" fullWidth>
-          สร้างบัญชีฟรี
+          {t("login.createFree")}
         </Button>
       </Link>
     </form>

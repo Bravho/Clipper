@@ -1,5 +1,6 @@
 "use client";
 
+import { useI18n } from "@/i18n/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { PushNotifications } from "@capacitor/push-notifications";
@@ -36,6 +37,7 @@ import { isNativePushAvailable } from "@/lib/mobile/pushSupport";
  * runtime permissions ask for.
  */
 export function NativePushRegistration() {
+  const { t } = useI18n();
   const { status, data: session } = useSession();
   const [showPrompt, setShowPrompt] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -238,12 +240,10 @@ export function NativePushRegistration() {
   return (
     <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-lg rounded-xl border border-blue-200 bg-white p-4 shadow-lg">
       <p className="text-sm font-semibold text-slate-900">
-        แจ้งเตือนเมื่อวิดีโอพร้อมตรวจสอบ
+        {t("push.title")}
       </p>
       <p className="mt-1 text-xs text-slate-600">
-        การสร้างวิดีโอใช้เวลาหลายนาทีต่อขั้นตอน
-        เปิดการแจ้งเตือนเพื่อให้เราบอกคุณทันทีที่แต่ละขั้นตอนเสร็จและถึงคิวที่คุณต้องตรวจสอบ
-        คุณไม่ต้องเปิดแอปค้างไว้
+        {t("push.nativeBody")}
       </p>
       <div className="mt-3 flex gap-2">
         <button
@@ -252,14 +252,14 @@ export function NativePushRegistration() {
           className="rounded-md bg-blue-700 px-3 py-2 text-xs font-medium text-white disabled:opacity-60"
           onClick={() => void enable()}
         >
-          {busy ? "กำลังเปิด..." : "เปิดการแจ้งเตือน"}
+          {busy ? t("push.enabling") : t("push.enable")}
         </button>
         <button
           type="button"
           className="rounded-md px-3 py-2 text-xs text-slate-600"
           onClick={() => setShowPrompt(false)}
         >
-          ไว้ภายหลัง
+          {t("push.later")}
         </button>
       </div>
     </div>

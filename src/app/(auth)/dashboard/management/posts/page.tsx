@@ -1,3 +1,4 @@
+import { getServerI18n } from "@/i18n/server";
 import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
@@ -32,6 +33,7 @@ export const dynamic = "force-dynamic";
  * expires; this page reads, it never charges.
  */
 export default async function ManagementPostsPage() {
+  const { t } = getServerI18n();
   const session = await getServerSession(authOptions);
   if (!session?.user) notFound();
 
@@ -70,7 +72,7 @@ export default async function ManagementPostsPage() {
     const thumbnailUrl = content?.thumbnailStorageKey
       ? spacesPublicUrl(content.thumbnailStorageKey)
       : null;
-    const postName = content?.title ?? "Untitled video";
+    const postName = content?.title ?? t("mgmt.untitledVideo");
 
     for (const target of targetLists[i]) {
       const conn = connectionById.get(target.socialConnectionId);
@@ -107,9 +109,9 @@ export default async function ManagementPostsPage() {
   return (
     <div className="mx-auto w-full min-w-0 max-w-4xl px-4 py-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">จัดการโพสต์</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{t("sidebar.posts")}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          โพสต์ทั้งหมดของคุณในทุกช่องทาง · แก้ไขหรือลบได้เฉพาะโพสต์ที่ตั้งเวลาไว้และยังไม่ถูกเผยแพร่
+          {t("posts.subtitle")}
         </p>
       </header>
 

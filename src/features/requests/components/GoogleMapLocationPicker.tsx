@@ -272,7 +272,10 @@ export function GoogleMapLocationPicker({
       })
       .catch((reason: unknown) => {
         if (cancelled) return;
-        setError(reason instanceof Error ? reason.message : "Google Maps โหลดไม่สำเร็จ");
+        // The loader's own messages are for the log; the user gets one sentence in
+        // their language.
+        console.warn("[map] load failed", reason);
+        setError(t("map.loadFailed"));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

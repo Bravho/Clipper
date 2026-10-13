@@ -167,7 +167,7 @@ async function uploadToSpaces(
 /** Fallback compose duration when the voice track can't be probed. */
 export const DEFAULT_COMPOSE_DURATION_SECONDS = 15;
 /** Background-music bed level (pre-ducking), 0..1. */
-export const MUSIC_BED_VOLUME = 0.3;
+export const MUSIC_BED_VOLUME = 0.4;
 /**
  * Sidechain compression ratio for ducking the music under the voiceover.
  * Higher = music drops further while speech plays. Affects ONLY the speaking

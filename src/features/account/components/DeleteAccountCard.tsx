@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ROUTES } from "@/config/routes";
 import { signOutEverywhere } from "@/lib/mobile/signOutEverywhere";
+import { useI18n } from "@/i18n/client";
 
 interface DeleteAccountCardProps {
   /** True when the account signs in with email/password (password re-verify). */
@@ -18,6 +19,7 @@ interface DeleteAccountCardProps {
  * OAuth accounts type "DELETE". Signs the user out on success.
  */
 export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [confirmText, setConfirmText] = useState("");
@@ -39,7 +41,7 @@ export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "เกิดข้อผิดพลาด กรุณาลองอีกครั้ง");
+        setError(data.error ?? t("common.errorRetry"));
         setLoading(false);
         return;
       }
@@ -47,7 +49,7 @@ export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
       // credential state too so a re-signup shows the account picker.
       await signOutEverywhere(ROUTES.HOME);
     } catch {
-      setError("ไม่สามารถเชื่อมต่อได้ กรุณาลองอีกครั้ง");
+      setError(t("common.networkError"));
       setLoading(false);
     }
   };
@@ -55,40 +57,33 @@ export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
   return (
     <Card className="border-red-200">
       <CardHeader>
-        <CardTitle>ลบบัญชี</CardTitle>
+        <CardTitle>{t("deleteAccount.title")}</CardTitle>
       </CardHeader>
 
       {!open ? (
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-slate-500">
-            ลบบัญชีและข้อมูลส่วนบุคคลของคุณอย่างถาวร
+            {t("deleteAccount.hint")}
           </p>
           <Button variant="danger" onClick={() => setOpen(true)}>
-            ลบบัญชี
+            {t("deleteAccount.title")}
           </Button>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <p className="font-semibold">การลบบัญชีไม่สามารถย้อนกลับได้</p>
+            <p className="font-semibold">{t("deleteAccount.irreversible")}</p>
             <ul className="mt-2 list-disc pl-5">
-              <li>ข้อมูลส่วนบุคคล (ชื่อ อีเมล และวิธีเข้าสู่ระบบ) จะถูกลบถาวร</li>
-              <li>เครดิตคงเหลือทั้งหมดจะถูกยกเลิกและไม่สามารถคืนได้</li>
-              <li>
-                ประวัติการชำระเงินและการยินยอมนโยบายจะถูกเก็บไว้ตามที่กฎหมายกำหนด
-                (ไม่มีข้อมูลส่วนบุคคล)
-              </li>
-              <li>
-                เพื่อป้องกันการใช้สิทธิ์ทดลองฟรีซ้ำ
-                ระบบจะเก็บรหัสอ้างอิงแบบเข้ารหัสทางเดียว (hash) ของอีเมล/บัญชีที่ใช้
-                — การสมัครใหม่ด้วยอีเมลเดิมจะไม่ได้รับสิทธิ์ทดลองฟรีอีก
-              </li>
+              <li>{t("deleteAccount.point1")}</li>
+              <li>{t("deleteAccount.point2")}</li>
+              <li>{t("deleteAccount.point3")}</li>
+              <li>{t("deleteAccount.point4")}</li>
             </ul>
           </div>
 
           {hasPassword ? (
             <Input
-              label="ยืนยันด้วยรหัสผ่านของคุณ"
+              label={t("deleteAccount.confirmPassword")}
               type="password"
               autoComplete="current-password"
               value={password}
@@ -96,7 +91,7 @@ export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
             />
           ) : (
             <Input
-              label='พิมพ์ "DELETE" เพื่อยืนยัน'
+              label={t("deleteAccount.typeDelete")}
               type="text"
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
@@ -123,7 +118,7 @@ export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
                 setError(null);
               }}
             >
-              ยกเลิก
+              {t("common.cancel")}
             </Button>
             <Button
               variant="danger"
@@ -131,7 +126,7 @@ export function DeleteAccountCard({ hasPassword }: DeleteAccountCardProps) {
               disabled={!canSubmit}
               onClick={handleDelete}
             >
-              ลบบัญชีถาวร
+              {t("deleteAccount.confirm")}
             </Button>
           </div>
         </div>

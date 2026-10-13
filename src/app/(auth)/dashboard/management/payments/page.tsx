@@ -51,7 +51,7 @@ export default async function ManagementPaymentsPage({
           href={returnTo}
           className="text-sm font-medium text-blue-600 hover:underline"
         >
-          ← Channel Management
+          ← {t("sidebar.management")}
         </Link>
         <h1 className="mt-2 text-2xl font-bold text-slate-900">{t("mgmt.payments.title")}</h1>
         <p className="mt-1 text-sm text-slate-500">{t("mgmt.payments.body")}</p>

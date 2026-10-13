@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { forgetDeletedDraft } from "@/features/requests/draftStorage";
 import { RequestStatus } from "@/domain/enums/RequestStatus";
+import { useI18n } from "@/i18n/client";
 
 interface CancelRequestButtonProps {
   requestId: string;
@@ -11,6 +12,7 @@ interface CancelRequestButtonProps {
 }
 
 export function CancelRequestButton({ requestId, status }: CancelRequestButtonProps) {
+  const { t } = useI18n();
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
 
@@ -20,8 +22,8 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
 
     const isDraft = status === RequestStatus.Draft;
     const confirmMsg = isDraft
-      ? "ลบแบบร่างนี้? ไม่สามารถย้อนกลับได้"
-      : "ลบคำขอนี้? ไม่สามารถย้อนกลับได้ และเครดิตจะไม่ถูกคืน";
+      ? t("requests.confirmDeleteDraft")
+      : t("requests.confirmDelete");
 
     if (!confirm(confirmMsg)) return;
 
@@ -39,12 +41,12 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
         router.refresh();
       } else {
         const data = await res.json().catch(() => null);
-        alert(data?.error ?? "ไม่สามารถลบคำขอได้ กรุณาลองใหม่อีกครั้ง");
+        alert(data?.error ?? t("requests.deleteFailed"));
       }
     } catch {
       // Network-level failure (e.g. the dev server restarted/was unreachable) —
       // surface a friendly message instead of an unhandled "Failed to fetch".
-      alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      alert(t("common.networkError"));
     } finally {
       setIsPending(false);
     }
@@ -56,7 +58,7 @@ export function CancelRequestButton({ requestId, status }: CancelRequestButtonPr
       disabled={isPending}
       className="text-xs text-red-400 hover:text-red-600 disabled:opacity-50 transition-colors"
     >
-      {isPending ? "กำลังลบ..." : "ลบ"}
+      {isPending ? t("common.deleting") : t("common.delete")}
     </button>
   );
 }

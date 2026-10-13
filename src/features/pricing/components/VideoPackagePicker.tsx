@@ -11,7 +11,7 @@ import {
 } from "@/config/videoPackages";
 import type { VideoProductCode } from "@/domain/enums/VideoProductCode";
 import { useI18n } from "@/i18n/client";
-import { ROUTES } from "@/config/routes";
+import { ROUTES, safeReturnPath } from "@/config/routes";
 import {
   ConfirmPurchaseDialog,
   PurchaseSuccessToast,
@@ -51,23 +51,6 @@ function newToken(): string {
  * error replays onto the same purchase while a deliberate second purchase (to
  * stack another month) correctly gets a new one.
  */
-/**
- * Only same-site paths the app actually sends here are honoured, so the
- * parameter cannot bounce a buyer to another site.
- */
-function safeReturnPath(value: string | null): string | null {
-  if (!value) return null;
-  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
-  if (
-    !value.startsWith("/studio") &&
-    !value.startsWith("/device-render-lab") &&
-    !value.startsWith("/dashboard/")
-  ) {
-    return null;
-  }
-  return value;
-}
-
 export function VideoPackagePicker({ balanceCredits, activeUntil }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
