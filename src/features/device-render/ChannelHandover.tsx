@@ -8,6 +8,7 @@ import type { VideoAccessView } from "@/services/VideoAccessService";
 import { managementArrivalPath } from "@/features/management/components/StudioTransferScreen";
 import type { StudioOutput } from "./studioPipeline";
 import { useStudioT } from "./studioI18n";
+import { trackStudioAction } from "./studioTracker";
 
 /** Channel Management as the studio page read it for this request. */
 export interface StudioManagement {
@@ -115,7 +116,13 @@ export function ChannelHandover({
           </div>
         )}
         {pending.length > 0 && !blocked ? (
-          <Link href={transferPath} className="studio-button studio-button-primary">
+          <Link
+            href={transferPath}
+            className="studio-button studio-button-primary"
+            onClick={() =>
+              trackStudioAction("sent_to_management", requestId, { videos: pending.length })
+            }
+          >
             {t("studio.handover.migrate")}
           </Link>
         ) : (

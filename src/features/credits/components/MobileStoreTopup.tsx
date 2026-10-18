@@ -35,6 +35,9 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
     platform: "ios" | "android";
     productId: string;
     transactionId: string;
+    /** The store's price for the product, for the admin Revenue page. */
+    price?: number;
+    currency?: string;
   }): Promise<{ creditsGranted: number; alreadyProcessed: boolean }> => {
     const response = await fetch("/api/mobile/purchases/verify", {
       method: "POST",
@@ -222,6 +225,8 @@ export function MobileStoreTopup({ returnTo, minimumTopupCredits }: Props) {
         platform,
         productId: product.identifier,
         transactionId: storeTransactionId,
+        price: Number.isFinite(product.price) ? product.price : undefined,
+        currency: product.currencyCode || undefined,
       };
       window.localStorage.setItem(pendingKey, JSON.stringify(pending));
       const { creditsGranted } = await verifyTransaction(pending);

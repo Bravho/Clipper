@@ -9,6 +9,45 @@ interface VerifiedPurchase {
   transactionId: string;
   environment: string;
   purchasedAt: Date | null;
+  /** What it cost, when the store's own transaction says (Apple does). */
+  price?: { amount: number; currency: string } | null;
+  /** Apple storefront (e.g. THA) or Google region code (e.g. TH). */
+  storefront?: string | null;
+  /** Google order id (GPA.…), for matching Play Console reports. */
+  orderId?: string | null;
+}
+
+/** The store price the app showed at purchase time, sent with verification. */
+export interface ClientReportedPrice {
+  amount: number;
+  currency: string;
+}
+
+/** A client price is only kept when it is plausible: positive, bounded, ISO currency. */
+export function cleanClientPrice(raw: unknown): ClientReportedPrice | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { amount, currency } = raw as { amount?: unknown; currency?: unknown };
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) {
+    return null;
+  }
+  if (typeof currency !== "string" || !/^[A-Za-z]{3}$/.test(currency)) return null;
+  return { amount: Math.round(amount * 100) / 100, currency: currency.toUpperCase() };
+}
+
+/**
+ * Apple's signed transaction carries `price` in MILLI-units of `currency`
+ * (e.g. 65000 = ฿65.00) and the `storefront` country code.
+ */
+export function applePriceFromTransaction(transaction: {
+  price?: number;
+  currency?: string;
+}): { amount: number; currency: string } | null {
+  if (typeof transaction.price !== "number" || !transaction.currency) return null;
+  if (!Number.isFinite(transaction.price) || transaction.price <= 0) return null;
+  return {
+    amount: Math.round(transaction.price / 10) / 100,
+    currency: transaction.currency.toUpperCase(),
+  };
 }
 
 function decodeJwsPayload<T>(jws: string): T {
@@ -59,6 +98,9 @@ async function verifyApple(transactionId: string): Promise<VerifiedPurchase> {
       purchaseDate?: number;
       revocationDate?: number;
       environment?: string;
+      price?: number;
+      currency?: string;
+      storefront?: string;
     }>(body.signedTransactionInfo);
     const expectedBundle = process.env.APP_STORE_BUNDLE_ID?.trim() || "com.rclipper.app";
     if (
@@ -76,6 +118,8 @@ async function verifyApple(transactionId: string): Promise<VerifiedPurchase> {
       purchasedAt: transaction.purchaseDate
         ? new Date(transaction.purchaseDate)
         : null,
+      price: applePriceFromTransaction(transaction),
+      storefront: transaction.storefront ?? null,
     };
   }
   throw new Error("App Store transaction was not found.");
@@ -128,6 +172,7 @@ async function verifyGoogle(
     consumptionState?: number;
     purchaseTimeMillis?: string;
     orderId?: string;
+    regionCode?: string;
   };
   if (purchase.purchaseState !== 0) {
     throw new Error("Google Play purchase is not completed.");
@@ -139,6 +184,9 @@ async function verifyGoogle(
     purchasedAt: purchase.purchaseTimeMillis
       ? new Date(Number(purchase.purchaseTimeMillis))
       : null,
+    price: null,
+    storefront: purchase.regionCode ?? null,
+    orderId: purchase.orderId ?? null,
   };
 }
 
@@ -167,12 +215,48 @@ async function settleGooglePurchase(transactionId: string, productId: string): P
   }
 }
 
+/**
+ * Write what the purchase cost (migration 042) AFTER the credits are committed,
+ * in its own statement: a database without those columns yet, or any other
+ * failure here, must never cost the person their credits. Analytics only.
+ */
+async function recordPurchasePrice(
+  platform: StorePlatform,
+  verified: VerifiedPurchase,
+  clientPrice: ClientReportedPrice | null
+): Promise<void> {
+  const price = verified.price ?? clientPrice;
+  const source = verified.price ? "store" : clientPrice ? "app" : null;
+  if (!price && !verified.storefront && !verified.orderId) return;
+  try {
+    await pool.query(
+      `UPDATE mobile_store_purchases
+          SET price_amount = $3, price_currency = $4, price_source = $5,
+              storefront = $6, order_id = $7
+        WHERE platform = $1 AND transaction_id = $2`,
+      [
+        platform,
+        verified.transactionId,
+        price?.amount ?? null,
+        price?.currency ?? null,
+        source,
+        verified.storefront ?? null,
+        verified.orderId ?? null,
+      ]
+    );
+  } catch (error) {
+    console.error("[mobile-purchase] price not recorded (migration 042 applied?):", error);
+  }
+}
+
 export class MobileStorePurchaseService {
   async verifyAndGrant(input: {
     userId: string;
     platform: StorePlatform;
     productId: string;
     transactionId: string;
+    /** The store price the app displayed; used only when the store gives none. */
+    clientPrice?: ClientReportedPrice | null;
   }): Promise<{ creditsGranted: number; alreadyProcessed: boolean }> {
     // Platform comes from the verified receipt, never the client: it selects
     // which price table is authoritative.
@@ -274,6 +358,7 @@ export class MobileStorePurchaseService {
         ]
       );
       await client.query("COMMIT");
+      await recordPurchasePrice(input.platform, verified, input.clientPrice ?? null);
       if (input.platform === "android") {
         await settleGooglePurchase(verified.transactionId, verified.productId);
       }

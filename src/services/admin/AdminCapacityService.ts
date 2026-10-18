@@ -41,16 +41,16 @@ import { tableExists } from "@/lib/db/tableExists";
  * `GateEventService` pattern) so the tests run without a socket.
  */
 
-import type { MetricsRange } from "@/services/admin/AdminApprovalMetricsService";
+import type { MetricsRange } from "@/services/admin/analyticsShared";
 
 /**
- * Range shape and duration formatting are shared with the approvals service
- * rather than re-declared here. The two analytics pages are read side by side,
+ * Range shape and duration formatting are shared with the other analytics
+ * pages (analyticsShared.ts) rather than re-declared here. They are read side by side,
  * and a wait printed `2m 30s` on one and `150s` on the other reads as two
  * different measurements; re-exporting also means the capacity page has a single
  * import source.
  */
-export { formatDuration } from "@/services/admin/AdminApprovalMetricsService";
+export { formatDuration } from "@/services/admin/analyticsShared";
 export type { MetricsRange };
 
 /** Minimal `pg` pool surface, so a stub can stand in for a real Pool. */

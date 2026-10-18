@@ -9,26 +9,20 @@ import { ChartEmpty, ChartFrame } from "@/features/admin/charts/ChartFrame";
 import { FunnelBars } from "@/features/admin/charts/FunnelBars";
 import { TimeSeriesChart } from "@/features/admin/charts/TimeSeriesChart";
 import { adminFunnelService } from "@/services/admin/AdminFunnelService";
-import type { FunnelStageKey } from "@/services/admin/AdminFunnelService";
 import { attempt } from "@/features/admin/attempt";
 import { AdminErrorPanel } from "@/features/admin/components/AdminErrorPanel";
+import { ROUTES } from "@/config/routes";
 
 export const metadata: Metadata = { title: "Conversion Funnel — Admin" };
 
 /**
- * Signup → publish, in nine stages.
+ * New users through the studio, step by step — and where they stop.
  *
- * The page has one job beyond drawing bars: making the shape of the data
- * honest. Three things about this funnel are easy to misread and are therefore
- * stated on the page rather than only in the service:
- *
- *   1. It is a COHORT funnel. Stage 1 is who signed up in the window; the later
- *      stages count those same people at any later date. Recent windows always
- *      understate the bottom of the funnel.
- *   2. Stages 1–2 only have data from the day login instrumentation shipped.
- *      That date is detected from the table, never hardcoded.
- *   3. A funnel that widens is a bug. If a later stage exceeds an earlier one
- *      the page says so instead of drawing it.
+ * Every video is made in the studio now and there is no approval by anyone but
+ * the requester, so the funnel follows the studio's own milestones. Each user
+ * is placed at the furthest milestone there is evidence for (see
+ * AdminFunnelService), which makes the bars monotonic and retroactive; the
+ * "recorded" figure under each bar is the direct evidence alone.
  */
 export default async function AdminFunnelPage({
   searchParams,
@@ -40,25 +34,26 @@ export default async function AdminFunnelPage({
   const params = await searchParams;
   const range = parseDateRange(params);
 
-  // Each load is caught separately. A funnel query that fails against an
-  // unexpected data shape should cost its own section, not the whole page —
-  // and in production a thrown error is replaced by an opaque digest, so
-  // catching here is the only way the admin ever sees what actually broke.
   const [reportAttempt, trendAttempt, instrumentationAttempt] = await Promise.all([
     attempt(() => adminFunnelService.getFunnelReport(range.from, range.to), "Funnel report"),
-    attempt(() => adminFunnelService.getSignupLoginTrend(range.from, range.to), "Signup/login trend"),
-    attempt(() => adminFunnelService.getLoginInstrumentation(), "Login instrumentation"),
+    attempt(() => adminFunnelService.getSignupLoginTrend(range.from, range.to), "Daily trend"),
+    attempt(() => adminFunnelService.getLoginInstrumentation(), "Tracking dates"),
   ]);
+
+  const header = (
+    <div>
+      <h1 className="text-2xl font-bold text-slate-900">Conversion Funnel</h1>
+      <p className="mt-1 text-sm text-slate-500">
+        New users through the studio, from signing up to publishing their video — and the
+        step where each one stopped.
+      </p>
+    </div>
+  );
 
   if (!reportAttempt.ok) {
     return (
       <div className="space-y-8">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Conversion funnel</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Signup through to publishing, counted as distinct users.
-          </p>
-        </div>
+        {header}
         <AdminErrorPanel title="The funnel could not be built" error={reportAttempt.error} />
       </div>
     );
@@ -66,225 +61,224 @@ export default async function AdminFunnelPage({
 
   const report = reportAttempt.data;
   const trend = trendAttempt.ok ? trendAttempt.data : [];
-  const instrumentation = instrumentationAttempt.ok
+  const tracking = instrumentationAttempt.ok
     ? instrumentationAttempt.data
-    : { available: false, firstRealLoginAt: null, realLoginRows: 0, backfillRows: 0 };
-
+    : {
+        available: false,
+        firstRealLoginAt: null,
+        realLoginRows: 0,
+        backfillRows: 0,
+        firstStudioEventAt: null,
+      };
   const { stages } = report;
-  const hasTrend = trend.some((point) => point.signups > 0 || point.logins > 0);
-
-  const bugWarnings = report.warnings.filter((w) => w.severity === "bug");
-  const knownGapWarnings = report.warnings.filter((w) => w.severity === "known-gap");
-
-  // Login data only exists from the first real (non-backfill) sign-in onwards.
-  // Cohorts that predate it cannot show stage 2 at all — worth saying before an
-  // admin reads a structural zero as a retention collapse.
-  const loginStart = instrumentation.firstRealLoginAt;
-  const loginStartInput = loginStart ? toBangkokDateInput(loginStart) : null;
-  const rangeStartsBeforeLogins = loginStart ? range.from < loginStart : true;
-
-  // The stage-5 cross-check: the download flag and the credit ledger are written
-  // by different code paths, so a gap between them is a reconciliation problem.
-  const paidStage = stages[4];
-  const chargeGap = report.chargedUsers - (paidStage?.users ?? 0);
+  const total = report.totalUsers;
+  const hasTrend = trend.some((p) => p.signups > 0 || p.logins > 0 || p.studioUsers > 0);
+  const studioStart = tracking.firstStudioEventAt
+    ? toBangkokDateInput(tracking.firstStudioEventAt)
+    : null;
+  const loginStart = tracking.firstRealLoginAt
+    ? toBangkokDateInput(tracking.firstRealLoginAt)
+    : null;
+  const stoppedBeforeEnd = report.stopPoints
+    .filter((point) => point.nextLabel !== null && point.users > 0)
+    .sort((a, b) => b.users - a.users);
+  const worstStop = stoppedBeforeEnd[0] ?? null;
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Conversion Funnel</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Signup through to publishing on a connected channel, counted as distinct
-          users.
-        </p>
-      </div>
+      {header}
 
-      <DateRangeBar
-        fromInput={range.fromInput}
-        toInput={range.toInput}
-        days={range.days}
-      />
+      <DateRangeBar fromInput={range.fromInput} toInput={range.toInput} days={range.days} />
       <RangeCaption days={range.days} />
 
-      {/* A widening funnel is loud on purpose: the alternative is a bar chart
-          that reads as a business discovery. The two pairs that can widen
-          honestly are demoted to a note — a banner that is always red is
-          furniture, and the next real join bug would be scrolled past. */}
-      {bugWarnings.length > 0 && (
+      {!report.studioTracking && (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-          <p className="font-semibold">This funnel widens — that is a data bug</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            {bugWarnings.map((warning) => (
-              <li key={`${warning.fromStage}-${warning.toStage}`}>{warning.message}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {knownGapWarnings.length > 0 && (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-          <p className="font-semibold">Two stages are out of order, for known reasons</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            {knownGapWarnings.map((warning) => (
-              <li key={`${warning.fromStage}-${warning.toStage}`}>{warning.message}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* The table itself is absent — a deployment problem, not a data finding.
-          Name the migration and the likely cause, because the symptom (a zero
-          login stage) is indistinguishable from a genuine one. */}
-      {!instrumentation.available && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
-          <p className="font-semibold">
-            Login tracking table is missing from this database
-          </p>
+          <p className="font-semibold">Studio step tracking is not switched on in this database</p>
           <p className="mt-1">
-            <code>user_login_events</code> does not exist, so stage 2 reads zero
-            for every cohort no matter how many people actually signed in. Apply{" "}
-            <code>src/db/migrations/028_admin_analytics.sql</code> to the database
-            this app connects to — if you have already run it, check{" "}
-            <code>PGDATABASE</code>, since it may have been applied to a different
-            one. Every other stage on this page is unaffected.
+            <code>studio_events</code> does not exist, so &ldquo;Opened the studio&rdquo; and
+            every click on{" "}
+            <a className="underline" href={ROUTES.ADMIN_ANALYTICS_STUDIO}>
+              Studio Activity
+            </a>{" "}
+            read zero. Apply <code>src/db/migrations/041_studio_events.sql</code>. The pipeline
+            stages below are unaffected.
           </p>
         </div>
       )}
 
-      {/* Stated on the page, not only in the code: the reader of a printed
-          screenshot has no access to the comments in the service. */}
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <p className="font-semibold">What these nine numbers are counting</p>
+        <p className="font-semibold">How to read this page</p>
         <p className="mt-1">
-          <strong>Cohort basis.</strong> Stage 1 is the users who signed up inside
-          this window. Stages 2–9 count how many of <em>those</em> users have since
-          reached each stage — at any later date, not only inside the window. A user
-          who signed up yesterday has not had time to pay, so recent windows always
-          understate the bottom of the funnel.
+          <strong>Cohort.</strong> Stage 1 is the users (admins excluded) who signed up in this
+          window; every other stage counts those same users at any later date. Recent windows
+          are always low at the bottom — those users have had the least time.
         </p>
         <p className="mt-1">
-          <strong>Stages 1–2 are not retroactive.</strong> Login tracking did not
-          exist before <code>user_login_events</code> shipped:{" "}
-          {loginStartInput ? (
-            <>
-              the earliest real sign-in on record is <strong>{loginStartInput}</strong>
-              , so any cohort before that date shows zero logins because nothing was
-              recorded, not because nobody signed in.
-            </>
-          ) : (
-            <>
-              no real sign-in has been recorded yet, so stage 2 is structurally zero
-              across the whole table.
-            </>
-          )}{" "}
-          {instrumentation.backfillRows > 0 && (
-            <>
-              The {instrumentation.backfillRows.toLocaleString()} synthetic{" "}
-              <code>provider = &lsquo;backfill&rsquo;</code> rows derived from{" "}
-              <code>users.created_at</code> are excluded everywhere on this page —
-              counting them would report a 100% login rate for every
-              pre-instrumentation cohort.
-            </>
-          )}{" "}
-          Stages 3–9 read tables that predate the analytics work and are fully
-          retroactive.
+          <strong>Furthest step.</strong> The studio&rsquo;s steps happen in a fixed order, so
+          each user is counted up to the furthest step they reached: a user with a finished
+          video is counted as having signed in and opened the studio even if that happened
+          before tracking existed. Under each bar, <em>recorded</em> is the direct evidence
+          only. Login tracking starts {loginStart ? <strong>{loginStart}</strong> : "— none yet"};
+          studio step tracking starts{" "}
+          {studioStart ? <strong>{studioStart}</strong> : "— none yet (migration 041 is new)"}.
+          Everything from &ldquo;Saved a brief&rdquo; on comes from the request and pipeline
+          tables and is fully retroactive.
         </p>
       </div>
 
-      {/* ── 1. Headline ─────────────────────────────────────────────────── */}
+      {/* ── Headline ─────────────────────────────────────────────────────── */}
       <StatTileGrid>
+        <StatTile label="New users" value={total} hint="signed up in range, admins excluded" />
         <StatTile
-          label="Users signed up"
-          value={report.totalUsers}
-          hint="live accounts created in range; deleted accounts excluded"
+          label="Made a video"
+          value={percent(report.madeVideoPct)}
+          hint={`reached "Main video made" · ${countAt(stages, "main_video_made")} of ${total.toLocaleString()}`}
         />
         <StatTile
-          label="Signup → paid generation"
-          value={percent(report.overallConversionPct)}
-          hint={`stage 1 → stage 5 · ${(paidStage?.users ?? 0).toLocaleString()} of ${report.totalUsers.toLocaleString()}`}
-        />
-        <StatTile
-          label="Biggest single drop-off"
-          value={
-            report.biggestDrop
-              ? `−${report.biggestDrop.dropped.toLocaleString()}`
-              : "—"
-          }
+          label="Most common stopping point"
+          value={worstStop ? worstStop.users.toLocaleString() : "—"}
           hint={
-            report.biggestDrop
-              ? `${report.biggestDrop.fromLabel} → ${report.biggestDrop.toLabel} (${percent(
-                  report.biggestDrop.pct
-                )} lost)`
-              : "no stage-to-stage loss in this cohort"
+            worstStop
+              ? `stopped after "${worstStop.reachedLabel}" (${percent(worstStop.pct)} of new users)`
+              : "nobody stopped before the end"
           }
-          tone={report.biggestDrop ? "urgent" : "default"}
+          tone={worstStop ? "urgent" : "default"}
         />
         <StatTile
-          label="Charged in the credit ledger"
-          value={report.chargedUsers}
-          hint={
-            chargeGap === 0
-              ? "agrees with stage 5"
-              : `${chargeGap > 0 ? "+" : ""}${chargeGap.toLocaleString()} vs stage 5 — see the note below`
-          }
-          tone={chargeGap === 0 ? "default" : "urgent"}
+          label="Bought a package"
+          value={report.side.boughtPackage}
+          hint={`${report.side.boughtAndMadeVideo.toLocaleString()} of them also made a video · ${report.side.quotaBlocked.toLocaleString()} hit the free limit`}
         />
       </StatTileGrid>
 
-      {/* ── 2. The funnel ───────────────────────────────────────────────── */}
+      {/* ── The funnel ───────────────────────────────────────────────────── */}
       <ChartFrame
-        title="Nine stages, distinct users"
-        description="Bar width is scaled to stage 1. The smaller figure beside each count is events, not people."
+        title={`${stages.length} studio steps, distinct users`}
+        description="Bar width is scaled to stage 1. The percentage on the right is the share kept from the step before."
         footnote={
           <>
-            Stage 5 counts requests drawn from a PURCHASED monthly allowance (
-            <code>pricing_tier = &lsquo;paid&rsquo;</code>). Requests are no longer
-            charged individually, so this measures subscribers using what they
-            bought rather than one-off payments.{" "}
-            {chargeGap === 0 ? (
-              <>
-                The independent count from{" "}
-                <code>credit_transactions.type = &lsquo;request_charge&rsquo;</code>{" "}
-                agrees exactly.
-              </>
-            ) : (
-              <>
-                The independent count from{" "}
-                <code>credit_transactions.type = &lsquo;request_charge&rsquo;</code>{" "}
-                gives {report.chargedUsers.toLocaleString()} users — a gap of{" "}
-                {Math.abs(chargeGap).toLocaleString()}. Charges without an unlock are
-                usually refunded or failed generations; unlocks without a charge are
-                usually admin grants.
-              </>
-            )}
+            Package purchases and uploading your own video into Channel Management are not
+            steps in this journey (you can do either without making a video), so they are
+            counted beside it: {report.side.boughtPackage.toLocaleString()} bought a package,{" "}
+            {report.side.uploadedOwn.toLocaleString()} uploaded their own video.
           </>
         }
       >
-        {report.totalUsers === 0 ? (
-          <ChartEmpty message="Nobody signed up in this range, so there is no cohort to follow. Widen the window." />
+        {total === 0 ? (
+          <ChartEmpty message="Nobody signed up in this range. Widen the window." />
         ) : (
           <FunnelBars
             stages={stages.map((stage) => ({
-              label: stage.label,
+              label: `${stage.label}  ·  ${stage.where}`,
               users: stage.users,
-              events: stage.events,
-              hint: stage.hint,
+              hint: `recorded directly: ${stage.recorded.toLocaleString()} — ${stage.hint}`,
             }))}
           />
         )}
       </ChartFrame>
 
-      {/* ── 3. Signup and login trend ───────────────────────────────────── */}
+      {/* ── Where they stop ──────────────────────────────────────────────── */}
+      <section>
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wider text-slate-400">
+          Where new users stop
+        </h2>
+        <p className="mb-3 text-xs text-slate-500">
+          Each new user once, at the furthest step they reached. &ldquo;Still active&rdquo; means
+          they did something in the last 3 days, so they may yet carry on; the rest have most
+          likely left at that step. Problems are what we can see in the data: a failed job, a
+          phone render error, or the free-video limit.
+        </p>
+        {total === 0 ? (
+          <EmptyRow message="No new users in this range." />
+        ) : (
+          <Table
+            headers={[
+              "Furthest step reached",
+              "Users",
+              "Share",
+              "Still active",
+              "Median idle",
+              "Failed job",
+              "Free limit hit",
+              "What we see",
+            ]}
+            textColumns={[7]}
+          >
+            {report.stopPoints
+              .filter((point) => point.users > 0)
+              .map((point) => (
+                <tr
+                  key={point.stageIndex}
+                  className={point.nextLabel === null ? "bg-emerald-50/60" : "hover:bg-slate-50"}
+                >
+                  <td className="px-4 py-3 text-slate-900">
+                    <span className="font-medium">
+                      {point.stageIndex + 1}. {point.reachedLabel}
+                    </span>
+                    <span className="block text-xs text-slate-400">
+                      {point.nextLabel ? `did not reach: ${point.nextLabel}` : "finished the journey"}
+                    </span>
+                  </td>
+                  <Count value={point.users} />
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                    {percent(point.pct)}
+                  </td>
+                  <Count value={point.activeRecently} />
+                  <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                    {point.medianIdleDays === null ? "—" : `${point.medianIdleDays.toFixed(1)} d`}
+                  </td>
+                  <Count value={point.failed} />
+                  <Count value={point.quotaBlocked} />
+                  <td className="px-4 py-3 text-xs text-slate-600">
+                    {point.topProblems.length === 0
+                      ? "—"
+                      : point.topProblems.map((problem) => (
+                          <span key={problem.label} className="block">
+                            {problem.label} ({problem.users})
+                          </span>
+                        ))}
+                  </td>
+                </tr>
+              ))}
+          </Table>
+        )}
+      </section>
+
+      {/* ── People to follow up ──────────────────────────────────────────── */}
+      {report.stuckUsers.length > 0 && (
+        <section>
+          <details className="rounded-lg border border-slate-200 bg-white">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700">
+              New users who have not finished ({report.stuckUsers.length} most recently active)
+            </summary>
+            <div className="border-t border-slate-100 p-3">
+              <Table
+                headers={["User", "Signed up", "Stopped at", "Next step", "Last active", "What we see"]}
+                textColumns={[1, 2, 3, 4, 5]}
+              >
+                {report.stuckUsers.map((user) => (
+                  <tr key={`${user.email}-${user.signedUpAt.toISOString()}`} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 text-slate-900">{user.email}</td>
+                    <td className="px-4 py-3 text-slate-600">{toBangkokDateInput(user.signedUpAt)}</td>
+                    <td className="px-4 py-3 text-slate-700">{user.stageLabel}</td>
+                    <td className="px-4 py-3 text-slate-500">{user.nextLabel ?? "—"}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {user.lastActiveAt ? toBangkokDateInput(user.lastActiveAt) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-600">{user.problem ?? "—"}</td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+          </details>
+        </section>
+      )}
+
+      {/* ── Daily new users and activity ─────────────────────────────────── */}
       <ChartFrame
-        title="Signups and logins per day"
-        description="Signups are new accounts; logins are distinct users signing in that Bangkok day."
-        footnote={
-          <>
-            Logins exclude the synthetic backfill provider.{" "}
-            {rangeStartsBeforeLogins &&
-              "Part of this window predates login instrumentation, so the login line starts flat at zero. "}
-            Exact daily figures are in the table below the chart.
-          </>
-        }
+        title="New users and activity per day"
+        description="Signups are new accounts; signed in and active in the studio are distinct users that Bangkok day."
+        footnote="Active in the studio = any studio event, or a request created or changed that day. Exact figures are in the table below."
       >
         {hasTrend ? (
           <TimeSeriesChart
@@ -292,29 +286,29 @@ export default async function AdminFunnelPage({
               date: point.date,
               signups: point.signups,
               logins: point.logins,
+              studio: point.studioUsers,
             }))}
             series={[
-              { key: "signups", label: "Signups" },
-              { key: "logins", label: "Distinct users logged in" },
+              { key: "signups", label: "New users" },
+              { key: "logins", label: "Signed in" },
+              { key: "studio", label: "Active in the studio" },
             ]}
           />
         ) : (
-          <ChartEmpty message="No signups and no recorded logins in this range." />
+          <ChartEmpty message="No signups, sign-ins or studio activity in this range." />
         )}
-
-        {/* The palette's contrast warning obliges relief: every charted value
-            also appears as text. Collapsed because a 90-day range is 90 rows. */}
         <details className="mt-4">
           <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
             Show daily figures ({trend.length} days)
           </summary>
           <div className="mt-3">
-            <Table headers={["Day", "Signups", "Distinct users logged in"]}>
+            <Table headers={["Day", "New users", "Signed in", "Active in the studio"]}>
               {trend.map((point) => (
                 <tr key={point.date} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-slate-700">{point.date}</td>
                   <Count value={point.signups} />
                   <Count value={point.logins} />
+                  <Count value={point.studioUsers} />
                 </tr>
               ))}
             </Table>
@@ -322,7 +316,7 @@ export default async function AdminFunnelPage({
         </details>
       </ChartFrame>
 
-      {/* ── 4. Cohorts ──────────────────────────────────────────────────── */}
+      {/* ── Cohorts ──────────────────────────────────────────────────────── */}
       <section>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
           By signup week
@@ -331,13 +325,13 @@ export default async function AdminFunnelPage({
           <EmptyRow message="No signups in this range, so there are no cohorts to compare." />
         ) : (
           <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-            <table className="w-full min-w-[44rem] text-sm">
+            <table className="w-full min-w-[60rem] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  <th className="px-4 py-3">Week of</th>
+                  <th className="px-3 py-3">Week of</th>
                   {stages.map((stage, i) => (
-                    <th key={stage.key} className="px-4 py-3 text-right" title={stage.label}>
-                      {i + 1}. {SHORT_LABELS[stage.key]}
+                    <th key={stage.key} className="px-3 py-3 text-right" title={stage.label}>
+                      {i + 1}. {stage.short}
                     </th>
                   ))}
                 </tr>
@@ -345,14 +339,11 @@ export default async function AdminFunnelPage({
               <tbody className="divide-y divide-slate-100">
                 {report.cohorts.map((cohort) => (
                   <tr key={cohort.week} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium tabular-nums text-slate-900">
+                    <td className="px-3 py-3 font-medium tabular-nums text-slate-900">
                       {cohort.week}
                     </td>
                     {cohort.users.map((count, i) => (
-                      <td
-                        key={stages[i].key}
-                        className="px-4 py-3 text-right tabular-nums text-slate-700"
-                      >
+                      <td key={stages[i].key} className="px-3 py-3 text-right tabular-nums text-slate-700">
                         {count.toLocaleString()}
                         {i > 0 && (
                           <span className="ml-1 text-xs text-slate-400">
@@ -370,38 +361,37 @@ export default async function AdminFunnelPage({
           </div>
         )}
         <p className="mt-2 text-xs text-slate-400">
-          <strong>This table, not the funnel above, is where onboarding
-          improvements show up.</strong> The aggregate funnel mixes every cohort in
-          the window together, so a month of better onboarding is averaged away
-          against the month before it. Read down a column instead: the percentage is
-          that stage as a share of the same week&rsquo;s signups. Weeks are Bangkok
-          weeks starting Monday, and the most recent rows are always low — those
-          users have had the least time to convert.
+          Read down a column to see whether a change to the studio helped: the percentage is that
+          step as a share of the same week&rsquo;s signups. Weeks are Bangkok weeks starting
+          Monday.
         </p>
       </section>
 
-      {/* ── 5. How each stage is counted ────────────────────────────────── */}
+      {/* ── Definitions ──────────────────────────────────────────────────── */}
       <section>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
-          Stage definitions
+          Step definitions
         </h2>
-        <Table headers={["Stage", "Users", "Events", "Counted from"]} textColumns={[3]}>
+        <Table headers={["Step", "Where", "Reached", "Recorded", "Counted from"]} textColumns={[1, 4]}>
           {stages.map((stage, i) => (
             <tr key={stage.key} className="hover:bg-slate-50">
               <td className="px-4 py-3 font-medium text-slate-900">
                 {i + 1}. {stage.label}
               </td>
+              <td className="px-4 py-3 text-slate-500">{stage.where}</td>
               <Count value={stage.users} />
-              <Count value={stage.events} />
+              <Count value={stage.recorded} />
               <td className="px-4 py-3 text-slate-500">{stage.hint}</td>
             </tr>
           ))}
         </Table>
         <p className="mt-2 text-xs text-slate-400">
-          Stages 6 and 7 are alternative <em>entry paths</em> into Channel
-          Management — transferring a generated video and uploading your own are
-          independent actions — so the step between them is not a conversion in the
-          way the others are.
+          Clicks inside each step (remaking the voice, editing the storyboard, render failures,
+          downloads) are on{" "}
+          <a className="underline" href={ROUTES.ADMIN_ANALYTICS_STUDIO}>
+            Studio Activity
+          </a>
+          .
         </p>
       </section>
     </div>
@@ -414,22 +404,9 @@ function percent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
-/**
- * Nine stage names will not fit across one table header, so the cohort table
- * gets a shortened form, keyed by the stage's stable key rather than its label
- * (a reworded label must not silently fall back to the long form).
- */
-const SHORT_LABELS: Record<FunnelStageKey, string> = {
-  signed_up: "Signed up",
-  logged_in: "Logged in",
-  started_generation: "Started",
-  reached_final_step: "Finished",
-  paid_for_generation: "Paid",
-  transferred_to_management: "Transferred",
-  uploaded_to_management: "Uploaded",
-  paid_for_management: "Paid CM",
-  published: "Published",
-};
+function countAt(stages: { key: string; users: number }[], key: string): string {
+  return (stages.find((stage) => stage.key === key)?.users ?? 0).toLocaleString();
+}
 
 function Table({
   headers,
@@ -437,7 +414,6 @@ function Table({
   children,
 }: {
   headers: string[];
-  /** Indexes that hold prose rather than numbers, so they stay left-aligned. */
   textColumns?: number[];
   children: ReactNode;
 }) {
@@ -449,11 +425,7 @@ function Table({
             {headers.map((header, i) => (
               <th
                 key={header}
-                className={
-                  i === 0 || textColumns.includes(i)
-                    ? "px-4 py-3"
-                    : "px-4 py-3 text-right"
-                }
+                className={i === 0 || textColumns.includes(i) ? "px-4 py-3" : "px-4 py-3 text-right"}
               >
                 {header}
               </th>
@@ -466,12 +438,9 @@ function Table({
   );
 }
 
-/** Right-aligned integer cell. `tabular-nums` keeps the column edges straight. */
 function Count({ value }: { value: number }) {
   return (
-    <td className="px-4 py-3 text-right tabular-nums text-slate-700">
-      {value.toLocaleString()}
-    </td>
+    <td className="px-4 py-3 text-right tabular-nums text-slate-700">{value.toLocaleString()}</td>
   );
 }
 

@@ -108,6 +108,7 @@ import { ChannelsPanel, channelShapes } from "./ChannelsPanel";
 import { ChannelFraming, type ChannelFramingStatus } from "./ChannelFraming";
 import { captureShotFrames } from "./shotFrames";
 import type { StudioManagement } from "./ChannelHandover";
+import { startStudioSession, trackStudioAction, trackStudioStep } from "./studioTracker";
 import {
   pipelineStepText,
   StudioI18nProvider,
@@ -222,6 +223,11 @@ const AFTER_MAIN_APPROVAL: string[] = [
  * Travy is not offered in the studio for now: its export is made from
  * server-held masters, which a phone-rendered request does not have.
  */
+/** A failure as a short line for the admin's analytics (never shown here). */
+function failureText(failure: unknown): string {
+  return (failure instanceof Error ? failure.message : String(failure)).slice(0, 160);
+}
+
 function withoutTravy(platforms: Platform[]): Platform[] {
   return platforms.filter((platform) => platform !== Platform.TravyApp);
 }
@@ -303,6 +309,27 @@ function StudioEditor({
   // opened with and becomes the new id the moment the brief is saved — the
   // studio attaches to the request in place instead of navigating away.
   const [requestId, setRequestId] = useState<string | null>(initialRequestId ?? null);
+  // Admin analytics (studioTracker): one visit per mount, and each screen seen.
+  useEffect(() => {
+    startStudioSession(initialRequestId ?? null);
+    // Once per mount, with the request the studio opened on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Callbacks with no requestId dependency read it from here.
+  const requestIdRef = useRef<string | null>(requestId);
+  requestIdRef.current = requestId;
+  useEffect(() => {
+    trackStudioStep(step, requestId);
+  }, [step, requestId]);
+  // Storyboard edits are many small taps; one event per kind per 20 s says
+  // "they rearranged it" without a row for every drag.
+  const lastEditNote = useRef(new Map<string, number>());
+  const noteStoryboardEdit = useCallback((what: string) => {
+    const now = Date.now();
+    if (now - (lastEditNote.current.get(what) ?? 0) < 20_000) return;
+    lastEditNote.current.set(what, now);
+    trackStudioAction("storyboard_edited", requestIdRef.current, { what });
+  }, []);
   // Coming BACK to the studio (the hardware/swipe back from Pricing, say) can
   // replay the router's cached render of the first visit — `/studio` with no
   // request — while the address bar already says `?request=<id>` (written by
@@ -454,6 +481,7 @@ function StudioEditor({
       // not the request — the id is already held in state.
     }
     setMessage(t("studio.msg.requestSaved"));
+    trackStudioAction("brief_saved", id);
     // Saving the brief is the end of that step; the next thing to do is the
     // media, so go there rather than leaving the person to find it.
     setStep("source");
@@ -591,6 +619,11 @@ function StudioEditor({
           [t("studio.msg.itemsAdded", { count: added.length }), ...notes].join(" ")
         );
       }
+      trackStudioAction("media_picked", requestIdRef.current, {
+        photos: added.filter((source) => source.kind === "image").length,
+        clips: added.filter((source) => source.kind === "clip").length,
+        failed,
+      });
       setPending((current) => current.filter((item) => !addedIds.has(item.id)));
       if (failed > 0) setError(t("studio.media.someFailed", { count: failed }));
     },
@@ -607,6 +640,7 @@ function StudioEditor({
 
   const removeSource = useCallback(
     (sourceId: string) => {
+      trackStudioAction("media_removed", requestIdRef.current);
       update((current) => {
         const source = findSource(current, sourceId);
         if (source) {
@@ -883,6 +917,12 @@ function StudioEditor({
         if (sources.length > 0) setDocument((current) => ({ ...current, sources }));
         // Said by the MissingOriginals panel, with the way to put them back.
         setMissingOriginals(missingMedia);
+        if (missingMedia.length > 0) {
+          trackStudioAction("originals_missing", requestIdRef.current, {
+            missing: missingMedia.length,
+            kept: sources.length,
+          });
+        }
       })
       .finally(() => {
         restoring.current = false;
@@ -1049,6 +1089,7 @@ function StudioEditor({
       const fresh = await reloadQuota();
       if (!fresh || !fresh.canSubmit) {
         setQuotaDialog(true);
+        trackStudioAction("quota_blocked", requestId, { at: "submit" });
         return;
       }
     }
@@ -1062,11 +1103,20 @@ function StudioEditor({
         onProgress: (done, total) => setSubmitProgress({ done, total }),
         t,
       });
+      trackStudioAction("submitted", requestId, {
+        photos: document.sources.filter((source) => source.kind === "image").length,
+        clips: document.sources.filter((source) => source.kind === "clip").length,
+      });
       await refreshContent();
       setStep("scenes");
       setMessage(t("studio.msg.submitted"));
     } catch (failure) {
       setSubmitError(failure instanceof Error ? failure.message : String(failure));
+      trackStudioAction(
+        failure instanceof StudioQuotaError ? "quota_blocked" : "submit_failed",
+        requestId,
+        { reason: failureText(failure) }
+      );
       if (failure instanceof StudioQuotaError) {
         setQuota((current) => ({
           tier: current?.tier ?? "free",
@@ -1099,10 +1149,12 @@ function StudioEditor({
         t,
       });
       setScriptEdited(false);
+      trackStudioAction("script_approved", requestId, { edited: !unchanged });
       await refreshContent();
       setMessage(t("studio.msg.scriptApproved"));
     } catch (failure) {
       setApproveError(failure instanceof Error ? failure.message : String(failure));
+      trackStudioAction("script_approve_failed", requestId, { reason: failureText(failure) });
     } finally {
       setApproving(false);
     }
@@ -1135,6 +1187,31 @@ function StudioEditor({
 
   // ── voice, production, and the storyboard's approval ─────────────────────
   const step_ = content?.currentStep ?? null;
+  // The storyboard and the voice arriving are the AI's half of the wait; the
+  // admin pages time "submitted → storyboard ready" and "approved → voice".
+  const milestonesSeen = useRef(new Set<string>());
+  useEffect(() => {
+    if (!requestId || !step_) return;
+    const action =
+      step_ === VideoGenerationStep.AwaitingContentApproval
+        ? "storyboard_ready"
+        : step_ === VideoGenerationStep.AwaitingVoiceApproval
+          ? "voice_ready"
+          : null;
+    if (!action) return;
+    const key = `${requestId}:${action}:${content?.voice?.assetId ?? ""}`;
+    if (milestonesSeen.current.has(key)) return;
+    milestonesSeen.current.add(key);
+    trackStudioAction(action, requestId);
+  }, [content?.voice?.assetId, requestId, step_]);
+  // Opened the studio with no free video left: the commonest reason a new
+  // user never gets past the brief. Once per visit.
+  const quotaNoted = useRef(false);
+  useEffect(() => {
+    if (quotaNoted.current || !quota || quota.canSubmit || content?.submitted) return;
+    quotaNoted.current = true;
+    trackStudioAction("quota_blocked", requestId, { at: "open", tier: quota.tier });
+  }, [content?.submitted, quota, requestId]);
   const PRE_PRODUCTION: (string | null)[] = [
     null,
     VideoGenerationStep.AnalyzingContent,
@@ -1240,10 +1317,12 @@ function StudioEditor({
         musicSelected: document.musicTrackId !== NO_MUSIC_TRACK_ID,
         t,
       });
+      trackStudioAction("voice_approved", requestId);
       await refreshContent();
       setMessage(t("studio.msg.voiceApproved"));
     } catch (failure) {
       setVoiceError(failure instanceof Error ? failure.message : String(failure));
+      trackStudioAction("voice_failed", requestId, { at: "approve", reason: failureText(failure) });
     } finally {
       setVoiceBusy(false);
     }
@@ -1270,11 +1349,16 @@ function StudioEditor({
         scriptText: scriptEdited ? script?.text : null,
         t,
       });
+      trackStudioAction("voice_regenerated", requestId, {
+        scriptEdited,
+        voice: voiceId,
+      });
       setScriptEdited(false);
       await refreshContent();
       setMessage(t("studio.msg.voiceAgain"));
     } catch (failure) {
       setVoiceError(failure instanceof Error ? failure.message : String(failure));
+      trackStudioAction("voice_failed", requestId, { at: "remake", reason: failureText(failure) });
     } finally {
       setVoiceBusy(false);
     }
@@ -1292,6 +1376,9 @@ function StudioEditor({
     setVoiceError(null);
     try {
       const result = await buyStudioVoiceMakes({ requestId, jobId: content.jobId, t });
+      if (result.creditsSpent > 0) {
+        trackStudioAction("voice_top_up", requestId, { credits: result.creditsSpent });
+      }
       await refreshContent();
       if (result.creditsSpent > 0) {
         setMessage(
@@ -1333,6 +1420,11 @@ function StudioEditor({
         voiceId,
         scriptText: scriptEdited ? script?.text : null,
         t,
+      });
+      trackStudioAction("voice_regenerated", requestId, {
+        scriptEdited,
+        voice: voiceId,
+        afterApproval: true,
       });
       setScriptEdited(false);
       setSoundConfirmed(false);
@@ -1381,6 +1473,12 @@ function StudioEditor({
       });
       setApprovedScenes(document.scenes);
       userStopped.current = false;
+      trackStudioAction("render_started", requestId, {
+        scenes: document.scenes.length,
+        music: document.musicTrackId !== NO_MUSIC_TRACK_ID,
+        captions: document.captionLanguages.length,
+        textStyle: String(document.textStyle ?? DEFAULT_TEXT_GRAPHIC_CHOICE),
+      });
       await refreshContent();
       setStep("render");
       setMessage(t("studio.msg.renderingMain"));
@@ -1389,6 +1487,7 @@ function StudioEditor({
       setAvailability(await checkDeviceRenderAvailability(requestId));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
+      trackStudioAction("render_start_failed", requestId, { reason: failureText(failure) });
     } finally {
       productionSending.current = false;
       setSendingProduction(false);
@@ -1436,6 +1535,7 @@ function StudioEditor({
         );
         setScriptEdited(false);
         setScriptWrittenHere(true);
+        trackStudioAction("script_rewritten", requestId, { scenes: plan.length });
         await refreshContent();
         setMessage(t("studio.msg.scriptFitted"));
       } catch (failure) {
@@ -1448,6 +1548,10 @@ function StudioEditor({
   );
 
   const approveStoryboard = useCallback(() => {
+    trackStudioAction("storyboard_approved", requestIdRef.current, {
+      scenes: document.scenes.length,
+      shots: document.scenes.reduce((total, scene) => total + scene.shots.length, 0),
+    });
     setApprovedScenes(document.scenes);
     setStep("audio");
     setMessage(
@@ -1504,6 +1608,7 @@ function StudioEditor({
   const [autoFitting, setAutoFitting] = useState(false);
   const fitScenesToVoice = useCallback(async () => {
     if (recommendedSeconds == null || requiredSeconds == null || voiceSeconds == null) return;
+    trackStudioAction("script_autofit", requestIdRef.current);
     const sourceOf = (sourceId: string) => {
       const source = findSource(document, sourceId);
       return source ? { kind: source.kind, durationSeconds: source.durationSeconds ?? null } : null;
@@ -1677,6 +1782,7 @@ function StudioEditor({
     setRegenerating(true);
     setVideoError(null);
     try {
+      trackStudioAction("video_regenerated", requestId);
       await reopenStudioProduction({ requestId, jobId: content.jobId, t });
       await refreshContent();
       await sendProduction();
@@ -1700,6 +1806,7 @@ function StudioEditor({
         let current = content.currentStep;
         if (current === VideoGenerationStep.AwaitingOverlayApproval) {
           await approveStudioVideo({ requestId, jobId, t });
+          trackStudioAction("video_approved", requestId, { extraShapes: ratios.length });
           current = (await fetchStudioContent(requestId)).currentStep;
         }
         // After delivery a shape that was skipped can still be made.
@@ -1719,6 +1826,10 @@ function StudioEditor({
             framings: scenePlanFromScenes(document, indexOfSource),
             t,
           });
+          trackStudioAction("channel_render_started", requestId, {
+            ratios: ratios.join(","),
+            afterDelivery: delivered,
+          });
         }
         userStopped.current = false;
         await refreshContent();
@@ -1730,6 +1841,7 @@ function StudioEditor({
         );
       } catch (failure) {
         setChannelsError(failure instanceof Error ? failure.message : String(failure));
+        trackStudioAction("channels_failed", requestId, { reason: failureText(failure) });
       } finally {
         setChannelsStarting(false);
       }
@@ -1991,6 +2103,12 @@ function StudioEditor({
       let waits = 0;
       for (;;) {
         if (outcome.status === "failed") {
+          trackStudioAction("render_failed", requestId, {
+            stage: stageRef.current ?? null,
+            ratio: ratioRef.current ?? null,
+            reason: (outcome.reason ?? "").slice(0, 160) || null,
+            retry: retries,
+          });
           setRenderFailure({
             summary: outcome.reason ?? t("studio.render.noReason"),
             log: outcome.log ?? [],
@@ -1998,6 +2116,10 @@ function StudioEditor({
             ratio: ratioRef.current,
           });
         } else if (outcome.status === "completed") {
+          trackStudioAction("render_done", requestId, {
+            stage: stageRef.current ?? null,
+            ratio: ratioRef.current ?? null,
+          });
           setRenderFailure(null);
         }
         if (cancelRequested.current) break;
@@ -2086,6 +2208,7 @@ function StudioEditor({
   const resumeRender = useCallback(async () => {
     if (busy) return;
     userStopped.current = false;
+    trackStudioAction("render_resumed", requestIdRef.current);
     // After a reload the native renderer can still be busy with the render the
     // old page started; nobody is listening for it any more, so stop it first
     // or the new one is refused as "already active".
@@ -2096,6 +2219,7 @@ function StudioEditor({
   const cancel = useCallback(async () => {
     cancelRequested.current = true;
     userStopped.current = true;
+    trackStudioAction("render_stopped", requestIdRef.current);
     await cancelDeviceRender();
     setMessage(t("studio.editor.stopping"));
   }, [t]);
@@ -2305,13 +2429,34 @@ function StudioEditor({
             document={document}
             transitions={MONTAGE_TRANSITIONS}
             motions={MOTION_PRESETS as MotionPreset[]}
-            onPatchShot={patchShot}
-            onAddScene={addScene}
-            onToggleSource={toggleSource}
-            onSceneTransition={setSceneTransition}
-            onMoveScene={moveScene}
-            onRemoveScene={removeScene}
-            onSceneSummary={setSceneSummary}
+            onPatchShot={(...args: Parameters<typeof patchShot>) => {
+              noteStoryboardEdit("shot");
+              patchShot(...args);
+            }}
+            onAddScene={() => {
+              noteStoryboardEdit("add_scene");
+              addScene();
+            }}
+            onToggleSource={(...args: Parameters<typeof toggleSource>) => {
+              noteStoryboardEdit("pictures");
+              toggleSource(...args);
+            }}
+            onSceneTransition={(...args: Parameters<typeof setSceneTransition>) => {
+              noteStoryboardEdit("transition");
+              setSceneTransition(...args);
+            }}
+            onMoveScene={(...args: Parameters<typeof moveScene>) => {
+              noteStoryboardEdit("move_scene");
+              moveScene(...args);
+            }}
+            onRemoveScene={(...args: Parameters<typeof removeScene>) => {
+              noteStoryboardEdit("remove_scene");
+              removeScene(...args);
+            }}
+            onSceneSummary={(...args: Parameters<typeof setSceneSummary>) => {
+              noteStoryboardEdit("summary");
+              setSceneSummary(...args);
+            }}
             onFit={(seconds) =>
               // With a voice, aim for the comfortable length, not the floor.
               fitStoryboard(
@@ -2455,6 +2600,10 @@ function StudioEditor({
             graphicConfirmed={graphicConfirmed}
             onConfirm={() => {
               setGraphicConfirmed(true);
+              trackStudioAction("style_chosen", requestId, {
+                template: document.templateId ?? null,
+                textStyle: String(document.textStyle ?? DEFAULT_TEXT_GRAPHIC_CHOICE),
+              });
               setStep("render");
               setMessage(
                 mainVideoOutput

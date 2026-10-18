@@ -44,7 +44,8 @@ export const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
     links: [
       { href: ROUTES.ADMIN_ANALYTICS_FUNNEL, label: "Conversion Funnel", icon: "◈" },
       { href: ROUTES.ADMIN_ANALYTICS_PIPELINE, label: "Pipeline Timing", icon: "⌛" },
-      { href: ROUTES.ADMIN_ANALYTICS_APPROVALS, label: "Approval Activity", icon: "⊞" },
+      { href: ROUTES.ADMIN_ANALYTICS_STUDIO, label: "Studio Activity", icon: "⊞" },
+      { href: ROUTES.ADMIN_ANALYTICS_REVENUE, label: "Revenue", icon: "↗" },
       { href: ROUTES.ADMIN_ANALYTICS_CAPACITY, label: "Capacity & CPU", icon: "⚙" },
     ],
   },

@@ -1,427 +1,445 @@
 import { pool } from "@/lib/db";
 import { REPORTING_TIMEZONE } from "@/features/admin/dateRange";
 import { tableExists } from "@/lib/db/tableExists";
+import { VideoGenerationStep as S } from "@/domain/enums/VideoGenerationStep";
+import { toDateOrNull, toInt } from "@/services/admin/analyticsShared";
+import { pipelineStepLabel } from "@/services/admin/AdminStudioActivityService";
 
 /**
- * The nine-stage acquisition → Channel Management funnel.
+ * The new-user funnel, following the studio journey (Oct 2026).
  *
- * NO REPOSITORY ON PURPOSE. This service reads across nine tables that belong
- * to five different aggregates (users, clip requests, pipeline jobs, credits,
- * Channel Management) and produces no domain model — only counts. A repository
- * per table would mean nine singletons in `@/repositories` and a join layer in
- * TypeScript that Postgres does the better job of. `ManagementAuditService`,
- * `LoginEventService` and `AdminFeedbackService` all talk to the shared pool
- * directly for the same reason; the pool is constructor-injected so the tests
- * drive a stub instead of opening a socket.
+ * The studio is now the one way to make a video, and there is no staff or
+ * admin approval anywhere in it: every gate is the requester's own button.
+ * The old nine-stage funnel (paid generation, paid Channel Management…) was
+ * built for the server pipeline and the per-request paywall, both gone. This
+ * one follows a new user from signing up, through each studio milestone, to
+ * taking the finished videos out and publishing them — and, for everyone who
+ * did not get to the end, says WHERE they stopped and what was in their way.
  *
- * COHORT SEMANTICS. Stage 1 is "users who signed up inside the selected range";
- * stages 2–9 count how many of THOSE users have since reached each stage, at
- * any later date — not only inside the range. That choice is what makes the
- * funnel a funnel: if every stage were independently windowed, stage 3 would be
- * counting people who signed up months earlier and the "conversion" between two
- * stages would be a ratio between two unrelated populations. The cost is that
- * the most recent cohorts are always understated (a user who signed up
- * yesterday has not had time to pay), which is exactly why the per-week cohort
- * table exists beside the aggregate.
+ * FURTHEST-STAGE RULE. The studio's milestones happen in a fixed order (no
+ * voice before a script, no render before the voice is approved), so every
+ * user is placed at the furthest milestone there is evidence for, and each
+ * stage counts the users who reached AT LEAST that far. Later evidence implies
+ * the earlier stages: someone with a finished video did sign in and did open
+ * the studio, even if they did it before login tracking (migration 028) or
+ * studio tracking (migration 041) existed. That is what makes the funnel
+ * retroactive and monotonic by construction. The "recorded" count beside each
+ * stage is the direct evidence alone, so a tracking gap stays visible.
  *
- * Everything is `COUNT(DISTINCT user)`; the event count carried beside it is
- * secondary and is only ever shown in small text.
+ * COHORT BASIS. Stage 1 is the users who signed up inside the range; the other
+ * stages count those same users at any later date. Recent cohorts are always
+ * understated — they have had the least time.
+ *
+ * NO REPOSITORY ON PURPOSE: a read across a dozen tables that produces only
+ * counts (same reasoning as before; the pool is injected for tests).
+ *
+ * ID JOIN RULE: both sides cast to text. `clip_requests.id`,
+ * `video_generation_jobs.id/.request_id` are uuid in production and text under
+ * the bare DDL; `clip_requests.user_id` and `video_allowance_windows.user_id`
+ * are TEXT while `users.id` is uuid. Casting one side only fails at runtime in
+ * exactly one environment (42883). Every user id below is `::text`.
  */
 
-/**
- * ID JOIN RULE: cast BOTH sides to text, never one.
- *
- * `clip_requests.id`, `video_generation_jobs.id` and `.request_id` are uuid in
- * some environments and text in others (migrations 006 and 019 inspect
- * `information_schema` for exactly this reason). Casting only one side looks
- * safe and is not: `cr.id::text = j.request_id` is `text = uuid` wherever
- * request_id is a uuid, and Postgres answers `operator does not exist` (42883)
- * — a runtime failure that no environment except the mismatched one will show.
- *
- * Both sides to text is the only form that holds in every environment. It gives
- * up index use on those joins; acceptable here because these are admin
- * analytics reports over small tables, not a request-path query.
- *
- * WHICH CASTS ARE ACTUALLY REMOVABLE, if these reports ever get slow:
- *
- *   - `video_generation_jobs.request_id` → `clip_requests.id` carries a FOREIGN
- *     KEY in production (`video_generation_jobs_request_id_fkey`). A FK cannot
- *     exist between mismatched types, so that pair is guaranteed to agree — both
- *     uuid in production, both text under the bare DDL. Those two casts are
- *     belt-and-braces and could be dropped to recover
- *     `idx_video_generation_jobs_request_id`.
- *   - Everything else genuinely mixes types and MUST stay cast:
- *     `video_generation_step_history.job_id`, `render_tasks.job_id`,
- *     `pipeline_gate_events.job_id` and `ai_content_reports.request_id` are all
- *     TEXT by their own DDL, while the ids they point at are uuid in production.
- *     There is no FK on any of them — deliberately, because the id type varies.
- *
- * Do not "simplify" the second group. That is the group that caused the outage.
- */
-/** Stable keys, in funnel order. The page renders them in this order. */
 export type FunnelStageKey =
   | "signed_up"
-  | "logged_in"
-  | "started_generation"
-  | "reached_final_step"
-  | "paid_for_generation"
-  | "transferred_to_management"
-  | "uploaded_to_management"
-  | "paid_for_management"
+  | "signed_in"
+  | "opened_studio"
+  | "wrote_brief"
+  | "submitted_media"
+  | "storyboard_ready"
+  | "script_approved"
+  | "voice_ready"
+  | "voice_approved"
+  | "render_started"
+  | "main_video_made"
+  | "videos_finished"
+  | "took_videos_out"
   | "published";
 
 export interface FunnelStageDefinition {
   key: FunnelStageKey;
   label: string;
-  /** How the stage is counted — rendered under the bar, not in a tooltip. */
+  /** Short form for the cohort table header. */
+  short: string;
+  /** Which studio screen this happens on, for the reader. */
+  where: string;
+  /** How the direct evidence is counted. */
   hint: string;
 }
 
-/**
- * The stage list, with the counting rule attached to each one.
- *
- * The hint is part of the data, not decoration: "paid for video generation"
- * means a request drawn from a PURCHASED monthly allowance
- * (`pricing_tier = 'paid'`) rather than the free one. Requests are no longer
- * charged individually, so this counts subscribers using what they bought, not
- * one-off payments. An admin comparing this number against the payments page
- * needs to know that before they file a bug about the two disagreeing.
- */
+/** In journey order. Index + 1 is the stage number shown on the page. */
 export const FUNNEL_STAGES: FunnelStageDefinition[] = [
   {
     key: "signed_up",
     label: "Signed up",
-    hint: "live accounts created in range",
+    short: "Signed up",
+    where: "Account",
+    hint: "live, non-admin accounts created in range",
   },
   {
-    key: "logged_in",
-    label: "Logged in",
-    hint: "real sign-ins only; synthetic backfill rows excluded",
+    key: "signed_in",
+    label: "Signed in",
+    short: "Signed in",
+    where: "Account",
+    hint: "a real sign-in (user_login_events, backfill rows excluded)",
   },
   {
-    key: "started_generation",
-    label: "Started generating a video",
-    hint: "request reached a pipeline job, not merely a draft",
+    key: "opened_studio",
+    label: "Opened the studio",
+    short: "Studio",
+    where: "Brief",
+    hint: "studio_open event (studio_events, migration 041)",
   },
   {
-    key: "reached_final_step",
-    label: "Reached the final step",
-    hint: "job history contains awaiting_distribution_review or complete",
+    key: "wrote_brief",
+    label: "Saved a brief",
+    short: "Brief",
+    where: "Brief",
+    hint: "a request exists (Draft or later)",
   },
   {
-    key: "paid_for_generation",
-    label: "Paid for video generation",
-    hint: "request drawn from a purchased monthly allowance",
+    key: "submitted_media",
+    label: "Submitted photos/clips",
+    short: "Submitted",
+    where: "Photos & clips",
+    hint: "the request reached a pipeline job",
   },
   {
-    key: "transferred_to_management",
-    label: "Moved a video to Channel Management",
-    hint: "generated video transferred into Management",
+    key: "storyboard_ready",
+    label: "Storyboard ready",
+    short: "Storyboard",
+    where: "Storyboard",
+    hint: "job reached awaiting_content_approval",
   },
   {
-    key: "uploaded_to_management",
-    label: "Uploaded own video to Channel Management",
-    hint: "own file, no RClipper generation behind it",
+    key: "script_approved",
+    label: "Approved storyboard & script",
+    short: "Script OK",
+    where: "Storyboard → Sound",
+    hint: "job reached generating_voice (start-production)",
   },
   {
-    key: "paid_for_management",
-    label: "Paid for Channel Management",
-    hint: "purchase in status paid",
+    key: "voice_ready",
+    label: "Voice ready",
+    short: "Voice",
+    where: "Sound",
+    hint: "job reached awaiting_voice_approval",
+  },
+  {
+    key: "voice_approved",
+    label: "Approved the voice",
+    short: "Voice OK",
+    where: "Sound → Graphic",
+    hint: "job reached generating_scene_design / awaiting_scene_design_approval",
+  },
+  {
+    key: "render_started",
+    label: "Pressed Make the video",
+    short: "Render",
+    where: "Render",
+    hint: "job reached generating_base_video, or a phone render attempt exists",
+  },
+  {
+    key: "main_video_made",
+    label: "Main video made",
+    short: "Main video",
+    where: "Render",
+    hint: "job reached awaiting_overlay_approval",
+  },
+  {
+    key: "videos_finished",
+    label: "Took the video (channels made)",
+    short: "Finished",
+    where: "Channels",
+    hint: "job reached additional ratios, distribution review or complete",
+  },
+  {
+    key: "took_videos_out",
+    label: "Downloaded or sent to Channel Management",
+    short: "Took out",
+    where: "Channels",
+    hint: "generated video transferred into Management, or a download event",
   },
   {
     key: "published",
-    label: "Published through Channel Management",
-    hint: "at least one destination reached status published",
+    label: "Published a generated video",
+    short: "Published",
+    where: "Channel Management",
+    hint: "a destination of a generated video reached status published",
   },
 ];
 
+/** Pipeline steps that are direct evidence for each stage (index into FUNNEL_STAGES). */
+const STEP_EVIDENCE: Partial<Record<FunnelStageKey, string[]>> = {
+  storyboard_ready: [S.AwaitingContentApproval],
+  script_approved: [S.GeneratingVoice],
+  voice_ready: [S.AwaitingVoiceApproval],
+  voice_approved: [S.GeneratingSceneDesign, S.AwaitingSceneDesignApproval],
+  render_started: [S.GeneratingBaseVideo, S.MergingScenes, S.ComposingFinalVideo, S.GeneratingOverlay],
+  main_video_made: [S.AwaitingOverlayApproval, S.AwaitingFinalApproval],
+  videos_finished: [
+    S.AwaitingAdditionalRatios,
+    S.GeneratingAdditionalRatios,
+    S.AwaitingDistributionReview,
+    S.Publishing,
+    S.Complete,
+  ],
+};
+
 export interface FunnelStageCount extends FunnelStageDefinition {
-  /** Distinct users. The headline number. */
+  /** Users who reached at least this stage. The headline number. */
   users: number;
-  /** Events behind those users — always secondary. */
-  events: number;
+  /** Users with direct evidence for this stage (no implication). */
+  recorded: number;
 }
 
-/** One signup week, with the same nine stages measured for that cohort alone. */
 export interface FunnelCohortRow {
-  /** Monday of the Bangkok signup week, `YYYY-MM-DD`. */
+  /** Monday of the Bangkok signup week. */
   week: string;
-  /** Users per stage, in `FUNNEL_STAGES` order. */
+  /** Users reaching at least each stage, in FUNNEL_STAGES order. */
   users: number[];
 }
 
-/**
- * A stage that came out larger than the one before it.
- *
- * `severity` exists because two of the eight pairs can widen WITHOUT anything
- * being broken, and a page that cried "join bug" at both would be ignored
- * within a week:
- *
- *   - 2 → 3: login tracking only exists from the day `user_login_events`
- *     shipped, so every pre-instrumentation cohort has a stage 2 that is
- *     structurally too small. Stage 3 exceeding it is the expected reading.
- *   - 6 → 7: transferring a generated video and uploading your own are
- *     independent entry paths into Channel Management, not a conversion.
- *
- * Everywhere else, a widening funnel is a defect.
- */
-export interface FunnelWarning {
-  /** 1-based stage numbers, as shown on the page. */
-  fromStage: number;
-  toStage: number;
-  message: string;
-  severity: "bug" | "known-gap";
+/** The users whose furthest stage is this one: they did it and went no further. */
+export interface StopPoint {
+  stageIndex: number;
+  /** The stage they reached. */
+  reachedLabel: string;
+  /** The stage they did not reach (null for the last stage — that is finishing). */
+  nextLabel: string | null;
+  users: number;
+  /** Share of the cohort, 0–100. */
+  pct: number;
+  /** Median days since their last activity. */
+  medianIdleDays: number | null;
+  /** Of these, how many are still active (any activity in the last 3 days). */
+  activeRecently: number;
+  /** Of these, how many hit the free-video limit. */
+  quotaBlocked: number;
+  /** Of these, how many have a failed job. */
+  failed: number;
+  /** Most common failure steps / phone render errors among them. */
+  topProblems: { label: string; users: number }[];
+}
+
+export interface StuckUser {
+  email: string;
+  signedUpAt: Date;
+  stageLabel: string;
+  nextLabel: string | null;
+  lastActiveAt: Date | null;
+  problem: string | null;
 }
 
 export interface FunnelDrop {
   fromLabel: string;
   toLabel: string;
-  /** Users lost between the two stages. */
   dropped: number;
-  /** Share of the earlier stage that was lost, 0–100. */
   pct: number;
+}
+
+export interface FunnelSideMetrics {
+  /** Bought a video package (video_allowance_windows). */
+  boughtPackage: number;
+  /** Of those, how many also reached "Main video made". */
+  boughtAndMadeVideo: number;
+  /** Uploaded their own video into Channel Management. */
+  uploadedOwn: number;
+  /** Hit the free-video limit at least once (studio event). */
+  quotaBlocked: number;
 }
 
 export interface FunnelReport {
   stages: FunnelStageCount[];
   cohorts: FunnelCohortRow[];
-  /** Stage 1. Named separately because the tiles read it directly. */
   totalUsers: number;
-  /** Stage 1 → stage 5, as a percentage. */
-  overallConversionPct: number;
-  /** Largest single stage-to-stage loss, or null when nobody signed up. */
+  /** Signed up → main video made, %. */
+  madeVideoPct: number;
+  /** Signed up → took videos out, %. */
+  tookOutPct: number;
   biggestDrop: FunnelDrop | null;
-  /**
-   * Distinct cohort users with a `request_charge` credit transaction. The
-   * independent cross-check on stage 5: the two are computed from different
-   * tables (the request flag vs the credit ledger) and should agree.
-   */
-  chargedUsers: number;
-  /** Monotonicity violations, classified — see `FunnelWarning`. */
-  warnings: FunnelWarning[];
+  stopPoints: StopPoint[];
+  stuckUsers: StuckUser[];
+  side: FunnelSideMetrics;
+  /** Is studio_events present? Without it stage 3 is implied only. */
+  studioTracking: boolean;
 }
 
-/** Daily signups and distinct daily logins, for the trend chart. */
 export interface SignupLoginPoint {
-  /** `YYYY-MM-DD` in Bangkok. */
   date: string;
   signups: number;
   logins: number;
+  /** Distinct users active in the studio that day (events or a request touched). */
+  studioUsers: number;
 }
 
-/**
- * When login instrumentation actually started producing data.
- *
- * Detected, never hardcoded: migration 028 shipped `user_login_events` with a
- * synthetic `provider = 'backfill'` seed derived from `users.created_at`, so
- * the earliest REAL row is the only honest answer to "from when is stage 2
- * meaningful", and it moves whenever the table is reseeded.
- */
 export interface LoginInstrumentation {
-  /**
-   * Does `user_login_events` exist at all?
-   *
-   * False means migration 028 has not reached this database. The login stage is
-   * then reported as unavailable rather than as zero — "nobody logged in" and
-   * "we are not recording logins" are very different findings, and showing the
-   * first while the second is true is a lie the funnel cannot recover from.
-   */
   available: boolean;
-  /** Earliest non-backfill sign-in, or null when none has been recorded yet. */
   firstRealLoginAt: Date | null;
   realLoginRows: number;
   backfillRows: number;
+  /** First studio event on record (migration 041), or null. */
+  firstStudioEventAt: Date | null;
 }
 
-/**
- * A stand-in with `user_login_events`' shape and no rows.
- *
- * Substituted into the queries when that table is missing, so the funnel still
- * renders every other stage instead of taking the whole page down. One query,
- * one code path — the alternative is duplicating two large SQL statements.
- */
-const EMPTY_LOGIN_SOURCE = `(SELECT NULL::uuid AS user_id,
-                                    ''::text AS provider,
-                                    NULL::timestamptz AS created_at
-                              WHERE false)`;
-
-/** Point the login CTEs at the real table, or at the empty stand-in. */
-function loginSourceSql(sql: string, available: boolean): string {
-  return available
-    ? sql
-    : sql.split("FROM user_login_events le").join(`FROM ${EMPTY_LOGIN_SOURCE} le`);
-}
-
-/**
- * Minimal shape of the `pg` pool this service needs, so tests can inject a stub
- * without constructing a real Pool (which would try to open a socket).
- */
 interface QueryableDb {
   query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
 }
 
-/**
- * `pg` hands back `COUNT(*)`, `SUM()` and every NUMERIC/BIGINT as a STRING.
- * Every count below is already `::int` in SQL, but `SUM()` over an int column
- * is BIGINT and a driver upgrade could change what `::int` yields, so the
- * boundary parses defensively rather than trusting the type.
- */
-function toInt(value: unknown): number {
-  if (value === null || value === undefined) return 0;
-  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value));
-  return Number.isFinite(parsed) ? Math.round(parsed) : 0;
+/** Stand-ins with the right shape and no rows, for tables a migration has not created. */
+const EMPTY_LOGINS = `(SELECT NULL::uuid AS user_id, ''::text AS provider,
+                              NULL::timestamptz AS created_at WHERE false)`;
+const EMPTY_STUDIO = `(SELECT NULL::uuid AS user_id, ''::text AS kind, ''::text AS action,
+                              ''::text AS session_id, ''::text AS step,
+                              NULL::timestamptz AS occurred_at WHERE false)`;
+
+function withSources(sql: string, logins: boolean, studio: boolean): string {
+  let out = sql;
+  if (!logins) out = out.split("FROM user_login_events le").join(`FROM ${EMPTY_LOGINS} le`);
+  if (!studio) out = out.split("FROM studio_events se").join(`FROM ${EMPTY_STUDIO} se`);
+  return out;
 }
 
-function toDateOrNull(value: unknown): Date | null {
-  if (!value) return null;
-  return value instanceof Date ? value : new Date(String(value));
-}
+const stepList = (steps: string[]) => steps.map((step) => `'${step}'`).join(", ");
 
 /**
- * Per-stage user sets, as CTEs.
- *
- * Every set is `(user_id, events)` with AT MOST ONE ROW PER USER, so the nine
- * LEFT JOINs below cannot fan out and `COUNT(sN.user_id)` is a distinct-user
- * count by construction.
- *
- * ID-TYPE HAZARD. `clip_requests.id` and `video_generation_jobs.id` are TEXT in
- * the DDL but uuid in production, `clip_requests.user_id` is TEXT with no FK to
- * `users.id` (uuid), and `video_generation_step_history.job_id` is TEXT with no
- * FK. Every join across that boundary casts explicitly (migrations 006 and 019
- * set the precedent) — an uncast join runs fine in one environment and throws
- * `operator does not exist: uuid = text` in the other. The Management tables
- * and `user_login_events` reference `users(id)` with a real FK, so those joins
- * are uuid-to-uuid and are deliberately left uncast.
- *
- * SOFT DELETES. `users.deleted_at` is honoured: a deleted account is not part
- * of any cohort. `management_content_items.removed_at` is deliberately NOT
- * honoured — the user did transfer or upload that video, and un-counting the
- * stage because they later tidied the item away would rewrite history.
+ * One row per cohort user, with the evidence for every stage and the context
+ * needed to explain a stop. Small: it is only the users who signed up in range.
  */
-const STAGE_SETS_SQL = `
-  cohort AS (
-    SELECT u.id AS user_id,
-           date_trunc('week', u.created_at AT TIME ZONE $3)::date AS cohort_week
+const PER_USER_SQL = `
+  WITH cohort AS (
+    SELECT u.id::text AS uid,
+           u.email,
+           u.created_at,
+           to_char(date_trunc('week', u.created_at AT TIME ZONE $3)::date, 'YYYY-MM-DD') AS cohort_week
       FROM users u
      WHERE u.deleted_at IS NULL
+       AND COALESCE(u.role, 'requester') <> 'admin'
        AND u.created_at >= $1
        AND u.created_at < $2
   ),
-  s2 AS (
-    -- Synthetic backfill rows were derived from users.created_at, so counting
-    -- them would report a 100% login rate for every pre-instrumentation cohort.
-    SELECT le.user_id, COUNT(*)::int AS events
+  logins AS (
+    SELECT le.user_id::text AS uid, MAX(le.created_at) AS last_at
       FROM user_login_events le
      WHERE le.provider <> 'backfill'
      GROUP BY le.user_id
   ),
-  s3 AS (
-    -- "Started generating" means a pipeline job exists. A draft request that
-    -- never reached the pipeline is not a generation attempt.
-    SELECT cr.user_id, COUNT(DISTINCT cr.id)::int AS events
+  studio AS (
+    SELECT se.user_id::text AS uid,
+           BOOL_OR(se.kind = 'studio_open')                                    AS opened,
+           BOOL_OR(se.action = 'quota_blocked')                                AS quota_blocked,
+           BOOL_OR(se.action IN ('video_downloaded', 'sent_to_management'))    AS took_out,
+           MAX(se.occurred_at)                                                 AS last_at
+      FROM studio_events se
+     GROUP BY se.user_id
+  ),
+  reqs AS (
+    SELECT cr.user_id::text AS uid, COUNT(*)::int AS requests, MAX(cr.updated_at) AS last_at
       FROM clip_requests cr
-      JOIN video_generation_jobs j ON j.request_id::text = cr.id::text
      GROUP BY cr.user_id
   ),
-  s4 AS (
-    SELECT cr.user_id, COUNT(DISTINCT h.job_id)::int AS events
-      FROM video_generation_step_history h
-      JOIN video_generation_jobs j ON j.id::text = h.job_id::text
+  jobs AS (
+    SELECT cr.user_id::text AS uid, j.id::text AS job_id, j.current_step, j.failed_at_step,
+           j.updated_at
+      FROM video_generation_jobs j
       JOIN clip_requests cr ON cr.id::text = j.request_id::text
-     WHERE h.step IN ('awaiting_distribution_review', 'complete')
-     GROUP BY cr.user_id
   ),
-  s5 AS (
-    SELECT cr.user_id, COUNT(*)::int AS events
-      FROM clip_requests cr
-     WHERE cr.pricing_tier = 'paid'
-     GROUP BY cr.user_id
+  steps AS (
+    -- Every step a user's jobs have been on: history plus where they are now
+    -- (the current step is evidence even if a history row was never written).
+    SELECT jb.uid, h.step
+      FROM video_generation_step_history h
+      JOIN jobs jb ON jb.job_id::text = h.job_id::text
+    UNION
+    SELECT jb.uid, jb.current_step FROM jobs jb
   ),
-  s6 AS (
-    SELECT m.user_id, COUNT(*)::int AS events
+  step_flags AS (
+    SELECT uid,
+           BOOL_OR(step IN (${stepList(STEP_EVIDENCE.storyboard_ready!)}))  AS storyboard_ready,
+           BOOL_OR(step IN (${stepList(STEP_EVIDENCE.script_approved!)}))   AS script_approved,
+           BOOL_OR(step IN (${stepList(STEP_EVIDENCE.voice_ready!)}))       AS voice_ready,
+           BOOL_OR(step IN (${stepList(STEP_EVIDENCE.voice_approved!)}))    AS voice_approved,
+           BOOL_OR(step IN (${stepList(STEP_EVIDENCE.render_started!)}))    AS render_started,
+           BOOL_OR(step IN (${stepList(STEP_EVIDENCE.main_video_made!)}))   AS main_video_made,
+           BOOL_OR(step IN (${stepList(STEP_EVIDENCE.videos_finished!)}))   AS videos_finished
+      FROM steps
+     GROUP BY uid
+  ),
+  job_summary AS (
+    SELECT uid,
+           COUNT(*)::int AS jobs,
+           MAX(updated_at) AS last_at,
+           -- The latest job's failure, if it is failed now.
+           (ARRAY_AGG(CASE WHEN current_step = '${S.Failed}' THEN COALESCE(failed_at_step, 'unknown') END
+                      ORDER BY updated_at DESC))[1] AS failed_step
+      FROM jobs
+     GROUP BY uid
+  ),
+  phone AS (
+    SELECT a.requester_id::text AS uid,
+           COUNT(*)::int AS attempts,
+           COUNT(*) FILTER (WHERE a.state = 'completed')::int AS completed,
+           (ARRAY_AGG(a.stage || ': ' || LEFT(COALESCE(a.error, 'no reason'), 80) ORDER BY a.created_at DESC)
+              FILTER (WHERE a.state = 'failed'))[1] AS last_error,
+           MAX(a.updated_at) AS last_at
+      FROM device_render_attempts a
+     GROUP BY a.requester_id
+  ),
+  mgmt AS (
+    SELECT m.user_id::text AS uid,
+           BOOL_OR(m.source_type = 'rclipper_generation' AND m.transferred_at IS NOT NULL) AS transferred,
+           BOOL_OR(m.source_type = 'user_upload') AS uploaded_own
       FROM management_content_items m
-     WHERE m.source_type = 'rclipper_generation'
-       AND m.transferred_at IS NOT NULL
      GROUP BY m.user_id
   ),
-  s7 AS (
-    SELECT m.user_id, COUNT(*)::int AS events
-      FROM management_content_items m
-     WHERE m.source_type = 'user_upload'
-     GROUP BY m.user_id
-  ),
-  s8 AS (
-    SELECT p.user_id, COUNT(*)::int AS events
-      FROM management_purchases p
-     WHERE p.status = 'paid'
-     GROUP BY p.user_id
-  ),
-  s9 AS (
-    SELECT p.user_id, COUNT(DISTINCT t.id)::int AS events
+  published AS (
+    SELECT DISTINCT p.user_id::text AS uid
       FROM management_publications p
       JOIN management_publication_targets t ON t.publication_id = p.id
+      JOIN management_content_items m ON m.id = p.management_content_id
      WHERE t.status = 'published'
-     GROUP BY p.user_id
+       AND m.source_type = 'rclipper_generation'
   ),
-  charged AS (
-    -- Cross-check on stage 5 from the other side of the transaction: the credit
-    -- ledger rather than the request's download flag.
-    SELECT ct.user_id, COUNT(*)::int AS events
-      FROM credit_transactions ct
-     WHERE ct.type = 'request_charge'
-     GROUP BY ct.user_id
-  )`;
+  packages AS (
+    SELECT DISTINCT w.user_id::text AS uid
+      FROM video_allowance_windows w
+     WHERE w.status <> 'revoked'
+  )
+  SELECT c.uid,
+         c.email,
+         c.created_at,
+         c.cohort_week,
+         (l.uid IS NOT NULL)                         AS signed_in,
+         COALESCE(st.opened, false)                  AS opened_studio,
+         (r.uid IS NOT NULL)                         AS wrote_brief,
+         (js.uid IS NOT NULL)                        AS submitted_media,
+         COALESCE(sf.storyboard_ready, false)        AS storyboard_ready,
+         COALESCE(sf.script_approved, false)         AS script_approved,
+         COALESCE(sf.voice_ready, false)             AS voice_ready,
+         COALESCE(sf.voice_approved, false)          AS voice_approved,
+         (COALESCE(sf.render_started, false) OR COALESCE(ph.attempts, 0) > 0) AS render_started,
+         COALESCE(sf.main_video_made, false)         AS main_video_made,
+         COALESCE(sf.videos_finished, false)         AS videos_finished,
+         (COALESCE(mg.transferred, false) OR COALESCE(st.took_out, false))    AS took_videos_out,
+         (pb.uid IS NOT NULL)                        AS published,
+         COALESCE(st.quota_blocked, false)           AS quota_blocked,
+         (pk.uid IS NOT NULL)                        AS bought_package,
+         COALESCE(mg.uploaded_own, false)            AS uploaded_own,
+         js.failed_step,
+         ph.last_error                               AS phone_error,
+         GREATEST(l.last_at, st.last_at, r.last_at, js.last_at, ph.last_at, c.created_at) AS last_active_at
+    FROM cohort c
+    LEFT JOIN logins      l  ON l.uid  = c.uid
+    LEFT JOIN studio      st ON st.uid = c.uid
+    LEFT JOIN reqs        r  ON r.uid  = c.uid
+    LEFT JOIN job_summary js ON js.uid = c.uid
+    LEFT JOIN step_flags  sf ON sf.uid = c.uid
+    LEFT JOIN phone       ph ON ph.uid = c.uid
+    LEFT JOIN mgmt        mg ON mg.uid = c.uid
+    LEFT JOIN published   pb ON pb.uid = c.uid
+    LEFT JOIN packages    pk ON pk.uid = c.uid
+   ORDER BY c.created_at`;
 
-/**
- * One query answers both the aggregate funnel and the cohort table.
- *
- * Grouping by signup week and summing the columns in TypeScript guarantees the
- * two views can never disagree — which they would, sooner or later, if the page
- * ran the funnel once over the range and again per week.
- */
-const FUNNEL_BY_COHORT_SQL = `
-  WITH${STAGE_SETS_SQL}
-  SELECT
-    to_char(c.cohort_week, 'YYYY-MM-DD')                AS cohort_week,
-    COUNT(*)::int                                       AS s1_users,
-    COUNT(*)::int                                       AS s1_events,
-    COUNT(s2.user_id)::int                              AS s2_users,
-    COALESCE(SUM(s2.events), 0)::int                    AS s2_events,
-    COUNT(s3.user_id)::int                              AS s3_users,
-    COALESCE(SUM(s3.events), 0)::int                    AS s3_events,
-    COUNT(s4.user_id)::int                              AS s4_users,
-    COALESCE(SUM(s4.events), 0)::int                    AS s4_events,
-    COUNT(s5.user_id)::int                              AS s5_users,
-    COALESCE(SUM(s5.events), 0)::int                    AS s5_events,
-    COUNT(s6.user_id)::int                              AS s6_users,
-    COALESCE(SUM(s6.events), 0)::int                    AS s6_events,
-    COUNT(s7.user_id)::int                              AS s7_users,
-    COALESCE(SUM(s7.events), 0)::int                    AS s7_events,
-    COUNT(s8.user_id)::int                              AS s8_users,
-    COALESCE(SUM(s8.events), 0)::int                    AS s8_events,
-    COUNT(s9.user_id)::int                              AS s9_users,
-    COALESCE(SUM(s9.events), 0)::int                    AS s9_events,
-    COUNT(charged.user_id)::int                         AS charged_users
-  FROM cohort c
-  LEFT JOIN s2      ON s2.user_id::text      = c.user_id::text
-  LEFT JOIN s3      ON s3.user_id::text      = c.user_id::text
-  LEFT JOIN s4      ON s4.user_id::text      = c.user_id::text
-  LEFT JOIN s5      ON s5.user_id::text      = c.user_id::text
-  LEFT JOIN s6      ON s6.user_id::text      = c.user_id::text
-  LEFT JOIN s7      ON s7.user_id::text      = c.user_id::text
-  LEFT JOIN s8      ON s8.user_id::text      = c.user_id::text
-  LEFT JOIN s9      ON s9.user_id::text      = c.user_id::text
-  LEFT JOIN charged ON charged.user_id::text = c.user_id::text
-  GROUP BY c.cohort_week
-  ORDER BY c.cohort_week`;
-
-/**
- * Daily signups and distinct daily logins.
- *
- * `generate_series` supplies every Bangkok day in range so the line has no gaps
- * — a day with no signups must plot as zero, not vanish and let the line
- * interpolate across it.
- */
 const SIGNUP_LOGIN_TREND_SQL = `
   WITH days AS (
     SELECT generate_series(
@@ -434,114 +452,196 @@ const SIGNUP_LOGIN_TREND_SQL = `
     SELECT (u.created_at AT TIME ZONE $3)::date AS day, COUNT(*)::int AS n
       FROM users u
      WHERE u.deleted_at IS NULL
-       AND u.created_at >= $1
-       AND u.created_at < $2
+       AND COALESCE(u.role, 'requester') <> 'admin'
+       AND u.created_at >= $1 AND u.created_at < $2
      GROUP BY 1
   ),
   logins AS (
-    SELECT (le.created_at AT TIME ZONE $3)::date AS day,
-           COUNT(DISTINCT le.user_id)::int AS n
+    SELECT (le.created_at AT TIME ZONE $3)::date AS day, COUNT(DISTINCT le.user_id)::int AS n
       FROM user_login_events le
      WHERE le.provider <> 'backfill'
-       AND le.created_at >= $1
-       AND le.created_at < $2
+       AND le.created_at >= $1 AND le.created_at < $2
      GROUP BY 1
+  ),
+  studio AS (
+    SELECT day, COUNT(DISTINCT uid)::int AS n FROM (
+      SELECT (se.occurred_at AT TIME ZONE $3)::date AS day, se.user_id::text AS uid
+        FROM studio_events se
+       WHERE se.occurred_at >= $1 AND se.occurred_at < $2
+      UNION ALL
+      SELECT (cr.updated_at AT TIME ZONE $3)::date, cr.user_id::text
+        FROM clip_requests cr
+       WHERE cr.updated_at >= $1 AND cr.updated_at < $2
+    ) active
+    GROUP BY day
   )
   SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
-         COALESCE(s.n, 0)::int        AS signups,
-         COALESCE(l.n, 0)::int        AS logins
+         COALESCE(s.n, 0)::int  AS signups,
+         COALESCE(l.n, 0)::int  AS logins,
+         COALESCE(st.n, 0)::int AS studio_users
     FROM days d
-    LEFT JOIN signups s ON s.day = d.day
-    LEFT JOIN logins  l ON l.day = d.day
+    LEFT JOIN signups s  ON s.day  = d.day
+    LEFT JOIN logins  l  ON l.day  = d.day
+    LEFT JOIN studio  st ON st.day = d.day
    ORDER BY d.day`;
 
-export class AdminFunnelService {
-  constructor(private db: QueryableDb = pool) {}
+/** The evidence columns of PER_USER_SQL, in FUNNEL_STAGES order (stage 1 is the cohort itself). */
+const EVIDENCE_COLUMNS: (FunnelStageKey | null)[] = FUNNEL_STAGES.map((stage, i) =>
+  i === 0 ? null : stage.key
+);
 
-  /**
-   * The whole page in one round trip: aggregate funnel, per-week cohorts, the
-   * credit cross-check and the monotonicity warnings.
-   */
-  async getFunnelReport(from: Date, to: Date): Promise<FunnelReport> {
-    const loginsAvailable = await tableExists("user_login_events", this.db);
-    const { rows } = await this.db.query(loginSourceSql(FUNNEL_BY_COHORT_SQL, loginsAvailable), [
-      from,
-      to,
-      REPORTING_TIMEZONE,
-    ]);
-
-    const cohorts: FunnelCohortRow[] = rows.map((row) => ({
-      week: String(row.cohort_week),
-      users: FUNNEL_STAGES.map((_, i) => toInt(row[`s${i + 1}_users`])),
-    }));
-
-    const stages: FunnelStageCount[] = FUNNEL_STAGES.map((stage, i) => ({
-      ...stage,
-      users: sumColumn(rows, `s${i + 1}_users`),
-      events: sumColumn(rows, `s${i + 1}_events`),
-    }));
-
-    const totalUsers = stages[0]?.users ?? 0;
-    const paidUsers = stages[4]?.users ?? 0;
-
-    return {
-      stages,
-      cohorts,
-      totalUsers,
-      overallConversionPct: totalUsers > 0 ? (paidUsers / totalUsers) * 100 : 0,
-      biggestDrop: findBiggestDrop(stages),
-      chargedUsers: sumColumn(rows, "charged_users"),
-      warnings: monotonicWarnings(stages),
-    };
-  }
-
-  async getSignupLoginTrend(from: Date, to: Date): Promise<SignupLoginPoint[]> {
-    const loginsAvailable = await tableExists("user_login_events", this.db);
-    const { rows } = await this.db.query(loginSourceSql(SIGNUP_LOGIN_TREND_SQL, loginsAvailable), [
-      from,
-      to,
-      REPORTING_TIMEZONE,
-    ]);
-    return rows.map((row) => ({
-      date: String(row.date),
-      signups: toInt(row.signups),
-      logins: toInt(row.logins),
-    }));
-  }
-
-  /**
-   * When stage 2 started being real. Deliberately unfiltered by range: the page
-   * needs the absolute first real sign-in to say "before this date, stage 2 is
-   * structurally zero", and a range-scoped MIN would move with the picker and
-   * mean nothing.
-   */
-  async getLoginInstrumentation(): Promise<LoginInstrumentation> {
-    if (!(await tableExists("user_login_events", this.db))) {
-      return { available: false, firstRealLoginAt: null, realLoginRows: 0, backfillRows: 0 };
-    }
-    const { rows } = await this.db.query(
-      `SELECT MIN(created_at) FILTER (WHERE provider <> 'backfill') AS first_real_login,
-              COUNT(*) FILTER (WHERE provider <> 'backfill')::int   AS real_rows,
-              COUNT(*) FILTER (WHERE provider = 'backfill')::int    AS backfill_rows
-         FROM user_login_events`
-    );
-    const row = rows[0] ?? {};
-    return {
-      available: true,
-      firstRealLoginAt: toDateOrNull(row.first_real_login),
-      realLoginRows: toInt(row.real_rows),
-      backfillRows: toInt(row.backfill_rows),
-    };
-  }
+/** One cohort user as the report needs it. */
+export interface FunnelUserRow {
+  email: string;
+  signedUpAt: Date;
+  week: string;
+  /** Direct evidence per stage, FUNNEL_STAGES order; index 0 is always true. */
+  evidence: boolean[];
+  /** Furthest stage index with evidence. */
+  furthest: number;
+  quotaBlocked: boolean;
+  boughtPackage: boolean;
+  uploadedOwn: boolean;
+  failedStep: string | null;
+  phoneError: string | null;
+  lastActiveAt: Date | null;
 }
 
-/** Column-wise sum across the cohort rows, parsing each cell defensively. */
-function sumColumn(rows: Record<string, unknown>[], column: string): number {
-  return rows.reduce((total, row) => total + toInt(row[column]), 0);
+export function toFunnelUserRow(row: Record<string, unknown>): FunnelUserRow {
+  const evidence = EVIDENCE_COLUMNS.map((column) => (column ? row[column] === true : true));
+  let furthest = 0;
+  evidence.forEach((has, i) => {
+    if (has) furthest = i;
+  });
+  return {
+    email: String(row.email ?? ""),
+    signedUpAt: toDateOrNull(row.created_at) ?? new Date(0),
+    week: String(row.cohort_week ?? ""),
+    evidence,
+    furthest,
+    quotaBlocked: row.quota_blocked === true,
+    boughtPackage: row.bought_package === true,
+    uploadedOwn: row.uploaded_own === true,
+    failedStep: row.failed_step ? String(row.failed_step) : null,
+    phoneError: row.phone_error ? String(row.phone_error) : null,
+    lastActiveAt: toDateOrNull(row.last_active_at),
+  };
+}
+
+const DAY_MS = 86_400_000;
+const ACTIVE_RECENTLY_DAYS = 3;
+
+/** What most likely stopped this user, in words an admin can act on. */
+export function problemFor(user: FunnelUserRow): string | null {
+  if (user.failedStep) return `Video failed during: ${pipelineStepLabel(user.failedStep)}`;
+  const nextKey = FUNNEL_STAGES[user.furthest + 1]?.key;
+  if (user.phoneError && (nextKey === "main_video_made" || nextKey === "render_started")) {
+    return `Phone render error — ${user.phoneError}`;
+  }
+  if (user.quotaBlocked && user.furthest < 4) return "Hit the free-video limit";
+  return null;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** Build the whole report from per-user rows. Pure, so it is tested directly. */
+export function buildFunnelReport(
+  users: FunnelUserRow[],
+  options: { now?: Date; studioTracking: boolean }
+): FunnelReport {
+  const now = options.now ?? new Date();
+  const total = users.length;
+
+  const stages: FunnelStageCount[] = FUNNEL_STAGES.map((stage, i) => ({
+    ...stage,
+    users: users.filter((user) => user.furthest >= i).length,
+    recorded: users.filter((user) => user.evidence[i]).length,
+  }));
+
+  const weeks = [...new Set(users.map((user) => user.week))].sort();
+  const cohorts: FunnelCohortRow[] = weeks.map((week) => {
+    const inWeek = users.filter((user) => user.week === week);
+    return {
+      week,
+      users: FUNNEL_STAGES.map((_, i) => inWeek.filter((user) => user.furthest >= i).length),
+    };
+  });
+
+  const stopPoints: StopPoint[] = FUNNEL_STAGES.map((stage, i) => {
+    const here = users.filter((user) => user.furthest === i);
+    const idle = here
+      .filter((user) => user.lastActiveAt)
+      .map((user) => (now.getTime() - (user.lastActiveAt as Date).getTime()) / DAY_MS);
+    const problems = new Map<string, number>();
+    for (const user of here) {
+      const problem = problemFor(user);
+      if (problem) problems.set(problem, (problems.get(problem) ?? 0) + 1);
+    }
+    return {
+      stageIndex: i,
+      reachedLabel: stage.label,
+      nextLabel: FUNNEL_STAGES[i + 1]?.label ?? null,
+      users: here.length,
+      pct: total > 0 ? (here.length / total) * 100 : 0,
+      medianIdleDays: median(idle),
+      activeRecently: idle.filter((days) => days <= ACTIVE_RECENTLY_DAYS).length,
+      quotaBlocked: here.filter((user) => user.quotaBlocked).length,
+      failed: here.filter((user) => user.failedStep).length,
+      topProblems: [...problems.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([label, count]) => ({ label, users: count })),
+    };
+  });
+
+  const last = FUNNEL_STAGES.length - 1;
+  const stuckUsers: StuckUser[] = users
+    .filter((user) => user.furthest < last)
+    .sort(
+      (a, b) =>
+        (b.lastActiveAt?.getTime() ?? 0) - (a.lastActiveAt?.getTime() ?? 0)
+    )
+    .slice(0, 30)
+    .map((user) => ({
+      email: user.email,
+      signedUpAt: user.signedUpAt,
+      stageLabel: FUNNEL_STAGES[user.furthest].label,
+      nextLabel: FUNNEL_STAGES[user.furthest + 1]?.label ?? null,
+      lastActiveAt: user.lastActiveAt,
+      problem: problemFor(user),
+    }));
+
+  const mainVideoIndex = FUNNEL_STAGES.findIndex((stage) => stage.key === "main_video_made");
+  const tookOutIndex = FUNNEL_STAGES.findIndex((stage) => stage.key === "took_videos_out");
+
+  return {
+    stages,
+    cohorts,
+    totalUsers: total,
+    madeVideoPct: total > 0 ? (stages[mainVideoIndex].users / total) * 100 : 0,
+    tookOutPct: total > 0 ? (stages[tookOutIndex].users / total) * 100 : 0,
+    biggestDrop: findBiggestDrop(stages),
+    stopPoints,
+    stuckUsers,
+    side: {
+      boughtPackage: users.filter((user) => user.boughtPackage).length,
+      boughtAndMadeVideo: users.filter(
+        (user) => user.boughtPackage && user.furthest >= mainVideoIndex
+      ).length,
+      uploadedOwn: users.filter((user) => user.uploadedOwn).length,
+      quotaBlocked: users.filter((user) => user.quotaBlocked).length,
+    },
+    studioTracking: options.studioTracking,
+  };
 }
 
 /** Largest single stage-to-stage loss. Ties resolve to the earliest pair. */
-export function findBiggestDrop(stages: FunnelStageCount[]): FunnelDrop | null {
+export function findBiggestDrop(stages: { label: string; users: number }[]): FunnelDrop | null {
   let worst: FunnelDrop | null = null;
   for (let i = 1; i < stages.length; i += 1) {
     const previous = stages[i - 1];
@@ -559,67 +659,74 @@ export function findBiggestDrop(stages: FunnelStageCount[]): FunnelDrop | null {
   return worst;
 }
 
-/**
- * A funnel that widens is, almost always, a join bug rather than an insight.
- *
- * Every stage is measured over the SAME cohort of signed-up users, so no stage
- * can legitimately exceed the one before it: reaching the final step requires
- * having started, publishing requires content in Management. If a count grows,
- * the usual cause is a join that fanned out (a user matched several rows in a
- * set that was supposed to be one-row-per-user) or a cast that silently matched
- * the wrong column. The page shows these instead of drawing a bar wider than
- * its parent, which would read as a discovery rather than a defect.
- *
- * The two pairs that can widen honestly are classified as `known-gap` so the
- * page can present them as notes rather than as alarms — see `FunnelWarning`.
- * Without that split the red banner would be permanent for every window that
- * predates login instrumentation, and a permanent alarm is not an alarm.
- */
-export function monotonicWarnings(stages: FunnelStageCount[]): FunnelWarning[] {
-  const warnings: FunnelWarning[] = [];
-  for (let i = 1; i < stages.length; i += 1) {
-    const previous = stages[i - 1];
-    const current = stages[i];
-    if (current.users <= previous.users) continue;
+export class AdminFunnelService {
+  constructor(private db: QueryableDb = pool) {}
 
-    const preamble =
-      `Stage ${i + 1} "${current.label}" (${current.users.toLocaleString()}) exceeds ` +
-      `stage ${i} "${previous.label}" (${previous.users.toLocaleString()}).`;
-
-    if (i === 2) {
-      warnings.push({
-        fromStage: i,
-        toStage: i + 1,
-        severity: "known-gap",
-        message:
-          `${preamble} Expected for any cohort that signed up before login tracking ` +
-          `existed: those users generated videos, but their sign-ins were never recorded. ` +
-          `It only indicates a bug for cohorts after the instrumentation date below.`,
-      });
-      continue;
-    }
-
-    if (i === 6) {
-      warnings.push({
-        fromStage: i,
-        toStage: i + 1,
-        severity: "known-gap",
-        message:
-          `${preamble} Stages 6 and 7 are independent entry paths into Channel ` +
-          `Management, so this reads as users uploading their own videos without ` +
-          `ever transferring a generated one — not as a broken join.`,
-      });
-      continue;
-    }
-
-    warnings.push({
-      fromStage: i,
-      toStage: i + 1,
-      severity: "bug",
-      message: `${preamble} A funnel cannot widen — check the join for that stage.`,
-    });
+  private async sources(): Promise<{ logins: boolean; studio: boolean }> {
+    const [logins, studio] = await Promise.all([
+      tableExists("user_login_events", this.db),
+      tableExists("studio_events", this.db),
+    ]);
+    return { logins, studio };
   }
-  return warnings;
+
+  async getFunnelReport(from: Date, to: Date, now: Date = new Date()): Promise<FunnelReport> {
+    const { logins, studio } = await this.sources();
+    const { rows } = await this.db.query(withSources(PER_USER_SQL, logins, studio), [
+      from,
+      to,
+      REPORTING_TIMEZONE,
+    ]);
+    return buildFunnelReport(rows.map(toFunnelUserRow), { now, studioTracking: studio });
+  }
+
+  async getSignupLoginTrend(from: Date, to: Date): Promise<SignupLoginPoint[]> {
+    const { logins, studio } = await this.sources();
+    const { rows } = await this.db.query(withSources(SIGNUP_LOGIN_TREND_SQL, logins, studio), [
+      from,
+      to,
+      REPORTING_TIMEZONE,
+    ]);
+    return rows.map((row) => ({
+      date: String(row.date),
+      signups: toInt(row.signups),
+      logins: toInt(row.logins),
+      studioUsers: toInt(row.studio_users),
+    }));
+  }
+
+  /** When login and studio tracking started producing data (unfiltered by range). */
+  async getLoginInstrumentation(): Promise<LoginInstrumentation> {
+    const { logins, studio } = await this.sources();
+    let firstStudioEventAt: Date | null = null;
+    if (studio) {
+      const { rows } = await this.db.query(`SELECT MIN(occurred_at) AS first_at FROM studio_events`);
+      firstStudioEventAt = toDateOrNull(rows[0]?.first_at);
+    }
+    if (!logins) {
+      return {
+        available: false,
+        firstRealLoginAt: null,
+        realLoginRows: 0,
+        backfillRows: 0,
+        firstStudioEventAt,
+      };
+    }
+    const { rows } = await this.db.query(
+      `SELECT MIN(created_at) FILTER (WHERE provider <> 'backfill') AS first_real_login,
+              COUNT(*) FILTER (WHERE provider <> 'backfill')::int   AS real_rows,
+              COUNT(*) FILTER (WHERE provider = 'backfill')::int    AS backfill_rows
+         FROM user_login_events`
+    );
+    const row = rows[0] ?? {};
+    return {
+      available: true,
+      firstRealLoginAt: toDateOrNull(row.first_real_login),
+      realLoginRows: toInt(row.real_rows),
+      backfillRows: toInt(row.backfill_rows),
+      firstStudioEventAt,
+    };
+  }
 }
 
 export const adminFunnelService = new AdminFunnelService();

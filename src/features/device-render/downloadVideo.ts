@@ -6,6 +6,7 @@ import { isNativeMobile } from "@/lib/mobile/platform";
 import { downloadVideoToAppCache, removeAppCacheCopy } from "@/lib/mobile/nativeDownload";
 import { finishedVideoUri, shareableCopy } from "@/lib/mobile/finishedVideoCache";
 import { saveVideoToPhoneGallery, type GallerySaveResult } from "@/lib/mobile/deviceRenderBridge";
+import { trackStudioAction } from "./studioTracker";
 
 /** What a download did, so the button can say where the video went. */
 export interface StudioDownloadResult {
@@ -73,8 +74,15 @@ export async function downloadStudioVideo(input: {
   // The server's checks (ownership, a locked download) apply to the phone's
   // own copy too: it is only offered when the server would offer the file.
   if (response && (!response.ok || !body.url || !body.downloadUrl)) {
+    if (response.status === 402 || response.status === 410) {
+      trackStudioAction("download_blocked", input.requestId, { status: response.status });
+    }
     throw new Error(body.error ?? input.failedMessage ?? "The video could not be downloaded.");
   }
+  trackStudioAction("video_downloaded", input.requestId, {
+    channel: input.channel ?? null,
+    madeOnPhone: Boolean(kept),
+  });
   const fileName = sanitize(
     body.fileName ?? (input.channel ? `RClipper - ${input.channel}.mp4` : "rclipper-video.mp4")
   );

@@ -50,7 +50,10 @@ export const ROUTES = {
   ADMIN_FEEDBACK: "/admin/feedback",
   ADMIN_ANALYTICS_FUNNEL: "/admin/analytics/funnel",
   ADMIN_ANALYTICS_PIPELINE: "/admin/analytics/pipeline",
+  /** Retired Oct 2026 — redirects to ADMIN_ANALYTICS_STUDIO for old bookmarks. */
   ADMIN_ANALYTICS_APPROVALS: "/admin/analytics/approvals",
+  ADMIN_ANALYTICS_STUDIO: "/admin/analytics/studio",
+  ADMIN_ANALYTICS_REVENUE: "/admin/analytics/revenue",
   ADMIN_ANALYTICS_CAPACITY: "/admin/analytics/capacity",
 
   // Requester Portal — Phase 2B

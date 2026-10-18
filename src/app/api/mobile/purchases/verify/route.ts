@@ -3,12 +3,18 @@ import { getServerSession } from "next-auth";
 import { z } from "zod";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
-import { mobileStorePurchaseService } from "@/services/MobileStorePurchaseService";
+import {
+  cleanClientPrice,
+  mobileStorePurchaseService,
+} from "@/services/MobileStorePurchaseService";
 
 const purchaseSchema = z.object({
   platform: z.enum(["ios", "android"]),
   productId: z.string().trim().min(3).max(200),
   transactionId: z.string().trim().min(3).max(4096),
+  /** The store price the app showed (Play Billing / StoreKit product). Optional. */
+  price: z.number().optional(),
+  currency: z.string().max(8).optional(),
 });
 
 export async function POST(request: Request) {
@@ -24,9 +30,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid store purchase." }, { status: 422 });
   }
   try {
+    const { price, currency, ...purchase } = parsed.data;
     const result = await mobileStorePurchaseService.verifyAndGrant({
       userId: session.user.id,
-      ...parsed.data,
+      ...purchase,
+      clientPrice: cleanClientPrice({ amount: price, currency }),
     });
     return NextResponse.json(result);
   } catch (err) {

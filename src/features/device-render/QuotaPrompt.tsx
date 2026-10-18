@@ -8,6 +8,7 @@ import { ENTRY_PACKAGE, managementPriceCredits } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { useStudioT } from "./studioI18n";
 import type { StudioT } from "./studioText";
+import { trackStudioAction } from "./studioTracker";
 
 /**
  * The account's video allowance, as the studio needs it.
@@ -82,7 +83,10 @@ function QuotaActions({ onLeave }: { onLeave?: () => void }) {
       <Link
         href={pricingHref}
         className="studio-button studio-button-primary"
-        onClick={onLeave}
+        onClick={() => {
+          trackStudioAction("pricing_opened", null, { from: "quota" });
+          onLeave?.();
+        }}
       >
         {t("studio.quota.packages")}
       </Link>
