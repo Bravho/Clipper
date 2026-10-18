@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clsx } from "clsx";
-import { ADMIN_NAV_GROUPS, isAdminLinkActive } from "@/config/adminNav";
+import { useMemo } from "react";
+import { ADMIN_NAV_GROUPS, CAMPAIGN_ADMIN_NAV_GROUP, isAdminLinkActive } from "@/config/adminNav";
 import { useRegisterPortalNavSections } from "@/components/layout/PortalNav";
 
 /**
@@ -23,10 +24,21 @@ import { useRegisterPortalNavSections } from "@/components/layout/PortalNav";
  * Red accents distinguish the admin portal from the requester portal's blue,
  * matching the red "Admin Portal" label the old strip carried.
  */
-export function AdminShell({ children }: { children: React.ReactNode }) {
+export function AdminShell({
+  children,
+  showCampaigns = false,
+}: {
+  children: React.ReactNode;
+  /** Server-decided: is this account a Merchant Campaign operator? */
+  showCampaigns?: boolean;
+}) {
   const pathname = usePathname();
+  const groups = useMemo(
+    () => (showCampaigns ? [...ADMIN_NAV_GROUPS, CAMPAIGN_ADMIN_NAV_GROUP] : ADMIN_NAV_GROUPS),
+    [showCampaigns]
+  );
 
-  useRegisterPortalNavSections(ADMIN_NAV_GROUPS);
+  useRegisterPortalNavSections(groups);
 
   return (
     <div className="flex w-full min-w-0 bg-slate-50">
@@ -39,7 +51,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex flex-1 flex-col gap-5 overflow-y-auto p-3">
-          {ADMIN_NAV_GROUPS.map((group) => (
+          {groups.map((group) => (
             <div key={group.id}>
               <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
                 {group.title}

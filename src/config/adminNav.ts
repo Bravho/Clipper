@@ -64,6 +64,17 @@ export const ADMIN_NAV_GROUPS: AdminNavGroup[] = [
   },
 ];
 
+/**
+ * Merchant Referral Campaigns — shown only to the operator e-mails
+ * (`config/merchantCampaigns.ts`), whatever their role, so it is not part of
+ * ADMIN_NAV_GROUPS; `AdminShell` appends it when the server says so.
+ */
+export const CAMPAIGN_ADMIN_NAV_GROUP: AdminNavGroup = {
+  id: "admin-campaigns",
+  title: "Merchant Campaigns",
+  links: [{ href: ROUTES.CAMPAIGN_ADMIN, label: "Shop Campaigns", icon: "⌗" }],
+};
+
 /** Every admin link, flattened — used by the dashboard's Quick Links block. */
 export const ADMIN_NAV_LINKS: PortalNavLink[] = ADMIN_NAV_GROUPS.flatMap(
   (group) => group.links

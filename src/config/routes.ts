@@ -40,6 +40,12 @@ export const ROUTES = {
   ADMIN: "/admin",
   ACCOUNT: "/account",
 
+  // Merchant Referral Campaigns. /scan and /c/<slug> are public (no login,
+  // app only); /campaigns is the operator page (any role, e-mail allow-list).
+  SCAN: "/scan",
+  CAMPAIGN: "/c",
+  CAMPAIGN_ADMIN: "/campaigns",
+
   // Admin Portal sections. Every one of these sits under ROUTES.ADMIN, so the
   // existing middleware matcher (`/admin/:path*`) gates them with no change.
   ADMIN_REQUESTS: "/admin/requests",

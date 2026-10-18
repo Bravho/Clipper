@@ -20,7 +20,14 @@ const roleBadgeVariant: Record<Role, "blue" | "green" | "red"> = {
   [Role.Admin]: "red",
 };
 
-export function Navbar({ showStudio = false }: { showStudio?: boolean }) {
+export function Navbar({
+  showStudio = false,
+  showScan = false,
+}: {
+  showStudio?: boolean;
+  /** Inside the app: "Scan shop QR" for Merchant Campaigns (no login needed). */
+  showScan?: boolean;
+}) {
   const { t } = useI18n();
   const { data: session, status } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -64,6 +71,11 @@ export function Navbar({ showStudio = false }: { showStudio?: boolean }) {
             {showStudio && (
               <Link href={ROUTES.STUDIO} className="text-sm font-medium text-blue-700 hover:text-blue-900">
                 {t("nav.newVideo")}
+              </Link>
+            )}
+            {showScan && (
+              <Link href={ROUTES.SCAN} className="text-sm font-medium text-slate-700 hover:text-slate-900">
+                {t("nav.scanShop")}
               </Link>
             )}
             {isLoading ? null : user ? (
@@ -131,6 +143,15 @@ export function Navbar({ showStudio = false }: { showStudio?: boolean }) {
             onClick={closeDrawer}
           >
             {t("nav.newVideo")}
+          </Link>
+        )}
+        {showScan && (
+          <Link
+            href={ROUTES.SCAN}
+            className="rounded-md px-3 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-100 hover:text-slate-900"
+            onClick={closeDrawer}
+          >
+            {t("nav.scanShop")}
           </Link>
         )}
         {user ? (

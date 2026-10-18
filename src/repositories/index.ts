@@ -146,3 +146,10 @@ import { PostgresManagementJobRepository } from "./postgres/PostgresManagementJo
 export const managementPublicationRepository =
   new PostgresManagementPublicationRepository();
 export const managementJobRepository = new PostgresManagementJobRepository();
+
+// ── Merchant Referral Campaigns — PostgreSQL ─────────────────────────────────
+// Shops, quick-video templates, campaigns, anonymous creators, referral codes,
+// reward claims and post links. Requires migration 043.
+import { PostgresMerchantCampaignRepository } from "./postgres/PostgresMerchantCampaignRepository";
+
+export const merchantCampaignRepository = new PostgresMerchantCampaignRepository();
