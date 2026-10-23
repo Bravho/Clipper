@@ -27,15 +27,18 @@ import { useI18n } from "@/i18n/client";
 export function DashboardShell({
   children,
   showManagement = false,
+  showCampaigns = false,
 }: {
   children: React.ReactNode;
   /** Server-evaluated: is RClipper Management enabled for this user? */
   showManagement?: boolean;
+  /** Server-evaluated: is this account a Merchant Campaign operator? */
+  showCampaigns?: boolean;
 }) {
   const { t } = useI18n();
   const pathname = usePathname();
 
-  const navLinks = useRequesterNavLinks(showManagement);
+  const navLinks = useRequesterNavLinks(showManagement, showCampaigns);
 
   // Mirror these links into the navbar hamburger for small screens.
   useRegisterPortalNav({ id: "requester-portal", title: "RClipper Portal", links: navLinks });
@@ -97,7 +100,7 @@ export function DashboardShell({
  * on a phone. Shared so a page outside the dashboard layout (the studio)
  * offers exactly the same menu instead of a shorter one.
  */
-export function useRequesterNavLinks(showManagement: boolean) {
+export function useRequesterNavLinks(showManagement: boolean, showCampaigns = false) {
   const { t } = useI18n();
   return [
     { href: ROUTES.DASHBOARD, label: t("nav.dashboard"), icon: "▣" },
@@ -116,6 +119,10 @@ export function useRequesterNavLinks(showManagement: boolean) {
           { href: ROUTES.MANAGEMENT_CONNECTIONS, label: t("sidebar.channels"), icon: "⚙" },
           { href: ROUTES.MANAGEMENT_POSTS, label: t("sidebar.posts"), icon: "▤" },
         ]
+      : []),
+    // Merchant Referral Campaigns: operator e-mails only (server-decided).
+    ...(showCampaigns
+      ? [{ href: ROUTES.CAMPAIGN_ADMIN, label: t("sidebar.campaigns"), icon: "⌗" }]
       : []),
   ];
 }

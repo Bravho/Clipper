@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { isManagementEnabledFor } from "@/config/management";
 import { DashboardShell } from "@/components/layout/DashboardShell";
+import { isCampaignOperator } from "@/config/merchantCampaigns";
 
 /**
  * Requester dashboard layout.
@@ -30,5 +31,12 @@ export default async function DashboardLayout({
       })
     : false;
 
-  return <DashboardShell showManagement={showManagement}>{children}</DashboardShell>;
+  return (
+    <DashboardShell
+      showManagement={showManagement}
+      showCampaigns={isCampaignOperator(session?.user?.email)}
+    >
+      {children}
+    </DashboardShell>
+  );
 }

@@ -98,6 +98,18 @@ export function VideoLibrary({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [list, setList] = useState(videos);
+  // `useState(videos)` only reads its argument on the FIRST render. A
+  // `router.refresh()` (after an upload, a publish or a delete) re-runs the
+  // server page and hands this component a NEW `videos` array, but React keeps
+  // the old state — so a freshly uploaded video never appeared until a full
+  // reload. Re-sync whenever the server sends a new list. The parent is a
+  // server component, so the prop only changes identity on a real refresh.
+  useEffect(() => {
+    setList(videos);
+  }, [videos]);
+  // The id of a video the user just uploaded: highlighted, paged to and
+  // scrolled into view once the refreshed list contains it.
+  const [uploadedId, setUploadedId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [tokens, setTokens] = useState(tokensRemaining);
   const [publishingVideo, setPublishingVideo] = useState<PublishFlowVideo | null>(null);
@@ -158,6 +170,20 @@ export function VideoLibrary({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [arrived, list, pathname, router, searchParams, t]);
 
+  useEffect(() => {
+    if (!uploadedId) return;
+    const index = list.findIndex((item) => item.id === uploadedId);
+    if (index < 0) return; // the refresh has not landed yet
+    setPage(Math.floor(index / PAGE_SIZE) + 1);
+    setNotice(t("upload.done", { title: list[index].title }));
+    const id = uploadedId;
+    window.setTimeout(() => {
+      document
+        .getElementById(`management-video-${id}`)
+        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 60);
+  }, [list, uploadedId, t]);
+
   function closePublishingFlow() {
     setPublishingVideo(null);
     if (!searchParams.has("publish")) return;
@@ -195,7 +221,13 @@ export function VideoLibrary({
             </p>
           </div>
           {canUpload ? (
-            <UploadVideoButton maxMB={uploadMaxMB} />
+            <UploadVideoButton
+              maxMB={uploadMaxMB}
+              onUploaded={(contentId) => {
+                setNotice(null);
+                setUploadedId(contentId);
+              }}
+            />
           ) : (
             <div className="text-right">
               <Button size="sm" disabled>
@@ -231,7 +263,7 @@ export function VideoLibrary({
               <VideoRow
                 key={v.id}
                 video={v}
-                highlighted={arrived.has(v.id)}
+                highlighted={arrived.has(v.id) || v.id === uploadedId}
                 publishReady={unlimited || tokens > 0}
                 onRemoved={() => setList((cur) => cur.filter((x) => x.id !== v.id))}
                 onSaved={(updated) =>

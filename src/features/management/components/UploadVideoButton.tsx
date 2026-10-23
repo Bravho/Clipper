@@ -25,9 +25,12 @@ const POSTER_MAX_EDGE = 640;
 export function UploadVideoButton({
   maxMB,
   disabled,
+  onUploaded,
 }: {
   maxMB: number;
   disabled?: boolean;
+  /** Called with the new content id once the upload is recorded server-side. */
+  onUploaded?: (contentId: string) => void;
 }) {
   const { t } = useI18n();
   const router = useRouter();
@@ -221,6 +224,7 @@ export function UploadVideoButton({
       setTitle("");
       if (fileRef.current) fileRef.current.value = "";
       setPhase("idle");
+      onUploaded?.(begin.contentId);
       router.refresh();
     } catch {
       setError(t("upload.failed"));

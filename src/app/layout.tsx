@@ -67,6 +67,10 @@ export default async function RootLayout({
   const showStudio =
     session?.user?.role === Role.Requester &&
     (process.env.NODE_ENV === "development" || isAppUserAgent(headers().get("user-agent")));
+  // "Scan shop QR" (Merchant Campaigns) is for anyone inside the app, signed
+  // in or not — a customer at a shop does not need an account.
+  const showScan =
+    process.env.NODE_ENV === "development" || isAppUserAgent(headers().get("user-agent"));
 
   return (
     <html lang={locale}>
@@ -87,7 +91,7 @@ export default async function RootLayout({
             <AppleReturnRecovery />
             <NativePushRegistration />
             <NativeStatusBar />
-            <Navbar showStudio={showStudio} />
+            <Navbar showStudio={showStudio} showScan={showScan} />
             {/* min-w-0 lets flex children shrink below their content width,
                 which is what stops wide cards/tables forcing a page-level
                 horizontal scroll on phones. */}
