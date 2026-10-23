@@ -1871,3 +1871,151 @@ a.studio-button {
   outline: 2px solid var(--s-accent);
   outline-offset: 1px;
 }
+
+/* ── Feedback: rate the video, or report a content problem ─────────────────
+   The old pipeline's "give feedback or report this video" (ReportAiContent),
+   rebuilt in the studio's own skin. Rating uses the accent (it is the live
+   action on this card); the report side uses danger so it never reads as the
+   same act as giving stars. */
+
+.studio-segment {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 16px;
+  border-radius: var(--s-radius);
+  background: var(--s-surface-raised);
+  border: 1px solid var(--s-border);
+}
+
+.studio-segment-option {
+  min-height: var(--s-tap);
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  line-height: 1.25;
+  background: transparent;
+  color: var(--s-text-muted);
+  font-size: 14px;
+  font-weight: 650;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.studio-segment-option[aria-selected="true"] {
+  background: var(--s-surface);
+  color: var(--s-text);
+  box-shadow: 0 1px 2px rgb(17 24 39 / 0.08), 0 0 0 1px var(--s-border);
+}
+
+.studio-segment-option[aria-selected="true"] > span {
+  color: var(--s-accent-strong);
+}
+
+.studio-segment-option[data-tone="danger"][aria-selected="true"] {
+  color: var(--s-danger);
+}
+
+.studio-segment-option[data-tone="danger"][aria-selected="true"] > span {
+  color: var(--s-danger);
+}
+
+.studio-segment-option:focus-visible,
+.studio-star:focus-visible,
+.studio-feedback-link:focus-visible {
+  outline: 2px solid var(--s-accent-strong);
+  outline-offset: 2px;
+}
+
+.studio-stars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.studio-star {
+  width: var(--s-tap);
+  height: var(--s-tap);
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  font-size: 32px;
+  line-height: 1;
+  color: var(--s-border-strong);
+  transition: transform 0.1s ease, color 0.12s ease;
+}
+
+.studio-star[data-on="true"] {
+  color: var(--s-accent);
+}
+
+.studio-star:active {
+  transform: scale(0.88);
+}
+
+.studio-stars-word {
+  flex-basis: 100%;
+  margin: 2px 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--s-text-muted);
+}
+
+.studio-feedback-chip {
+  font-size: 13px;
+}
+
+.studio-chip-row[data-tone="danger"] .studio-chip[aria-pressed="true"] {
+  border-color: var(--s-danger);
+  background: color-mix(in srgb, var(--s-danger) 10%, var(--s-surface-raised));
+  color: var(--s-text);
+}
+
+.studio-feedback-thanks {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.studio-feedback-thanks-mark {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--s-positive) 14%, var(--s-surface));
+  color: var(--s-positive);
+  font-weight: 800;
+}
+
+.studio-feedback-thanks-title {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.studio-feedback-thanks-stars {
+  margin: 4px 0 0;
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: var(--s-accent);
+}
+
+.studio-feedback-thanks-stars span {
+  color: var(--s-border-strong);
+}
+
+.studio-feedback-link {
+  margin: 10px 0 0 48px;
+  min-height: var(--s-tap);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--s-accent-text);
+  font-size: 14px;
+  font-weight: 650;
+}
