@@ -10,8 +10,12 @@ import {
   uploadedAssetRepository,
   publishingLinkRepository,
   requestStatusHistoryRepository,
+  videoGenerationJobRepository,
+  deviceRenderAttemptRepository,
 } from "@/repositories";
 import { AdminStatusBadge } from "@/features/admin/components/AdminStatusBadge";
+import { RequestJourneyTimeline } from "@/features/admin/components/RequestJourneyTimeline";
+import { adminRequestJourneyService } from "@/services/admin/AdminRequestJourneyService";
 
 export const metadata: Metadata = { title: "Request Detail — Admin" };
 
@@ -32,6 +36,15 @@ export default async function AdminRequestDetailPage({
   ]);
 
   if (!request) notFound();
+
+  // Studio journey (read-only): the latest job, its step log, phone render
+  // attempts, app studio clicks and Channel Management records.
+  const [job, attempts, journeyExtras] = await Promise.all([
+    videoGenerationJobRepository.findByRequestId(id),
+    deviceRenderAttemptRepository.listByRequest(id),
+    adminRequestJourneyService.extrasFor(id),
+  ]);
+  const jobHistory = job ? await videoGenerationJobRepository.listStepHistory(job.id) : [];
 
   const now = new Date();
   const isOverdue =
@@ -60,6 +73,15 @@ export default async function AdminRequestDetailPage({
         </div>
         <p className="mt-1 text-xs text-slate-400">ID: {request.id}</p>
       </div>
+
+      <RequestJourneyTimeline
+        request={request}
+        job={job}
+        history={jobHistory}
+        attempts={attempts}
+        assets={assets}
+        extras={journeyExtras}
+      />
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left column — brief + operational data */}

@@ -18,7 +18,14 @@ const STATUS_CONFIG: Record<
   [RequestStatus.AutoCancelled]:         { label: "Auto-Cancelled",         className: "bg-red-100 text-red-700" },
 };
 
-export function AdminStatusBadge({ status }: { status: RequestStatus }) {
+export function AdminStatusBadge({
+  status,
+  size = "md",
+}: {
+  status: RequestStatus;
+  /** "sm" = the small secondary badge under the studio step on All Requests. */
+  size?: "md" | "sm";
+}) {
   const { label, className } = STATUS_CONFIG[status] ?? {
     label: status,
     className: "bg-slate-100 text-slate-600",
@@ -26,7 +33,9 @@ export function AdminStatusBadge({ status }: { status: RequestStatus }) {
 
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${className}`}
+      className={`inline-flex items-center rounded-full font-medium ${
+        size === "sm" ? "px-1.5 py-px text-[10px]" : "px-2.5 py-0.5 text-xs"
+      } ${className}`}
     >
       {label}
     </span>
