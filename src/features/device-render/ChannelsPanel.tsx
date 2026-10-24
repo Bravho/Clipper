@@ -12,6 +12,7 @@ import { DownloadVideoButton, ResumeCallout, type ResumeControls } from "./Downl
 import { useStudioT } from "./studioI18n";
 import { ChannelHandover, type StudioManagement } from "./ChannelHandover";
 import { StudioVideo } from "./StudioVideo";
+import { StudioFeedback } from "./StudioFeedback";
 import type { VideoAccessView } from "@/services/VideoAccessService";
 
 const STAGES: ("montage" | "master" | "final")[] = ["montage", "master", "final"];
@@ -282,6 +283,10 @@ export function ChannelsPanel({
           access={access}
         />
       )}
+
+      {/* Rate the video / report a content problem — the old pipeline's
+          ReportAiContent, back for studio videos once the main one exists. */}
+      {!before && requestId && <StudioFeedback requestId={requestId} />}
     </>
   );
 }
