@@ -25,7 +25,7 @@ export function PlanComparison({ t }: { t: Translate }) {
     {
       key: "free",
       name: t("limits.free.name"),
-      price: t("limits.free.price"),
+      price: t("limits.free.price", { videos: FREE_FACTS.videos }),
       highlight: false,
       lines: [
         t("limits.free.videos", { videos: FREE_FACTS.videos, days: FREE_FACTS.days }),

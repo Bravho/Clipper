@@ -77,12 +77,20 @@ export interface CampaignTemplate {
   defaultMusicTrackId: string;
   /** Which caption slot the customer's sentence is drawn in. */
   captionLanguage: "th" | "en";
+  /**
+   * Story formats the customer can choose from (max 4, ids from
+   * `config/campaignStoryFormats.ts`). Empty = the original single-clip video.
+   */
+  storyFormats: string[];
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export type CreateCampaignTemplateInput = Omit<CampaignTemplate, "id" | "createdAt" | "updatedAt">;
+export type CreateCampaignTemplateInput = Omit<
+  CampaignTemplate,
+  "id" | "createdAt" | "updatedAt" | "storyFormats"
+> & { storyFormats?: string[] };
 export type UpdateCampaignTemplateInput = Partial<
   Omit<CampaignTemplate, "id" | "merchantId" | "createdBy" | "createdAt" | "updatedAt">
 >;
@@ -109,6 +117,17 @@ export interface MerchantCampaign {
   endsAt: Date | null;
   /** First time the campaign went live; codes issued from then are published. */
   publishedAt: Date | null;
+  /**
+   * The creator must verify a phone by SMS code before the quick video is
+   * made (default). iTravy uses it to refuse a creator's own code.
+   */
+  requirePhoneOtp: boolean;
+  /**
+   * The iTravy referral campaign (uuid, from the iTravy admin page) where
+   * friends redeem this campaign's codes. Null = not linked yet: codes are
+   * issued but iTravy cannot redeem them.
+   */
+  itravyCampaignId: string | null;
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -125,7 +144,7 @@ export type CreateMerchantCampaignInput = Pick<
   | "startsAt"
   | "endsAt"
   | "createdBy"
-> & { slug: string; qrKey: string };
+> & { slug: string; qrKey: string; requirePhoneOtp?: boolean; itravyCampaignId?: string | null };
 
 export type UpdateMerchantCampaignInput = Partial<
   Pick<
@@ -140,6 +159,8 @@ export type UpdateMerchantCampaignInput = Partial<
     | "endsAt"
     | "qrKey"
     | "publishedAt"
+    | "requirePhoneOtp"
+    | "itravyCampaignId"
   >
 >;
 
@@ -149,8 +170,28 @@ export interface CampaignCreator {
   /** sha256(pepper + install id) — the raw id never reaches the database. */
   installHash: string;
   platform: "ios" | "android" | "web" | null;
+  /** HMAC(pepper, E.164 number) of the SMS-verified phone; null until verified. */
+  phoneHash: string | null;
+  /** Last four digits, for support only. */
+  phoneLast4: string | null;
+  phoneVerifiedAt: Date | null;
+  /** When iTravy last accepted this phone for the creator (iTravy keeps it per creator). */
+  itravyPhoneSyncedAt: Date | null;
   createdAt: Date;
   lastSeenAt: Date;
+}
+
+/** One SMS code sent to a phone (stored hashed). */
+export interface CampaignPhoneOtp {
+  id: string;
+  installHash: string;
+  phoneHash: string;
+  phoneLast4: string;
+  codeHash: string;
+  attempts: number;
+  expiresAt: Date;
+  verifiedAt: Date | null;
+  createdAt: Date;
 }
 
 /** A creator taking part in one campaign; owns the immutable referral code. */
@@ -162,6 +203,10 @@ export interface CreatorCampaign {
   referralCode: string;
   videosMade: number;
   lastVideoAt: Date | null;
+  /** iTravy accepted this code (it can be redeemed there). */
+  itravyRegisteredAt: Date | null;
+  /** Last refusal from iTravy, for the operator page. */
+  itravyError: string | null;
   createdAt: Date;
 }
 
@@ -174,6 +219,8 @@ export interface CreatorRewardClaim {
   campaignId: string;
   merchantId: string;
   installHash: string;
+  /** The creator's verified phone at claim time, if any. */
+  phoneHash: string | null;
   referralCode: string;
   status: RewardClaimStatus;
   claimedAt: Date;

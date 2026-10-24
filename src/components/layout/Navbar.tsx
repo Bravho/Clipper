@@ -104,6 +104,12 @@ export function Navbar({
               </>
             ) : (
               <>
+                <Link
+                  href={ROUTES.PUBLIC_PRICING}
+                  className="text-sm font-semibold text-blue-700 hover:text-blue-900"
+                >
+                  {t("nav.pricing")}
+                </Link>
                 <Link href={ROUTES.LOGIN} className="text-sm text-slate-600 hover:text-slate-900">
                   {t("nav.signIn")}
                 </Link>
@@ -115,6 +121,16 @@ export function Navbar({
             )}
           </div>
 
+          {/* Signed out on a phone/tablet: keep Pricing visible next to the menu,
+              not only inside the drawer. */}
+          {!isLoading && !user && (
+            <Link
+              href={ROUTES.PUBLIC_PRICING}
+              className="ml-auto flex-shrink-0 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 lg:hidden"
+            >
+              {t("nav.pricing")}
+            </Link>
+          )}
           {/* Mobile / tablet menu button — 44px hit target per iOS HIG */}
           <button
             type="button"
@@ -190,6 +206,13 @@ export function Navbar({
           </>
         ) : (
           <>
+            <Link
+              href={ROUTES.PUBLIC_PRICING}
+              className="rounded-md px-3 py-2.5 text-sm font-medium text-slate-900 hover:bg-slate-100"
+              onClick={closeDrawer}
+            >
+              {t("nav.pricing")}
+            </Link>
             <Link
               href={ROUTES.LOGIN}
               className="rounded-md px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900"

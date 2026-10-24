@@ -72,7 +72,12 @@ export async function getInstallId(): Promise<string> {
 
 /** A refusal from the campaign API, with its machine-readable code. */
 export class CampaignApiError extends Error {
-  constructor(message: string, readonly code: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: number,
+    readonly details: Record<string, unknown> = {}
+  ) {
     super(message);
     this.name = "CampaignApiError";
   }
@@ -100,7 +105,8 @@ async function call<T>(
     throw new CampaignApiError(
       typeof json.error === "string" ? json.error : `HTTP ${response.status}`,
       typeof json.code === "string" ? json.code : "server_error",
-      response.status
+      response.status,
+      json
     );
   }
   return json as T;
@@ -122,14 +128,45 @@ export interface CampaignManifestResponse {
   useClipSound: boolean;
   musicTrackId: string;
   pictureSeconds: number;
+  clipAssetIds: string[];
+  formatId: string | null;
+  moodId: string | null;
 }
 
 export function fetchCampaignManifest(
   slug: string,
   qrKey: string,
-  body: { localId: string; mimeType: string; durationSeconds: number; statement: string; sound: string }
+  body: {
+    shots: { localId: string; mimeType: string; durationSeconds: number }[];
+    statement: string;
+    sound: string;
+    format: string | null;
+    mood: string | null;
+    pick: string | null;
+  }
 ) {
   return call<CampaignManifestResponse>(slug, "/manifest", { method: "POST", qrKey, body });
+}
+
+export interface PhoneCodeSent {
+  challengeId: string;
+  maskedPhone: string;
+  expiresInSeconds: number;
+  resendAfterSeconds: number;
+}
+
+/** Creator phone OTP: send the SMS code. */
+export function sendPhoneCode(slug: string, qrKey: string, phone: string, lang: string) {
+  return call<PhoneCodeSent>(slug, "/phone/send", { method: "POST", qrKey, body: { phone, lang } });
+}
+
+/** Creator phone OTP: check the code (the server also hands the phone to iTravy). */
+export function verifyPhoneCode(
+  slug: string,
+  qrKey: string,
+  body: { challengeId: string; code: string; phone: string }
+) {
+  return call<{ status: CreatorCampaignStatus }>(slug, "/phone/verify", { method: "POST", qrKey, body });
 }
 
 export function reportVideoMade(slug: string, qrKey: string) {

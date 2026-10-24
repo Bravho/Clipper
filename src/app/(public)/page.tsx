@@ -16,6 +16,7 @@ import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import { ENTRY_PACKAGE, managementPriceCredits } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS } from "@/config/packageTiers";
 import { StoreButtons } from "@/features/marketing/StoreButtons";
+import { AppWelcome } from "@/features/marketing/AppWelcome";
 
 /**
  * The marketing home page — what a web browser sees at rclipper.
@@ -37,9 +38,10 @@ export default async function HomePage() {
     // making a video works (see middleware).
     redirect(getRoleHomePath(session.user.role as Role));
   } else if (inApp) {
-    // Inside the app there is nothing to download: go to sign-in (which links
-    // to sign-up).
-    redirect(ROUTES.LOGIN);
+    // Inside the app there is nothing to download: show the welcome screen —
+    // what RClipper is, who it is for, how it works — with sign-up and
+    // sign-in one tap away, instead of opening straight onto the login form.
+    return <AppWelcome t={t} freeTotal={FREE_REQUESTS_TOTAL} />;
   }
 
   // The cheapest package on sale: Starter, 1 month (config/management.ts).

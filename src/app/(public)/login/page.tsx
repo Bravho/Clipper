@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { redirect } from "next/navigation";
-import { getRoleHomePath, ROUTES } from "@/config/routes";
+import { getRoleHomePath, ROUTES, safeReturnPath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { LoginForm } from "@/features/auth/components/LoginForm";
 import { getServerI18n } from "@/i18n/server";
@@ -31,8 +31,10 @@ const NOTICE_KEYS: Record<string, MessageKey> = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams?: { message?: string; error?: string; notice?: string };
+  searchParams?: { message?: string; error?: string; notice?: string; callbackUrl?: string };
 }) {
+  // Only same-site studio/dashboard paths are honoured (no open redirect).
+  const callbackUrl = safeReturnPath(searchParams?.callbackUrl) ?? undefined;
   const { t } = getServerI18n();
   const session = await getServerSession(authOptions);
   if (session?.user) {
@@ -71,7 +73,7 @@ export default async function LoginPage({
           </div>
         )}
 
-        <LoginForm />
+        <LoginForm callbackUrl={callbackUrl} />
 
         <div className="mt-6 border-t border-slate-200 pt-4">
           <p className="text-center text-xs text-slate-400">

@@ -9,7 +9,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { campaignCreatorService } from "@/services/campaigns";
-import { NO_STORE, accessOf, failure, installIdOf, limited, platformOf, readJson } from "../../_shared";
+import { NO_STORE, accessOf, failure, installIdOf, limited, platformOf, readJson, signalsOf } from "../../_shared";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,8 @@ export async function POST(request: NextRequest, { params }: { params: { slug: s
     const { resolved, status } = await campaignCreatorService.startSession(
       accessOf(params.slug, request, body),
       installIdOf(request),
-      platformOf(request)
+      platformOf(request),
+      signalsOf(request)
     );
     return NextResponse.json(
       { campaign: campaignCreatorService.publicView(resolved), status },

@@ -14,7 +14,8 @@ import { fetchWithTimeout, RequestTimeoutError } from "@/lib/fetchWithTimeout";
 import { useI18n } from "@/i18n/client";
 import { localizeValidation } from "@/i18n/validationMessages";
 
-export function SignupForm() {
+/** `callbackUrl`: already sanitised (safeReturnPath); where to land after social sign-up. */
+export function SignupForm({ callbackUrl }: { callbackUrl?: string } = {}) {
   const { t } = useI18n();
   const v = (message: string | undefined) => localizeValidation(t, message);
   const router = useRouter();
@@ -107,7 +108,7 @@ export function SignupForm() {
       )}
 
       <SocialSignInButtons
-        callbackUrl={ROUTES.DASHBOARD}
+        callbackUrl={callbackUrl ?? ROUTES.DASHBOARD}
         dividerLabel={t("signup.orEmail")}
         dividerPlacement="after"
         googleLabel={t("signup.google")}
@@ -175,7 +176,7 @@ export function SignupForm() {
         <p className="text-center text-sm text-slate-500">
           {t("signup.haveAccount")}{" "}
           <Link
-            href={ROUTES.LOGIN}
+            href={callbackUrl ? `${ROUTES.LOGIN}?callbackUrl=${encodeURIComponent(callbackUrl)}` : ROUTES.LOGIN}
             className="text-blue-700 font-medium hover:underline"
           >
             {t("nav.signIn")}

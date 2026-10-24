@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { redirect } from "next/navigation";
-import { getRoleHomePath } from "@/config/routes";
+import { getRoleHomePath, safeReturnPath } from "@/config/routes";
 import { Role } from "@/domain/enums/Role";
 import { SignupForm } from "@/features/auth/components/SignupForm";
 import { getServerI18n } from "@/i18n/server";
@@ -12,8 +12,14 @@ export const metadata: Metadata = {
   description: "สร้างบัญชี RClipper ฟรีและเริ่มต้นด้วย 30 เครดิต",
 };
 
-export default async function SignupPage() {
+export default async function SignupPage({
+  searchParams,
+}: {
+  searchParams?: { callbackUrl?: string };
+}) {
   const { t } = getServerI18n();
+  // Only same-site studio/dashboard paths are honoured (no open redirect).
+  const callbackUrl = safeReturnPath(searchParams?.callbackUrl) ?? undefined;
   const session = await getServerSession(authOptions);
   if (session?.user) {
     redirect(getRoleHomePath(session.user.role as Role));
@@ -32,7 +38,7 @@ export default async function SignupPage() {
           </p>
         </div>
 
-        <SignupForm />
+        <SignupForm callbackUrl={callbackUrl} />
       </div>
     </div>
   );

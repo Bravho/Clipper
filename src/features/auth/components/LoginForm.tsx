@@ -16,7 +16,12 @@ import { ROUTES } from "@/config/routes";
 import { useI18n } from "@/i18n/client";
 import { localizeValidation } from "@/i18n/validationMessages";
 
-export function LoginForm() {
+/**
+ * `callbackUrl`: an already-sanitised (safeReturnPath) page to open after
+ * signing in — e.g. /dashboard/pricing when coming from a public "buy" button.
+ * Without it the user goes to their role's home as before.
+ */
+export function LoginForm({ callbackUrl }: { callbackUrl?: string } = {}) {
   const { t } = useI18n();
   const v = (message: string | undefined) => localizeValidation(t, message);
   const router = useRouter();
@@ -58,7 +63,8 @@ export function LoginForm() {
         // Fetch session to get role for redirect
         const session = await getSession();
         const role = session?.user?.role as Role | undefined;
-        const destination = role ? getRoleHomePath(role) : ROUTES.DASHBOARD;
+        const home = role ? getRoleHomePath(role) : ROUTES.DASHBOARD;
+        const destination = callbackUrl && role === Role.Requester ? callbackUrl : home;
         router.push(destination);
         router.refresh();
       }
@@ -110,6 +116,7 @@ export function LoginForm() {
       </Button>
 
       <SocialSignInButtons
+        callbackUrl={callbackUrl}
         dividerLabel={t("login.or")}
         dividerPlacement="before"
         googleLabel={t("login.google")}
@@ -122,7 +129,10 @@ export function LoginForm() {
         <div className="flex-1 border-t border-slate-200" />
       </div>
 
-      <Link href={ROUTES.SIGNUP} className="w-full">
+      <Link
+        href={callbackUrl ? `${ROUTES.SIGNUP}?callbackUrl=${encodeURIComponent(callbackUrl)}` : ROUTES.SIGNUP}
+        className="w-full"
+      >
         <Button variant="outline" fullWidth>
           {t("login.createFree")}
         </Button>

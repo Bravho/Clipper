@@ -3,6 +3,7 @@ import { pool } from "@/lib/db";
 import type { IMerchantCampaignRepository } from "@/repositories/interfaces/IMerchantCampaignRepository";
 import type {
   CampaignCreator,
+  CampaignPhoneOtp,
   CampaignStats,
   CampaignStatus,
   CampaignTemplate,
@@ -59,6 +60,8 @@ function toTemplate(r: Row): CampaignTemplate {
     defaultStatement: str(r.default_statement),
     defaultMusicTrackId: str(r.default_music_track_id),
     captionLanguage: str(r.caption_language) === "en" ? "en" : "th",
+    // 045; absent before it is applied → no formats (the original video).
+    storyFormats: Array.isArray(r.story_formats) ? (r.story_formats as string[]) : [],
     createdBy: (r.created_by as string | null) ?? null,
     createdAt: new Date(r.created_at as string),
     updatedAt: new Date(r.updated_at as string),
@@ -80,6 +83,9 @@ function toCampaign(r: Row): MerchantCampaign {
     startsAt: dateOrNull(r.starts_at),
     endsAt: dateOrNull(r.ends_at),
     publishedAt: dateOrNull(r.published_at),
+    // Columns from 044; before it is applied they are absent → safe defaults.
+    requirePhoneOtp: r.require_phone_otp == null ? true : Boolean(r.require_phone_otp),
+    itravyCampaignId: (r.itravy_campaign_id as string | null) ?? null,
     createdBy: (r.created_by as string | null) ?? null,
     createdAt: new Date(r.created_at as string),
     updatedAt: new Date(r.updated_at as string),
@@ -91,6 +97,10 @@ function toCreator(r: Row): CampaignCreator {
     id: str(r.id),
     installHash: str(r.install_hash),
     platform: (r.platform as CampaignCreator["platform"]) ?? null,
+    phoneHash: (r.phone_hash as string | null) ?? null,
+    phoneLast4: (r.phone_last4 as string | null) ?? null,
+    phoneVerifiedAt: dateOrNull(r.phone_verified_at),
+    itravyPhoneSyncedAt: dateOrNull(r.itravy_phone_synced_at),
     createdAt: new Date(r.created_at as string),
     lastSeenAt: new Date(r.last_seen_at as string),
   };
@@ -105,6 +115,8 @@ function toCreatorCampaign(r: Row): CreatorCampaign {
     referralCode: str(r.referral_code),
     videosMade: Number(r.videos_made ?? 0),
     lastVideoAt: dateOrNull(r.last_video_at),
+    itravyRegisteredAt: dateOrNull(r.itravy_registered_at),
+    itravyError: (r.itravy_error as string | null) ?? null,
     createdAt: new Date(r.created_at as string),
   };
 }
@@ -117,9 +129,24 @@ function toClaim(r: Row): CreatorRewardClaim {
     campaignId: str(r.campaign_id),
     merchantId: str(r.merchant_id),
     installHash: str(r.install_hash),
+    phoneHash: (r.phone_hash as string | null) ?? null,
     referralCode: str(r.referral_code),
     status: str(r.status) as RewardClaimStatus,
     claimedAt: new Date(r.claimed_at as string),
+  };
+}
+
+function toOtp(r: Row): CampaignPhoneOtp {
+  return {
+    id: str(r.id),
+    installHash: str(r.install_hash),
+    phoneHash: str(r.phone_hash),
+    phoneLast4: str(r.phone_last4),
+    codeHash: str(r.code_hash),
+    attempts: Number(r.attempts ?? 0),
+    expiresAt: new Date(r.expires_at as string),
+    verifiedAt: dateOrNull(r.verified_at),
+    createdAt: new Date(r.created_at as string),
   };
 }
 
@@ -183,6 +210,7 @@ const TEMPLATE_COLUMNS = {
   defaultStatement: "default_statement",
   defaultMusicTrackId: "default_music_track_id",
   captionLanguage: "caption_language",
+  storyFormats: "story_formats",
 };
 
 const CAMPAIGN_COLUMNS = {
@@ -196,6 +224,8 @@ const CAMPAIGN_COLUMNS = {
   endsAt: "ends_at",
   qrKey: "qr_key",
   publishedAt: "published_at",
+  requirePhoneOtp: "require_phone_otp",
+  itravyCampaignId: "itravy_campaign_id",
 };
 
 function isUniqueViolation(error: unknown, constraintHint?: string): boolean {
@@ -235,6 +265,15 @@ export class PostgresMerchantCampaignRepository implements IMerchantCampaignRepo
   }
 
   async createTemplate(input: CreateCampaignTemplateInput): Promise<CampaignTemplate> {
+    const created = await this.insertTemplate(input);
+    // 045 column written as an update, so creating still works before 045.
+    if (input.storyFormats && input.storyFormats.length > 0) {
+      return (await this.updateTemplate(created.id, { storyFormats: input.storyFormats })) ?? created;
+    }
+    return created;
+  }
+
+  private async insertTemplate(input: CreateCampaignTemplateInput): Promise<CampaignTemplate> {
     const { rows } = await this.db.query(
       `INSERT INTO campaign_templates
          (id, merchant_id, name, motion_template_id, text_style_id, accent_color,
@@ -285,6 +324,20 @@ export class PostgresMerchantCampaignRepository implements IMerchantCampaignRepo
   }
 
   async createCampaign(input: CreateMerchantCampaignInput): Promise<MerchantCampaign> {
+    const created = await this.insertCampaign(input);
+    // 044 columns are written as an update, so a create still works before 044.
+    if (input.requirePhoneOtp !== undefined || input.itravyCampaignId !== undefined) {
+      return (
+        (await this.updateCampaign(created.id, {
+          requirePhoneOtp: input.requirePhoneOtp,
+          itravyCampaignId: input.itravyCampaignId,
+        })) ?? created
+      );
+    }
+    return created;
+  }
+
+  private async insertCampaign(input: CreateMerchantCampaignInput): Promise<MerchantCampaign> {
     const { rows } = await this.db.query(
       `INSERT INTO merchant_campaigns
          (id, merchant_id, template_id, slug, qr_key, title, discount_percent,
@@ -431,6 +484,7 @@ export class PostgresMerchantCampaignRepository implements IMerchantCampaignRepo
   async claimReward(input: {
     creatorCampaign: CreatorCampaign;
     installHash: string;
+    phoneHash: string | null;
     cooldownDays: number;
     now: Date;
   }): Promise<{ claim: CreatorRewardClaim; lastGranted: CreatorRewardClaim | null }> {
@@ -442,11 +496,18 @@ export class PostgresMerchantCampaignRepository implements IMerchantCampaignRepo
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         `campaign-claim:${input.installHash}:${input.creatorCampaign.campaignId}`,
       ]);
+      if (input.phoneHash) {
+        // Two installs with one phone: serialise on the phone too.
+        await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+          `campaign-claim-phone:${input.phoneHash}:${input.creatorCampaign.campaignId}`,
+        ]);
+      }
       const last = await client.query(
         `SELECT * FROM creator_reward_claims
-          WHERE install_hash = $1 AND campaign_id = $2 AND status = 'granted'
+          WHERE campaign_id = $2 AND status = 'granted'
+            AND (install_hash = $1 OR ($3::text IS NOT NULL AND phone_hash = $3::text))
           ORDER BY claimed_at DESC LIMIT 1`,
-        [input.installHash, input.creatorCampaign.campaignId]
+        [input.installHash, input.creatorCampaign.campaignId, input.phoneHash]
       );
       const lastGranted = last.rows[0] ? toClaim(last.rows[0]) : null;
       const windowStart = input.now.getTime() - input.cooldownDays * 86_400_000;
@@ -454,8 +515,8 @@ export class PostgresMerchantCampaignRepository implements IMerchantCampaignRepo
       const { rows } = await client.query(
         `INSERT INTO creator_reward_claims
            (id, creator_campaign_id, creator_id, campaign_id, merchant_id, install_hash,
-            referral_code, status, claimed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+            referral_code, status, claimed_at, phone_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
         [
           `rwc_${randomUUID()}`,
           input.creatorCampaign.id,
@@ -466,6 +527,7 @@ export class PostgresMerchantCampaignRepository implements IMerchantCampaignRepo
           input.creatorCampaign.referralCode,
           blocked ? "rejected_limit" : "granted",
           input.now,
+          input.phoneHash,
         ]
       );
       await client.query("COMMIT");
@@ -478,14 +540,107 @@ export class PostgresMerchantCampaignRepository implements IMerchantCampaignRepo
     }
   }
 
-  async lastGrantedClaim(installHash: string, campaignId: string): Promise<CreatorRewardClaim | null> {
+  async lastGrantedClaim(
+    installHash: string,
+    campaignId: string,
+    phoneHash: string | null = null
+  ): Promise<CreatorRewardClaim | null> {
     const { rows } = await this.db.query(
       `SELECT * FROM creator_reward_claims
-        WHERE install_hash = $1 AND campaign_id = $2 AND status = 'granted'
+        WHERE campaign_id = $2 AND status = 'granted'
+          AND (install_hash = $1 OR ($3::text IS NOT NULL AND phone_hash = $3::text))
         ORDER BY claimed_at DESC LIMIT 1`,
-      [installHash, campaignId]
+      [installHash, campaignId, phoneHash]
     );
     return rows[0] ? toClaim(rows[0]) : null;
+  }
+
+  async findCreator(id: string): Promise<CampaignCreator | null> {
+    const { rows } = await this.db.query(`SELECT * FROM campaign_creators WHERE id = $1`, [id]);
+    return rows[0] ? toCreator(rows[0]) : null;
+  }
+
+  async setCreatorPhone(
+    creatorId: string,
+    phone: { phoneHash: string; phoneLast4: string; verifiedAt: Date }
+  ): Promise<CampaignCreator | null> {
+    const { rows } = await this.db.query(
+      `UPDATE campaign_creators
+          SET itravy_phone_synced_at = CASE WHEN phone_hash IS DISTINCT FROM $2
+                                            THEN NULL ELSE itravy_phone_synced_at END,
+              phone_hash = $2, phone_last4 = $3, phone_verified_at = $4
+        WHERE id = $1 RETURNING *`,
+      [creatorId, phone.phoneHash, phone.phoneLast4, phone.verifiedAt]
+    );
+    return rows[0] ? toCreator(rows[0]) : null;
+  }
+
+  async markCreatorPhoneSynced(creatorId: string, at: Date): Promise<void> {
+    await this.db.query(`UPDATE campaign_creators SET itravy_phone_synced_at = $2 WHERE id = $1`, [creatorId, at]);
+  }
+
+  async createOtp(
+    input: Omit<CampaignPhoneOtp, "attempts" | "verifiedAt" | "createdAt"> & { createdAt?: Date }
+  ): Promise<CampaignPhoneOtp> {
+    const { rows } = await this.db.query(
+      `INSERT INTO campaign_phone_otps (id, install_hash, phone_hash, phone_last4, code_hash, expires_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, NOW())) RETURNING *`,
+      [input.id, input.installHash, input.phoneHash, input.phoneLast4, input.codeHash, input.expiresAt, input.createdAt ?? null]
+    );
+    return toOtp(rows[0]);
+  }
+
+  async findOtp(id: string): Promise<CampaignPhoneOtp | null> {
+    const { rows } = await this.db.query(`SELECT * FROM campaign_phone_otps WHERE id = $1`, [id]);
+    return rows[0] ? toOtp(rows[0]) : null;
+  }
+
+  async otpSendStats(input: { installHash: string; phoneHash: string; now: Date }) {
+    const { rows } = await this.db.query(
+      `SELECT COUNT(*) FILTER (WHERE install_hash = $1)::int AS by_install,
+              COUNT(*) FILTER (WHERE phone_hash = $2)::int   AS by_phone,
+              EXTRACT(EPOCH FROM ($3::timestamptz - MAX(created_at) FILTER (WHERE install_hash = $1)))::int AS since_last
+         FROM campaign_phone_otps
+        WHERE (install_hash = $1 OR phone_hash = $2)
+          AND created_at > $3::timestamptz - INTERVAL '1 hour'`,
+      [input.installHash, input.phoneHash, input.now]
+    );
+    const r = rows[0] ?? {};
+    return {
+      byInstall: Number(r.by_install ?? 0),
+      byPhone: Number(r.by_phone ?? 0),
+      secondsSinceLast: r.since_last == null ? null : Number(r.since_last),
+    };
+  }
+
+  async bumpOtpAttempts(id: string): Promise<number> {
+    const { rows } = await this.db.query(
+      `UPDATE campaign_phone_otps SET attempts = attempts + 1 WHERE id = $1 RETURNING attempts`,
+      [id]
+    );
+    return Number(rows[0]?.attempts ?? 0);
+  }
+
+  async markOtpVerified(id: string, at: Date): Promise<void> {
+    await this.db.query(`UPDATE campaign_phone_otps SET verified_at = $2 WHERE id = $1`, [id, at]);
+  }
+
+  async expireOtp(id: string, at: Date): Promise<void> {
+    await this.db.query(`UPDATE campaign_phone_otps SET expires_at = $2 WHERE id = $1`, [id, at]);
+  }
+
+  async markItravyRegistered(creatorCampaignId: string, at: Date): Promise<void> {
+    await this.db.query(
+      `UPDATE creator_campaigns SET itravy_registered_at = $2, itravy_error = NULL WHERE id = $1`,
+      [creatorCampaignId, at]
+    );
+  }
+
+  async setItravyError(creatorCampaignId: string, error: string | null): Promise<void> {
+    await this.db.query(`UPDATE creator_campaigns SET itravy_error = $2 WHERE id = $1`, [
+      creatorCampaignId,
+      error ? error.slice(0, 200) : null,
+    ]);
   }
 
   async addSocialPost(input: {

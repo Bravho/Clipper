@@ -22,6 +22,12 @@ export function limited(request: Request, bucket: keyof typeof CAMPAIGN_RATE_LIM
   );
 }
 
+/** The creator's IP and user agent — passed to iTravy for its weak self-referral flag. */
+export function signalsOf(request: Request): { ip: string | null; userAgent: string | null } {
+  const ip = clientIp(request);
+  return { ip: ip === "unknown" ? null : ip, userAgent: request.headers.get("user-agent") };
+}
+
 export function installIdOf(request: Request): string | null {
   return request.headers.get("x-install-id");
 }

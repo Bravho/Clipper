@@ -54,23 +54,34 @@ export interface CampaignRenderResult {
 
 async function renderOnce(
   manifest: DeviceRenderManifest,
-  file: File,
+  files: File[],
+  assetIds: string[],
   withClipSound: boolean
 ) {
-  const staged = await stageLocalSourceForNative(file);
-  const sources: StagedLocalSource[] = [{ key: CAMPAIGN_CLIP_ASSET_ID, sourceUrl: staged.sourceUrl }];
-  if (withClipSound) sources.push({ key: NATIVE_VOICE_KEY, sourceUrl: staged.sourceUrl });
+  const staged: { sourceUrl: string }[] = [];
   try {
-    // Releases the staged copy (both keys point at it) when it returns.
+    for (const file of files) staged.push(await stageLocalSourceForNative(file));
+    const sources: StagedLocalSource[] = staged.map((copy, index) => ({
+      key: assetIds[index] ?? CAMPAIGN_CLIP_ASSET_ID,
+      sourceUrl: copy.sourceUrl,
+    }));
+    // The clip's own sound: only with ONE clip (one "voice" track, in sync).
+    if (withClipSound && staged.length === 1) {
+      sources.push({ key: NATIVE_VOICE_KEY, sourceUrl: staged[0].sourceUrl });
+    }
+    // Releases the staged copies when it returns.
     return await renderManifestOnDevice(manifest, sources);
   } finally {
-    await releaseStagedLocalSource(staged.sourceUrl).catch(() => undefined);
+    await Promise.allSettled(staged.map((copy) => releaseStagedLocalSource(copy.sourceUrl)));
   }
 }
 
 export async function renderCampaignVideo(input: {
   manifest: DeviceRenderManifest;
-  file: File;
+  /** One file per shot, in order. */
+  files: File[];
+  /** The manifest asset id of each file (from the server's answer). */
+  clipAssetIds: string[];
   useClipSound: boolean;
   videoKey: string;
   onProgress?: (percent: number) => void;
@@ -82,12 +93,12 @@ export async function renderCampaignVideo(input: {
     let soundFallback = false;
     let result;
     try {
-      result = await renderOnce(input.manifest, input.file, input.useClipSound);
+      result = await renderOnce(input.manifest, input.files, input.clipAssetIds, input.useClipSound);
     } catch (error) {
       if (!input.useClipSound) throw error;
       soundFallback = true;
       input.onProgress?.(0);
-      result = await renderOnce(input.manifest, input.file, false);
+      result = await renderOnce(input.manifest, input.files, input.clipAssetIds, false);
     }
     await keepFinishedVideo(input.videoKey, result.path);
     await releaseRenderedOutput(result.path);

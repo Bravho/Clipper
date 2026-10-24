@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { campaignCreatorService } from "@/services/campaigns";
 import { appOrigin } from "@/lib/appOrigin";
-import { NO_STORE, accessOf, failure, installIdOf, limited, readJson } from "../../_shared";
+import { NO_STORE, accessOf, failure, installIdOf, limited, readJson, signalsOf } from "../../_shared";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,8 @@ export async function POST(request: NextRequest, { params }: { params: { slug: s
       accessOf(params.slug, request, body),
       installIdOf(request),
       body,
-      appOrigin(request)
+      appOrigin(request),
+      signalsOf(request)
     );
     return NextResponse.json(result, { headers: NO_STORE });
   } catch (error) {

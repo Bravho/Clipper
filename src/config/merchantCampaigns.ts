@@ -77,3 +77,24 @@ export function campaignInstallPepper(): string {
     "rclipper-campaign-dev-pepper"
   );
 }
+
+/**
+ * Creator phone OTP — the same numbers iTravy uses for its redeemer OTP
+ * (travel_advisor backend/src/services/referral/otpService.js), so the two
+ * halves behave alike.
+ */
+export const CAMPAIGN_OTP = {
+  ttlSeconds: 300,
+  maxAttempts: 5,
+  resendCooldownSeconds: 60,
+  maxSendsPerInstallPerHour: 5,
+  maxSendsPerPhonePerHour: 3,
+} as const;
+
+/**
+ * iTravy API base for the server-to-server referral calls. Authenticated with
+ * the same shared `RCLIPPER_API_KEY` iTravy already uses for the video feed.
+ */
+export function itravyApiBase(): string {
+  return (process.env.ITRAVY_API_URL?.trim() || "https://api.travy.buzz").replace(/\/+$/, "");
+}

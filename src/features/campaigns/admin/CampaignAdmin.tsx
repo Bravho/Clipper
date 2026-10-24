@@ -5,6 +5,11 @@ import { clsx } from "clsx";
 import { MOTION_TEMPLATES } from "@/config/motionTemplates";
 import { TEXT_GRAPHIC_STYLE_IDS } from "@/config/textGraphicStyles";
 import { BACKGROUND_MUSIC_TRACKS } from "@/config/backgroundMusic";
+import {
+  MAX_STORY_FORMATS_PER_TEMPLATE,
+  STORY_FORMAT_IDS,
+  STORY_FORMATS,
+} from "@/config/campaignStoryFormats";
 import type {
   CampaignStats,
   CampaignTemplate,
@@ -229,6 +234,7 @@ function emptyTemplate(merchantId: string) {
     defaultStatement: "",
     defaultMusicTrackId: CLIP_SOUND,
     captionLanguage: "th" as "th" | "en",
+    storyFormats: [] as string[],
   };
 }
 type TemplateForm = ReturnType<typeof emptyTemplate>;
@@ -257,6 +263,7 @@ function TemplatesTab({ data, run }: { data: Overview; run: Run }) {
         defaultStatement: template.defaultStatement,
         defaultMusicTrackId: template.defaultMusicTrackId,
         captionLanguage: template.captionLanguage,
+        storyFormats: [...(template.storyFormats ?? [])],
       });
     } else {
       setEditing("new");
@@ -355,9 +362,58 @@ function TemplatesTab({ data, run }: { data: Overview; run: Run }) {
                 <code>{"{code}"}</code>. Leave a field empty to use the shop&apos;s details.
               </p>
 
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Video styles the customer can choose — up to {MAX_STORY_FORMATS_PER_TEMPLATE} ({form.storyFormats.length} chosen)
+              </p>
+              <p className="text-xs text-slate-500">
+                Fewer is easier for customers. None = one simple clip with the cards above. The order you tick them is
+                the order customers see.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {STORY_FORMAT_IDS.map((id) => {
+                  const story = STORY_FORMATS[id];
+                  const checked = form.storyFormats.includes(id);
+                  const full = !checked && form.storyFormats.length >= MAX_STORY_FORMATS_PER_TEMPLATE;
+                  return (
+                    <label
+                      key={id}
+                      className={clsx(
+                        "flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-sm",
+                        checked ? "border-blue-400 bg-blue-50" : "border-slate-200",
+                        full && "cursor-not-allowed opacity-50"
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={checked}
+                        disabled={full}
+                        onChange={() =>
+                          set(
+                            "storyFormats",
+                            checked ? form.storyFormats.filter((f) => f !== id) : [...form.storyFormats, id]
+                          )
+                        }
+                      />
+                      <span className="min-w-0">
+                        <span className="font-medium text-slate-900">
+                          {story.icon} {story.adminName}
+                          {checked && (
+                            <span className="ml-1 text-xs text-blue-700">#{form.storyFormats.indexOf(id) + 1}</span>
+                          )}
+                        </span>
+                        <span className="block text-xs text-slate-500">
+                          {story.adminDescription} {story.shots.length > 1 ? "· 2 shots" : "· 1 shot"}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+
               <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Customer defaults</p>
               <Field
-                label="Default sentence (the customer can edit it) — keep it factual, not a review"
+                label="Default sentence for the simple clip (each video style has its own) — keep it factual, not a review"
                 placeholder={en ? "Afternoon at {merchant}" : "แวะมาที่ {merchant} วันนี้"}
                 value={form.defaultStatement}
                 onChange={(v) => set("defaultStatement", v)}
@@ -394,6 +450,15 @@ function TemplatesTab({ data, run }: { data: Overview; run: Run }) {
                     <p className="text-xs text-slate-500">
                       {template.motionTemplateId} · {template.textStyleId} · {template.captionLanguage.toUpperCase()} ·{" "}
                       {template.defaultMusicTrackId === CLIP_SOUND ? "clip sound" : template.defaultMusicTrackId}
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      {(template.storyFormats ?? []).length > 0
+                        ? (template.storyFormats ?? [])
+                            .map((id) => STORY_FORMATS[id as keyof typeof STORY_FORMATS])
+                            .filter(Boolean)
+                            .map((story) => `${story.icon} ${story.adminName}`)
+                            .join(" · ")
+                        : "Simple clip (no styles chosen)"}
                     </p>
                   </div>
                 </div>
@@ -472,6 +537,8 @@ function CampaignsTab({ data, run, goTo }: { data: Overview; run: Run; goTo: (ta
     rewardCooldownDays: "30",
     startsAt: "",
     endsAt: "",
+    itravyCampaignId: "",
+    requirePhoneOtp: true,
   });
   const shopTemplates = useMemo(
     () => data.templates.filter((t) => t.merchantId === form.merchantId),
@@ -490,6 +557,8 @@ function CampaignsTab({ data, run, goTo }: { data: Overview; run: Run; goTo: (ta
         rewardCooldownDays: String(campaign.rewardCooldownDays),
         startsAt: toLocalInput(campaign.startsAt),
         endsAt: toLocalInput(campaign.endsAt),
+        itravyCampaignId: campaign.itravyCampaignId ?? "",
+        requirePhoneOtp: campaign.requirePhoneOtp,
       });
     } else {
       const merchantId = activeShops[0]?.id ?? "";
@@ -503,6 +572,8 @@ function CampaignsTab({ data, run, goTo }: { data: Overview; run: Run; goTo: (ta
         rewardCooldownDays: "30",
         startsAt: "",
         endsAt: "",
+        itravyCampaignId: "",
+        requirePhoneOtp: true,
       });
     }
   };
@@ -516,6 +587,8 @@ function CampaignsTab({ data, run, goTo }: { data: Overview; run: Run; goTo: (ta
       rewardCooldownDays: Number(form.rewardCooldownDays),
       startsAt: fromLocalInput(form.startsAt),
       endsAt: fromLocalInput(form.endsAt),
+      itravyCampaignId: form.itravyCampaignId.trim() || null,
+      requirePhoneOtp: form.requirePhoneOtp,
     };
     const ok = await run(editing === "new" ? "Campaign created (draft)" : "Campaign saved", () =>
       editing === "new"
@@ -585,6 +658,29 @@ function CampaignsTab({ data, run, goTo }: { data: Overview; run: Run; goTo: (ta
             <Field label="Starts (optional)" type="datetime-local" value={form.startsAt} onChange={(v) => setForm({ ...form, startsAt: v })} />
             <Field label="Ends (optional)" type="datetime-local" value={form.endsAt} onChange={(v) => setForm({ ...form, endsAt: v })} />
           </Grid>
+          <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-slate-400">iTravy (where friends redeem)</p>
+          <Field
+            label="iTravy campaign id — copy it from iTravy admin → โค้ดแนะนำ RClipper"
+            placeholder="e.g. 3f2b8c1e-4a5d-4e6f-8a7b-9c0d1e2f3a4b"
+            value={form.itravyCampaignId}
+            onChange={(v) => setForm({ ...form, itravyCampaignId: v })}
+          />
+          <p className="text-xs text-slate-500">
+            Saved only if iTravy has that campaign and it gives the same discount. Each creator&apos;s code is then
+            registered at iTravy before their video is made.
+          </p>
+          <label className="flex items-start gap-3 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={form.requirePhoneOtp}
+              onChange={(e) => setForm({ ...form, requirePhoneOtp: e.target.checked })}
+            />
+            <span>
+              Creators verify their phone by SMS code before the video (recommended). iTravy then refuses that phone
+              when someone tries to redeem the creator&apos;s own code.
+            </span>
+          </label>
           <Actions>
             <Primary onClick={() => void save()}>Save campaign</Primary>
             <Secondary onClick={() => setEditing(null)}>Cancel</Secondary>
@@ -609,8 +705,16 @@ function CampaignsTab({ data, run, goTo }: { data: Overview; run: Run; goTo: (ta
                   <p className="text-sm text-slate-600">
                     {shop?.name ?? "?"} · template “{template?.name ?? "?"}” · friends {campaign.discountPercent}% off
                   </p>
+                  <p className="text-xs">
+                    {campaign.itravyCampaignId ? (
+                      <Badge tone="green">linked to iTravy</Badge>
+                    ) : (
+                      <Badge tone="amber">not linked to iTravy — friends can&apos;t redeem yet</Badge>
+                    )}
+                    {campaign.requirePhoneOtp && <Badge tone="slate">creator phone OTP</Badge>}
+                  </p>
                   <p className="text-xs text-slate-500">
-                    Reward: {campaign.rewardDescription || "—"} · 1 per device / {campaign.rewardCooldownDays} days
+                    Reward: {campaign.rewardDescription || "—"} · 1 per device or phone / {campaign.rewardCooldownDays} days
                     {campaign.endsAt ? ` · ends ${new Date(campaign.endsAt).toLocaleDateString()}` : ""}
                   </p>
                 </div>

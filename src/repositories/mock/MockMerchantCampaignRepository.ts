@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { IMerchantCampaignRepository } from "@/repositories/interfaces/IMerchantCampaignRepository";
 import type {
   CampaignCreator,
+  CampaignPhoneOtp,
   CampaignStats,
   CampaignTemplate,
   CreateCampaignTemplateInput,
@@ -27,6 +28,7 @@ export interface MerchantCampaignStore {
   creatorCampaigns: Map<string, CreatorCampaign>;
   claims: Map<string, CreatorRewardClaim>;
   posts: Map<string, CreatorSocialPost>;
+  otps: Map<string, CampaignPhoneOtp>;
 }
 
 export function emptyMerchantCampaignStore(): MerchantCampaignStore {
@@ -38,6 +40,7 @@ export function emptyMerchantCampaignStore(): MerchantCampaignStore {
     creatorCampaigns: new Map(),
     claims: new Map(),
     posts: new Map(),
+    otps: new Map(),
   };
 }
 
@@ -73,7 +76,13 @@ export class MockMerchantCampaignRepository implements IMerchantCampaignReposito
 
   async createTemplate(input: CreateCampaignTemplateInput): Promise<CampaignTemplate> {
     const now = new Date();
-    const template: CampaignTemplate = { ...input, id: `tpl_${randomUUID()}`, createdAt: now, updatedAt: now };
+    const template: CampaignTemplate = {
+      ...input,
+      storyFormats: [...(input.storyFormats ?? [])],
+      id: `tpl_${randomUUID()}`,
+      createdAt: now,
+      updatedAt: now,
+    };
     this.s.templates.set(template.id, template);
     return copy(template);
   }
@@ -108,6 +117,8 @@ export class MockMerchantCampaignRepository implements IMerchantCampaignReposito
       id: `cmp_${randomUUID()}`,
       status: "draft",
       publishedAt: null,
+      requirePhoneOtp: input.requirePhoneOtp ?? true,
+      itravyCampaignId: input.itravyCampaignId ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -163,7 +174,17 @@ export class MockMerchantCampaignRepository implements IMerchantCampaignReposito
       this.s.creators.set(existing.id, next);
       return copy(next);
     }
-    const creator: CampaignCreator = { id: `crt_${randomUUID()}`, installHash, platform, createdAt: now, lastSeenAt: now };
+    const creator: CampaignCreator = {
+      id: `crt_${randomUUID()}`,
+      installHash,
+      platform,
+      phoneHash: null,
+      phoneLast4: null,
+      phoneVerifiedAt: null,
+      itravyPhoneSyncedAt: null,
+      createdAt: now,
+      lastSeenAt: now,
+    };
     this.s.creators.set(creator.id, creator);
     return copy(creator);
   }
@@ -200,6 +221,8 @@ export class MockMerchantCampaignRepository implements IMerchantCampaignReposito
         referralCode: code,
         videosMade: 0,
         lastVideoAt: null,
+        itravyRegisteredAt: null,
+        itravyError: null,
         createdAt: new Date(),
       };
       this.s.creatorCampaigns.set(entry.id, entry);
@@ -224,10 +247,15 @@ export class MockMerchantCampaignRepository implements IMerchantCampaignReposito
   async claimReward(input: {
     creatorCampaign: CreatorCampaign;
     installHash: string;
+    phoneHash: string | null;
     cooldownDays: number;
     now: Date;
   }): Promise<{ claim: CreatorRewardClaim; lastGranted: CreatorRewardClaim | null }> {
-    const lastGranted = await this.lastGrantedClaim(input.installHash, input.creatorCampaign.campaignId);
+    const lastGranted = await this.lastGrantedClaim(
+      input.installHash,
+      input.creatorCampaign.campaignId,
+      input.phoneHash
+    );
     const windowStart = input.now.getTime() - input.cooldownDays * 86_400_000;
     const blocked = lastGranted != null && lastGranted.claimedAt.getTime() > windowStart;
     const claim: CreatorRewardClaim = {
@@ -237,6 +265,7 @@ export class MockMerchantCampaignRepository implements IMerchantCampaignReposito
       campaignId: input.creatorCampaign.campaignId,
       merchantId: input.creatorCampaign.merchantId,
       installHash: input.installHash,
+      phoneHash: input.phoneHash,
       referralCode: input.creatorCampaign.referralCode,
       status: blocked ? "rejected_limit" : "granted",
       claimedAt: input.now,
@@ -245,11 +274,106 @@ export class MockMerchantCampaignRepository implements IMerchantCampaignReposito
     return { claim: copy(claim), lastGranted };
   }
 
-  async lastGrantedClaim(installHash: string, campaignId: string): Promise<CreatorRewardClaim | null> {
+  async lastGrantedClaim(
+    installHash: string,
+    campaignId: string,
+    phoneHash: string | null = null
+  ): Promise<CreatorRewardClaim | null> {
     const found = [...this.s.claims.values()]
-      .filter((c) => c.installHash === installHash && c.campaignId === campaignId && c.status === "granted")
+      .filter(
+        (c) =>
+          c.campaignId === campaignId &&
+          c.status === "granted" &&
+          (c.installHash === installHash || (phoneHash != null && c.phoneHash === phoneHash))
+      )
       .sort((a, b) => b.claimedAt.getTime() - a.claimedAt.getTime())[0];
     return found ? copy(found) : null;
+  }
+
+  async findCreator(id: string): Promise<CampaignCreator | null> {
+    const found = this.s.creators.get(id);
+    return found ? copy(found) : null;
+  }
+
+  async setCreatorPhone(
+    creatorId: string,
+    phone: { phoneHash: string; phoneLast4: string; verifiedAt: Date }
+  ): Promise<CampaignCreator | null> {
+    const found = this.s.creators.get(creatorId);
+    if (!found) return null;
+    const changed = found.phoneHash !== phone.phoneHash;
+    const next: CampaignCreator = {
+      ...found,
+      phoneHash: phone.phoneHash,
+      phoneLast4: phone.phoneLast4,
+      phoneVerifiedAt: phone.verifiedAt,
+      // A different number has not been given to iTravy yet.
+      itravyPhoneSyncedAt: changed ? null : found.itravyPhoneSyncedAt,
+    };
+    this.s.creators.set(creatorId, next);
+    return copy(next);
+  }
+
+  async markCreatorPhoneSynced(creatorId: string, at: Date): Promise<void> {
+    const found = this.s.creators.get(creatorId);
+    if (found) this.s.creators.set(creatorId, { ...found, itravyPhoneSyncedAt: at });
+  }
+
+  async createOtp(
+    input: Omit<CampaignPhoneOtp, "attempts" | "verifiedAt" | "createdAt"> & { createdAt?: Date }
+  ): Promise<CampaignPhoneOtp> {
+    const otp: CampaignPhoneOtp = {
+      ...input,
+      attempts: 0,
+      verifiedAt: null,
+      createdAt: input.createdAt ?? new Date(),
+    };
+    this.s.otps.set(otp.id, otp);
+    return copy(otp);
+  }
+
+  async findOtp(id: string): Promise<CampaignPhoneOtp | null> {
+    const found = this.s.otps.get(id);
+    return found ? copy(found) : null;
+  }
+
+  async otpSendStats(input: { installHash: string; phoneHash: string; now: Date }) {
+    const since = input.now.getTime() - 3600_000;
+    const recent = [...this.s.otps.values()].filter((o) => o.createdAt.getTime() > since);
+    const mine = recent.filter((o) => o.installHash === input.installHash);
+    const last = mine.reduce<number | null>((max, o) => Math.max(max ?? 0, o.createdAt.getTime()), null);
+    return {
+      byInstall: mine.length,
+      byPhone: recent.filter((o) => o.phoneHash === input.phoneHash).length,
+      secondsSinceLast: last == null ? null : Math.floor((input.now.getTime() - last) / 1000),
+    };
+  }
+
+  async bumpOtpAttempts(id: string): Promise<number> {
+    const found = this.s.otps.get(id);
+    if (!found) return 0;
+    this.s.otps.set(id, { ...found, attempts: found.attempts + 1 });
+    return found.attempts + 1;
+  }
+
+  async markOtpVerified(id: string, at: Date): Promise<void> {
+    const found = this.s.otps.get(id);
+    if (found) this.s.otps.set(id, { ...found, verifiedAt: at });
+  }
+
+  async expireOtp(id: string, at: Date): Promise<void> {
+    const found = this.s.otps.get(id);
+    if (found) this.s.otps.set(id, { ...found, expiresAt: at });
+  }
+
+  async markItravyRegistered(creatorCampaignId: string, at: Date): Promise<void> {
+    const found = this.s.creatorCampaigns.get(creatorCampaignId);
+    if (found) this.s.creatorCampaigns.set(found.id, { ...found, itravyRegisteredAt: at, itravyError: null });
+  }
+
+  async setItravyError(creatorCampaignId: string, error: string | null): Promise<void> {
+    const found = this.s.creatorCampaigns.get(creatorCampaignId);
+    if (found) this.s.creatorCampaigns.set(found.id, { ...found, itravyError: error });
   }
 
   async addSocialPost(input: {

@@ -11,9 +11,16 @@ import { CAMPAIGN_LIMITS } from "@/config/merchantCampaigns";
 import { MOTION_TEMPLATES } from "@/config/motionTemplates";
 import { TEXT_GRAPHIC_STYLE_IDS } from "@/config/textGraphicStyles";
 import { findMusicTrack } from "@/config/backgroundMusic";
+import { MAX_STORY_FORMATS_PER_TEMPLATE, STORY_FORMAT_IDS } from "@/config/campaignStoryFormats";
 import { TEXT_GRAPHIC_LIMITS } from "@/lib/textGraphics/plan";
 import { generateCampaignSlug, generateQrKey } from "@/lib/campaigns/referralCode";
 import { CampaignError } from "@/services/campaigns/CampaignErrors";
+import { formatPercent } from "@/lib/campaigns/campaignManifest";
+import {
+  isUuid,
+  itravyClient as defaultItravyClient,
+  type ItravyClient,
+} from "@/lib/campaigns/itravyClient";
 
 /**
  * The operator side: shops, quick-video templates, campaigns and their QR.
@@ -54,6 +61,12 @@ export const templateInputSchema = z.object({
     .default(CLIP_SOUND_CHOICE)
     .refine((id) => id === CLIP_SOUND_CHOICE || Boolean(findMusicTrack(id)), "Unknown music track"),
   captionLanguage: z.enum(["th", "en"]).default("th"),
+  /** Story formats the customer can pick from: at most 4 (none = the original single clip). */
+  storyFormats: z
+    .array(z.enum(STORY_FORMAT_IDS))
+    .max(MAX_STORY_FORMATS_PER_TEMPLATE, `Pick at most ${MAX_STORY_FORMATS_PER_TEMPLATE} video formats`)
+    .refine((ids) => new Set(ids).size === ids.length, "Each video format only once")
+    .default([]),
 });
 
 const optionalDate = z
@@ -75,6 +88,14 @@ export const campaignInputSchema = z.object({
     .default(CAMPAIGN_LIMITS.defaultRewardCooldownDays),
   startsAt: optionalDate,
   endsAt: optionalDate,
+  /** Require a verified creator phone before the video (default on). */
+  requirePhoneOtp: z.boolean().optional(),
+  /** iTravy campaign uuid ("" or null unlinks). */
+  itravyCampaignId: z
+    .union([z.string().trim(), z.null()])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v ? v : null))
+    .refine((v) => v == null || isUuid(v), "Paste the iTravy campaign id (a uuid) from the iTravy admin page"),
 });
 
 export const campaignUpdateSchema = campaignInputSchema
@@ -109,7 +130,40 @@ export function campaignQrLink(campaign: Pick<MerchantCampaign, "slug" | "qrKey"
 }
 
 export class MerchantCampaignAdminService {
-  constructor(private readonly repo: IMerchantCampaignRepository) {}
+  constructor(
+    private readonly repo: IMerchantCampaignRepository,
+    private readonly itravy: ItravyClient = defaultItravyClient
+  ) {}
+
+  /**
+   * A link to iTravy must point at a real iTravy campaign that gives friends
+   * the SAME discount the video promises; otherwise a friend is shown 5% in the
+   * video and something else at the counter.
+   */
+  private async checkItravyLink(itravyCampaignId: string, discountPercent: number): Promise<void> {
+    const result = await this.itravy.getCampaign(itravyCampaignId);
+    if (!result.ok || !result.data) {
+      throw new CampaignError(
+        "invalid",
+        result.reason === "CAMPAIGN_NOT_FOUND"
+          ? "iTravy has no campaign with that id."
+          : `Could not check the iTravy campaign (${result.reason ?? "error"}). Try again.`,
+        400
+      );
+    }
+    const label = result.data.campaign.discount_label;
+    const ours = `${formatPercent(discountPercent)}%`;
+    if (label !== ours) {
+      throw new CampaignError(
+        "invalid",
+        `The iTravy campaign gives ${label} but this campaign promises ${ours}. Make them the same.`,
+        400
+      );
+    }
+    if (result.data.campaign.status === "ended") {
+      throw new CampaignError("invalid", "That iTravy campaign has ended.", 400);
+    }
+  }
 
   async overview(origin: string): Promise<CampaignAdminOverview> {
     const [merchants, templates, campaigns] = await Promise.all([
@@ -175,6 +229,7 @@ export class MerchantCampaignAdminService {
     if (data.startsAt && data.endsAt && data.endsAt <= data.startsAt) {
       throw new CampaignError("invalid", "The end date must be after the start date", 400);
     }
+    if (data.itravyCampaignId) await this.checkItravyLink(data.itravyCampaignId, data.discountPercent);
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         return await this.repo.createCampaign({
@@ -209,6 +264,14 @@ export class MerchantCampaignAdminService {
     const endsAt = rest.endsAt === undefined ? current.endsAt : rest.endsAt;
     if (startsAt && endsAt && endsAt <= startsAt) {
       throw new CampaignError("invalid", "The end date must be after the start date", 400);
+    }
+    const linkTo = rest.itravyCampaignId === undefined ? current.itravyCampaignId : rest.itravyCampaignId;
+    const discount = rest.discountPercent ?? current.discountPercent;
+    if (
+      linkTo &&
+      (linkTo !== current.itravyCampaignId || discount !== current.discountPercent)
+    ) {
+      await this.checkItravyLink(linkTo, discount);
     }
     // A date the PATCH did not mention parses to null; keep the stored one.
     const raw = input_(input);

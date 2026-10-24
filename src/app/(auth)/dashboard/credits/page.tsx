@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { ROUTES, requestDetailPath } from "@/config/routes";
@@ -11,6 +12,7 @@ import type { MessageKey } from "@/i18n/messages";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { CreditPurchaseOptions } from "@/features/credits/components/CreditPurchaseOptions";
+import { parseAppUserAgent } from "@/lib/mobile/appUserAgent";
 
 
 export const metadata: Metadata = { title: "เครดิต — RClipper" };
@@ -52,6 +54,10 @@ export default async function CreditsPage({
   const { t, locale } = getServerI18n();
   const user = await requireRole(Role.Requester);
   const query = await searchParams;
+  // Inside the app only that platform's store is mentioned — no baht figure, no
+  // PromptPay/card, no web (the native shells add RClipperNative/<ios|android>).
+  const appPlatform = parseAppUserAgent(headers().get("user-agent")).platform;
+  const store = appPlatform === "ios" ? "App Store" : "Google Play";
   const [balance, transactions] = await Promise.all([
     creditService.getBalance(user.id),
     creditService.getTransactionHistory(user.id),
@@ -86,7 +92,7 @@ export default async function CreditsPage({
             <p className="text-lg font-semibold text-slate-900">
               {t("credits.available", { balance: balance.toLocaleString() })}
             </p>
-            <p className="text-sm text-slate-500">{t("credits.balanceHint")}</p>
+            <p className="text-sm text-slate-500">{appPlatform ? t("credits.balanceHintApp") : t("credits.balanceHint")}</p>
           </div>
         </div>
 
@@ -105,7 +111,7 @@ export default async function CreditsPage({
         <ul className="flex flex-col gap-2 text-sm text-slate-600">
           <li className="flex items-start gap-2">
             <span className="mt-0.5 font-bold text-blue-500">i</span>
-            <span className="min-w-0">{t("credits.how.buy")}</span>
+            <span className="min-w-0">{appPlatform ? t("credits.how.buyStore", { store }) : t("credits.how.buy")}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="mt-0.5 font-bold text-red-500">−</span>

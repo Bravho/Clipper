@@ -39,6 +39,93 @@ uploaded, and nothing renders on the server.**
      `reward_cooldown_days`.
    - Refusals are recorded as `rejected_limit` and show the next eligible date.
 
+## Story formats (19 Oct, migration 045)
+
+A shop template picks **up to 4** video styles; the customer chooses one.
+With no styles chosen, the customer gets the original simple clip. Catalog:
+`src/config/campaignStoryFormats.ts`.
+
+| Format | Shots | On screen (at most 3 things) |
+|---|---|---|
+| ☕ My Little Moment *(requested)* | drink up close, then the place around | "MY LITTLE MOMENT" card, "A little break from a busy day" |
+| ❓ Guess Where I Am *(requested)* | food or a corner (sign out of view) | "Guess where I am?" (no shop name), hint, closing card reveals the shop |
+| 👀 My Day's Point of View *(requested)* | one first-person shot | "POV · My day at …" |
+| ⭐ Today's Pick *(requested)* | what they picked, up close | "TODAY'S PICK · <their pick>" (asks one short text) |
+| 🎨 Mood of the Day *(requested)* | anything | Happy / Chill / Weekend vibe chips; the mood sets the music, look and text style |
+| 😋 First Bite *(added)* | first bite or sip | "FIRST BITE" card |
+| 🍽️ Before & After *(added)* | full, then empty | small "Before" / "After" labels instead of an opening card |
+| 🔍 Little Details *(added)* | two close-ups | "LITTLE DETAILS" card |
+| 🥂 Out with Friends *(added)* | the table with friends | "OUT WITH FRIENDS" card |
+| 🏷️ Tag a Friend *(added)* | anything | "Who would you bring here?" — made for tagging friends who use the code |
+
+Rules ("อย่าให้เยอะเกิน"):
+- **One or two shots**, at most 15 s in total. A longer clip uses its first
+  part.
+- **At most three things on screen**: the opening card (or the shot labels),
+  the customer's sentence, and the closing card with the code.
+- Only Mood of the Day changes the shop's look; the shop colour always stays.
+- Default sentences describe what happened, never quality ("best",
+  "delicious", "ต้องมา"); a test guards this.
+- **Two-shot formats use music only.** The renderer mixes one "voice" track, so
+  two clips' own sounds cannot both stay in sync.
+- Video words come in the template's caption language (Thai or English). App
+  words (style names, descriptions, shot prompts, moods) are
+  `campaign.format.*` / `campaign.mood.*` keys in Thai, English and Vietnamese.
+
+Rendering is unchanged: each shot is one scene of the same v4 manifest (a hard
+cut into the first shot, a dissolve into the second), staged under
+`campaign_clip` and `campaign_clip_2`.
+
+## Creator phone OTP + iTravy (18 Oct, migration 044)
+
+Purpose: a creator must not redeem **their own** code. Redemption happens in
+iTravy (travel_advisor, `REFERRAL_REDEMPTION_PLAN.md`), which already
+OTP-verifies the friend's phone and refuses one equal to the creator's phone
+(`evaluate()` → `SELF_REFERRAL`). RClipper's job is to verify the creator's
+phone and hand it to iTravy.
+
+1. **Link**: the operator pastes the iTravy campaign id into the RClipper
+   campaign. It is saved only if iTravy has that campaign with the **same
+   discount** (`GET /api/referral/rclipper/campaigns/:id`).
+2. **Session**: RClipper registers the creator's code at iTravy, best effort
+   (`POST /api/referral/rclipper/codes`, `X-API-Key: RCLIPPER_API_KEY`).
+   RClipper sends **its own code**, so the code in the video is the code
+   iTravy redeems. If iTravy already holds a different code for that creator,
+   the result is `CODE_MISMATCH` and the video is refused.
+3. **Step 4 "Verify your phone"** (once per install, before Create):
+   - `POST /api/campaigns/:slug/phone/send` → 6-digit SMS code.
+   - `POST …/phone/verify` checks it, then sends `creator_phone` (E.164)
+     with the code to iTravy. iTravy stores only its HMAC, per creator.
+   - If iTravy cannot be reached, the code is **not** used up; the creator
+     taps Verify again.
+4. **Manifest** is refused (`428 phone_required`) until the phone is verified,
+   and, when the campaign is linked, iTravy has it. A linked campaign also
+   needs the code registered at iTravy.
+
+Rules are identical to iTravy's redeemer OTP:
+- Phone normalisation (Thai 06/08/09, 66…, +E.164) is the same on both sides.
+- Codes are 6 digits, live 5 minutes, allow 5 tries, and need 60 s between
+  sends.
+- Limits: 5 sends per install per hour, 3 per phone per hour. They are checked
+  before any SMS is sent.
+- The SMS text is in Thai, English or Vietnamese.
+
+The number is stored only as HMAC(pepper, E.164) plus its last 4 digits. The
+OTP code is stored as an HMAC. The creator reward is also limited **per
+phone** (two installs, one number = one reward per cooldown).
+
+**SMS provider**: `src/lib/sms/index.ts`, the same shape as iTravy's
+`sms/index.js`.
+- Unset in development, it uses `console` (the code appears in the server log).
+- Unset in **production**, there is no provider. The phone step is **skipped**,
+  as iTravy does, and logged once.
+- Add a real provider (for example ThaiBulkSMS) in both repos and set
+  `SMS_PROVIDER` on both servers. Until then self-referral is NOT blocked by
+  phone on either side.
+
+Per campaign, `require_phone_otp` (default on) can be switched off in the
+operator form.
+
 ## Rendering: why nothing in the device pipeline changed
 
 `src/lib/campaigns/campaignManifest.ts` calls the studio's own
@@ -94,6 +181,8 @@ All public routes are rate-limited per IP in memory.
 | `POST /api/campaigns/:slug/video-made` | `X-Install-Id` |
 | `POST /api/campaigns/:slug/reward-claim` | `X-Install-Id` |
 | `POST /api/campaigns/:slug/social-post` | `X-Install-Id` |
+| `POST /api/campaigns/:slug/phone/send` | `X-Install-Id`; `{ k, phone, lang }` |
+| `POST /api/campaigns/:slug/phone/verify` | `X-Install-Id`; `{ k, challengeId, code, phone }` |
 | `GET/POST/PATCH /api/campaign-admin/…` | session + operator e-mail |
 | `GET /api/travy/referral-codes/:code` | `X-API-Key: RCLIPPER_API_KEY` (iTravy) |
 
@@ -114,8 +203,13 @@ count. Redemption tokens and commission belong to iTravy (later).
 ## Deploy checklist
 
 1. `node scripts/apply-migration.js src/db/migrations/043_merchant_campaigns.sql`
+   then `node scripts/apply-migration.js src/db/migrations/044_campaign_phone_otp.sql`
+   then `node scripts/apply-migration.js src/db/migrations/045_campaign_story_formats.sql`
 2. `npm ci` (new deps: `jsqr`, `qrcode`, `@types/qrcode`) → `npm run build` → restart.
-3. Optional env:
+3. iTravy link: `RCLIPPER_API_KEY` (already set; the same value as on iTravy)
+   and optionally `ITRAVY_API_URL` (default `https://api.travy.buzz`).
+   `SMS_PROVIDER` (see above).
+   Optional env:
    - `CAMPAIGN_OPERATOR_EMAILS` (comma list)
    - `CAMPAIGN_INSTALL_PEPPER` (defaults to `NEXTAUTH_SECRET`; **do not change
      it later**, or every creator gets a new identity)
@@ -128,7 +222,6 @@ count. Redemption tokens and commission belong to iTravy (later).
   Android App Links intent-filter, and the path to the iOS AASA file.
 - Native `sourceClipAudio` support (the clip's own sound mixed under a music
   bed).
-- Phone OTP if fraud turns out high.
 - iTravy redemption endpoint and commission ledger.
 
 ## Needs a device test

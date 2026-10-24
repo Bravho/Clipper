@@ -1,5 +1,6 @@
 import type {
   CampaignCreator,
+  CampaignPhoneOtp,
   CampaignStats,
   CampaignTemplate,
   CreateCampaignTemplateInput,
@@ -57,17 +58,48 @@ export interface IMerchantCampaignRepository {
   recordVideoMade(creatorCampaignId: string, at: Date): Promise<CreatorCampaign | null>;
 
   /**
-   * Atomically: grant a reward unless this device already got one from this
-   * campaign within `cooldownDays`, and record the attempt either way.
+   * Atomically: grant a reward unless this device — or this verified phone —
+   * already got one from this campaign within `cooldownDays`, and record the
+   * attempt either way.
    */
   claimReward(input: {
     creatorCampaign: CreatorCampaign;
     installHash: string;
+    phoneHash: string | null;
     cooldownDays: number;
     now: Date;
   }): Promise<{ claim: CreatorRewardClaim; lastGranted: CreatorRewardClaim | null }>;
-  /** Most recent GRANTED claim by this device in this campaign. */
-  lastGrantedClaim(installHash: string, campaignId: string): Promise<CreatorRewardClaim | null>;
+  /** Most recent GRANTED claim by this device (or this phone) in this campaign. */
+  lastGrantedClaim(
+    installHash: string,
+    campaignId: string,
+    phoneHash?: string | null
+  ): Promise<CreatorRewardClaim | null>;
+
+  // ── Creator phone OTP (migration 044) ──────────────────────────────────────
+  findCreator(id: string): Promise<CampaignCreator | null>;
+  setCreatorPhone(
+    creatorId: string,
+    phone: { phoneHash: string; phoneLast4: string; verifiedAt: Date }
+  ): Promise<CampaignCreator | null>;
+  markCreatorPhoneSynced(creatorId: string, at: Date): Promise<void>;
+
+  createOtp(input: Omit<CampaignPhoneOtp, "attempts" | "verifiedAt" | "createdAt"> & { createdAt?: Date }): Promise<CampaignPhoneOtp>;
+  findOtp(id: string): Promise<CampaignPhoneOtp | null>;
+  /** Sends in the last hour by this install and to this phone, and seconds since this install's last send. */
+  otpSendStats(input: { installHash: string; phoneHash: string; now: Date }): Promise<{
+    byInstall: number;
+    byPhone: number;
+    secondsSinceLast: number | null;
+  }>;
+  /** attempts + 1, returns the new count. */
+  bumpOtpAttempts(id: string): Promise<number>;
+  markOtpVerified(id: string, at: Date): Promise<void>;
+  expireOtp(id: string, at: Date): Promise<void>;
+
+  // ── iTravy link (migration 044) ────────────────────────────────────────────
+  markItravyRegistered(creatorCampaignId: string, at: Date): Promise<void>;
+  setItravyError(creatorCampaignId: string, error: string | null): Promise<void>;
 
   addSocialPost(input: {
     creatorCampaign: CreatorCampaign;

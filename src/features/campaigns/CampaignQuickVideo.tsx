@@ -7,6 +7,7 @@ import type { MessageKey } from "@/i18n/messages";
 import type {
   CreatorCampaignStatus,
   PublicCampaignView,
+  PublicStoryFormat,
   RewardClaimResult,
 } from "@/services/campaigns/CampaignCreatorService";
 import {
@@ -24,6 +25,7 @@ import {
   shareCampaignVideo,
 } from "@/features/campaigns/campaignRender";
 import { finishedVideoUri } from "@/lib/mobile/finishedVideoCache";
+import { PhoneVerifyStep } from "@/features/campaigns/PhoneVerifyStep";
 
 /**
  * The Merchant Quick Video: Scan → Shoot → Create → Share. No login.
@@ -109,8 +111,15 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [campaign, setCampaign] = useState<PublicCampaignView | null>(null);
   const [status, setStatus] = useState<CreatorCampaignStatus | null>(null);
-  const [clip, setClip] = useState<PickedClip | null>(null);
-  const [clipError, setClipError] = useState<string | null>(null);
+  // The story format the customer chose (null = the shop offers none: the original single clip).
+  const [formatId, setFormatId] = useState<string | null>(null);
+  // One slot per shot of the format.
+  const [clips, setClips] = useState<(PickedClip | null)[]>([null]);
+  const [clipErrors, setClipErrors] = useState<(string | null)[]>([null]);
+  const clipUrls = useRef<string[]>([]);
+  const [moodId, setMoodId] = useState<string | null>(null);
+  const [pick, setPick] = useState("");
+  const [statementTouched, setStatementTouched] = useState(false);
   const [statement, setStatement] = useState("");
   const [sound, setSound] = useState(CLIP_SOUND);
   const [notice, setNotice] = useState<string | null>(null);
@@ -136,6 +145,8 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
         setStatus(result.status);
         setStatement(result.campaign.defaultStatement);
         setSound(result.campaign.defaultSound || CLIP_SOUND);
+        // One style offered: no choice to make.
+        if (result.campaign.formats.length === 1) applyFormat(result.campaign.formats[0]);
         setPhase({ kind: "ready" });
       } catch (error) {
         if (cancelled) return;
@@ -146,36 +157,83 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
     return () => {
       cancelled = true;
     };
+    // applyFormat only sets state; it is stable in meaning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, qrKey, t]);
 
   useEffect(() => () => {
-    if (clip) URL.revokeObjectURL(clip.url);
-  }, [clip]);
+    clipUrls.current.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  const format: PublicStoryFormat | null = useMemo(
+    () => campaign?.formats.find((f) => f.id === formatId) ?? null,
+    [campaign, formatId]
+  );
+
+  /** Choose a style: one empty slot per shot, its sentence, mood and sound. */
+  function applyFormat(next: PublicStoryFormat) {
+    setFormatId(next.id);
+    setClips(next.shots.map(() => null));
+    setClipErrors(next.shots.map(() => null));
+    const firstMood = next.moods[0] ?? null;
+    setMoodId(firstMood?.id ?? null);
+    setPick("");
+    setStatementTouched(false);
+    setStatement(firstMood?.defaultStatement ?? next.defaultStatement);
+    setSound(firstMood?.defaultSound ?? next.defaultSound);
+  }
+
+  const chooseMood = (id: string) => {
+    const mood = format?.moods.find((m) => m.id === id);
+    if (!mood) return;
+    setMoodId(id);
+    if (!statementTouched) setStatement(mood.defaultStatement);
+    setSound(mood.defaultSound);
+  };
 
   useEffect(() => () => audioRef.current?.pause(), []);
 
+  const setSlot = (index: number, clip: PickedClip | null, error: string | null) => {
+    setClips((current) => {
+      const next = [...current];
+      if (next[index]) URL.revokeObjectURL(next[index]!.url);
+      next[index] = clip;
+      return next;
+    });
+    setClipErrors((current) => {
+      const next = [...current];
+      next[index] = error;
+      return next;
+    });
+  };
+
   const onPick = useCallback(
-    async (file: File | undefined) => {
+    async (index: number, file: File | undefined) => {
       if (!file || !campaign) return;
-      setClipError(null);
+      const min = format ? format.shots[index].minSeconds : campaign.limits.minClipSeconds;
       const url = URL.createObjectURL(file);
+      clipUrls.current.push(url);
       try {
         const seconds = await readDuration(url);
-        if (seconds < campaign.limits.minClipSeconds) {
+        if (seconds < min) {
           URL.revokeObjectURL(url);
-          setClip(null);
-          setClipError(t("campaign.shoot.tooShort", { seconds: campaign.limits.minClipSeconds }));
+          setSlot(index, null, t("campaign.shoot.tooShort", { seconds: min }));
           return;
         }
-        setClip({ file, url, seconds });
+        setSlot(index, { file, url, seconds }, null);
       } catch {
         URL.revokeObjectURL(url);
-        setClip(null);
-        setClipError(t("campaign.shoot.unreadable"));
+        setSlot(index, null, t("campaign.shoot.unreadable"));
       }
     },
-    [campaign, t]
+    [campaign, format, t]
   );
+
+  // Two clips cannot keep their own sound in sync: offer music only.
+  const allowsClipSound = format ? format.allowsClipSound : true;
+  useEffect(() => {
+    if (!allowsClipSound && sound === CLIP_SOUND && format) setSound(format.defaultSound);
+  }, [allowsClipSound, format, sound]);
 
   const togglePreview = useCallback(
     (id: string, url: string) => {
@@ -194,24 +252,33 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
     [playing]
   );
 
+  const ready = clips.length > 0 && clips.every((c) => c !== null);
+
   const create = useCallback(async () => {
-    if (!clip || !campaign) return;
+    if (!ready || !campaign) return;
+    const picked = clips as PickedClip[];
     audioRef.current?.pause();
     setPlaying(null);
     setNotice(null);
     setPhase({ kind: "rendering", percent: null });
     try {
       const plan = await fetchCampaignManifest(slug, qrKey, {
-        localId: "campaign-clip",
-        mimeType: clip.file.type || "video/mp4",
-        durationSeconds: clip.seconds,
+        shots: picked.map((c, index) => ({
+          localId: `campaign-clip-${index + 1}`,
+          mimeType: c.file.type || "video/mp4",
+          durationSeconds: c.seconds,
+        })),
         statement,
         sound,
+        format: formatId,
+        mood: moodId,
+        pick: pick.trim() || null,
       });
       const videoKey = `campaign-${slug}-${Date.now()}`;
       const result = await renderCampaignVideo({
         manifest: plan.manifest,
-        file: clip.file,
+        files: picked.map((c) => c.file),
+        clipAssetIds: plan.clipAssetIds,
         useClipSound: plan.useClipSound,
         videoKey,
         onProgress: (percent) => setPhase({ kind: "rendering", percent }),
@@ -227,11 +294,17 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
         .then(({ videosMade }) => setStatus((s) => (s ? { ...s, videosMade } : s)))
         .catch(() => undefined);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
       setPhase({ kind: "ready" });
+      if (error instanceof CampaignApiError && error.code === "phone_required") {
+        // The server is the judge: show the phone step again.
+        setStatus((s) => (s ? { ...s, phone: { ...s.phone, ok: false } } : s));
+        setNotice(t("campaign.phone.needed"));
+        return;
+      }
+      const reason = error instanceof Error ? error.message : String(error);
       setNotice(t("campaign.createFailed", { reason }));
     }
-  }, [campaign, clip, qrKey, slug, sound, statement, t]);
+  }, [campaign, clips, formatId, moodId, pick, qrKey, ready, slug, sound, statement, t]);
 
   const fileName = useMemo(() => safeFileName(campaign?.merchant.name ?? ""), [campaign]);
 
@@ -301,7 +374,8 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
   }, [qrKey, slug]);
 
   const reset = useCallback(() => {
-    setClip(null);
+    setClips((current) => current.map(() => null));
+    setClipErrors((current) => current.map(() => null));
     setPostUrl("");
     setPostSaved(false);
     setNotice(null);
@@ -323,8 +397,10 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
     );
   }
 
-  const overCap = clip && clip.seconds > campaign.limits.maxClipSeconds;
   const rendering = phase.kind === "rendering";
+  // The shop offers styles and none is chosen yet: show only the picker.
+  const choosing = campaign.formats.length > 0 && !format;
+  const fmt = (suffix: string) => t(`campaign.format.${formatId}.${suffix}` as MessageKey);
 
   return (
     <Shell>
@@ -414,32 +490,128 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
         </section>
       ) : (
         <>
-          {/* 1 · Shoot */}
+          {/* Choose a style (only when the shop offers more than one) */}
+          {campaign.formats.length > 1 && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <h2 className="text-base font-bold text-slate-900">{t("campaign.step.style")}</h2>
+              {choosing && <p className="mt-1 text-sm text-slate-600">{t("campaign.style.hint")}</p>}
+              <div className="mt-3 grid grid-cols-1 gap-2">
+                {campaign.formats
+                  .filter((option) => choosing || option.id === formatId)
+                  .map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={rendering}
+                      onClick={() => applyFormat(option)}
+                      className={
+                        "flex min-h-[64px] items-start gap-3 rounded-xl border px-3 py-3 text-left " +
+                        (option.id === formatId ? "border-blue-500 bg-blue-50" : "border-slate-200 active:bg-slate-50")
+                      }
+                    >
+                      <span className="text-2xl leading-none" aria-hidden>{option.icon}</span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-slate-900">
+                          {t(`campaign.format.${option.id}.name` as MessageKey)}
+                        </span>
+                        <span className="block text-xs leading-relaxed text-slate-600">
+                          {t(`campaign.format.${option.id}.desc` as MessageKey)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+              </div>
+              {!choosing && (
+                <button
+                  type="button"
+                  disabled={rendering}
+                  onClick={() => setFormatId(null)}
+                  className="mt-2 min-h-[40px] text-sm font-medium text-blue-700"
+                >
+                  {t("campaign.style.change")}
+                </button>
+              )}
+            </section>
+          )}
+
+          {!choosing && (
+            <>
+          {/* 1 · Shoot — one slot per shot */}
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <h2 className="text-base font-bold text-slate-900">{t("campaign.step.shoot")}</h2>
-            <p className="mt-1 text-sm text-slate-600">{t("campaign.shoot.hint")}</p>
-            {clip && (
-              <div className="mt-3 flex items-center gap-3">
-                <video src={clip.url} muted playsInline className="h-28 w-16 rounded-lg bg-black object-cover" />
-                <div className="text-sm text-slate-700">
-                  <p className="font-medium">{t("campaign.shoot.length", { seconds: Math.round(clip.seconds) })}</p>
-                  {overCap && (
-                    <p className="text-xs text-slate-500">
-                      {t("campaign.shoot.trimmed", { seconds: campaign.limits.maxClipSeconds })}
-                    </p>
-                  )}
+            {!format && <p className="mt-1 text-sm text-slate-600">{t("campaign.shoot.hint")}</p>}
+            {format?.moods.length ? (
+              <div className="mt-3">
+                <p className="text-sm font-medium text-slate-800">{t("campaign.mood.label")}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {format.moods.map((mood) => (
+                    <button
+                      key={mood.id}
+                      type="button"
+                      disabled={rendering}
+                      onClick={() => chooseMood(mood.id)}
+                      className={
+                        "min-h-[40px] rounded-full border px-4 text-sm font-medium " +
+                        (mood.id === moodId ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 text-slate-700")
+                      }
+                    >
+                      {t(`campaign.mood.${mood.id}` as MessageKey)}
+                    </button>
+                  ))}
                 </div>
               </div>
+            ) : null}
+            {clips.map((slot, index) => {
+              const shot = format?.shots[index];
+              const max = shot ? shot.maxSeconds : campaign.limits.maxClipSeconds;
+              return (
+                <div key={`${formatId ?? "classic"}-${index}`} className={index > 0 ? "mt-4 border-t border-slate-100 pt-4" : "mt-3"}>
+                  {format && (
+                    <p className="text-sm text-slate-700">
+                      {clips.length > 1 && <span className="font-semibold">{index + 1}. </span>}
+                      {fmt(`shot${index + 1}`)}
+                      <span className="text-slate-400"> · {t("campaign.shoot.range", { min: shot!.minSeconds, max })}</span>
+                    </p>
+                  )}
+                  {slot && (
+                    <div className="mt-2 flex items-center gap-3">
+                      <video src={slot.url} muted playsInline className="h-28 w-16 rounded-lg bg-black object-cover" />
+                      <div className="text-sm text-slate-700">
+                        <p className="font-medium">{t("campaign.shoot.length", { seconds: Math.round(slot.seconds) })}</p>
+                        {slot.seconds > max && (
+                          <p className="text-xs text-slate-500">{t("campaign.shoot.trimmed", { seconds: max })}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {clipErrors[index] && <p className="mt-2 text-sm text-red-700">{clipErrors[index]}</p>}
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <FileButton accept="video/*" capture primary={!slot} disabled={rendering} onFile={(file) => void onPick(index, file)}>
+                      {slot ? t("campaign.shoot.again") : t("campaign.shoot.record")}
+                    </FileButton>
+                    <FileButton accept="video/*" disabled={rendering} onFile={(file) => void onPick(index, file)}>
+                      {t("campaign.shoot.pick")}
+                    </FileButton>
+                  </div>
+                </div>
+              );
+            })}
+            {format?.asksPick && (
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <label className="text-sm font-medium text-slate-800" htmlFor="campaign-pick">
+                  {t("campaign.pick.label")}
+                </label>
+                <input
+                  id="campaign-pick"
+                  value={pick}
+                  onChange={(event) => setPick(event.target.value)}
+                  maxLength={22}
+                  placeholder={t("campaign.pick.placeholder")}
+                  disabled={rendering}
+                  className="mt-2 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-base"
+                />
+              </div>
             )}
-            {clipError && <p className="mt-2 text-sm text-red-700">{clipError}</p>}
-            <div className="mt-3 grid grid-cols-1 gap-2">
-              <FileButton accept="video/*" capture primary={!clip} disabled={rendering} onFile={onPick}>
-                {clip ? t("campaign.shoot.again") : t("campaign.shoot.record")}
-              </FileButton>
-              <FileButton accept="video/*" disabled={rendering} onFile={onPick}>
-                {t("campaign.shoot.pick")}
-              </FileButton>
-            </div>
           </section>
 
           {/* 2 · Words */}
@@ -448,7 +620,10 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
             <p className="mt-1 text-sm text-slate-600">{t("campaign.words.hint")}</p>
             <textarea
               value={statement}
-              onChange={(event) => setStatement(event.target.value)}
+              onChange={(event) => {
+                setStatement(event.target.value);
+                setStatementTouched(true);
+              }}
               maxLength={campaign.limits.statementMaxChars * 2}
               rows={2}
               disabled={rendering}
@@ -460,7 +635,10 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <h2 className="text-base font-bold text-slate-900">{t("campaign.step.sound")}</h2>
             <ul className="mt-3 flex max-h-64 flex-col gap-1 overflow-y-auto">
-              {[{ id: CLIP_SOUND, label: t("campaign.sound.clip"), url: "" }, ...campaign.sounds].map((option) => (
+              {[
+                ...(allowsClipSound ? [{ id: CLIP_SOUND, label: t("campaign.sound.clip"), url: "" }] : []),
+                ...campaign.sounds,
+              ].map((option) => (
                 <li key={option.id} className="flex items-center gap-2">
                   <label className="flex min-h-[44px] flex-1 cursor-pointer items-center gap-3 rounded-lg px-2 active:bg-slate-50">
                     <input
@@ -486,7 +664,21 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
             </ul>
           </section>
 
-          <BigButton onClick={() => void create()} disabled={!clip || rendering} primary>
+          {/* 4 · Phone (once per install) — so iTravy can refuse the creator's own code */}
+          {status.phone.required && (
+            <PhoneVerifyStep
+              slug={slug}
+              qrKey={qrKey}
+              status={status}
+              disabled={rendering}
+              onVerified={(next) => {
+                setStatus(next);
+                setNotice(null);
+              }}
+            />
+          )}
+
+          <BigButton onClick={() => void create()} disabled={!ready || rendering || !status.phone.ok} primary>
             {rendering
               ? phase.percent == null
                 ? t("campaign.preparing")
@@ -500,6 +692,8 @@ export function CampaignQuickVideo({ slug, qrKey }: { slug: string; qrKey: strin
                 style={{ width: `${phase.percent ?? 3}%` }}
               />
             </div>
+          )}
+            </>
           )}
         </>
       )}
