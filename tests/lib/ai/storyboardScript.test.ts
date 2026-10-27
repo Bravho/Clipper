@@ -85,6 +85,27 @@ describe("generateScriptForStoryboard", () => {
     expect(out.scriptThai).toBe("มาที่ร้านนี้กัน ข้าวซอยน้ำข้นหอมมาก แวะมาลองนะ");
   });
 
+  it("leaves the description line out of the prompt when there is none", async () => {
+    const reply = {
+      text: JSON.stringify({
+        scenes: [
+          { sceneNumber: 1, line: "มาที่ร้านนี้กัน" },
+          { sceneNumber: 2, line: "ข้าวซอยน้ำข้นหอมมาก" },
+          { sceneNumber: 3, line: "แวะมาลองนะ" },
+        ],
+      }),
+    };
+    generateContent.mockResolvedValueOnce(reply).mockResolvedValueOnce(reply);
+    await generateScriptForStoryboard({ ...base, description: "", scenes });
+    await generateScriptForStoryboard({ ...base, description: "ร้านข้าวซอย", scenes });
+    const empty = generateContent.mock.calls[0][0].contents.at(-1).text as string;
+    const given = generateContent.mock.calls[1][0].contents.at(-1).text as string;
+    expect(empty).not.toContain("Video description");
+    expect(empty).not.toContain("undefined");
+    expect(given).toContain("Video description");
+    expect(given).toContain("ร้านข้าวซอย");
+  });
+
   it("holds each scene's line to that scene's time", async () => {
     const long = Array.from({ length: 20 }, () => "อร่อยมากจริงๆเลยนะ").join(" ");
     generateContent.mockResolvedValueOnce({
@@ -98,5 +119,86 @@ describe("generateScriptForStoryboard", () => {
     });
     const out = await generateScriptForStoryboard({ ...base, scenes });
     expect(countScriptUnits(out.sceneLines[2], "th")).toBeLessThanOrEqual(sceneLineUnits(3, "th").max);
+  });
+});
+
+describe("generateScriptForStoryboard — business profile and failures", () => {
+  beforeEach(() => generateContent.mockReset());
+
+  const lines = {
+    scenes: [
+      { sceneNumber: 1, line: "มาที่ร้านนี้กัน" },
+      { sceneNumber: 2, line: "ข้าวซอยน้ำข้นหอมมาก" },
+      { sceneNumber: 3, line: "แวะมาลองนะ" },
+    ],
+  };
+
+  it("asks for the caption and the business profile, and returns the parsed profile", async () => {
+    generateContent.mockResolvedValueOnce({
+      text: JSON.stringify({
+        ...lines,
+        captionThai: "ข้าวซอยอร่อย #ข้าวซอย",
+        businessProfile: {
+          businessName: "ร้านป้าศรี",
+          category: " ร้านอาหาร ",
+          location: "null",
+          description: "",
+          menuDetails: "ข้าวซอยไก่",
+        },
+      }),
+    });
+    const out = await generateScriptForStoryboard({ ...base, scenes });
+    const prompt = generateContent.mock.calls[0][0].contents.at(-1).text as string;
+    expect(prompt).toContain('Business profile (REQUIRED, "businessProfile")');
+    expect(prompt).toContain('"menuDetails": "string or null"');
+    expect(out.captionThai).toBe("ข้าวซอยอร่อย #ข้าวซอย");
+    expect(out.businessProfile).toEqual({
+      businessName: "ร้านป้าศรี",
+      category: "ร้านอาหาร",
+      location: null,
+      description: null,
+      menuDetails: "ข้าวซอยไก่",
+    });
+  });
+
+  it("gives no profile (never a guessed one) when the model's is unusable", async () => {
+    generateContent.mockResolvedValueOnce({
+      text: JSON.stringify({ ...lines, captionThai: "c", businessProfile: { businessName: "x" } }),
+    });
+    const out = await generateScriptForStoryboard({ ...base, scenes });
+    expect(out.businessProfile).toBeNull();
+  });
+
+  it("names an unparseable answer as an invalid-output failure", async () => {
+    generateContent.mockResolvedValueOnce({ text: "not json {" });
+    await expect(generateScriptForStoryboard({ ...base, scenes })).rejects.toMatchObject({
+      name: "StoryboardScriptError",
+      reason: "invalid_output",
+    });
+  });
+
+  it("names a failed AI request as an ai_error failure", async () => {
+    generateContent.mockRejectedValueOnce(new Error("503 overloaded"));
+    await expect(generateScriptForStoryboard({ ...base, scenes })).rejects.toMatchObject({
+      name: "StoryboardScriptError",
+      reason: "ai_error",
+    });
+  });
+
+  it("fails instead of leaving a silent gap when a speaking scene has no line", async () => {
+    generateContent.mockResolvedValueOnce({
+      text: JSON.stringify({
+        scenes: [
+          { sceneNumber: 1, line: "มาที่ร้านนี้กัน" },
+          { sceneNumber: 2, line: "" },
+          { sceneNumber: 3, line: "แวะมาลองนะ" },
+        ],
+        captionThai: "c",
+      }),
+    });
+    await expect(generateScriptForStoryboard({ ...base, scenes })).rejects.toMatchObject({
+      name: "StoryboardScriptError",
+      reason: "invalid_output",
+    });
   });
 });

@@ -32,6 +32,12 @@ import type { HeadlessBrowser } from "@remotion/renderer";
 import { derivePalette, type Palette } from "@/lib/ai/paletteService";
 import type { TimedSegment } from "@/lib/ai/geminiSubtitlesService";
 import { orderSourceAssets, type OrderedSourceAsset } from "@/lib/sourceAssets";
+import { buildOrderedStoryboard } from "@/lib/ai/storyboard";
+import {
+  parseBusinessProfile,
+  StoryboardScriptError,
+  type ExtractedBusinessProfile,
+} from "@/lib/ai/storyboardScriptResult";
 import {
   buildSceneMontageAssets,
   applyApprovedStoryboardSelections,
@@ -242,6 +248,14 @@ function readLocalMediaDescriptors(
     if (parsed.success) descriptors.push(parsed.data);
   }
   return descriptors;
+}
+
+/** `render_payload.storyboardMode` of a studio job whose storyboard is the selection order. */
+const ORDERED_STORYBOARD_MODE = "ordered";
+
+/** Was this job's storyboard built from the selection order (the studio path, no Stage-1 AI)? */
+function isOrderedStoryboardJob(payload: Record<string, unknown> | null | undefined): boolean {
+  return payload?.storyboardMode === ORDERED_STORYBOARD_MODE;
 }
 
 /** The voice is longer than the picked material can cover. */
@@ -463,6 +477,15 @@ export class VideoGenerationService {
       targetPlatforms: Platform[];
       preferredStyle: string;
       rvcVoiceModel?: string;
+      /**
+       * The phone studio's path (Tho, 2026-10-26): the storyboard is the
+       * selected material in the order it was selected — one scene per item,
+       * no written content — and it is ready the moment the job exists. No
+       * Stage-1 AI call (no generateSpeakingScript): the speaking script is
+       * written later, from the approved storyboard and its pictures
+       * (writeScriptForStoryboard), which also writes the caption.
+       */
+      orderedStoryboard?: boolean;
     }
   ): Promise<VideoGenerationJob> {
     const existing = await videoGenerationJobRepository.findByRequestId(requestId);
@@ -531,8 +554,14 @@ export class VideoGenerationService {
         renderPayload: {
           mediaMode: "local-first",
           localMedia: params.localMedia,
+          ...(params.orderedStoryboard ? { storyboardMode: ORDERED_STORYBOARD_MODE } : {}),
         },
       });
+    }
+
+    if (params.orderedStoryboard) {
+      const assetCount = params.localMedia?.length || params.imageUrls.length;
+      return this._readyOrderedStoryboard(job.id, assetCount);
     }
 
     // Run Gemini analysis and update job when complete
@@ -546,6 +575,30 @@ export class VideoGenerationService {
     });
 
     return job;
+  }
+
+  /**
+   * The studio's instant storyboard: one scene per submitted item, in the
+   * submitted (= selected) order, no summaries. The job goes straight to the
+   * storyboard/script review step with no script yet — the studio writes it
+   * from the approved storyboard (writeScriptForStoryboard).
+   */
+  private async _readyOrderedStoryboard(
+    jobId: string,
+    assetCount: number
+  ): Promise<VideoGenerationJob> {
+    return videoGenerationJobRepository.update(
+      jobId,
+      {
+        currentStep: VideoGenerationStep.AwaitingContentApproval,
+        scenePlan: null,
+        scriptThai: null,
+        hookThai: null,
+        captionThai: null,
+        storyboard: JSON.stringify(buildOrderedStoryboard(assetCount)),
+      },
+      SYSTEM_ACTOR
+    );
   }
 
   private async _runChatGptAnalysis(
@@ -603,33 +656,73 @@ export class VideoGenerationService {
       storyboard: output.storyboard ? JSON.stringify(output.storyboard) : null,
     }, SYSTEM_ACTOR);
 
-    // Auto-save/enrich the account profile only when this request is for that
-    // same business. A requester can make clips for multiple venues, so a
-    // per-video AI extraction must not overwrite an unrelated account profile.
-    if (output.businessProfile) {
+    // Fill the account profile's gaps from this extraction (never overwriting
+    // what is there; see `_fillBusinessProfileGaps`). This is the older,
+    // non-studio path, where the profile has always been best-effort.
+    const extracted = parseBusinessProfile(output.businessProfile);
+    if (req && extracted) {
       try {
-        if (req) {
-          const existingProfile = await businessProfileService.getProfile(req.userId);
-          const mayUpdateAccountProfile =
-            !existingProfile ||
-            businessProfileMatchesPlace(existingProfile.businessName, req.placeName);
-          if (mayUpdateAccountProfile) {
-            await businessProfileService.saveProfile(req.userId, {
-              // The requester-entered place name is authoritative; do not let
-              // the model rewrite its spelling in the account profile.
-              businessName: req.placeName?.trim() || output.businessProfile.businessName,
-              category: output.businessProfile.category,
-              location: output.businessProfile.location ?? null,
-              description: output.businessProfile.description ?? null,
-              menuDetails: output.businessProfile.menuDetails ?? null,
-            });
-            console.log(`[AI Profile] Auto-saved business profile for user ${req.userId}`);
-          }
-        }
+        const outcome = await this._fillBusinessProfileGaps(req, extracted);
+        console.log(`[AI Profile] business profile for user ${req.userId}: ${outcome}`);
       } catch (profileErr) {
         console.error("Failed to auto-save business profile from AI output:", profileErr);
       }
     }
+  }
+
+  /**
+   * Fill the account's business profile from details the AI extracted — ONLY
+   * the fields that are missing or empty. A value already in the profile (typed
+   * by the person or saved earlier) is never overwritten.
+   *
+   * The name-match guard stays: a requester can make videos for several
+   * places, so a profile for ANOTHER place is left alone entirely. With no
+   * profile yet one is created, named with the request's place name (the
+   * requester's spelling is authoritative) or, failing that, the name the
+   * model read from the brief. With no name at all nothing is created — a
+   * profile is never saved under a guessed name.
+   */
+  private async _fillBusinessProfileGaps(
+    req: { userId: string; placeName?: string | null },
+    extracted: ExtractedBusinessProfile
+  ): Promise<"created" | "filled" | "unchanged" | "other_place" | "no_name"> {
+    const { businessProfileService } = await import("@/services/BusinessProfileService");
+    const blank = (value: string | null | undefined) => !value || !value.trim();
+    const existing = await businessProfileService.getProfile(req.userId);
+    const requestedName = req.placeName?.trim() || extracted.businessName.trim();
+
+    if (!existing) {
+      if (!requestedName) return "no_name";
+      await businessProfileService.saveProfile(req.userId, {
+        businessName: requestedName,
+        category: extracted.category,
+        location: extracted.location,
+        description: extracted.description,
+        menuDetails: extracted.menuDetails,
+      });
+      return "created";
+    }
+
+    if (!businessProfileMatchesPlace(existing.businessName, req.placeName)) return "other_place";
+
+    const keepOrFill = (current: string | null | undefined, found: string | null) =>
+      blank(current) && !blank(found) ? (found as string).trim() : (current ?? null);
+    const merged = {
+      businessName: blank(existing.businessName) && requestedName ? requestedName : existing.businessName,
+      category: blank(existing.category) ? extracted.category : existing.category,
+      location: keepOrFill(existing.location, extracted.location),
+      description: keepOrFill(existing.description, extracted.description),
+      menuDetails: keepOrFill(existing.menuDetails, extracted.menuDetails),
+    };
+    const changed =
+      merged.businessName !== existing.businessName ||
+      merged.category !== existing.category ||
+      merged.location !== (existing.location ?? null) ||
+      merged.description !== (existing.description ?? null) ||
+      merged.menuDetails !== (existing.menuDetails ?? null);
+    if (!changed) return "unchanged";
+    await businessProfileService.saveProfile(req.userId, merged);
+    return "filled";
   }
 
   /**
@@ -659,7 +752,13 @@ export class VideoGenerationService {
       /** Background music chosen (or not chosen yet): the voice starts after its intro. */
       musicSelected: boolean;
     }
-  ): Promise<{ scriptThai: string; sceneLines: string[]; speakSeconds: number }> {
+  ): Promise<{
+    scriptThai: string;
+    sceneLines: string[];
+    speakSeconds: number;
+    /** The caption written with this script (always present: no caption is a failure). */
+    captionThai: string;
+  }> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingContentApproval);
     await this.requireAiProcessingConsent(job.requestId);
     const { clipRequestRepository } = await import("@/repositories/index");
@@ -739,6 +838,24 @@ export class VideoGenerationService {
       })),
     });
 
+    // Tho's rule (2026-10-26): no silent fallback. An answer without a caption
+    // or without a usable business profile is a failed call — nothing is saved
+    // and the studio offers "Try again" (the same call) instead.
+    if (!output.captionThai) {
+      throw new StoryboardScriptError("The script writer returned no caption.", "invalid_output");
+    }
+    if (!output.businessProfile) {
+      throw new StoryboardScriptError(
+        "The script writer returned no usable business profile.",
+        "invalid_output"
+      );
+    }
+
+    // Only a complete, valid answer reaches here. The profile's gaps are
+    // filled first: if that write fails the call fails too, and "Try again"
+    // runs it again (filling gaps twice is harmless — it never overwrites).
+    await this._fillBusinessProfileGaps(req, output.businessProfile);
+
     // The storyboard the script was written for goes with it, so approval and
     // scene design start from the same arrangement.
     const storyboard: StoryboardScene[] = scenes.map((scene, index) => ({
@@ -752,13 +869,14 @@ export class VideoGenerationService {
       scriptThai: output.scriptThai,
       scriptEnglish: null,
       storyboard: JSON.stringify(storyboard),
-      ...(output.captionThai ? { captionThai: output.captionThai } : {}),
+      captionThai: output.captionThai,
     });
 
     return {
       scriptThai: output.scriptThai,
       sceneLines: output.sceneLines,
       speakSeconds: speak.reduce((sum, seconds) => sum + seconds, 0),
+      captionThai: output.captionThai,
     };
   }
 
@@ -5005,7 +5123,12 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         approvedScriptEnglish: analysis.scriptEnglish,
         approvedHookThai: analysis.hookThai ?? null,
         approvedHookEnglish: analysis.hookEnglish,
-        approvedCaptionThai: analysis.captionThai,
+        // A studio request has no Stage-1 caption: the one written with the
+        // script from the storyboard is on the job; keep it when the studio
+        // sends none.
+        approvedCaptionThai: analysis.captionThai?.trim()
+          ? analysis.captionThai
+          : existing.captionThai ?? "",
         approvedCaptionEnglish: analysis.captionEnglish,
         approvedCaptionChinese: analysis.captionChinese,
         storyboard: storyboardJson,
@@ -5195,6 +5318,12 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         const imageUrls = assets
           .filter((a) => (a.assetType === AssetType.Image || a.assetType === AssetType.Video) && a.uploadStatus === AssetUploadStatus.Uploaded)
           .map((a) => a.storageUrl).filter(Boolean);
+        if (isOrderedStoryboardJob(job.renderPayload)) {
+          // A studio request never had a Stage-1 AI call to retry: rebuild its
+          // ordered storyboard from the submitted material.
+          const material = readLocalMediaDescriptors(job.renderPayload);
+          return this._readyOrderedStoryboard(jobId, material.length || imageUrls.length);
+        }
         const updated = await videoGenerationJobRepository.update(jobId, {
           currentStep: VideoGenerationStep.AnalyzingContent,
           scenePlan: null, scriptThai: null, scriptEnglish: null,

@@ -405,7 +405,8 @@ export class TextGraphicsService {
       type: "text",
       text: [
         `Business name: ${inputs.brand || "(unknown)"}`,
-        `Brief from the owner: ${inputs.brief || "(none)"}`,
+        // The description is optional: with none, the line is left out.
+        ...(inputs.brief ? [`Brief from the owner: ${inputs.brief}`] : []),
         `Video duration: ${inputs.durationSeconds.toFixed(2)} s (the voice starts at ${inputs.leadInSeconds.toFixed(1)} s).`,
         `Voiceover with timing (these lines are already shown as subtitles):`,
         timeline || "  (no timing available)",

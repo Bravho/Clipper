@@ -108,9 +108,14 @@ export async function GET(request: Request) {
   const storyboard = parseStoryboard(
     contentApproved ? (job.approvedStoryboard ?? job.storyboard) : job.storyboard
   );
+  // A studio request reaches the review step with its storyboard but no script
+  // yet (no Stage-1 AI call): the script is written from the approved
+  // storyboard. Report an empty one so the studio asks for the storyboard
+  // first instead of waiting for a script that is not coming.
   const hasScript =
     job.currentStep !== VideoGenerationStep.AnalyzingContent &&
-    Boolean(job.scriptThai || job.approvedScriptThai);
+    (Boolean(job.scriptThai || job.approvedScriptThai) ||
+      job.currentStep === VideoGenerationStep.AwaitingContentApproval);
 
   // The finished, captioned videos — one per channel shape — played in the
   // studio's Render and Channels steps through the request's own stream route.

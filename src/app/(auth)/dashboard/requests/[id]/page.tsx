@@ -944,7 +944,10 @@ export default async function RequestDetailPage({
               </dd>
             </div>
           )}
-          <BriefRow label="Description" value={view.description} />
+          {/* The description is optional: no row rather than an empty one. */}
+          {view.description?.trim() ? (
+            <BriefRow label="Description" value={view.description} />
+          ) : null}
           <BriefRow label="Target audience" value={view.targetAudience} />
           <BriefRow
             label="Target platforms"

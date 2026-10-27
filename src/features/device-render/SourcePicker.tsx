@@ -46,6 +46,8 @@ export interface PendingMedia {
  */
 export function SourcePicker({
   sources,
+  selection,
+  onToggle,
   ratio,
   onAdd,
   onRemove,
@@ -57,6 +59,14 @@ export function SourcePicker({
   footer,
 }: {
   sources: EditorSource[];
+  /**
+   * The selected source ids in the order they were tapped. A tile shows its
+   * position here (1, 2, 3…); only these are submitted, in this order, and the
+   * storyboard is one scene per item in this order.
+   */
+  selection: string[];
+  /** Tap a tile: select it as the next number, or unselect it (renumbering the rest). */
+  onToggle: (sourceId: string) => void;
   ratio: EditorRatio;
   onAdd: (files: FileList | null) => void | Promise<void>;
   onRemove: (sourceId: string) => void;
@@ -75,8 +85,9 @@ export function SourcePicker({
   footer?: ReactNode;
 }) {
   const t = useStudioT();
-  const clips = sources.filter((source) => source.kind === "clip").length;
-  const photos = sources.length - clips;
+  const chosen = sources.filter((source) => selection.includes(source.id));
+  const clips = chosen.filter((source) => source.kind === "clip").length;
+  const photos = chosen.length - clips;
   const preparing = pending.some((item) => item.state !== "ready" && item.state !== "failed");
   // "Preparing 3 of 8": the item being worked on, counted in picking order.
   const finished = pending.filter((item) => item.state === "ready" || item.state === "failed").length;
@@ -163,13 +174,51 @@ export function SourcePicker({
           </p>
         ) : (
           <>
-            <p className="studio-panel-hint" style={{ marginBottom: 10 }}>
-              {t("studio.source.counts", { photos, clips })}
+            {!locked && sources.length > 0 && (
+              <p className="studio-panel-hint" style={{ marginBottom: 6 }}>
+                {t("studio.source.selectHint")}
+              </p>
+            )}
+            <p className="studio-panel-hint" style={{ marginBottom: 10 }} aria-live="polite">
+              {t("studio.source.selectedCounts", {
+                selected: chosen.length,
+                total: sources.length,
+                photos,
+                clips,
+              })}
             </p>
             <ul className="studio-media-grid">
-              {sources.map((source) => (
-                <li key={source.id} className="studio-media-tile">
-                  <MediaThumb source={source} />
+              {sources.map((source) => {
+                const position = selection.indexOf(source.id);
+                const selected = position >= 0;
+                return (
+                <li
+                  key={source.id}
+                  className={
+                    selected ? "studio-media-tile studio-media-selected" : "studio-media-tile studio-media-unselected"
+                  }
+                  data-selected={selected ? "true" : "false"}
+                >
+                  <button
+                    type="button"
+                    className="studio-media-toggle"
+                    aria-pressed={selected}
+                    aria-label={
+                      selected
+                        ? t("studio.source.orderAria", { name: source.fileName, number: position + 1 })
+                        : t("studio.source.unselectedAria", { name: source.fileName })
+                    }
+                    disabled={disabled || locked}
+                    onClick={() => onToggle(source.id)}
+                  >
+                    <MediaThumb source={source} />
+                  </button>
+                  <span
+                    className={selected ? "studio-media-order" : "studio-media-order studio-media-order-empty"}
+                    aria-hidden
+                  >
+                    {selected ? position + 1 : ""}
+                  </span>
                   <span className="studio-media-badge">
                     {source.kind === "clip"
                       ? `${(source.durationSeconds ?? 0).toFixed(1)}s`
@@ -187,7 +236,8 @@ export function SourcePicker({
                     </button>
                   )}
                 </li>
-              ))}
+                );
+              })}
               {pending.map((item) => (
                 <PendingTile
                   key={item.id}

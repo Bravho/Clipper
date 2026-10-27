@@ -1,8 +1,29 @@
 import {
   buildFallbackStoryboard,
+  buildOrderedStoryboard,
   ensureAllAssetsUsed,
   sanitizeStoryboard,
 } from "@/lib/ai/storyboard";
+
+describe("buildOrderedStoryboard (studio: the selection order, no content)", () => {
+  it("makes one empty scene per item, in index order", () => {
+    expect(buildOrderedStoryboard(3)).toEqual([
+      { sceneNumber: 1, summary: "", assetIndexes: [0] },
+      { sceneNumber: 2, summary: "", assetIndexes: [1] },
+      { sceneNumber: 3, summary: "", assetIndexes: [2] },
+    ]);
+  });
+
+  it("never groups items, however many there are", () => {
+    const sb = buildOrderedStoryboard(10);
+    expect(sb).toHaveLength(10);
+    expect(sb.every((scene) => scene.assetIndexes.length === 1 && scene.summary === "")).toBe(true);
+  });
+
+  it("returns one empty scene for no material", () => {
+    expect(buildOrderedStoryboard(0)).toEqual([{ sceneNumber: 1, summary: "", assetIndexes: [] }]);
+  });
+});
 
 describe("buildFallbackStoryboard", () => {
   it("returns a single empty scene when there are no assets", () => {

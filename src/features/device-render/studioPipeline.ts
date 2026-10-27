@@ -19,6 +19,7 @@ import { isUnreadableFileError } from "@/features/requests/uploadDiagnostics";
 import { supportsManifestRender } from "@/lib/mobile/deviceRenderBridge";
 import { prepareClip } from "./clipPreview";
 import { studioEnglish, type StudioT } from "./studioText";
+import { requestStoryboardScript, type StoryboardScriptResult } from "./studioScriptFit";
 import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
 import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import {
@@ -648,22 +649,10 @@ export function fitStudioScriptToStoryboard(input: {
   jobId: string;
   scenes: { summary: string; shots: { assetIndex: number; seconds: number }[] }[];
   musicSelected: boolean;
-  t?: StudioT;
-}): Promise<{ scriptThai: string; sceneLines: string[]; speakSeconds: number }> {
-  const t = input.t ?? studioEnglish;
-  return (async () => {
-    const response = await fetch(`/api/requests/${input.requestId}/script/fit-storyboard`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jobId: input.jobId,
-        musicSelected: input.musicSelected,
-        scenes: input.scenes,
-      }),
-    });
-    if (!response.ok) throw new Error(await readError(response, t("studio.audio.fitScriptFailed")));
-    return (await response.json()) as { scriptThai: string; sceneLines: string[]; speakSeconds: number };
-  })();
+}): Promise<StoryboardScriptResult> {
+  // Every failure (error status, timeout, dropped connection, an incomplete
+  // answer) throws a StudioScriptFitError; the studio shows it with "Try again".
+  return requestStoryboardScript(input);
 }
 
 /**

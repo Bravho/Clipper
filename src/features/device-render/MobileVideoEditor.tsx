@@ -51,8 +51,10 @@ import {
   measureClipAspect,
   measurePictureAspect,
   readImagePoster,
+  restoreSelection,
   retimeScenes,
   scenePlanFromScenes,
+  selectedSources,
   scenesFromScenePlan,
   scenesFromStoryboard,
   scenesPlaySeconds,
@@ -61,6 +63,7 @@ import {
   stretchScenesToLength,
   storyboardFromScenes,
   submissionProblems,
+  toggleSelection,
   validateDocument,
   type EditorBrief,
   type EditorDocument,
@@ -73,6 +76,7 @@ import { subjectCentre } from "@/lib/mobile/shotFraming";
 import { preloadVoiceSamples } from "./voiceSamples";
 import {
   clearDraftSources,
+  loadDraftSelection,
   loadDraftSources,
   saveDraftSources,
   sweepOrphanStudioCopies,
@@ -109,6 +113,7 @@ import { ChannelFraming, type ChannelFramingStatus } from "./ChannelFraming";
 import { captureShotFrames } from "./shotFrames";
 import type { StudioManagement } from "./ChannelHandover";
 import { startStudioSession, trackStudioAction, trackStudioStep } from "./studioTracker";
+import { scriptFitFailureText, studioScriptStatus, type ScriptFitFailure } from "./studioScriptFit";
 import {
   pipelineStepText,
   StudioI18nProvider,
@@ -607,12 +612,16 @@ function StudioEditor({
       if (added.length > 0) {
         update((current) => {
           const sources = [...current.sources, ...added];
+          // New picks join the selection at once, numbered after the items
+          // already selected, in the order they were picked.
+          const selection = [...current.selection, ...added.map((source) => source.id)];
           return {
             ...current,
             sources,
-            // Auto-arrange only the first time, so adding a photo later does not
-            // throw away an order someone has already set.
-            scenes: current.scenes.length === 0 ? autoArrange(sources) : current.scenes,
+            selection,
+            // Before Submit the storyboard IS the selection: one scene per
+            // selected item, in selection order.
+            scenes: autoArrange(selectedSources({ sources, selection })),
           };
         });
         setMessage(
@@ -650,13 +659,31 @@ function StudioEditor({
           if (source.posterUrl) URL.revokeObjectURL(source.posterUrl);
           void dropPrivateCopy(source.snapshotKey);
         }
+        const sources = current.sources.filter((item) => item.id !== sourceId);
+        const selection = current.selection.filter((id) => id !== sourceId);
         return {
           ...current,
-          sources: current.sources.filter((item) => item.id !== sourceId),
-          scenes: current.scenes.map((scene) => ({
-            ...scene,
-            shots: scene.shots.filter((shot) => shot.sourceId !== sourceId),
-          })),
+          sources,
+          selection,
+          scenes: autoArrange(selectedSources({ sources, selection })),
+        };
+      });
+    },
+    [update]
+  );
+
+  /**
+   * Tap a Media tile: select it as the next number, or unselect it and move
+   * every later number up. The storyboard follows the new order at once.
+   */
+  const toggleSelected = useCallback(
+    (sourceId: string) => {
+      update((current) => {
+        const selection = toggleSelection(current.selection, sourceId);
+        return {
+          ...current,
+          selection,
+          scenes: autoArrange(selectedSources({ sources: current.sources, selection })),
         };
       });
     },
@@ -723,18 +750,6 @@ function StudioEditor({
       update((current) => ({
         ...current,
         scenes: current.scenes.filter((scene) => scene.id !== sceneId),
-      }));
-    },
-    [update]
-  );
-
-  const setSceneSummary = useCallback(
-    (sceneId: string, summary: string) => {
-      update((current) => ({
-        ...current,
-        scenes: current.scenes.map((scene) =>
-          scene.id === sceneId ? { ...scene, summary } : scene
-        ),
       }));
     },
     [update]
@@ -892,8 +907,16 @@ function StudioEditor({
     draftChecked.current = true;
     void loadDraftSources(requestId).then((sources) => {
       if (sources.length === 0) return;
+      const selection = restoreSelection(sources, loadDraftSelection(requestId));
       setDocument((current) =>
-        current.sources.length > 0 ? current : { ...current, sources }
+        current.sources.length > 0
+          ? current
+          : {
+              ...current,
+              sources,
+              selection,
+              scenes: autoArrange(selectedSources({ sources, selection })),
+            }
       );
       setMessage(t("studio.msg.mediaRestored", { count: sources.length }));
     });
@@ -901,8 +924,8 @@ function StudioEditor({
   useEffect(() => {
     if (!requestId || !draftChecked.current) return;
     if (submitted) clearDraftSources(requestId);
-    else saveDraftSources(requestId, document.sources);
-  }, [document.sources, requestId, submitted]);
+    else saveDraftSources(requestId, document.sources, document.selection);
+  }, [document.selection, document.sources, requestId, submitted]);
 
   // A reopened studio has no picked files in memory. The originals it kept at
   // submission are still in private storage; bring them back so the storyboard
@@ -914,7 +937,14 @@ function StudioEditor({
     restoring.current = true;
     void restoreStudioSources(content.localMedia)
       .then(({ sources, missingMedia }) => {
-        if (sources.length > 0) setDocument((current) => ({ ...current, sources }));
+        // What was submitted is exactly what was selected, in that order.
+        if (sources.length > 0) {
+          setDocument((current) => ({
+            ...current,
+            sources,
+            selection: sources.map((source) => source.id),
+          }));
+        }
         // Said by the MissingOriginals panel, with the way to put them back.
         setMissingOriginals(missingMedia);
         if (missingMedia.length > 0) {
@@ -1097,16 +1127,35 @@ function StudioEditor({
     setSubmitError(null);
     setSubmitProgress(null);
     try {
+      // Only the selected items, in the order they were numbered: that order
+      // is the material order, and the storyboard is one scene per item in it.
+      const chosen = selectedSources(document);
       await submitStudioRequest({
         requestId,
-        sources: document.sources,
+        sources: chosen,
         onProgress: (done, total) => setSubmitProgress({ done, total }),
         t,
       });
       trackStudioAction("submitted", requestId, {
-        photos: document.sources.filter((source) => source.kind === "image").length,
-        clips: document.sources.filter((source) => source.kind === "clip").length,
+        photos: chosen.filter((source) => source.kind === "image").length,
+        clips: chosen.filter((source) => source.kind === "clip").length,
+        unselected: document.sources.length - chosen.length,
       });
+      // The unselected picks are not part of this request: let them go, so the
+      // submitted list and the grid agree (and the timeline maps 1:1).
+      const kept = new Set(chosen.map((source) => source.id));
+      for (const source of document.sources) {
+        if (kept.has(source.id)) continue;
+        URL.revokeObjectURL(source.previewUrl);
+        if (source.posterUrl) URL.revokeObjectURL(source.posterUrl);
+        void dropPrivateCopy(source.snapshotKey);
+      }
+      setDocument((current) => ({
+        ...current,
+        sources: chosen,
+        selection: chosen.map((source) => source.id),
+        scenes: autoArrange(chosen),
+      }));
       await refreshContent();
       setStep("scenes");
       setMessage(t("studio.msg.submitted"));
@@ -1131,7 +1180,7 @@ function StudioEditor({
       setSubmitting(false);
       setSubmitProgress(null);
     }
-  }, [document.sources, quota, refreshContent, reloadQuota, requestId, t]);
+  }, [document, quota, refreshContent, reloadQuota, requestId, t]);
 
   const approveScript = useCallback(async () => {
     if (!requestId || !script) return;
@@ -1176,14 +1225,18 @@ function StudioEditor({
   // showing the draft written at submission.
   const [scriptWrittenHere, setScriptWrittenHere] = useState(false);
   const [fittingScript, setFittingScript] = useState(false);
+  // The last script call failed (Tho, 2026-10-26: no silent fallback — the
+  // error is shown with "Try again", and a failure on storyboard approval
+  // blocks the Sound step until the call works).
+  const [fitFailure, setFitFailure] = useState<ScriptFitFailure | null>(null);
   const scriptReady =
     contentApproved || Boolean(content?.scriptFromStoryboard) || scriptWrittenHere;
-  const scriptStatus: ScriptStatus =
-    pipelineScriptStatus === "review" && !scriptReady
-      ? fittingScript
-        ? "writing"
-        : "waiting_storyboard"
-      : pipelineScriptStatus;
+  const scriptStatus: ScriptStatus = studioScriptStatus({
+    pipeline: pipelineScriptStatus,
+    scriptReady,
+    fitting: fittingScript,
+    failure: fitFailure,
+  });
 
   // ── voice, production, and the storyboard's approval ─────────────────────
   const step_ = content?.currentStep ?? null;
@@ -1252,12 +1305,12 @@ function StudioEditor({
             }))
           )
         : materialSeconds(
-            document.sources.map((source) => ({
+            selectedSources(document).map((source) => ({
               isClip: source.kind === "clip",
               durationSeconds: source.durationSeconds,
             }))
           ),
-    [content?.localMedia, document.sources]
+    [content?.localMedia, document]
   );
   const maxVoiceSeconds = maxVoiceSecondsForMaterial(materialTotal);
   const voiceTooLong =
@@ -1505,8 +1558,22 @@ function StudioEditor({
    * Replaces the script on screen; only before the script is approved.
    */
   const writeScriptFromStoryboard = useCallback(
-    async (scenes: EditorScene[]) => {
-      if (!requestId || !content?.jobId) return;
+    async (scenes: EditorScene[], options: { fromApproval?: boolean } = {}) => {
+      // On storyboard approval the script MUST come from this call: a failure
+      // blocks the Sound step (with "Try again"). The optional rewrite of a
+      // script that is already valid only reports its failure.
+      const blocking = options.fromApproval === true;
+      const fail = (failure: unknown) => {
+        setFitFailure({ message: scriptFitFailureText(failure, t, blocking), blocking });
+        trackStudioAction("script_fit_failed", requestId, {
+          reason: failureText(failure),
+          blocking,
+        });
+      };
+      if (!requestId || !content?.jobId) {
+        if (blocking) fail(new Error("The request is not ready yet."));
+        return;
+      }
       const plan = scenes
         .map((scene) => ({
           summary: scene.summary,
@@ -1518,8 +1585,12 @@ function StudioEditor({
             .filter((shot) => shot.assetIndex >= 0 && shot.seconds > 0),
         }))
         .filter((scene) => scene.shots.length > 0);
-      if (plan.length === 0) return;
+      if (plan.length === 0) {
+        if (blocking) fail(new Error("The storyboard has no scenes with pictures."));
+        return;
+      }
       setFittingScript(true);
+      setFitFailure(null);
       setApproveError(null);
       try {
         const result = await fitStudioScriptToStoryboard({
@@ -1528,10 +1599,18 @@ function StudioEditor({
           scenes: plan,
           // "Not chosen yet" counts as music: the stricter, shorter script.
           musicSelected: document.musicTrackId !== NO_MUSIC_TRACK_ID,
-          t,
         });
+        // The caption is written with the script and is always there (an
+        // answer without one is a failure, never a silent keep-the-old-one).
         setScript((current) =>
-          current ? { ...current, text: result.scriptThai, english: "" } : current
+          current
+            ? {
+                ...current,
+                text: result.scriptThai,
+                english: "",
+                caption: result.captionThai,
+              }
+            : current
         );
         setScriptEdited(false);
         setScriptWrittenHere(true);
@@ -1539,7 +1618,7 @@ function StudioEditor({
         await refreshContent();
         setMessage(t("studio.msg.scriptFitted"));
       } catch (failure) {
-        setApproveError(failure instanceof Error ? failure.message : String(failure));
+        fail(failure);
       } finally {
         setFittingScript(false);
       }
@@ -1565,8 +1644,9 @@ function StudioEditor({
     // Approving the storyboard is what writes the script. A script already
     // written from an earlier approval and then edited by hand is kept; the
     // Sound step offers to write it again instead.
+    setFitFailure(null);
     if (!contentApproved && pipelineScriptStatus === "review" && !(scriptReady && scriptEdited)) {
-      void writeScriptFromStoryboard(document.scenes);
+      void writeScriptFromStoryboard(document.scenes, { fromApproval: true });
     }
   }, [
     contentApproved,
@@ -2253,7 +2333,7 @@ function StudioEditor({
       step_ === VideoGenerationStep.Complete,
   };
 
-  const mediaProblems = submissionProblems(document.sources, t);
+  const mediaProblems = submissionProblems(selectedSources(document), t);
   // The bar is for Stop while rendering, and for picking a stopped render back
   // up. Starting the main video is Render's own button.
   // Stop while rendering; Resume only after Stop or a failure that waiting
@@ -2395,6 +2475,8 @@ function StudioEditor({
         {step === "source" && (
           <SourcePicker
             sources={document.sources}
+            selection={document.selection}
+            onToggle={toggleSelected}
             ratio={document.ratio}
             onAdd={addFiles}
             onRemove={removeSource}
@@ -2453,10 +2535,6 @@ function StudioEditor({
               noteStoryboardEdit("remove_scene");
               removeScene(...args);
             }}
-            onSceneSummary={(...args: Parameters<typeof setSceneSummary>) => {
-              noteStoryboardEdit("summary");
-              setSceneSummary(...args);
-            }}
             onFit={(seconds) =>
               // With a voice, aim for the comfortable length, not the floor.
               fitStoryboard(
@@ -2499,6 +2577,15 @@ function StudioEditor({
             onFitScript={
               scriptStatus === "review" && hasShots
                 ? () => void writeScriptFromStoryboard(document.scenes)
+                : null
+            }
+            fitError={fitFailure?.message ?? null}
+            onRetryFit={
+              fitFailure && hasShots
+                ? () =>
+                    void writeScriptFromStoryboard(approvedScenes ?? document.scenes, {
+                      fromApproval: fitFailure.blocking,
+                    })
                 : null
             }
             onScriptChange={(change) => {
@@ -2557,7 +2644,9 @@ function StudioEditor({
             confirmBlocker={
               productionStarted || voiceStatus === "approved"
                 ? null
-                : scriptStatus === "waiting_storyboard"
+                : scriptStatus === "fit_failed"
+                  ? t("studio.blocker.scriptFailed")
+                  : scriptStatus === "waiting_storyboard"
                   ? t("studio.blocker.approveStoryboard")
                   : scriptStatus === "review"
                   ? t("studio.blocker.approveScript")

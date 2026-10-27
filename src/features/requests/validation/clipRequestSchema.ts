@@ -46,10 +46,15 @@ export const clipRequestFormSchema = z.object({
     .min(-180, "พิกัดลองจิจูดไม่ถูกต้อง")
     .max(180, "พิกัดลองจิจูดไม่ถูกต้อง"),
 
+  // Optional (Tho, 2026-10-26): a brief with no description goes on with the
+  // rest of its information. The column is NOT NULL (migration 002), so an
+  // absent description is stored as "" — never a guessed fill-in.
   description: z
     .string()
-    .min(20, "Please provide a description of at least 20 characters.")
-    .max(2000, "Description must be 2000 characters or fewer."),
+    .trim()
+    .max(2000, "Description must be 2000 characters or fewer.")
+    .optional()
+    .default(""),
 
   // Not collected on the form (removed per product decision) — must accept
   // the empty/undefined value that react-hook-form will actually submit.

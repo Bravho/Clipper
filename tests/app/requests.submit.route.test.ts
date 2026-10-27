@@ -136,6 +136,48 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
       })
     );
     expect(storeDerivativesMock).toHaveBeenCalledWith("req-1", "user-1", localMedia);
+    // Not the phone studio: the Stage-1 AI storyboard path is unchanged.
+    expect(initializePipelineMock.mock.calls[0][2]).toMatchObject({ orderedStoryboard: false });
+  });
+
+  it("asks for the instant ordered storyboard for a phone-studio submission", async () => {
+    getOwnedRequestMock.mockResolvedValue(submittedRequest);
+    getCurrentJobMock.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    findAssetsMock.mockResolvedValue([]);
+    storeDerivativesMock.mockResolvedValue(["https://example.com/b.jpg", "https://example.com/a.jpg"]);
+    initializePipelineMock.mockResolvedValue({ id: "job-studio" });
+
+    const material = (id: string) => ({
+      localId: `req-1--${id}`,
+      fileName: `${id}.jpg`,
+      mimeType: "image/jpeg",
+      fileSizeBytes: 25_000,
+      durationSeconds: null,
+    });
+    // Submitted in SELECTION order: b was numbered 1, a was numbered 2.
+    const localMedia = {
+      mode: "local-first",
+      materials: [material("b"), material("a")],
+      analysisFrames: [
+        { localId: "req-1--b", assetIndex: 0, mimeType: "image/jpeg", dataBase64: "YWJj" },
+        { localId: "req-1--a", assetIndex: 1, mimeType: "image/jpeg", dataBase64: "YWJj" },
+      ],
+      renderOnDevice: true,
+    };
+
+    const response = await POST(request({ localMedia }), {
+      params: Promise.resolve({ id: "req-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(initializePipelineMock).toHaveBeenCalledWith(
+      "req-1",
+      "user-1",
+      expect.objectContaining({
+        orderedStoryboard: true,
+        localMedia: localMedia.materials,
+      })
+    );
   });
 
   it("does not charge or submit a phone-local video through the still proxy", async () => {

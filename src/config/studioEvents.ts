@@ -62,6 +62,7 @@ export const STUDIO_ACTIONS = {
   voice_regenerated: { step: "audio", label: "Made the voice again" },
   voice_top_up: { step: "audio", label: "Bought more voice makes" },
   script_rewritten: { step: "audio", label: "Script written from the storyboard" },
+  script_fit_failed: { step: "audio", label: "Script from the storyboard failed (Try again shown)" },
   script_autofit: { step: "audio", label: "Auto-fit scenes to the voice" },
   script_approved: { step: "audio", label: "Approved the script" },
   script_approve_failed: { step: "audio", label: "Script approval failed" },

@@ -249,6 +249,13 @@ export interface EditorDocument {
   brief: EditorBrief;
   ratio: EditorRatio;
   sources: EditorSource[];
+  /**
+   * The ids of the SELECTED sources, in the order the person tapped them —
+   * the numbers 1, 2, 3… on the Media tiles. Only these are submitted, and in
+   * exactly this order: it is the material order the storyboard follows (one
+   * scene per item). A source not listed here stays in the grid, unselected.
+   */
+  selection: string[];
   scenes: EditorScene[];
   captionLanguages: CaptionLanguage[];
   templateId: string;
@@ -286,6 +293,7 @@ export function emptyDocument(): EditorDocument {
     brief: emptyBrief(),
     ratio: "9:16",
     sources: [],
+    selection: [],
     scenes: [],
     captionLanguages: ["en", "zh"],
     templateId: "none",
@@ -294,6 +302,48 @@ export function emptyDocument(): EditorDocument {
     voiceFile: null,
     musicFile: null,
   };
+}
+
+/**
+ * Tap a Media tile: an unselected item takes the next number; a numbered item
+ * is unselected and every number after it moves up by one (3 → 2 …).
+ */
+export function toggleSelection(selection: readonly string[], sourceId: string): string[] {
+  return selection.includes(sourceId)
+    ? selection.filter((id) => id !== sourceId)
+    : [...selection, sourceId];
+}
+
+/**
+ * The selected sources, in selection order. Ids whose source is gone are
+ * skipped, so a stale selection can never submit a missing file.
+ */
+export function selectedSources(
+  document: Pick<EditorDocument, "sources" | "selection">
+): EditorSource[] {
+  const byId = new Map(document.sources.map((source) => [source.id, source]));
+  const seen = new Set<string>();
+  const out: EditorSource[] = [];
+  for (const id of document.selection) {
+    const source = byId.get(id);
+    if (!source || seen.has(id)) continue;
+    seen.add(id);
+    out.push(source);
+  }
+  return out;
+}
+
+/**
+ * A saved selection matched to the sources that were read back. Null (a list
+ * saved before ordered selection existed) selects everything, in pick order.
+ */
+export function restoreSelection(
+  sources: readonly EditorSource[],
+  saved: readonly string[] | null
+): string[] {
+  if (!saved) return sources.map((source) => source.id);
+  const present = new Set(sources.map((source) => source.id));
+  return Array.from(new Set(saved.filter((id) => present.has(id))));
 }
 
 let counter = 0;
@@ -623,9 +673,8 @@ export function briefProblems(brief: EditorBrief, t: StudioT = studioEnglish): s
   if (brief.placeName.trim().length === 0) {
     problems.push(t("studio.brief.problem.place"));
   }
-  if (brief.details.trim().length < 20) {
-    problems.push(t("studio.brief.problem.details"));
-  }
+  // No details check: the description is optional (Tho, 2026-10-26). An
+  // empty one moves on with the name, the place and the platforms.
   // No length check: the brief has no length any more (2026-10-11). A request
   // saved earlier with a length outside today's range must not block a brief
   // over a field the person can no longer see.
@@ -640,14 +689,11 @@ export function briefProblems(brief: EditorBrief, t: StudioT = studioEnglish): s
  *
  * Deliberately weaker than {@link briefProblems}: a storyboard is a draft, and
  * refusing to draft one because the map pin is missing would be pedantry. What
- * it genuinely cannot work without is some material and some words.
+ * it genuinely cannot work without is some material and a place to name. The
+ * description is optional (2026-10-26), so it is not asked for here either.
  */
 export function canRequestStoryboard(document: EditorDocument): boolean {
-  return (
-    document.sources.length > 0 &&
-    document.brief.placeName.trim().length > 0 &&
-    document.brief.details.trim().length >= 10
-  );
+  return document.sources.length > 0 && document.brief.placeName.trim().length > 0;
 }
 
 /**

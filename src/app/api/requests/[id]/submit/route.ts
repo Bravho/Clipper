@@ -242,6 +242,9 @@ export async function POST(
       targetAudience: submitted.targetAudience,
       targetPlatforms: submitted.targetPlatforms,
       preferredStyle: submitted.preferredStyle ?? "",
+      // The phone studio: the storyboard is the selected material in its
+      // selected order, ready at once — no Stage-1 AI call.
+      orderedStoryboard: localMedia?.renderOnDevice === true,
     });
 
     return NextResponse.json({ request: submitted, jobId: job.id });

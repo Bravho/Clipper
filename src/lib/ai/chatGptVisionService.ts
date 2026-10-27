@@ -8,6 +8,12 @@ import { sanitizeThaiVoiceScript } from "@/lib/ai/thaiScriptSanitizer";
 import { sanitizeScenePlanDescriptions } from "@/lib/ai/scenePlanSanitizer";
 import { sanitizeStoryboard } from "@/lib/ai/storyboard";
 import {
+  parseBusinessProfile,
+  StoryboardScriptError,
+  withStoryboardScriptTimeout,
+  type ExtractedBusinessProfile,
+} from "@/lib/ai/storyboardScriptResult";
+import {
   countScriptUnits,
   maxScriptUnits,
   SCRIPT_UNITS_PER_SECOND,
@@ -212,7 +218,13 @@ function buildUserPrompt(params: GenerateContentParams): string {
           `Place-name preservation rule: reproduce "${params.placeName.trim()}" exactly in visible text. Do not translate, rewrite, abbreviate, normalize, or split this name across sentences or subtitle phrases.`,
         ]
       : []),
-    `Video description (รายละเอียดคลิป, provided by the requester — may contain the place/shop/venue name to say in the script): ${params.description}`,
+    // The description is optional (2026-10-26): with none, the line is left
+    // out rather than sent empty or filled with a guess.
+    ...(params.description?.trim()
+      ? [
+          `Video description (รายละเอียดคลิป, provided by the requester — may contain the place/shop/venue name to say in the script): ${params.description.trim()}`,
+        ]
+      : []),
     `Target audience (for theme/style reference only — do not include in script or scene content): ${params.targetAudience}`,
     `Target platforms: ${params.targetPlatforms.join(", ")}`,
     `Preferred style/tone: ${params.preferredStyle}`,
@@ -524,14 +536,27 @@ Requirements:
 - Place name: if the requester gave a place/shop name in the title or description, say it naturally once (in the hook or the closing). Never invent one.
 - Target audience is for tone only; never mention or address it.
 - Product accuracy: only mention items visibly present in the pictures or stated by the requester.
+- Every scene with a maximum above 0 MUST get a non-empty line.
+- Caption (REQUIRED, "captionThai"): a platform post caption with hashtags, in the selected content language.
+- Business profile (REQUIRED, "businessProfile"): the business details of this place, from the requester's brief and the pictures — "businessName": the place/shop name exactly as the requester gave it ("" when none was given; never invent one); "category": a short type of business such as "ร้านอาหาร", "คาเฟ่", "สปา" or "โรงแรม" (required); "location": only if the requester stated it or it is clearly visible, else null; "description": one or two sentences about the place from what is visible or stated, else null; "menuDetails": the dishes, products or highlights that are visible or stated, comma-separated, else null. Never invent facts.
 
 Respond with ONLY a valid JSON object. No markdown fences, no explanation outside the JSON.
 
 Schema:
 {
   "scenes": [ { "sceneNumber": 1, "line": "string" } ],
-  "captionThai": "string"
+  "captionThai": "string",
+  "businessProfile": {
+    "businessName": "string",
+    "category": "string",
+    "location": "string or null",
+    "description": "string or null",
+    "menuDetails": "string or null"
+  }
 }`;
+
+/** The longest the storyboard script call may take before it is a failure. */
+export const STORYBOARD_SCRIPT_TIMEOUT_MS = 75_000;
 
 /**
  * How much longer than the storyboard the script is written: a little, on
@@ -598,12 +623,40 @@ function buildStoryboardScriptPrompt(
  */
 export async function generateScriptForStoryboard(
   params: GenerateContentParams & { scenes: ScriptSceneTiming[] }
-): Promise<StoryboardScriptOutput & { captionThai: string | null }> {
+): Promise<
+  StoryboardScriptOutput & {
+    captionThai: string | null;
+    /** null when the model gave no usable profile (the caller fails the call). */
+    businessProfile: ExtractedBusinessProfile | null;
+  }
+> {
   const language = scriptLanguageOf(params.contentLanguage);
-  const output = await generateWithImages<{
+  // Any failure of the call itself — the request, a timeout, an answer that is
+  // not JSON — is a StoryboardScriptError: the studio offers "Try again".
+  let output: {
     scenes?: { sceneNumber?: unknown; line?: unknown }[];
     captionThai?: unknown;
-  }>(params, `${STORYBOARD_SCRIPT_SYSTEM_PROMPT}\n\n${buildStoryboardScriptPrompt(params, language)}`);
+    businessProfile?: unknown;
+  };
+  try {
+    output = await withStoryboardScriptTimeout(
+      generateWithImages<typeof output>(
+        params,
+        `${STORYBOARD_SCRIPT_SYSTEM_PROMPT}\n\n${buildStoryboardScriptPrompt(params, language)}`
+      ),
+      STORYBOARD_SCRIPT_TIMEOUT_MS
+    );
+  } catch (err) {
+    if (err instanceof StoryboardScriptError) throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new StoryboardScriptError(
+      `The script writer failed: ${detail}`,
+      err instanceof SyntaxError ? "invalid_output" : "ai_error"
+    );
+  }
+  if (!output || typeof output !== "object") {
+    throw new StoryboardScriptError("The script writer returned no usable answer.", "invalid_output");
+  }
 
   const written = Array.isArray(output.scenes) ? output.scenes : [];
   const sceneLines = params.scenes.map((scene, index) => {
@@ -611,14 +664,27 @@ export async function generateScriptForStoryboard(
       written.find((item) => Number(item?.sceneNumber) === scene.sceneNumber) ?? written[index];
     const raw = typeof match?.line === "string" ? sanitizeThaiVoiceScript(match.line) : "";
     const { max } = sceneLineUnits(scene.speakSeconds, language);
-    if (!raw || max === 0) return "";
+    if (max === 0) return "";
+    // A scene that should speak but got no line is a broken answer, not a
+    // silent gap in the voice.
+    if (!raw) {
+      throw new StoryboardScriptError(
+        `The script writer returned no line for scene ${scene.sceneNumber}.`,
+        "invalid_output"
+      );
+    }
     return trimScriptToFit(raw, limitSecondsForUnits(max, language), language);
   });
 
   // The whole script: at most the ceiling share of what the scenes carry.
   const speakSeconds = params.scenes.reduce((sum, scene) => sum + scene.speakSeconds, 0);
   const joined = sceneLines.filter(Boolean).join(" ");
-  if (!joined) throw new Error("The script writer returned no lines for the storyboard.");
+  if (!joined) {
+    throw new StoryboardScriptError(
+      "The script writer returned no lines for the storyboard.",
+      "invalid_output"
+    );
+  }
   const ceiling = unitsForVoiceSeconds(speakSeconds * STORYBOARD_SCRIPT_MAX_SHARE, language);
   const scriptThai =
     countScriptUnits(joined, language) > ceiling
@@ -630,6 +696,7 @@ export async function generateScriptForStoryboard(
     captionThai: typeof output.captionThai === "string" && output.captionThai.trim()
       ? output.captionThai.trim()
       : null,
+    businessProfile: parseBusinessProfile(output.businessProfile),
   };
 }
 

@@ -16,15 +16,9 @@ import { pipelineStepText, useStudioT } from "./studioI18n";
 import { SoundSyncPreview } from "./SoundSyncPreview";
 import { preloadVoiceSamples, voiceSampleSource, voiceSampleUrl } from "./voiceSamples";
 
-/** Where the speaking script is, from the studio's point of view. */
-export type ScriptStatus =
-  | "not_submitted"
-  | "writing"
-  /** A draft exists, but the script is written from the approved storyboard. */
-  | "waiting_storyboard"
-  | "review"
-  | "approved"
-  | "failed";
+/** Where the speaking script is, from the studio's point of view (see studioScriptFit). */
+export type { ScriptStatus } from "./studioScriptFit";
+import type { ScriptStatus } from "./studioScriptFit";
 
 /** Where the generated voice is. */
 export type VoiceStatus = "none" | "generating" | "review" | "approved";
@@ -126,6 +120,8 @@ export function AudioPanel({
   onScriptChange,
   scriptFitting = false,
   onFitScript = null,
+  fitError = null,
+  onRetryFit = null,
   voiceScriptStale = false,
   materialSeconds = 0,
   maxVoiceSeconds = 0,
@@ -172,6 +168,14 @@ export function AudioPanel({
   scriptFitting?: boolean;
   /** Rewrite the script from the approved storyboard (null: not offered). */
   onFitScript?: (() => void) | null;
+  /**
+   * The script call failed: what to tell the person. With `fit_failed` it is
+   * the whole Sound step's script section (nothing can go on); in `review` it
+   * is a note under a script that is still valid.
+   */
+  fitError?: string | null;
+  /** Run the failed script call again ("Try again"). */
+  onRetryFit?: (() => void) | null;
   /** The script on screen is not the one the current voice was made from. */
   voiceScriptStale?: boolean;
   /** Total length of the picked clips and photos, seconds. */
@@ -508,6 +512,25 @@ export function AudioPanel({
           <p className="studio-note studio-note-danger">{t("studio.audio.failed")}</p>
         )}
 
+        {/* The script call on storyboard approval failed. Nothing goes on until
+            it works: the error, and the same call again. */}
+        {scriptStatus === "fit_failed" && (
+          <div className="studio-note studio-note-danger studio-fit-failed" role="alert">
+            <strong>{t("studio.audio.fitFailedTitle")}</strong>
+            <p style={{ margin: "6px 0 12px" }}>{fitError ?? t("studio.audio.fitFailedBody")}</p>
+            {onRetryFit && (
+              <button
+                type="button"
+                className="studio-button studio-button-primary"
+                disabled={disabled}
+                onClick={onRetryFit}
+              >
+                {t("studio.audio.tryAgain")}
+              </button>
+            )}
+          </div>
+        )}
+
         {(scriptStatus === "review" || scriptStatus === "approved") && script && (
           <>
             <p className="studio-panel-hint">
@@ -608,6 +631,22 @@ export function AudioPanel({
               <p className="studio-note studio-note-accent" role="status" style={{ marginBottom: 12 }}>
                 <span className="studio-live-dot" aria-hidden /> {t("studio.audio.fittingScript")}
               </p>
+            )}
+
+            {scriptStatus === "review" && fitError && !scriptFitting && (
+              <div className="studio-note studio-note-danger" role="alert" style={{ marginBottom: 12 }}>
+                <p style={{ margin: "0 0 10px" }}>{fitError}</p>
+                {onRetryFit && (
+                  <button
+                    type="button"
+                    className="studio-button studio-button-ghost"
+                    disabled={disabled || approving}
+                    onClick={onRetryFit}
+                  >
+                    {t("studio.audio.tryAgain")}
+                  </button>
+                )}
+              </div>
             )}
 
             {scriptStatus === "review" && onFitScript && !scriptFitting && (

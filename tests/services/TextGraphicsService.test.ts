@@ -105,6 +105,40 @@ it("uses Claude's tool answer, its style pick on auto, and saves it", async () =
   expect(videoGenerationJobRepository.update).toHaveBeenCalled();
 });
 
+it("leaves the owner's brief out of the prompt when the request has no description", async () => {
+  jest.resetModules();
+  process.env.TEST_CLAUDE_KEY = "sk-test";
+  const repos = await import("@/repositories");
+  (repos.clipRequestRepository.findById as jest.Mock).mockResolvedValue({
+    placeName: "MAGURO KAPPOU",
+    title: "t",
+    description: "",
+  });
+  const { TextGraphicsService: Fresh } = await import("@/services/TextGraphicsService");
+  const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      content: [
+        {
+          type: "tool_use",
+          name: "write_text_graphics",
+          input: { style: "street", items: [{ kind: "hook", start: 0.3, end: 3.6, title: "MAGURO KAPPOU" }] },
+        },
+      ],
+    }),
+  } as unknown as Response);
+  await new Fresh().ensurePlan(job());
+  const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+  const text = body.messages[0].content
+    .filter((c: { type: string }) => c.type === "text")
+    .map((c: { text: string }) => c.text)
+    .join("\n");
+  expect(text).toContain("Business name: MAGURO KAPPOU");
+  expect(text).not.toContain("Brief from the owner");
+  expect(text).not.toContain("(none)\nVideo duration");
+  await new Promise((r) => setImmediate(r));
+});
+
 it("falls back when Claude errors", async () => {
   jest.resetModules();
   process.env.TEST_CLAUDE_KEY = "sk-test";

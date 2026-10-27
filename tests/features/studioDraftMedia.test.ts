@@ -26,6 +26,7 @@ class MemoryStorage {
 
 import {
   clearDraftSources,
+  loadDraftSelection,
   loadDraftSources,
   saveDraftSources,
 } from "@/features/device-render/studioDraftMedia";
@@ -71,6 +72,21 @@ describe("studio draft media", () => {
     saveDraftSources("req3", [source("a", "clip", "studio-a")]);
     clearDraftSources("req3");
     expect(await loadDraftSources("req3")).toEqual([]);
+  });
+
+  it("keeps the selection order (only ids still listed)", () => {
+    saveDraftSources(
+      "req5",
+      [source("a", "clip", "studio-a"), source("b", "image", "studio-b"), source("c", "image", null)],
+      ["b", "c", "a"]
+    );
+    expect(loadDraftSelection("req5")).toEqual(["b", "a"]);
+  });
+
+  it("reads no selection from a list saved before ordered selection", () => {
+    saveDraftSources("req6", [source("a", "clip", "studio-a")]);
+    expect(loadDraftSelection("req6")).toBeNull();
+    expect(loadDraftSelection("never-saved")).toBeNull();
   });
 
   it("does not list a source without a private copy", async () => {

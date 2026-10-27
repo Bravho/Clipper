@@ -4,6 +4,10 @@ import { requireRole } from "@/lib/auth/helpers";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository, videoGenerationJobRepository } from "@/repositories/index";
 import { videoGenerationService } from "@/services/VideoGenerationService";
+import {
+  STORYBOARD_SCRIPT_ERROR_CODE,
+  StoryboardScriptError,
+} from "@/lib/ai/storyboardScriptResult";
 
 const schema = z.object({
   jobId: z.string().min(1),
@@ -35,7 +39,10 @@ const schema = z.object({
  * (VideoGenerationService.writeScriptForStoryboard). Only while the script is
  * waiting for approval.
  *
- *   200 { scriptThai, sceneLines, speakSeconds }
+ *   200 { scriptThai, sceneLines, speakSeconds, captionThai }
+ *   502 { error, code: "script_ai_failed", reason } — the AI call failed, timed
+ *       out or gave an invalid answer. Nothing was saved; the studio shows the
+ *       error with "Try again", which calls this route again.
  */
 export async function POST(
   req: NextRequest,
@@ -62,6 +69,13 @@ export async function POST(
     });
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
+    if (err instanceof StoryboardScriptError) {
+      console.error("[script/fit-storyboard] AI call failed:", err.reason, err.message);
+      return NextResponse.json(
+        { error: err.message, code: STORYBOARD_SCRIPT_ERROR_CODE, reason: err.reason },
+        { status: 502 }
+      );
+    }
     const message = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 400 });
   }

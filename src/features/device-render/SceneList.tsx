@@ -81,7 +81,6 @@ export function SceneList({
   onSceneTransition,
   onMoveScene,
   onRemoveScene,
-  onSceneSummary,
   onFit,
   targetSeconds,
   requiredSeconds,
@@ -101,7 +100,6 @@ export function SceneList({
   onSceneTransition: (sceneId: string, transition: MontageTransition) => void;
   onMoveScene: (sceneIndex: number, by: -1 | 1) => void;
   onRemoveScene: (sceneId: string) => void;
-  onSceneSummary: (sceneId: string, summary: string) => void;
   /** Share `seconds` out across the shots. */
   onFit: (seconds: number) => void;
   /** The brief's length. */
@@ -307,16 +305,9 @@ export function SceneList({
               </div>
             </header>
 
-            <label style={{ display: "block", padding: "10px 12px 0" }}>
-              <span className="studio-label">{t("studio.scenes.shows")}</span>
-              <textarea
-                className="studio-textarea"
-                style={{ minHeight: 64 }}
-                value={scene.summary}
-                disabled={disabled}
-                onChange={(event) => onSceneSummary(scene.id, event.target.value)}
-              />
-            </label>
+            {/* No scene description (Tho, 2026-10-26): the storyboard is the
+                selected material in order, and the voice script is written
+                from the pictures themselves. */}
 
             {scene.shots.length === 0 && (
               <p className="studio-empty" style={{ margin: 14, padding: 20 }}>

@@ -92,10 +92,13 @@ export default async function AdminRequestDetailPage({
               Clip Brief
             </h2>
             <div className="space-y-3 text-sm">
-              <div>
-                <p className="text-xs font-medium text-slate-500">Description</p>
-                <p className="mt-0.5 text-slate-800">{request.description}</p>
-              </div>
+              {/* The description is optional: no heading over an empty text. */}
+              {request.description?.trim() ? (
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Description</p>
+                  <p className="mt-0.5 text-slate-800">{request.description}</p>
+                </div>
+              ) : null}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <p className="text-xs font-medium text-slate-500">Target Audience</p>

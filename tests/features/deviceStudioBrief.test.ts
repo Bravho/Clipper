@@ -59,9 +59,20 @@ describe("briefProblems", () => {
 
   it("names every missing field rather than stopping at the first", () => {
     const problems = briefProblems({ ...emptyDocument().brief, platforms: [] });
-    expect(problems).toHaveLength(4);
+    // Name, place and platform — the description is optional (2026-10-26).
+    expect(problems).toHaveLength(3);
     expect(problems.join(" ")).toContain("name");
-    expect(problems.join(" ")).toContain("20 characters");
+  });
+
+  it("lets a brief with no description through to the next step", () => {
+    const brief = {
+      ...emptyDocument().brief,
+      clipName: "Summer promotion",
+      placeName: "Pho 54",
+      details: "",
+    };
+    expect(briefProblems(brief)).toEqual([]);
+    expect(briefProblems({ ...brief, details: "   " })).toEqual([]);
   });
 
   it("never blocks a brief over a length — the brief has none any more", () => {
@@ -97,6 +108,13 @@ describe("canRequestStoryboard", () => {
     document.brief.details = "Late-night noodles.";
     expect(canRequestStoryboard(document)).toBe(true);
     expect(briefProblems(document.brief).length).toBeGreaterThan(0);
+  });
+
+  it("plans with no description at all", () => {
+    const document = documentWith([source("a", "image", null)], 15);
+    document.brief.placeName = "Pho 54";
+    document.brief.details = "";
+    expect(canRequestStoryboard(document)).toBe(true);
   });
 });
 

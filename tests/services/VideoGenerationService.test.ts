@@ -32,6 +32,7 @@ import type {
 } from "@/domain/models/VideoGenerationJob";
 import type { BusinessProfile } from "@/domain/models/BusinessProfile";
 import { MOTION_TEMPLATES, DEFAULT_TEMPLATE_ID } from "@/config/motionTemplates";
+import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/config/elevenLabsVoices";
 
 // ── Mock repositories module (used via `@/repositories/index` singletons) ──
 jest.mock("@/repositories/index", () => ({
@@ -167,8 +168,18 @@ const mockGenerateSceneDesignFromScript = jest.fn(async (_params: unknown) => ({
   captionThai: "แคปชั่นทดสอบ",
   theme: "ธีมทดสอบ",
 }));
+const mockGenerateSpeakingScript = jest.fn(async (_params: unknown) => {
+  throw new Error("Stage-1 AI must not run in this test");
+});
+const mockGenerateScriptForStoryboard = jest.fn(async (_params: unknown): Promise<unknown> => {
+  throw new Error("The storyboard script AI must be mocked per test");
+});
 jest.mock("@/lib/ai/chatGptVisionService", () => ({
   generateSceneDesignFromScript: (params: unknown) => mockGenerateSceneDesignFromScript(params),
+  generateSpeakingScript: (params: unknown) => mockGenerateSpeakingScript(params),
+  generateScriptForStoryboard: (params: unknown) => mockGenerateScriptForStoryboard(params),
+  speakSecondsForScenes: (...args: unknown[]) =>
+    jest.requireActual("@/lib/ai/chatGptVisionService").speakSecondsForScenes(...args),
 }));
 
 const businessProfileGetMock = jest.fn(
@@ -1467,5 +1478,270 @@ describe("VideoGenerationService — Phase 8 distribution review + publishing", 
     expect(updated.currentStep).toBe(VideoGenerationStep.Complete);
     const req = await mockClipRepo.findById(request.id);
     expect(req?.status).toBe(RequestStatus.Delivered);
+  });
+});
+
+// ── Studio: the storyboard is the selection order, no Stage-1 AI (2026-10-26) ──
+
+describe("VideoGenerationService — studio ordered storyboard", () => {
+  const material = (n: number) => ({
+    localId: `req--m${n}`,
+    fileName: `m${n}.jpg`,
+    mimeType: "image/jpeg" as const,
+    fileSizeBytes: 1000,
+    durationSeconds: null,
+  });
+
+  beforeEach(() => mockGenerateSpeakingScript.mockClear());
+
+  it("is ready at once: one scene per selected item, in order, no AI call and no content", async () => {
+    const request = await createRequest();
+    const service = new VideoGenerationService();
+    const job = await service.initializePipeline(request.id, "user-001", {
+      imageUrls: ["https://cdn/a.jpg", "https://cdn/b.jpg", "https://cdn/c.jpg"],
+      localMedia: [material(1), material(2), material(3)],
+      description: "d",
+      targetAudience: "a",
+      targetPlatforms: [Platform.TikTok],
+      preferredStyle: "s",
+      orderedStoryboard: true,
+    });
+
+    expect(job.currentStep).toBe(VideoGenerationStep.AwaitingContentApproval);
+    expect(JSON.parse(job.storyboard ?? "null")).toEqual([
+      { sceneNumber: 1, summary: "", assetIndexes: [0] },
+      { sceneNumber: 2, summary: "", assetIndexes: [1] },
+      { sceneNumber: 3, summary: "", assetIndexes: [2] },
+    ]);
+    expect(job.scriptThai).toBeNull();
+    expect(job.captionThai).toBeNull();
+    expect(job.renderPayload).toMatchObject({ storyboardMode: "ordered" });
+    expect(mockGenerateSpeakingScript).not.toHaveBeenCalled();
+    const steps = (await mockJobRepo.listStepHistory(job.id)).map((h) => h.step);
+    expect(steps).toEqual([
+      VideoGenerationStep.AnalyzingContent,
+      VideoGenerationStep.AwaitingContentApproval,
+    ]);
+  });
+
+  it("keeps the caption written with the storyboard script when the studio approves without one", async () => {
+    const request = await createRequest();
+    const service = new VideoGenerationService();
+    const job = await service.initializePipeline(request.id, "user-001", {
+      imageUrls: ["https://cdn/a.jpg"],
+      localMedia: [material(1)],
+      description: "d",
+      targetAudience: "a",
+      targetPlatforms: [Platform.TikTok],
+      preferredStyle: "s",
+      orderedStoryboard: true,
+    });
+    // What writeScriptForStoryboard stores: the script and its caption.
+    await mockJobRepo.update(job.id, { scriptThai: "สวัสดีค่ะ", captionThai: "แคปชั่นจากสคริปต์" });
+
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const started = await service.startFromRequesterApproval(
+      request.id,
+      "user-001",
+      {
+        scriptThai: "สวัสดีค่ะ",
+        scriptEnglish: "",
+        hookEnglish: "",
+        captionThai: "",
+        captionEnglish: "",
+        captionChinese: "",
+      },
+      DEFAULT_ELEVENLABS_VOICE_ID
+    );
+    expect(started.approvedCaptionThai).toBe("แคปชั่นจากสคริปต์");
+    // Voice generation runs in the background against mocked services; let it settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    errorLog.mockRestore();
+  });
+});
+
+describe("VideoGenerationService — storyboard script call: business profile and no silent fallback", () => {
+  const { StoryboardScriptError } = jest.requireActual("@/lib/ai/storyboardScriptResult") as typeof import("@/lib/ai/storyboardScriptResult");
+
+  const goodAnswer = (overrides: Record<string, unknown> = {}) => ({
+    scriptThai: "มาที่ร้านนี้กัน ข้าวซอยหอมมาก",
+    sceneLines: ["มาที่ร้านนี้กัน ข้าวซอยหอมมาก"],
+    captionThai: "ข้าวซอยร้านโปรด #ข้าวซอย",
+    businessProfile: {
+      businessName: "ร้านข้าวซอยป้าศรี",
+      category: "ร้านอาหาร",
+      location: "เชียงใหม่",
+      description: "ร้านข้าวซอยเล็กๆ",
+      menuDetails: "ข้าวซอยไก่, ข้าวซอยเนื้อ",
+    },
+    ...overrides,
+  });
+
+  const storedProfile = (overrides: Partial<BusinessProfile> = {}): BusinessProfile => ({
+    id: "profile-1",
+    userId: "user-001",
+    businessName: "ข้าวซอยป้าศรี",
+    category: "คาเฟ่",
+    location: null,
+    description: "",
+    menuDetails: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  });
+
+  async function studioJob(placeName = "ข้าวซอยป้าศรี") {
+    const request = await mockClipRepo.create({
+      userId: "user-001",
+      title: "Studio clip",
+      placeName,
+      description: "d",
+      targetAudience: "All",
+      targetPlatforms: [Platform.TikTok],
+      preferredStyle: "s",
+      preferredLanguage: "Thai",
+      durationSeconds: 15,
+    });
+    await mockClipRepo.updateStatus(request.id, RequestStatus.Editing, {
+      aiProcessingConfirmed: true,
+      aiConsentVersion: "1.0.0",
+      aiConsentAcceptedAt: new Date(),
+    });
+    await mockAssetRepo.create({
+      requestId: request.id,
+      userId: "user-001",
+      fileName: "a.jpg",
+      assetType: AssetType.Image,
+      fileSizeBytes: 1024,
+      mimeType: "image/jpeg",
+      storageKey: "tmp/a.jpg",
+      storageUrl: "https://cdn.example.com/a.jpg",
+      thumbnailKey: "",
+      thumbnailUrl: "",
+      uploadStatus: AssetUploadStatus.Uploaded,
+      scheduledDeletionAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+    });
+    const service = new VideoGenerationService();
+    const job = await service.initializePipeline(request.id, "user-001", {
+      imageUrls: ["https://cdn.example.com/a.jpg"],
+      localMedia: [
+        { localId: "x--a", fileName: "a.jpg", mimeType: "image/jpeg", fileSizeBytes: 1024, durationSeconds: null },
+      ],
+      description: "d",
+      targetAudience: "All",
+      targetPlatforms: [Platform.TikTok],
+      preferredStyle: "s",
+      orderedStoryboard: true,
+    });
+    return { service, job };
+  }
+
+  const input = {
+    scenes: [{ summary: "", shots: [{ assetIndex: 0, seconds: 6 }] }],
+    musicSelected: false,
+  };
+
+  beforeEach(() => {
+    mockGenerateScriptForStoryboard.mockReset();
+    businessProfileGetMock.mockReset();
+    businessProfileGetMock.mockResolvedValue(null);
+    businessProfileSaveMock.mockReset();
+  });
+
+  it("writes the script and caption and creates the profile under the request's place name", async () => {
+    const { service, job } = await studioJob();
+    mockGenerateScriptForStoryboard.mockResolvedValueOnce(goodAnswer());
+
+    const result = await service.writeScriptForStoryboard(job.id, "user-001", input);
+
+    expect(result.captionThai).toBe("ข้าวซอยร้านโปรด #ข้าวซอย");
+    const saved = await mockJobRepo.findById(job.id);
+    expect(saved?.scriptThai).toBe("มาที่ร้านนี้กัน ข้าวซอยหอมมาก");
+    expect(saved?.captionThai).toBe("ข้าวซอยร้านโปรด #ข้าวซอย");
+    expect(businessProfileSaveMock).toHaveBeenCalledWith("user-001", {
+      businessName: "ข้าวซอยป้าศรี", // the requester's spelling, not the model's
+      category: "ร้านอาหาร",
+      location: "เชียงใหม่",
+      description: "ร้านข้าวซอยเล็กๆ",
+      menuDetails: "ข้าวซอยไก่, ข้าวซอยเนื้อ",
+    });
+  });
+
+  it("fails, saves nothing, and works when the same call is tried again", async () => {
+    const { service, job } = await studioJob();
+    mockGenerateScriptForStoryboard.mockRejectedValueOnce(
+      new StoryboardScriptError("The script writer failed: 503", "ai_error")
+    );
+
+    await expect(service.writeScriptForStoryboard(job.id, "user-001", input)).rejects.toBeInstanceOf(
+      StoryboardScriptError
+    );
+    let saved = await mockJobRepo.findById(job.id);
+    expect(saved?.scriptThai).toBeNull();
+    expect(saved?.captionThai).toBeNull();
+    expect(saved?.currentStep).toBe(VideoGenerationStep.AwaitingContentApproval);
+    expect(businessProfileSaveMock).not.toHaveBeenCalled();
+
+    // "Try again": the same call, now answering properly.
+    mockGenerateScriptForStoryboard.mockResolvedValueOnce(goodAnswer());
+    const retried = await service.writeScriptForStoryboard(job.id, "user-001", input);
+    expect(retried.scriptThai).toBe("มาที่ร้านนี้กัน ข้าวซอยหอมมาก");
+    saved = await mockJobRepo.findById(job.id);
+    expect(saved?.scriptThai).toBe("มาที่ร้านนี้กัน ข้าวซอยหอมมาก");
+    expect(businessProfileSaveMock).toHaveBeenCalledTimes(1);
+    expect(mockGenerateScriptForStoryboard).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["no caption", { captionThai: null }],
+    ["no business profile", { businessProfile: null }],
+  ])("treats an answer with %s as a failure: nothing saved, no guessed profile", async (_label, overrides) => {
+    const { service, job } = await studioJob();
+    mockGenerateScriptForStoryboard.mockResolvedValueOnce(goodAnswer(overrides));
+
+    await expect(service.writeScriptForStoryboard(job.id, "user-001", input)).rejects.toMatchObject({
+      name: "StoryboardScriptError",
+      reason: "invalid_output",
+    });
+    const saved = await mockJobRepo.findById(job.id);
+    expect(saved?.scriptThai).toBeNull();
+    expect(saved?.captionThai).toBeNull();
+    expect(businessProfileSaveMock).not.toHaveBeenCalled();
+  });
+
+  it("fills only the empty fields of a matching profile and never overwrites one", async () => {
+    const { service, job } = await studioJob();
+    businessProfileGetMock.mockResolvedValue(storedProfile());
+    mockGenerateScriptForStoryboard.mockResolvedValueOnce(goodAnswer());
+
+    await service.writeScriptForStoryboard(job.id, "user-001", input);
+
+    expect(businessProfileSaveMock).toHaveBeenCalledWith("user-001", {
+      businessName: "ข้าวซอยป้าศรี",
+      category: "คาเฟ่", // kept: the person's value, not the model's "ร้านอาหาร"
+      location: "เชียงใหม่",
+      description: "ร้านข้าวซอยเล็กๆ", // "" counts as empty
+      menuDetails: "ข้าวซอยไก่, ข้าวซอยเนื้อ",
+    });
+  });
+
+  it("writes nothing when the profile is already complete", async () => {
+    const { service, job } = await studioJob();
+    businessProfileGetMock.mockResolvedValue(
+      storedProfile({ location: "ลำปาง", description: "ร้านเดิม", menuDetails: "ก๋วยเตี๋ยว" })
+    );
+    mockGenerateScriptForStoryboard.mockResolvedValueOnce(goodAnswer());
+
+    await service.writeScriptForStoryboard(job.id, "user-001", input);
+    expect(businessProfileSaveMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves an account profile for another place alone", async () => {
+    const { service, job } = await studioJob();
+    businessProfileGetMock.mockResolvedValue(storedProfile({ businessName: "ร้านอื่น" }));
+    mockGenerateScriptForStoryboard.mockResolvedValueOnce(goodAnswer());
+
+    await service.writeScriptForStoryboard(job.id, "user-001", input);
+    expect(businessProfileSaveMock).not.toHaveBeenCalled();
   });
 });

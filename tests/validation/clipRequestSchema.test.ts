@@ -58,12 +58,45 @@ describe("clipRequestFormSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects description shorter than 20 characters", () => {
+  it("accepts a short description — there is no minimum any more", () => {
     const result = clipRequestFormSchema.safeParse({
       ...validBase,
       description: "Too short.",
     });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an empty or absent description and stores it as an empty string", () => {
+    // Optional since 2026-10-26; the column is NOT NULL, so "" — never a guess.
+    for (const description of ["", "   ", undefined]) {
+      const result = clipRequestFormSchema.safeParse({ ...validBase, description });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.description).toBe("");
+    }
+  });
+
+  it("still rejects a description over 2000 characters", () => {
+    const result = clipRequestFormSchema.safeParse({
+      ...validBase,
+      description: "a".repeat(2001),
+    });
     expect(result.success).toBe(false);
+  });
+
+  it("lets the studio and the final submission through with no description", () => {
+    const studio = studioClipRequestFormSchema.safeParse({ ...validBase, description: "" });
+    expect(studio.success).toBe(true);
+    if (studio.success) expect(studio.data.description).toBe("");
+    const withoutDescription: Record<string, unknown> = { ...validBase };
+    delete withoutDescription.description;
+    const submit = submitClipRequestSchema.safeParse({
+      ...withoutDescription,
+      creditConfirmed: true,
+      rightsConfirmed: true,
+      aiProcessingConfirmed: true,
+    });
+    expect(submit.success).toBe(true);
+    if (submit.success) expect(submit.data.description).toBe("");
   });
 
   it("rejects empty targetPlatforms array", () => {

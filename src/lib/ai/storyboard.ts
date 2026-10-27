@@ -33,6 +33,23 @@ export function buildFallbackStoryboard(assetCount: number, targetScenes = 3): S
 }
 
 /**
+ * The studio's storyboard (Tho, 2026-10-26): ONE scene per submitted item, in
+ * the order the requester selected them (the material order IS the asset
+ * index order), with no written content — no summary, no AI. It exists the
+ * moment the request is submitted.
+ */
+export function buildOrderedStoryboard(assetCount: number): StoryboardScene[] {
+  if (!Number.isFinite(assetCount) || assetCount <= 0) {
+    return [{ sceneNumber: 1, summary: "", assetIndexes: [] }];
+  }
+  return Array.from({ length: Math.floor(assetCount) }, (_, index) => ({
+    sceneNumber: index + 1,
+    summary: "",
+    assetIndexes: [index],
+  }));
+}
+
+/**
  * Validate/repair a raw (e.g. AI-produced) storyboard against the known asset
  * count: drop out-of-range asset indexes, coerce summaries to strings, and
  * renumber scenes contiguously. Falls back to `buildFallbackStoryboard` when

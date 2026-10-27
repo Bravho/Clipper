@@ -41,6 +41,12 @@ interface DraftEntry {
 interface DraftRecord {
   savedAt: number;
   entries: DraftEntry[];
+  /**
+   * The ids of the picked items the person has SELECTED, in the order they
+   * tapped them (1, 2, 3…). Absent in a list written before ordered selection
+   * existed: every item then counts as selected, in pick order.
+   */
+  selection?: string[];
 }
 
 function storage(): Storage | null {
@@ -51,8 +57,15 @@ function storage(): Storage | null {
   }
 }
 
-/** Remember which private copies make up this request's picked media. */
-export function saveDraftSources(requestId: string, sources: readonly EditorSource[]): void {
+/**
+ * Remember which private copies make up this request's picked media, and which
+ * of them are selected, in what order.
+ */
+export function saveDraftSources(
+  requestId: string,
+  sources: readonly EditorSource[],
+  selection?: readonly string[]
+): void {
   const store = storage();
   if (!store) return;
   const entries: DraftEntry[] = sources
@@ -68,7 +81,12 @@ export function saveDraftSources(requestId: string, sources: readonly EditorSour
     }));
   try {
     if (entries.length === 0) store.removeItem(PREFIX + requestId);
-    else store.setItem(PREFIX + requestId, JSON.stringify({ savedAt: Date.now(), entries }));
+    else {
+      const listed = new Set(entries.map((entry) => entry.id));
+      const record: DraftRecord = { savedAt: Date.now(), entries };
+      if (selection) record.selection = selection.filter((id) => listed.has(id));
+      store.setItem(PREFIX + requestId, JSON.stringify(record));
+    }
   } catch {
     /* storage full or blocked: the copies still exist, only the list is lost */
   }
@@ -80,6 +98,24 @@ export function clearDraftSources(requestId: string): void {
     storage()?.removeItem(PREFIX + requestId);
   } catch {
     /* nothing to do */
+  }
+}
+
+/**
+ * The saved selection order of an unsubmitted request: the selected ids in the
+ * order they were tapped. Null when nothing is saved, or the list predates
+ * ordered selection (the caller then selects everything, in pick order).
+ */
+export function loadDraftSelection(requestId: string): string[] | null {
+  const store = storage();
+  if (!store) return null;
+  try {
+    const raw = store.getItem(PREFIX + requestId);
+    const record = raw ? (JSON.parse(raw) as DraftRecord) : null;
+    if (!record || !Array.isArray(record.selection)) return null;
+    return record.selection.filter((id): id is string => typeof id === "string");
+  } catch {
+    return null;
   }
 }
 
