@@ -101,6 +101,12 @@ jest.mock("@/lib/ai/ffmpegService", () => ({
 }));
 
 // ── Mock Phase 4 motion-graphics + Remotion overlay rendering ───────────────
+// Scene approval also starts background montage work. Mock it so this suite
+// never starts webpack/Chromium after Jest has torn down.
+jest.mock("@/lib/ai/montageService", () => ({
+  renderScene: jest.fn(async () => ({ storageKey: "test/scene.mp4", storageUrl: "https://cdn.example.com/scene.mp4", fileSizeBytes: 5000 })),
+  renderSceneToFile: jest.fn(async (_spec: unknown, path: string) => ({ path, fileSizeBytes: 5000 })),
+}));
 const generateAnimationSpecMock = jest.fn();
 jest.mock("@/lib/ai/animationService", () => ({
   generateAnimationSpec: (...args: unknown[]) => generateAnimationSpecMock(...args),

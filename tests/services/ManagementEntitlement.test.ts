@@ -132,7 +132,7 @@ function serviceWith(stubs: Stubs) {
 }
 
 describe("product catalogue", () => {
-  it("defines the thirteen one-time products: five retired, eight on sale", () => {
+  it("defines the thirteen one-time products: nine retired, four on sale", () => {
     expect(MANAGEMENT_PRODUCTS.map((p) => p.code)).toEqual([
       "management_single_video",
       "management_access_1_month",
@@ -148,19 +148,16 @@ describe("product catalogue", () => {
       "management_bundle_6_months",
       "management_bundle_1_year",
     ]);
-    // Only the Starter and Pro packages are sold (2026-09-27).
+    // 3mo/6mo taken off sale 2026-10-27; only 1mo and 12mo remain.
     expect(MANAGEMENT_PACKAGES_ON_SALE.map((p) => p.code)).toEqual([
       "management_starter_1_month",
-      "management_starter_3_months",
-      "management_starter_6_months",
       "management_starter_1_year",
       "management_bundle_1_month",
-      "management_bundle_3_months",
-      "management_bundle_6_months",
       "management_bundle_1_year",
     ]);
     expect(isManagementProductOnSale("management_access_1_month")).toBe(false);
     expect(isManagementProductOnSale("management_single_video")).toBe(false);
+    expect(isManagementProductOnSale("management_starter_3_months")).toBe(false);
     expect(isManagementProductOnSale("management_starter_1_month")).toBe(true);
     expect(ENTRY_PACKAGE.code).toBe("management_starter_1_month");
   });
@@ -189,17 +186,18 @@ describe("product catalogue", () => {
   });
 
   it("prices the two tiers as agreed, with longer terms cheaper per month", () => {
+    // 3mo/6mo are off sale (2026-10-27); only 1mo and 12mo are in PACKAGES_ON_SALE.
     const ladder = {
-      starter: { 1: 190, 3: 540, 6: 1030, 12: 1890 },
-      pro: { 1: 350, 3: 990, 6: 1890, 12: 3490 },
+      starter: { 1: 99, 12: 990 },
+      pro: { 1: 179, 12: 1790 },
     } as const;
 
     for (const tier of ["starter", "pro"] as const) {
       const products = packagesForTier(tier);
-      expect(products.map((p) => p.durationMonths)).toEqual([1, 3, 6, 12]);
+      expect(products.map((p) => p.durationMonths)).toEqual([1, 12]);
       let previousPerMonth = Number.POSITIVE_INFINITY;
       for (const product of products) {
-        const months = product.durationMonths as 1 | 3 | 6 | 12;
+        const months = product.durationMonths as 1 | 12;
         expect(managementPriceCredits(product)).toBe(ladder[tier][months]);
         // A package grants the same months of BOTH halves.
         expect(product.videoMonths).toBe(product.durationMonths);
@@ -226,7 +224,9 @@ describe("product catalogue", () => {
         product.code.startsWith("management_bundle_") ||
         product.code.startsWith("management_starter_");
       expect(product.videoMonths != null).toBe(isPackage);
-      expect(product.onSale).toBe(isPackage);
+      // 3mo/6mo are packages (videoMonths != null) but off sale (2026-10-27);
+      // onSale no longer implies isPackage for every row.
+      if (product.onSale) expect(isPackage).toBe(true);
     }
   });
 

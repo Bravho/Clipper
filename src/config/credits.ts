@@ -27,19 +27,19 @@ export const CREDITS_CONFIG = {
  * THE LADDER MUST REACH THE DEAREST PACKAGE IN ONE TOP-UP. It previously stopped
  * at 1,000 while the annual bundle costs 3,500, so the highest-intent buyer in
  * the product was the one forced through four separate payments. The two entry
- * rungs are set to the exact price of the two entry packages (190 Starter,
- * 350 Pro — 2026-09-27) so the commonest purchase leaves no stranded remainder,
- * and the top rung covers Pro 1 year (3,490).
+ * rungs are set to the exact price of the two entry packages (99 Starter,
+ * 179 Pro — 2026-10-27) so the commonest purchase leaves no stranded remainder,
+ * and the top rung covers Pro 1 year (1,790).
  * `tests/config/storeCatalogue.test.ts` holds this invariant across all three
  * payment rails.
  */
 export const TOPUP_BUNDLES = [
   { credits: 50, baht: 50, label: "50 เครดิต" },
-  { credits: 190, baht: 190, label: "190 เครดิต · Starter 1 เดือน", popular: true },
-  { credits: 350, baht: 350, label: "350 เครดิต · Pro 1 เดือน" },
-  { credits: 1000, baht: 1000, label: "1,000 เครดิต" },
+  { credits: 99, baht: 99, label: "99 เครดิต · Starter 1 เดือน", popular: true },
+  { credits: 179, baht: 179, label: "179 เครดิต · Pro 1 เดือน" },
+  { credits: 990, baht: 990, label: "990 เครดิต · Starter 1 ปี" },
+  { credits: 1790, baht: 1790, label: "1,790 เครดิต · Pro 1 ปี" },
   { credits: 2000, baht: 2000, label: "2,000 เครดิต" },
-  { credits: 3500, baht: 3500, label: "3,500 เครดิต · Pro 1 ปี" },
 ] as const;
 
 /**

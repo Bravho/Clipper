@@ -22,8 +22,8 @@ describe("plan limits shown to users", () => {
   });
 
   it("describes the tiers and the free allowance from the catalogue", () => {
-    expect(tierFacts("starter")).toEqual({ videosPerMonth: 5, monthlyPrice: 190, lowestPerMonth: 158 });
-    expect(tierFacts("pro")).toEqual({ videosPerMonth: 10, monthlyPrice: 350, lowestPerMonth: 291 });
+    expect(tierFacts("starter")).toEqual({ videosPerMonth: 5, monthlyPrice: 99, lowestPerMonth: 83 });
+    expect(tierFacts("pro")).toEqual({ videosPerMonth: 10, monthlyPrice: 179, lowestPerMonth: 149 });
     // `days` is now how long a video is kept — the free allowance has no window.
     expect(FREE_FACTS).toEqual({
       videos: FREE_REQUESTS_TOTAL,

@@ -51,6 +51,7 @@ export type VideoAccessBlock =
   | "expired";
 
 export interface VideoAccess {
+  canPurchaseUnlock?: boolean;
   /** The request may leave the app (paid for, or unlocked by a purchase). */
   unlocked: boolean;
   /** The account holds a live package right now. */
@@ -70,6 +71,7 @@ export interface VideoAccess {
 
 /** The JSON shape the studio and the request page receive. */
 export interface VideoAccessView {
+  canPurchaseUnlock?: boolean;
   unlocked: boolean;
   hasPackage: boolean;
   expiresAt: string | null;
@@ -233,6 +235,7 @@ export function describeAccess(
       ? null
       : "package_required";
   return {
+    canPurchaseUnlock: request.pricingTier === "free" && !unlocked && !expired && !DEAD_STATUSES.has(request.status),
     unlocked,
     hasPackage,
     expiresAt: request.videosExpireAt ?? null,

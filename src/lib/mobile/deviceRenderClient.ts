@@ -137,9 +137,9 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   });
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
-    throw new Error(
+    throw Object.assign(new Error(
       typeof payload.error === "string" ? payload.error : `Request failed (${response.status})`
-    );
+    ), { code: payload.code });
   }
   return payload as T;
 }

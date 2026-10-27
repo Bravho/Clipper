@@ -5,8 +5,8 @@
  * (unlimited publishing to the connected accounts) for its whole term. The tiers
  * differ only in how many videos each month is worth:
  *
- *   Starter  5 videos a month   1mo 190 · 3mo 540 · 6mo 1,030 · 12mo 1,890
- *   Pro     10 videos a month   1mo 350 · 3mo 990 · 6mo 1,890 · 12mo 3,490
+ *   Starter  5 videos a month   1mo 99 · 12mo 990   (3mo/6mo off sale 2026-10-27)
+ *   Pro     10 videos a month   1mo 179 · 12mo 1790  (3mo/6mo off sale 2026-10-27)
  *
  * Why these numbers: every frame is now made on the requester's phone, so a
  * video costs the server only its AI calls (Gemini + ElevenLabs), storage and

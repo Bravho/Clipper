@@ -516,7 +516,7 @@ describe("Per-request limits (2026-09-27)", () => {
     expect(updated.currentStep).toBe(VideoGenerationStep.GeneratingVoice);
   });
 
-  it("refuses a sixth voice make and leaves the job where it was", async () => {
+  it("refuses a fourth voice make and leaves the job where it was", async () => {
     const service = new VideoGenerationService();
     const request = await createRequest("device");
     await addVoiceMakes(request.id, MAX_VOICE_MAKES_PER_REQUEST);
@@ -527,6 +527,17 @@ describe("Per-request limits (2026-09-27)", () => {
     expect((await mockJobRepo.findById(job.id))!.currentStep).toBe(
       VideoGenerationStep.AwaitingVoiceApproval
     );
+  });
+
+  it.each([
+    { pricingTier: "free", downloadUnlocked: false },
+    { pricingTier: "free", downloadUnlocked: true },
+    { pricingTier: "paid", downloadUnlocked: true },
+  ])("gives the same included voice makes to free, single-unlocked and package requests: %j", async (entitlement) => {
+    const request = await createRequest("device");
+    await mockClipRepo.updateStatus(request.id, RequestStatus.Submitted, entitlement as never);
+    const service = new VideoGenerationService();
+    expect(await service.voiceMakesFor(request.id)).toEqual({ used: 0, limit: 3 });
   });
 
   it("adds the makes of every pack bought with credits to the allowance", async () => {

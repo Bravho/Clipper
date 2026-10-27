@@ -25,6 +25,7 @@ const submitBodySchema = z.object({
   rightsConfirmed: z.literal(true),
   aiProcessingConfirmed: z.literal(true),
   localMedia: localMediaSubmissionSchema.optional(),
+  downloadUnlocked: z.boolean().optional(),
 });
 
 /**
@@ -172,7 +173,8 @@ export async function POST(
         session.user.id,
         parsed.data.creditConfirmed,
         parsed.data.rightsConfirmed,
-        parsed.data.aiProcessingConfirmed
+        parsed.data.aiProcessingConfirmed,
+        parsed.data.downloadUnlocked === true
       );
       if (rendersOnDevice) {
         // Pin the render location now, while we still know the originals were
@@ -250,6 +252,10 @@ export async function POST(
     return NextResponse.json({ request: submitted, jobId: job.id });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error.";
+    if (err instanceof Error && err.name === "VideoUnlockInsufficientCreditsError") {
+      const creditError = err as Error & { requiredCredits: number; balanceCredits: number };
+      return NextResponse.json({ error: message, code: "insufficient_credits", requiredCredits: creditError.requiredCredits, balanceCredits: creditError.balanceCredits }, { status: 402 });
+    }
     // The phone studio has no quota check of its own before Submit (the web
     // form shows the quota up front), so an exhausted allowance reached it as
     // the bare 500 below. Say what it is, and when the next free slot opens.

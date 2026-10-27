@@ -5,7 +5,7 @@
  * its AI calls. The one that grows with use is ElevenLabs: each voice make is
  * billed per character of the script (≈ ฿1.3 for a 30 s voice, ≈ ฿4 for 90 s).
  * These limits cap the worst case at ≈ ฿25 per request (10 items, 88 s voice,
- * 5 makes, 4 shapes), so a Pro package stays profitable even when every video
+ * 3 makes, 4 shapes), so a Pro package stays profitable even when every video
  * is used to the maximum.
  *
  * ALL are enforced on the server (VideoGenerationService); the studio only
@@ -13,11 +13,11 @@
  */
 
 /**
- * Voice makes per request: the first one plus four remakes. Counted from the
+ * Voice makes per request: the first make plus two remakes. Counted from the
  * voice files ElevenLabs actually produced for the request, so a make that
  * failed (and cost nothing) is not counted.
  */
-export const MAX_VOICE_MAKES_PER_REQUEST = 5;
+export const MAX_VOICE_MAKES_PER_REQUEST = 3;
 
 /**
  * More voice makes, bought with credits once the included ones are used
@@ -33,16 +33,33 @@ export const MAX_VOICE_MAKES_PER_REQUEST = 5;
  *   + storing the MP3 (≈ 1 MB) — under ฿0.1
  *   ⇒ 5 makes ≈ ฿20 typical, ≈ ฿40 worst case.
  *
- * PRICE: 49 credits (฿49 on the web). ≈ 2.4× cost on a typical script (≈ 58%
- * margin) and still above cost at the 88 s maximum, so a request that buys
- * pack after pack never loses money. Mobile top-ups are already priced for
+ * PRICE: 29 credits (฿29 on the web), above the ≈ ฿20 typical cost but BELOW
+ * the ≈ ฿40 worst case for five 88-second makes. This approved price accepts
+ * a loss at maximum usage. The price is set above typical server cost while
+ * keeping the top-up accessible. Mobile top-ups are already priced for
  * the store commission (config/mobilePurchases.ts), so one price serves both.
  *
  * Changing the price needs no migration: the ledger stores what was charged.
  */
 export const VOICE_MAKE_TOP_UP = {
   makes: 5,
-  priceCredits: 49,
+  priceCredits: 29,
+} as const;
+
+/**
+ * One-time credit purchase to unlock download for a single free request for
+ * VIDEO_DOWNLOAD_UNLOCK_DAYS days (set 2026-10-27).
+ *
+ * Channel Management is NOT included — only download. The unlock does not
+ * count as a package in VideoAccessService.hasActivePackage(). The debit is
+ * idempotent: a second call for the same user+request is a no-op.
+ *
+ * Changing the price needs no migration: the ledger stores what was charged.
+ */
+export const VIDEO_DOWNLOAD_UNLOCK = {
+  priceCredits: 39,
+  /** Days from purchase the download is available. */
+  days: 30,
 } as const;
 
 /**

@@ -31,4 +31,10 @@ export enum TransactionType {
    * for a request is how many packs it has bought.
    */
   VoiceMakeTopUp = "voice_make_top_up",
+  /**
+   * Credits spent to unlock download of a single free request for
+   * VIDEO_DOWNLOAD_UNLOCK.days days (config/requestLimits.ts). `referenceId`
+   * is the request. Channel Management is NOT included.
+   */
+  VideoDownloadUnlock = "video_download_unlock",
 }

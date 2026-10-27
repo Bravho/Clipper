@@ -20,7 +20,13 @@ import { supportsManifestRender } from "@/lib/mobile/deviceRenderBridge";
 import { prepareClip } from "./clipPreview";
 import { studioEnglish, type StudioT } from "./studioText";
 import { requestStoryboardScript, type StoryboardScriptResult } from "./studioScriptFit";
+import {
+  StudioTextGraphicsError,
+  TEXT_GRAPHICS_AI_FAILED_CODE,
+  STUDIO_GRAPHICS_TIMEOUT_MS,
+} from "./studioTextGraphics";
 import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
+import { VIDEO_DOWNLOAD_UNLOCK } from "@/config/requestLimits";
 import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import {
   readImagePoster,
@@ -168,6 +174,7 @@ async function posterDataUrl(posterUrl: string | null): Promise<string | undefin
 export async function submitStudioRequest(input: {
   requestId: string;
   sources: EditorSource[];
+  downloadUnlocked?: boolean;
   onProgress?: (done: number, total: number) => void;
   /** The studio's language for the sentences this can fail with. */
   t?: StudioT;
@@ -218,6 +225,7 @@ export async function submitStudioRequest(input: {
       creditConfirmed: true,
       rightsConfirmed: true,
       aiProcessingConfirmed: true,
+      downloadUnlocked: input.downloadUnlocked === true,
       localMedia: {
         mode: "local-first",
         materials,
@@ -232,13 +240,16 @@ export async function submitStudioRequest(input: {
   if (!response.ok) {
     if (response.status === 402) {
       const body = (await response.json().catch(() => null)) as
-        | { code?: string; nextFreeSlotAt?: string | null; error?: string }
+        | { code?: string; nextFreeSlotAt?: string | null; error?: string; requiredCredits?: number }
         | null;
       if (body?.code === "quota_exhausted") {
         throw new StudioQuotaError(
           quotaMessage(t, body.nextFreeSlotAt ?? null),
           body.nextFreeSlotAt ?? null
         );
+      }
+      if (body?.code === "insufficient_credits") {
+        throw new Error(t("studio.access.unlockInsufficient", { required: body.requiredCredits ?? VIDEO_DOWNLOAD_UNLOCK.priceCredits }));
       }
       throw new Error(body?.error ?? t("studio.pipe.submitFailed"));
     }
@@ -791,23 +802,54 @@ export async function fetchTextGraphicsPreview(input: {
   fresh: boolean;
   t?: StudioT;
 }): Promise<TextGraphicsPreviewResult> {
-  const response = await fetch("/api/device-render/text-graphics", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      requestId: input.requestId,
-      choice: input.choice,
-      scenePlan: input.scenePlan,
-      musicTrackId: input.musicTrackId ?? "none",
-      fresh: input.fresh,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(
-      await readError(response, (input.t ?? studioEnglish)("studio.text.previewFailed"))
+  if (input.choice === "none") return { plan: null, textGraphics: null };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), STUDIO_GRAPHICS_TIMEOUT_MS);
+  let response: Response;
+  let body: Record<string, unknown> | null;
+  try {
+    response = await fetch("/api/device-render/text-graphics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: input.requestId,
+        choice: input.choice,
+        scenePlan: input.scenePlan,
+        musicTrackId: input.musicTrackId ?? "none",
+        fresh: input.fresh,
+      }),
+      signal: controller.signal,
+    });
+    body = await response.json().catch((failure) => {
+      if (controller.signal.aborted) throw failure;
+      return null;
+    }) as Record<string, unknown> | null;
+  } catch (failure) {
+    clearTimeout(timer);
+    if (controller.signal.aborted) {
+      throw new StudioTextGraphicsError("timeout", "Writing text graphics took too long.");
+    }
+    throw new StudioTextGraphicsError(
+      "network",
+      failure instanceof Error ? failure.message : String(failure)
     );
   }
-  return (await response.json()) as TextGraphicsPreviewResult;
+  clearTimeout(timer);
+
+  if (!response.ok) {
+    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    if (body?.code === TEXT_GRAPHICS_AI_FAILED_CODE) {
+      throw new StudioTextGraphicsError(body.reason === "timeout" ? "timeout" : "ai", message);
+    }
+    throw new StudioTextGraphicsError("server", message);
+  }
+  const plan = body?.plan as { source?: string; items?: unknown } | null;
+  const graphics = body?.textGraphics as { items?: unknown } | null;
+  if (plan?.source !== "claude" || !Array.isArray(plan.items) || plan.items.length === 0 ||
+      !Array.isArray(graphics?.items) || graphics.items.length === 0) {
+    throw new StudioTextGraphicsError("ai", "No usable text graphics were returned.");
+  }
+  return body as unknown as TextGraphicsPreviewResult;
 }
 
 /**

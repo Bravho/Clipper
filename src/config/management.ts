@@ -29,8 +29,8 @@
  * product is sold: a PACKAGE that includes video making AND unlimited
  * publishing for its whole term, in two tiers (see config/packageTiers.ts):
  *
- *   Starter  5 videos/month   1mo 190 . 3mo 540 . 6mo 1030 . 12mo 1890
- *   Pro     10 videos/month   1mo 350 . 3mo 990 . 6mo 1890 . 12mo 3490
+ *   Starter  5 videos/month   1mo 99 · 12mo 990   (3mo/6mo off sale)
+ *   Pro     10 videos/month   1mo 179 · 12mo 1790  (3mo/6mo off sale)
  *
  * The Pro packages keep the old `management_bundle_*` codes (they were already
  * "10 videos a month + unlimited publishing"); Starter adds
@@ -251,8 +251,8 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
     tier: "starter",
     onSale: true,
-    fullPriceCredits: 190,
-    launchPriceCredits: 190,
+    fullPriceCredits: 99,
+    launchPriceCredits: 99,
     sortOrder: 6,
   },
   {
@@ -266,7 +266,7 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoMonths: 3,
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
     tier: "starter",
-    onSale: true,
+    onSale: false,
     fullPriceCredits: 540,
     launchPriceCredits: 540,
     sortOrder: 7,
@@ -282,7 +282,7 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoMonths: 6,
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
     tier: "starter",
-    onSale: true,
+    onSale: false,
     fullPriceCredits: 1030,
     launchPriceCredits: 1030,
     sortOrder: 8,
@@ -299,8 +299,8 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.starter,
     tier: "starter",
     onSale: true,
-    fullPriceCredits: 1890,
-    launchPriceCredits: 1890,
+    fullPriceCredits: 990,
+    launchPriceCredits: 990,
     sortOrder: 9,
   },
   {
@@ -315,8 +315,8 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
     tier: "pro",
     onSale: true,
-    fullPriceCredits: 350,
-    launchPriceCredits: 350,
+    fullPriceCredits: 179,
+    launchPriceCredits: 179,
     sortOrder: 10,
   },
   {
@@ -330,7 +330,7 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoMonths: 3,
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
     tier: "pro",
-    onSale: true,
+    onSale: false,
     fullPriceCredits: 990,
     launchPriceCredits: 990,
     sortOrder: 11,
@@ -346,7 +346,7 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoMonths: 6,
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
     tier: "pro",
-    onSale: true,
+    onSale: false,
     fullPriceCredits: 1890,
     launchPriceCredits: 1890,
     sortOrder: 12,
@@ -363,8 +363,8 @@ export const MANAGEMENT_PRODUCTS: readonly ManagementProductDefinition[] = [
     videoRequestsPerMonth: PACKAGE_TIER_REQUESTS.pro,
     tier: "pro",
     onSale: true,
-    fullPriceCredits: 3490,
-    launchPriceCredits: 3490,
+    fullPriceCredits: 1790,
+    launchPriceCredits: 1790,
     sortOrder: 13,
   },
 ] as const;

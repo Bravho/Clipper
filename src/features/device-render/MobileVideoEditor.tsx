@@ -114,6 +114,7 @@ import { captureShotFrames } from "./shotFrames";
 import type { StudioManagement } from "./ChannelHandover";
 import { startStudioSession, trackStudioAction, trackStudioStep } from "./studioTracker";
 import { scriptFitFailureText, studioScriptStatus, type ScriptFitFailure } from "./studioScriptFit";
+import { graphicsFailureText, StudioTextGraphicsError } from "./studioTextGraphics";
 import {
   pipelineStepText,
   StudioI18nProvider,
@@ -362,6 +363,8 @@ function StudioEditor({
   }, []);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [graphicsRenderFailed, setGraphicsRenderFailed] = useState(false);
+  const [graphicsProductionFailed, setGraphicsProductionFailed] = useState(false);
   const [serverOutcome, setServerOutcome] = useState<string | null>(null);
   // The latest failed try in THIS session, with its step-by-step log. The
   // server keeps a copy too (`lastPhoneError`), for a studio reopened later.
@@ -376,6 +379,7 @@ function StudioEditor({
     null
   );
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [standaloneUnlock, setStandaloneUnlock] = useState(false);
   // Originals this phone lost since submitting (reinstall, cleared data,
   // Android freeing space); the person can pick them again.
   const [missingOriginals, setMissingOriginals] = useState<LocalMediaDescriptor[]>([]);
@@ -1114,7 +1118,7 @@ function StudioEditor({
     if (!requestId) return;
     // Nothing left this period: say so, with the way to buy more, before any
     // original is copied or anything is sent.
-    if (quota && !quota.canSubmit) {
+    if (!standaloneUnlock && quota && !quota.canSubmit) {
       // Check again first: a package may have been bought since this was read.
       const fresh = await reloadQuota();
       if (!fresh || !fresh.canSubmit) {
@@ -1133,6 +1137,7 @@ function StudioEditor({
       await submitStudioRequest({
         requestId,
         sources: chosen,
+        downloadUnlocked: standaloneUnlock,
         onProgress: (done, total) => setSubmitProgress({ done, total }),
         t,
       });
@@ -1180,7 +1185,7 @@ function StudioEditor({
       setSubmitting(false);
       setSubmitProgress(null);
     }
-  }, [document, quota, refreshContent, reloadQuota, requestId, t]);
+  }, [document, quota, refreshContent, reloadQuota, requestId, standaloneUnlock, t]);
 
   const approveScript = useCallback(async () => {
     if (!requestId || !script) return;
@@ -1509,7 +1514,15 @@ function StudioEditor({
     productionSending.current = true;
     setSendingProduction(true);
     setError(null);
+    setGraphicsProductionFailed(false);
     try {
+      const choice = document.textStyle ?? DEFAULT_TEXT_GRAPHIC_CHOICE;
+      if (choice !== "none") {
+        await fetchTextGraphicsPreview({
+          requestId, choice, scenePlan: scenePlanFromScenes(document, indexOfSource),
+          musicTrackId: document.musicTrackId, fresh: false, t,
+        });
+      }
       await approveStudioProduction({
         requestId,
         jobId: content.jobId,
@@ -1539,7 +1552,8 @@ function StudioEditor({
       // for this phone the moment the plan is accepted.
       setAvailability(await checkDeviceRenderAvailability(requestId));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setGraphicsProductionFailed(failure instanceof StudioTextGraphicsError);
+      setError(failure instanceof StudioTextGraphicsError ? graphicsFailureText(failure, t) : failure instanceof Error ? failure.message : String(failure));
       trackStudioAction("render_start_failed", requestId, { reason: failureText(failure) });
     } finally {
       productionSending.current = false;
@@ -2142,6 +2156,7 @@ function StudioEditor({
     if (!requestId) return;
     setBusy(true);
     setError(null);
+    setGraphicsRenderFailed(false);
     setServerOutcome(null);
     cancelRequested.current = false;
     // No navigation here. This also runs by itself while the person is in
@@ -2274,7 +2289,10 @@ function StudioEditor({
       }
       setAvailability(await checkDeviceRenderAvailability(requestId));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      const graphicsFailed = (failure as { code?: string })?.code === "text_graphics_ai_failed";
+      setGraphicsRenderFailed(graphicsFailed);
+      if (graphicsFailed) userStopped.current = true;
+      setError(graphicsFailed ? graphicsFailureText(failure, t) : failure instanceof Error ? failure.message : String(failure));
     } finally {
       setBusy(false);
     }
@@ -2498,7 +2516,9 @@ function StudioEditor({
                   onConfirm={setConfirmed}
                   onSubmit={() => void submitMedia()}
                   onGoToBrief={() => setStep("brief")}
-                  quota={submitted ? null : quota}
+                  quota={submitted || standaloneUnlock ? null : quota}
+                  standaloneUnlock={standaloneUnlock}
+                  onStandaloneUnlock={setStandaloneUnlock}
                   disabled={busy || preparingMedia}
                 />
               ) : null
@@ -2767,6 +2787,8 @@ function StudioEditor({
         <div role="status" aria-live="polite" style={{ display: "grid", gap: 8 }}>
           {message && <p className="studio-note">{message}</p>}
           {error && <p className="studio-note studio-note-danger">{error}</p>}
+          {graphicsRenderFailed && <button type="button" className="studio-button studio-button-primary" disabled={busy} onClick={() => void renderForServer()}>{t("studio.graphics.tryAgain")}</button>}
+          {graphicsProductionFailed && <button type="button" className="studio-button studio-button-primary" disabled={sendingProduction} onClick={() => void sendProduction()}>{t("studio.graphics.tryAgain")}</button>}
         </div>
       </div>
 

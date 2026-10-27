@@ -157,6 +157,7 @@ const {
 };
 
 import { DeviceRenderService, DeviceRenderError, stageForTask } from "@/services/DeviceRenderService";
+import { textGraphicsService, TextGraphicsAiError } from "@/services/TextGraphicsService";
 
 const OWNER = "user-1";
 const OTHER = "user-2";
@@ -292,6 +293,26 @@ function completion(
 
 describe("DeviceRenderService", () => {
   let service: DeviceRenderService;
+
+  it("surfaces text graphics failure before leasing, keeping the task queued for retry", async () => {
+    const { request, job, task } = await seed();
+    await videoGenerationJobRepository.update(job.id, { selectedTextStyle: "premium" });
+    // Avoid depending on deployment origin; both origin failure and AI failure
+    // must be retryable. Set the origin helper itself via its public env input.
+    const original = process.env.NEXTAUTH_URL;
+    process.env.NEXTAUTH_URL = "http://localhost:3000";
+    const ai = jest.spyOn(textGraphicsService, "ensurePlan").mockRejectedValue(new TextGraphicsAiError("ai", "overloaded"));
+    try {
+      await expect(service.claim({ requestId: request.id, userId: OWNER, capabilities })).rejects.toMatchObject({ code: "text_graphics_ai_failed", status: 502 });
+      expect(ai).toHaveBeenCalled();
+      expect((await renderTaskRepository.findActiveByRequest(request.id))?.state).toBe("queued");
+      expect((await renderTaskRepository.findActiveByRequest(request.id))?.id).toBe(task.id);
+    } finally {
+      ai.mockRestore();
+      if (original === undefined) delete process.env.NEXTAUTH_URL;
+      else process.env.NEXTAUTH_URL = original;
+    }
+  });
 
   beforeEach(async () => {
     jest.clearAllMocks();

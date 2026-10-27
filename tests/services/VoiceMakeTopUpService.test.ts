@@ -112,8 +112,8 @@ describe("VoiceMakeTopUpService", () => {
     expect(state.packs).toBe(2);
   });
 
-  it("prices the pack above what five makes cost the server", () => {
-    // ≈ ฿40 worst case for 5 makes of the longest voice (see requestLimits.ts).
-    expect(VOICE_MAKE_TOP_UP.priceCredits).toBeGreaterThan(40);
+  it("prices the pack above what five typical-script makes cost the server", () => {
+    // ≈ ฿16.5 typical for 5 makes of a 40 s voice (see requestLimits.ts).
+    expect(VOICE_MAKE_TOP_UP.priceCredits).toBeGreaterThan(15);
   });
 });

@@ -70,6 +70,19 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
       }),
     });
 
+  it("passes the explicit standalone unlock choice to submission and recovers idempotently", async () => {
+    getOwnedRequestMock.mockResolvedValue({ ...submittedRequest, status: RequestStatus.Draft, durationSeconds: 15 });
+    submitRequestMock.mockResolvedValue({ ...submittedRequest, downloadUnlocked: true });
+    findAssetsMock.mockResolvedValue([]);
+    getCurrentJobMock.mockResolvedValue({ id: "job-paid" });
+    const response = await POST(request({ downloadUnlocked: true }), { params: Promise.resolve({ id: "req-1" }) });
+    expect(response.status).toBe(200);
+    expect(submitRequestMock).toHaveBeenCalledWith("req-1", "user-1", true, true, true, true);
+    getOwnedRequestMock.mockResolvedValue({ ...submittedRequest, downloadUnlocked: true });
+    await POST(request({ downloadUnlocked: true }), { params: Promise.resolve({ id: "req-1" }) });
+    expect(submitRequestMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns the existing job when the first response was lost after submission", async () => {
     getOwnedRequestMock.mockResolvedValue(submittedRequest);
     getCurrentJobMock.mockResolvedValue({ id: "job-1" });

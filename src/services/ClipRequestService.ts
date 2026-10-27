@@ -125,7 +125,8 @@ export class ClipRequestService {
     userId: string,
     creditConfirmed: boolean,
     rightsConfirmed: boolean,
-    aiProcessingConfirmed: boolean
+    aiProcessingConfirmed: boolean,
+    downloadUnlocked = false
   ): Promise<ClipRequest> {
     const existing = await this.getOwnedRequest(requestId, userId);
 
@@ -143,6 +144,14 @@ export class ClipRequestService {
 
     if (!aiProcessingConfirmed) {
       throw new Error("AI processing permission is required to submit.");
+    }
+
+    if (downloadUnlocked) {
+      const { videoDownloadUnlockService } = await import("./VideoDownloadUnlockService");
+      await videoDownloadUnlockService.purchase({
+        userId, requestId, currentExpiry: null, alreadyUnlocked: false, submitNew: true,
+      });
+      return this.getOwnedRequest(requestId, userId);
     }
 
     // Take a quota slot: a paid month's request if the account has a live

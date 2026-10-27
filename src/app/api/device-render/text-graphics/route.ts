@@ -5,6 +5,7 @@ import { clipRequestRepository, videoGenerationJobRepository } from "@/repositor
 import { isTextGraphicChoice } from "@/config/textGraphicStyles";
 import { findMusicTrack } from "@/config/backgroundMusic";
 import { toManifestTextGraphics } from "@/lib/textGraphics/plan";
+import { TextGraphicsAiError } from "@/services/TextGraphicsService";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
 /**
@@ -18,7 +19,7 @@ import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
  *
  * The plan is saved on the job with the fingerprint of these inputs; approving
  * production with the same edit reuses it instead of asking Claude again.
- * Fail-open: Claude trouble answers the simple fallback plan.
+ * AI failures return a retryable 502; guessed text is never substituted.
  */
 export const maxDuration = 60;
 
@@ -65,6 +66,12 @@ export async function POST(request: Request) {
       textGraphics: toManifestTextGraphics(plan, palette.accent, ""),
     });
   } catch (err) {
+    if (err instanceof TextGraphicsAiError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code, reason: err.kind },
+        { status: 502 }
+      );
+    }
     console.error("[device-render/text-graphics] failed:", err);
     return NextResponse.json({ error: "Could not write the text graphics." }, { status: 500 });
   }

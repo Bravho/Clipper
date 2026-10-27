@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Fragment } from "react";
 import { headers } from "next/headers";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
@@ -8,6 +9,7 @@ import { getServerI18n } from "@/i18n/server";
 import type { MessageKey } from "@/i18n/messages";
 import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
 import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
+import { VIDEO_DOWNLOAD_UNLOCK } from "@/config/requestLimits";
 import { MANAGEMENT_PACKAGES_ON_SALE, managementPriceCredits } from "@/config/management";
 import { PACKAGE_TIER_REQUESTS, PACKAGE_TIERS } from "@/config/packageTiers";
 import { tierPackageOptions } from "@/features/pricing/tierOptions";
@@ -120,6 +122,7 @@ export default async function PlansPage() {
         </section>
 
         {PACKAGE_TIERS.map((tier) => (
+          <Fragment key={tier}>
           <section key={tier} className="mb-12">
             <h2 className="mb-1 text-xl font-bold text-slate-900">{t(tierName[tier])}</h2>
             <p className="mb-4 text-sm text-slate-600">
@@ -137,6 +140,16 @@ export default async function PlansPage() {
               )}
             </div>
           </section>
+          {tier === "starter" && (
+            <section className="mb-12">
+              <h2 className="mb-4 text-xl font-bold text-slate-900">{t("mkt.plans.singleUnlockName")}</h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {card("single-unlock", t("mkt.plans.singleUnlockName"), VIDEO_DOWNLOAD_UNLOCK.priceCredits,
+                  t("mkt.plans.singleUnlockBody", { days: VIDEO_DOWNLOAD_UNLOCK.days }))}
+              </div>
+            </section>
+          )}
+          </Fragment>
         ))}
 
         {/* In the app: what a credit costs in THIS store, priced by the store. */}

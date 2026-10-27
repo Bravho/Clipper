@@ -264,9 +264,9 @@ export function sanitizeTextGraphicItems(raw: unknown, durationSeconds: number):
 
 /**
  * A plan with no AI at all: the business name as the opening hook, and a
- * closing card. Used when Claude is unavailable, so a chosen style never
- * silently produces nothing.
+ * closing card. Retained for legacy callers and reference only.
  */
+/** @deprecated Never use as a silent AI-failure fallback; surface a retryable error. */
 export function fallbackTextGraphicItems(input: {
   durationSeconds: number;
   brand: string;

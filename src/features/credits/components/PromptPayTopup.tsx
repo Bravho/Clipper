@@ -10,9 +10,9 @@ import type { MessageKey } from "@/i18n/messages";
 
 /** What a bundle covers, by its credit amount (the config labels are Thai-only). */
 const BUNDLE_TAG: Record<number, MessageKey> = {
-  190: "topup.tag.starterMonth",
-  350: "topup.tag.proMonth",
-  3500: "topup.tag.proYear",
+  99: "topup.tag.starterMonth",
+  179: "topup.tag.proMonth",
+  1790: "topup.tag.proYear",
 };
 
 type Bundle = (typeof TOPUP_BUNDLES)[number];

@@ -64,7 +64,7 @@ describe("store rows", () => {
       user_id: "u",
       at: "2026-10-03T00:00:00Z",
     });
-    expect(p).toMatchObject({ channel: "app_store", amount: 130, currency: "THB", estimated: true });
+    expect(p).toMatchObject({ channel: "app_store", amount: 120, currency: "THB", estimated: true });
   });
 
   it("treats only Production as revenue; Sandbox and Test are not", () => {

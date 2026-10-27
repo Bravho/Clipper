@@ -36,8 +36,8 @@
  * store product. `assertStoreCatalogueVerified()` fails while any row is
  * unverified, so a release build cannot silently ship a guess. Flip a row to
  * true only after its `productId` exists in the console and its price point has
- * been chosen there. As of 2026-09-10 every row on both stores is verified —
- * set a NEW row back to false rather than assuming the table stays clean.
+ * been chosen there. As of 2026-10-27 all rows are unverified after the
+ * repricing — reconcile in App Store Connect and Play Console before release.
  *
  * Web (Stripe PromptPay/Card) keeps 1 credit = ฿1 and lives in `TOPUP_BUNDLES`
  * in src/config/credits.ts. That one IS authoritative, because we charge it.
@@ -71,11 +71,11 @@ export interface StoreProduct {
  *
  *   net per credit = plannedPriceBaht / credits × (1 − commission)
  *
- * At the SMALL-BUSINESS rate (15%, which both stores apply below ~$1M/year —
- * automatic on Play, an annual OPT-IN on Apple) the live 1.30× uplift nets
- * ฿1.105 and clears. At the STANDARD rate (30%) the same 1.30× nets ฿0.91, i.e.
- * every store top-up would sell credits for less than they are worth. Breaking
- * even at 30% needs 1.43× — roughly ฿93 for 50 credits rather than ฿65.
+ * At the SMALL-BUSINESS rate (15%) the 1.20× uplift nets ฿1.02 per credit,
+ * which barely clears. At the STANDARD rate (30%) the same 1.20× nets
+ * ฿0.84, i.e. every store top-up would sell credits for less than they are
+ * worth. Breaking even at 30% still needs 1.43×. The margin is thinner than
+ * before — small-business enrolment is even more important.
  *
  * Both stores now charge the SAME ฿ per credit, so this is not a per-platform
  * risk: it is one rate assumption carrying the whole native business. Apple's
@@ -90,42 +90,50 @@ export const STORE_COMMISSION = {
 } as const;
 
 /**
- * Apple App Store products — CONFIRMED against App Store Connect on 2026-09-10.
+ * Apple App Store products.
+ *
+ * Flat 1.20 ฿/credit as of the 2026-10-27 repricing. All rows set to
+ * verified: false — reconcile in App Store Connect before release.
+ *
+ * A 30-credit pack was added for the 29-credit voice top-up, and a 40-credit
+ * pack was added for the 39-credit single video unlock — both are single store
+ * purchases at 1.20×.
  *
  * Apple's THB ladder turned out to contain every point Play was already using,
  * so the two tables are currently IDENTICAL. That is a fact about today's
  * prices, not a reason to merge them: Apple's ladder is fixed and Google's is
  * free-form, so the next repricing can easily force them apart. Keep the split.
- *
- * Flat 1.30 ฿/credit at every rung as of the 2026-09-10 update.
  */
 export const IOS_STORE_PRODUCTS: readonly StoreProduct[] = [
-  { productId: "com.rclipper.credits.50", credits: 50, plannedPriceBaht: 65, verified: true },
-  { productId: "com.rclipper.credits.100", credits: 100, plannedPriceBaht: 130, verified: true },
-  { productId: "com.rclipper.credits.200", credits: 200, plannedPriceBaht: 260, verified: true },
-  { productId: "com.rclipper.credits.500", credits: 500, plannedPriceBaht: 650, verified: true },
-  { productId: "com.rclipper.credits.1000", credits: 1000, plannedPriceBaht: 1300, verified: true },
-  { productId: "com.rclipper.credits.2000", credits: 2000, plannedPriceBaht: 2600, verified: true },
+  { productId: "com.rclipper.credits.30", credits: 30, plannedPriceBaht: 36, verified: false },
+  { productId: "com.rclipper.credits.40", credits: 40, plannedPriceBaht: 48, verified: false },
+  { productId: "com.rclipper.credits.50", credits: 50, plannedPriceBaht: 60, verified: false },
+  { productId: "com.rclipper.credits.100", credits: 100, plannedPriceBaht: 120, verified: false },
+  { productId: "com.rclipper.credits.200", credits: 200, plannedPriceBaht: 240, verified: false },
+  { productId: "com.rclipper.credits.500", credits: 500, plannedPriceBaht: 600, verified: false },
+  { productId: "com.rclipper.credits.1000", credits: 1000, plannedPriceBaht: 1200, verified: false },
+  { productId: "com.rclipper.credits.2000", credits: 2000, plannedPriceBaht: 2400, verified: false },
 ] as const;
 
 /**
- * Google Play products — CONFIRMED against Play Console on 2026-09-10.
+ * Google Play products.
  *
- * These are the real, live products and prices. Play has no tier ladder, so the
- * values are exactly as configured there. A flat 1.30 ฿/credit at every rung
- * since the 2026-09-10 update — the old 1.25 discount at 1,000 is gone, so the
- * margin no longer thins out exactly where the biggest purchases happen.
+ * Flat 1.20 ฿/credit as of the 2026-10-27 repricing. All rows set to
+ * verified: false — reconcile in Play Console before release.
  *
- * The 2,000 rung was added so the 1,900-credit 6-month bundle is a single
- * transaction. The 3,500-credit annual bundle still takes two.
+ * A 30-credit pack (for the 29-credit voice top-up) and a 40-credit pack (for
+ * the 39-credit single video unlock) were added on 2026-10-27. The 2,000 rung
+ * covers the dearest on-sale plan (Pro 12mo = 1,790) in one transaction.
  */
 export const ANDROID_STORE_PRODUCTS: readonly StoreProduct[] = [
-  { productId: "com.rclipper.credits.50", credits: 50, plannedPriceBaht: 65, verified: true },
-  { productId: "com.rclipper.credits.100", credits: 100, plannedPriceBaht: 130, verified: true },
-  { productId: "com.rclipper.credits.200", credits: 200, plannedPriceBaht: 260, verified: true },
-  { productId: "com.rclipper.credits.500", credits: 500, plannedPriceBaht: 650, verified: true },
-  { productId: "com.rclipper.credits.1000", credits: 1000, plannedPriceBaht: 1300, verified: true },
-  { productId: "com.rclipper.credits.2000", credits: 2000, plannedPriceBaht: 2600, verified: true },
+  { productId: "com.rclipper.credits.30", credits: 30, plannedPriceBaht: 36, verified: false },
+  { productId: "com.rclipper.credits.40", credits: 40, plannedPriceBaht: 48, verified: false },
+  { productId: "com.rclipper.credits.50", credits: 50, plannedPriceBaht: 60, verified: false },
+  { productId: "com.rclipper.credits.100", credits: 100, plannedPriceBaht: 120, verified: false },
+  { productId: "com.rclipper.credits.200", credits: 200, plannedPriceBaht: 240, verified: false },
+  { productId: "com.rclipper.credits.500", credits: 500, plannedPriceBaht: 600, verified: false },
+  { productId: "com.rclipper.credits.1000", credits: 1000, plannedPriceBaht: 1200, verified: false },
+  { productId: "com.rclipper.credits.2000", credits: 2000, plannedPriceBaht: 2400, verified: false },
 ] as const;
 
 /** The two stores the native shells ship to. */

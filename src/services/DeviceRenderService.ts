@@ -241,6 +241,7 @@ export class DeviceRenderService {
     try {
       plan = await this._planFor(job, stage, ratio, link, fromSources);
     } catch (err) {
+      if (err instanceof DeviceRenderError && err.code === "text_graphics_ai_failed") throw err;
       console.log(
         `[device-render] request ${input.requestId}: not offering ${task.step} to a device — ${
           err instanceof Error ? err.message : String(err)
@@ -918,8 +919,9 @@ export class DeviceRenderService {
 
     // Text graphics belong to the finished video only. Usually written when
     // production was approved (or previewed in the studio) and simply read
-    // here; if not, Claude gets a short window before the fallback plan is
-    // used, so a claim never hangs on it. Any failure renders without them.
+    // here. If Claude fails, the error is surfaced so the requester sees
+    // "Try again" — the render must never proceed with no graphics after an
+    // AI failure when the user chose a text style other than "none".
     //
     // Every outcome is logged with its reason: a final that silently came out
     // with the Look's frame but no text graphics (2026-10-11) gave nothing to
@@ -934,13 +936,12 @@ export class DeviceRenderService {
       if (choice === "none") {
         console.log(`[device-render] job ${job.id} ${ratio}: no text graphics (choice is none)`);
       } else if (!origin) {
-        console.error(
-          `[device-render] job ${job.id} ${ratio}: text graphics "${choice}" SKIPPED — no app origin (set NEXTAUTH_URL)`
-        );
+        throw new DeviceRenderError("Text graphics are unavailable. Try again.", "text_graphics_ai_failed", 502);
       } else {
         try {
           const plan = await textGraphicsService.ensurePlan(job, { timeoutMs: 20_000 });
           textGraphics = toManifestTextGraphics(plan, palette.accent, origin);
+          if (!textGraphics) throw new Error("No usable text graphics were returned.");
           console.log(
             `[device-render] job ${job.id} ${ratio}: text graphics "${choice}" → ` +
               (textGraphics
@@ -948,7 +949,10 @@ export class DeviceRenderService {
                 : "no plan (scene plan too short?)")
           );
         } catch (err) {
-          console.error(`[device-render] job ${job.id} ${ratio}: text graphics skipped:`, err);
+          console.error(`[device-render] job ${job.id} ${ratio}: text graphics failed:`, err);
+          // Re-throw so the manifest is not given to the phone. The render task
+          // stays queued; retrying after the text-graphics plan is cached works.
+          throw new DeviceRenderError("Could not write text graphics. Try again.", "text_graphics_ai_failed", 502);
         }
       }
     }

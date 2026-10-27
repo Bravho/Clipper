@@ -55,25 +55,23 @@ describe("credit ladder reachability", () => {
     // The entry video package and the entry bundle are what most buyers reach
     // for. Those must never be a multi-transaction ordeal.
     for (const ladder of [IOS, ANDROID]) {
-      expect(topUpsFor(ladder, 190)).toBe(1); // Starter, 1 month
-      expect(topUpsFor(ladder, 350)).toBe(1); // Pro, 1 month
+      expect(topUpsFor(ladder, 99)).toBe(1);   // Starter, 1 month
+      expect(topUpsFor(ladder, 179)).toBe(1);  // Pro, 1 month
     }
   });
 
-  it("gets a store buyer to Pro 6 months and Starter 1 year in one transaction", () => {
-    // The 2,000 rung was added for exactly this: 1,900 credits used to take two
-    // purchases. Now an invariant worth protecting, not a pin.
+  it("gets a store buyer to any on-sale plan in one transaction", () => {
+    // Starter 12mo = 990, Pro 12mo = 1790; the 2,000 rung covers both.
     for (const ladder of [IOS, ANDROID]) {
-      expect(topUpsFor(ladder, 1890)).toBe(1);
+      expect(topUpsFor(ladder, 990)).toBe(1);   // Starter 12 months
+      expect(topUpsFor(ladder, 1790)).toBe(1);  // Pro 12 months
     }
   });
 
-  it("documents that the annual bundle still costs a store buyer two transactions", () => {
-    // Pro 1 year is 3,490 credits against a 2,000 ceiling. Adding a 3,500 rung
-    // (~฿4,550 at the flat 1.30 rate, created in both consoles first) would
-    // finish the job; until then this is pinned so the suite stays honest.
-    expect(topUpsFor(ANDROID, dearest)).toBe(2);
-    expect(topUpsFor(IOS, dearest)).toBe(2);
+  it("covers the dearest on-sale plan (Pro 12mo = 1790) in one store transaction", () => {
+    // Pro 12 months = 1790 credits; the 2,000 store rung covers it in one purchase.
+    expect(topUpsFor(ANDROID, dearest)).toBe(1);
+    expect(topUpsFor(IOS, dearest)).toBe(1);
   });
 
   it("covers the cheapest package with the smallest rung", () => {
@@ -152,14 +150,17 @@ describe("store catalogue integrity", () => {
     expect(creditsForStoreProduct("com.rclipper.credits.nope", "ios")).toBeNull();
   });
 
-  it("has no unreconciled rows left", () => {
-    // Both consoles were read on 2026-09-10. Anything appearing here again is a
-    // product someone added to the table without opening a console.
-    expect(unverifiedStoreProducts()).toEqual([]);
+  it("flags all rows as unreconciled after the 2026-10-27 repricing", () => {
+    // All prices changed to 1.20× on 2026-10-27 and verified: false was set
+    // for every row on both stores. assertStoreCatalogueVerified() is expected
+    // to throw until Tho reconciles in App Store Connect and Play Console.
+    expect(unverifiedStoreProducts().length).toBeGreaterThan(0);
   });
 
-  it("passes the release gate", () => {
-    expect(() => assertStoreCatalogueVerified()).not.toThrow();
+  it("throws at the release gate while rows are unreconciled", () => {
+    // Intentional: verified: false is set for every row after the 2026-10-27
+    // repricing. Tho must reconcile in the store consoles before shipping.
+    expect(() => assertStoreCatalogueVerified()).toThrow();
   });
 
   it("prices a credit identically on both stores today", () => {

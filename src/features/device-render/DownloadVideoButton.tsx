@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { VideoAccessView } from "@/services/VideoAccessService";
 import { downloadStudioVideo } from "./downloadVideo";
@@ -28,6 +28,16 @@ export function DownloadVideoButton({
   access?: VideoAccessView | null;
 }) {
   const t = useStudioT();
+  const [refreshedAccess, setRefreshedAccess] = useState(access);
+  useEffect(() => setRefreshedAccess(access), [access, requestId]);
+  const currentAccess = refreshedAccess;
+  const refreshAccess = async () => {
+    const response = await fetch(`/api/device-render/content?requestId=${encodeURIComponent(requestId)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("Could not refresh download access.");
+    const body = await response.json() as { access?: VideoAccessView };
+    if (!body.access?.canDownload) throw new Error("Download access is not ready. Try again.");
+    setRefreshedAccess(body.access);
+  };
   const [downloading, setDownloading] = useState(false);
   const [stage, setStage] = useState<"downloading" | "saving" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +56,7 @@ export function DownloadVideoButton({
         assetId,
         channel,
         failedMessage: t("studio.download.failed"),
-        allowedOffline: access?.canDownload === true,
+        allowedOffline: currentAccess?.canDownload === true,
         onProgress: (fraction) => setPercent(Math.round(fraction * 100)),
         onStage: setStage,
       });
@@ -80,7 +90,7 @@ export function DownloadVideoButton({
       <button
         type="button"
         className="studio-button studio-button-ghost"
-        disabled={downloading || (access != null && !access.canDownload)}
+        disabled={downloading || (currentAccess != null && !currentAccess.canDownload)}
         onClick={() => void download()}
       >
         {downloading
@@ -91,7 +101,7 @@ export function DownloadVideoButton({
               : t("studio.download.preparing")
           : (label ?? t("studio.download.default"))}
       </button>
-      <VideoAccessNote access={access} />
+      <VideoAccessNote access={currentAccess} requestId={requestId} onUnlocked={refreshAccess} />
       {savedNote && (
         <p className="studio-note studio-note-positive" role="status" style={{ marginTop: 8 }}>
           {savedNote}

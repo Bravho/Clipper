@@ -28,6 +28,22 @@ import { clipRequestRepository, videoGenerationJobRepository } from "@/repositor
 import type { ScenePlan, VideoGenerationJob } from "@/domain/models/VideoGenerationJob";
 
 /**
+ * Thrown when Claude is unavailable, times out, or returns unusable output.
+ * The API route maps this to a 502-style response with code "text_graphics_ai_failed".
+ * The studio shows an error message with a "Try again" button.
+ */
+export class TextGraphicsAiError extends Error {
+  readonly code = "text_graphics_ai_failed";
+  constructor(
+    readonly kind: "timeout" | "ai" | "network",
+    message: string
+  ) {
+    super(message);
+    this.name = "TextGraphicsAiError";
+  }
+}
+
+/**
  * Writes the per-request text-graphics plan with Claude.
  *
  * Claude sees each scene's small picture (the same poster/derivative the
@@ -35,8 +51,8 @@ import type { ScenePlan, VideoGenerationJob } from "@/domain/models/VideoGenerat
  * voice timeline, the business name and the brief, and returns which words to
  * show in each scene, when, and — on "auto" — which style pack fits.
  *
- * Nothing here can block or fail a render: every failure path ends in the
- * deterministic fallback plan (business name hook + closing card). The plan is
+ * On failure, throws a TextGraphicsAiError. The API route maps this to a
+ * 502-style response and the studio shows a Try again button. The plan is
  * cached on the job with a fingerprint of its inputs, so the studio's preview
  * and the final render share one Claude call when nothing changed in between.
  */
@@ -187,8 +203,8 @@ export class TextGraphicsService {
    * @param options.scenePlan  overrides the approved scene plan (studio preview,
    *                           before production is approved)
    * @param options.musicSelected overrides whether the master opens on music
-   * @param options.timeoutMs  how long to wait for Claude before using the fallback
-   * @returns null when the choice is "none" or there is nothing to time against
+   * @param options.timeoutMs  how long to wait for Claude before a retryable error
+   * @returns null only when the requester chose "none"
    */
   async ensurePlan(
     job: VideoGenerationJob,
@@ -204,15 +220,17 @@ export class TextGraphicsService {
     if (choice === "none") return null;
 
     const inputs = await this._inputs(job, choice, options);
-    if (!inputs) return null;
+    if (!inputs) throw new TextGraphicsAiError("ai", "No usable scene timing for text graphics. Try again.");
 
     const stored = parseTextGraphicsPlan(job.textGraphicsPlan);
-    if (!options.fresh && stored && stored.fingerprint === inputs.fingerprint) return stored;
+    if (!options.fresh && stored && stored.source !== "fallback" && stored.fingerprint === inputs.fingerprint) return stored;
 
     const key = `${job.id}:${inputs.fingerprint}`;
     let pending = options.fresh ? undefined : inFlight.get(key);
     if (!pending) {
-      pending = this._write(inputs).finally(() => inFlight.delete(key));
+      pending = this._write(inputs).finally(() => {
+        if (inFlight.get(key) === pending) inFlight.delete(key);
+      });
       inFlight.set(key, pending);
       // Persist whenever it lands, even if this caller stops waiting.
       void pending.then((plan) => this._save(job.id, plan)).catch(() => undefined);
@@ -225,7 +243,12 @@ export class TextGraphicsService {
     });
     try {
       const plan = await Promise.race([pending, timedOut]);
-      return plan ?? this._fallback(inputs);
+      if (plan === null) {
+        // A retry must not join a provider call that may never settle.
+        if (inFlight.get(key) === pending) inFlight.delete(key);
+        throw new TextGraphicsAiError("timeout", "Writing text graphics took too long.");
+      }
+      return plan;
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -315,6 +338,11 @@ export class TextGraphicsService {
     };
   }
 
+  /**
+   * @deprecated Must never be called as a silent AI-failure fallback. When
+   * Claude fails, TextGraphicsAiError is thrown and surfaced to the requester.
+   * Kept only for legacy reference.
+   */
   private _fallback(inputs: PlanInputs): TextGraphicsPlan {
     return {
       version: 1,
@@ -336,16 +364,17 @@ export class TextGraphicsService {
 
   private async _write(inputs: PlanInputs): Promise<TextGraphicsPlan> {
     const apiKey = AI_CONFIG.claude.apiKey;
-    if (!apiKey) return this._fallback(inputs);
+    if (!apiKey) throw new TextGraphicsAiError("ai", "Text graphics AI is not configured.");
     try {
       const result = await this._askClaude(inputs, apiKey);
       const items = sanitizeTextGraphicItems(result.items, inputs.durationSeconds);
-      if (items.length === 0) return this._fallback(inputs);
+      if (items.length === 0) throw new TextGraphicsAiError("ai", "Claude returned no usable text graphic items.");
+      if (!isTextGraphicStyleId(inputs.choice) && !isTextGraphicStyleId(result.style)) {
+        throw new TextGraphicsAiError("ai", "Claude returned no usable text graphic style.");
+      }
       const styleId: TextGraphicStyleId = isTextGraphicStyleId(inputs.choice)
         ? inputs.choice
-        : isTextGraphicStyleId(result.style)
-          ? result.style
-          : "premium";
+        : result.style as TextGraphicStyleId; // Validated above; never guess a style.
       return {
         version: 1,
         choice: inputs.choice,
@@ -357,8 +386,9 @@ export class TextGraphicsService {
         createdAt: new Date().toISOString(),
       };
     } catch (err) {
-      console.error("[textGraphics] Claude failed, using the fallback plan:", err);
-      return this._fallback(inputs);
+      console.error("[textGraphics] Claude failed:", err);
+      if (err instanceof TextGraphicsAiError) throw err;
+      throw new TextGraphicsAiError("ai", err instanceof Error ? err.message : "Claude did not return usable text graphics.");
     }
   }
 

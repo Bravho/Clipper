@@ -1,7 +1,7 @@
 /**
  * TextGraphicsService: one Claude call per edit, reused by the preview and the
- * render, and never able to break a render — every failure ends in the
- * fallback plan.
+ * render. On failure, throws a TextGraphicsAiError (the API route maps this to
+ * a 502 and the studio shows a Try again button).
  */
 const update = jest.fn(async () => ({}));
 jest.mock("@/repositories", () => ({
@@ -53,19 +53,33 @@ it("is null when the requester chose none", async () => {
   expect(await new TextGraphicsService().ensurePlan(job({ selectedTextStyle: "none" }))).toBeNull();
 });
 
-it("falls back without an API key: business name hook and a closing card", async () => {
-  const plan = await new TextGraphicsService().ensurePlan(job());
-  expect(plan?.source).toBe("fallback");
-  expect(plan?.styleId).toBe("premium");
-  expect(plan?.items[0]).toMatchObject({ kind: "hook", title: "MAGURO KAPPOU" });
-  // Scenes back to back — the scene dissolve borrows, it does not shorten.
-  expect(plan?.durationSeconds).toBeCloseTo(14, 5);
+it("throws TextGraphicsAiError without an API key", async () => {
+  const { TextGraphicsAiError } = await import("@/services/TextGraphicsService");
+  await expect(new TextGraphicsService().ensurePlan(job())).rejects.toBeInstanceOf(TextGraphicsAiError);
 });
 
 it("reuses a stored plan whose fingerprint matches, without asking again", async () => {
-  const service = new TextGraphicsService();
+  jest.resetModules();
+  process.env.TEST_CLAUDE_KEY = "sk-test";
+  const { TextGraphicsService: Fresh } = await import("@/services/TextGraphicsService");
+  const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      content: [
+        {
+          type: "tool_use",
+          name: "write_text_graphics",
+          input: {
+            style: "cafe",
+            items: [{ kind: "hook", start: 0.3, end: 3.6, title: "MAGURO KAPPOU" }],
+          },
+        },
+      ],
+    }),
+  } as unknown as Response);
+  const service = new Fresh();
   const first = await service.ensurePlan(job({ selectedTextStyle: "cafe" }));
-  const fetchSpy = jest.spyOn(global, "fetch");
+  fetchSpy.mockClear();
   const again = await service.ensurePlan(job({ selectedTextStyle: "cafe", textGraphicsPlan: JSON.stringify(first) }));
   expect(again).toEqual(first);
   expect(fetchSpy).not.toHaveBeenCalled();
@@ -139,13 +153,52 @@ it("leaves the owner's brief out of the prompt when the request has no descripti
   await new Promise((r) => setImmediate(r));
 });
 
-it("falls back when Claude errors", async () => {
+it("throws TextGraphicsAiError when Claude errors", async () => {
+  jest.resetModules();
+  process.env.TEST_CLAUDE_KEY = "sk-test";
+  const { TextGraphicsService: Fresh, TextGraphicsAiError } = await import("@/services/TextGraphicsService");
+  jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 529, text: async () => "overloaded" } as unknown as Response);
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
+  await expect(new Fresh().ensurePlan(job({ selectedTextStyle: "premium" }))).rejects.toBeInstanceOf(TextGraphicsAiError);
+});
+
+it("throws TextGraphicsAiError with kind=timeout when the call times out", async () => {
+  jest.resetModules();
+  process.env.TEST_CLAUDE_KEY = "sk-test";
+  const { TextGraphicsService: Fresh, TextGraphicsAiError } = await import("@/services/TextGraphicsService");
+  // fetch never resolves
+  jest.spyOn(global, "fetch").mockImplementation(() => new Promise(() => undefined));
+  let caughtErr: unknown;
+  try {
+    await new Fresh().ensurePlan(job(), { timeoutMs: 50 });
+  } catch (err) {
+    caughtErr = err;
+  }
+  expect(caughtErr).toBeInstanceOf(TextGraphicsAiError);
+  expect((caughtErr as InstanceType<typeof TextGraphicsAiError>).kind).toBe("timeout");
+});
+
+it("a retry after timeout starts a new call rather than joining the hung call", async () => {
   jest.resetModules();
   process.env.TEST_CLAUDE_KEY = "sk-test";
   const { TextGraphicsService: Fresh } = await import("@/services/TextGraphicsService");
-  jest.spyOn(global, "fetch").mockResolvedValue({ ok: false, status: 529, text: async () => "overloaded" } as unknown as Response);
+  const fetchSpy = jest.spyOn(global, "fetch")
+    .mockImplementationOnce(() => new Promise(() => undefined))
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ content: [{ type: "tool_use", name: "write_text_graphics", input: { style: "street", items: [{ kind: "hook", start: 0.3, end: 3.6, title: "Cafe" }] } }] }) } as Response);
+  const service = new Fresh();
+  await expect(service.ensurePlan(job(), { timeoutMs: 10 })).rejects.toMatchObject({ kind: "timeout" });
+  await expect(service.ensurePlan(job(), { timeoutMs: 1000 })).resolves.toMatchObject({ source: "claude" });
+  expect(fetchSpy).toHaveBeenCalledTimes(2);
+});
+
+it("refuses to reuse a historical fallback plan when AI is unavailable", async () => {
+  jest.resetModules();
+  process.env.TEST_CLAUDE_KEY = "sk-test";
+  const { TextGraphicsService: Fresh } = await import("@/services/TextGraphicsService");
+  const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: "tool_use", name: "write_text_graphics", input: { style: "street", items: [{ kind: "hook", start: 0.3, end: 3.6, title: "Cafe" }] } }] }) } as Response);
+  const service = new Fresh();
+  const first = await service.ensurePlan(job());
+  fetchSpy.mockRejectedValue(new Error("offline"));
   jest.spyOn(console, "error").mockImplementation(() => undefined);
-  const plan = await new Fresh().ensurePlan(job({ selectedTextStyle: "premium" }));
-  expect(plan?.source).toBe("fallback");
-  expect(plan?.styleId).toBe("premium");
+  await expect(service.ensurePlan(job({ textGraphicsPlan: JSON.stringify({ ...first, source: "fallback" }) }))).rejects.toMatchObject({ code: "text_graphics_ai_failed" });
 });

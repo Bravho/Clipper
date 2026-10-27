@@ -25,6 +25,7 @@ import { sceneJoinDissolves } from "@/config/montage";
 import { DEVICE_SCENE_CROSSFADE_SECONDS } from "@/lib/mobile/deviceRenderCaptions";
 import { shotPlaySeconds, type EditorDocument } from "./editorState";
 import { useStudioT, type StudioT } from "./studioI18n";
+import { graphicsFailureText, StudioTextGraphicsError } from "./studioTextGraphics";
 
 /**
  * Graphic → Text graphics: pick the style pack the scene titles are drawn in,
@@ -429,12 +430,12 @@ export function TextStylePicker({
   const t = useStudioT();
   const [preview, setPreview] = useState<{ choice: TextGraphicChoice; result: TextGraphicsPreviewResult } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failureKind, setFailureKind] = useState<unknown>(null);
 
   // A preview belongs to the style it was written for, and to the edit as it was.
   useEffect(() => {
     setPreview((current) => (current && current.choice === choice ? current : null));
-    setError(null);
+    setFailureKind(null);
   }, [choice]);
   useEffect(() => {
     setPreview(null);
@@ -444,17 +445,18 @@ export function TextStylePicker({
     async (fresh: boolean) => {
       if (!loadPreview || choice === "none") return;
       setLoading(true);
-      setError(null);
+      setFailureKind(null);
+      setPreview(null);
       try {
         const result = await loadPreview(choice, fresh);
         setPreview({ choice, result });
-      } catch {
-        setError(t("studio.text.previewFailed"));
+      } catch (err) {
+        setFailureKind(err instanceof StudioTextGraphicsError ? err : new StudioTextGraphicsError("ai", err instanceof Error ? err.message : String(err)));
       } finally {
         setLoading(false);
       }
     },
-    [choice, loadPreview, t]
+    [choice, loadPreview]
   );
 
   const picked = preview?.result.plan;
@@ -519,6 +521,19 @@ export function TextStylePicker({
                 </button>
               )}
             </>
+          ) : failureKind ? (
+            <div className="studio-note studio-note-danger" role="alert" style={{ marginTop: 8 }}>
+              <p style={{ margin: 0 }}>{graphicsFailureText(failureKind, t)}</p>
+              <button
+                type="button"
+                className="studio-button studio-button-primary"
+                disabled={disabled || loading}
+                style={{ marginTop: 10 }}
+                onClick={() => void run(false)}
+              >
+                {loading ? t("studio.text.previewLoading") : t("studio.graphics.tryAgain")}
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -528,11 +543,6 @@ export function TextStylePicker({
             >
               {loading ? t("studio.text.previewLoading") : t("studio.text.previewMake")}
             </button>
-          )}
-          {error && (
-            <p className="studio-note studio-note-danger" role="alert" style={{ marginTop: 8 }}>
-              {error}
-            </p>
           )}
         </div>
       )}
