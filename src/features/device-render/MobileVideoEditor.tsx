@@ -1441,7 +1441,7 @@ function StudioEditor({
       if (result.creditsSpent > 0) {
         setMessage(
           t("studio.audio.topUpDone", {
-            makes: content.voiceMakeTopUp?.makes ?? 5,
+            makes: content.voiceMakeTopUp?.makes ?? 2,
             credits: result.creditsSpent,
           })
         );

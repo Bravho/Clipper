@@ -1,6 +1,10 @@
 import type { Pool, PoolClient } from "pg";
 
-import { MAX_VOICE_MAKES_PER_REQUEST, VOICE_MAKE_TOP_UP } from "@/config/requestLimits";
+import {
+  MAX_VOICE_MAKES_PER_REQUEST,
+  VOICE_MAKE_TOP_UP,
+  makesForTopUpAmount,
+} from "@/config/requestLimits";
 import { pool } from "@/lib/db";
 
 /**
@@ -14,10 +18,15 @@ import { pool } from "@/lib/db";
  * never be charged without the makes or get the makes without the charge.
  *
  * ONE PACK AT A TIME. A pack is sold only while the request has no makes left,
- * checked under the wallet lock with the packs already bought counted inside
- * the transaction. A double tap, a retry after a lost response, or two phones
+ * checked under the wallet lock with the purchased makes counted inside the
+ * transaction. A double tap, a retry after a lost response, or two phones
  * pressing at once therefore buy exactly one pack: the second call finds makes
  * left and is refused without a charge.
+ *
+ * LEGACY PACKS. Production has rows at amount=−49 and amount=−29, each
+ * granting +5 makes. The allowance is derived from the ledger row amounts via
+ * makesForTopUpAmount() (config/requestLimits.ts), so changing the current
+ * price never retroactively reduces existing buyers' makes.
  */
 
 /** The request still has makes; nothing was charged. Routes map this to 409. */
@@ -49,22 +58,38 @@ export interface VoiceMakeTopUpResult {
 
 type Db = Pick<Pool, "connect" | "query">;
 
-const COUNT_PACKS_SQL = `SELECT COUNT(*)::int AS packs
-   FROM credit_transactions
-  WHERE reference_id = $1 AND type = 'voice_make_top_up'`;
+/**
+ * Fetches the ABS(amount) for every voice_make_top_up row for this request so
+ * the allowance can be derived per-row via makesForTopUpAmount(). Counts packs
+ * by their historical charge rather than by count, preserving legacy buyers.
+ */
+const GET_PACK_AMOUNTS_SQL = `
+  SELECT ABS(amount)::int AS amount_charged
+    FROM credit_transactions
+   WHERE reference_id = $1 AND type = 'voice_make_top_up'`;
 
-/** The allowance a request has after buying `packs` packs. */
-export function voiceMakeLimitForPacks(packs: number): number {
-  return MAX_VOICE_MAKES_PER_REQUEST + Math.max(0, packs) * VOICE_MAKE_TOP_UP.makes;
+/** The allowance a request has after purchasing the given total top-up makes. */
+export function voiceMakeLimitForPurchasedMakes(purchasedMakes: number): number {
+  return MAX_VOICE_MAKES_PER_REQUEST + Math.max(0, purchasedMakes);
 }
 
 export class VoiceMakeTopUpService {
   constructor(private readonly db: Db = pool) {}
 
-  /** How many packs this request has bought (0 when none). */
-  async packsBought(requestId: string): Promise<number> {
-    const result = await this.db.query<{ packs: number }>(COUNT_PACKS_SQL, [requestId]);
-    return Number(result.rows[0]?.packs ?? 0);
+  /**
+   * Total top-up makes this request has purchased (0 when none).
+   * Sums makes per ledger row via makesForTopUpAmount so legacy packs (bought
+   * at 49 or 29 credits for +5 makes each) are honoured correctly.
+   */
+  async purchasedMakes(requestId: string): Promise<number> {
+    const result = await this.db.query<{ amount_charged: number }>(
+      GET_PACK_AMOUNTS_SQL,
+      [requestId]
+    );
+    return result.rows.reduce(
+      (sum, row) => sum + makesForTopUpAmount(Number(row.amount_charged)),
+      0
+    );
   }
 
   /**
@@ -85,17 +110,25 @@ export class VoiceMakeTopUpService {
       await client.query("BEGIN");
 
       // Lock the wallet first: it serialises this user's purchases, so the
-      // pack count read below cannot be stale.
+      // pack amounts read below cannot be stale.
       const walletResult = await client.query<{ id: string; balance: number }>(
         `SELECT id, balance FROM credit_wallets WHERE user_id = $1 FOR UPDATE`,
         [params.userId]
       );
       const wallet = walletResult.rows[0];
 
-      const packsResult = await client.query<{ packs: number }>(COUNT_PACKS_SQL, [
-        params.requestId,
-      ]);
-      const limit = voiceMakeLimitForPacks(Number(packsResult.rows[0]?.packs ?? 0));
+      // Read all existing pack amounts inside the transaction and sum the
+      // makes they represent. Legacy rows (amount=49 or 29) contribute their
+      // original +5 makes each so existing buyers are not affected.
+      const packRows = await client.query<{ amount_charged: number }>(
+        GET_PACK_AMOUNTS_SQL,
+        [params.requestId]
+      );
+      const purchased = packRows.rows.reduce(
+        (sum, row) => sum + makesForTopUpAmount(Number(row.amount_charged)),
+        0
+      );
+      const limit = voiceMakeLimitForPurchasedMakes(purchased);
       if (params.usedMakes < limit) {
         await client.query("ROLLBACK");
         throw new VoiceMakesStillLeftError(params.usedMakes, limit);

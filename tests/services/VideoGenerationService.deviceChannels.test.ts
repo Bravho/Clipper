@@ -45,15 +45,15 @@ jest.mock("@/lib/ai/ffmpegService", () => ({
   },
 }));
 
-// Packs of voice makes bought with credits: read from the ledger in Postgres,
+// Purchased voice makes (sum from ledger rows): read from Postgres in prod,
 // so stand in for it here. 0 unless a test says otherwise.
-const mockPacksBought = jest.fn(async (_requestId: string) => 0);
+const mockPurchasedMakes = jest.fn(async (_requestId: string) => 0);
 jest.mock("@/services/VoiceMakeTopUpService", () => {
   const actual = jest.requireActual("@/services/VoiceMakeTopUpService");
   return {
     ...actual,
     voiceMakeTopUpService: {
-      packsBought: (requestId: string) => mockPacksBought(requestId),
+      purchasedMakes: (requestId: string) => mockPurchasedMakes(requestId),
       purchase: jest.fn(),
     },
   };
@@ -544,7 +544,9 @@ describe("Per-request limits (2026-09-27)", () => {
     const service = new VideoGenerationService();
     const request = await createRequest("device");
     await addVoiceMakes(request.id, MAX_VOICE_MAKES_PER_REQUEST);
-    mockPacksBought.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
+    // purchasedMakes returns total makes (not pack count) — one new pack = VOICE_MAKE_TOP_UP.makes.
+    // Set twice: once consumed by the explicit voiceMakesFor call, once by regenerateVoice.
+    mockPurchasedMakes.mockResolvedValueOnce(VOICE_MAKE_TOP_UP.makes).mockResolvedValueOnce(VOICE_MAKE_TOP_UP.makes);
     expect(await service.voiceMakesFor(request.id)).toEqual({
       used: MAX_VOICE_MAKES_PER_REQUEST,
       limit: MAX_VOICE_MAKES_PER_REQUEST + VOICE_MAKE_TOP_UP.makes,
@@ -557,7 +559,7 @@ describe("Per-request limits (2026-09-27)", () => {
   it("falls back to the included makes when the ledger cannot be read", async () => {
     const service = new VideoGenerationService();
     const request = await createRequest("device");
-    mockPacksBought.mockRejectedValueOnce(new Error("db down"));
+    mockPurchasedMakes.mockRejectedValueOnce(new Error("db down"));
     const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     expect((await service.voiceMakesFor(request.id)).limit).toBe(MAX_VOICE_MAKES_PER_REQUEST);
     spy.mockRestore();

@@ -16,7 +16,7 @@ import { ELEVENLABS_VOICE_FILE_NAME } from "@/lib/ai/elevenLabsTtsService";
 import { LOCK_AFTER_APPROVAL } from "@/config/requestLimits";
 import { findMusicTrack } from "@/config/backgroundMusic";
 import {
-  voiceMakeLimitForPacks,
+  voiceMakeLimitForPurchasedMakes,
   voiceMakeTopUpService,
   type VoiceMakeTopUpResult,
 } from "@/services/VoiceMakeTopUpService";
@@ -2045,11 +2045,11 @@ export class VideoGenerationService {
    * it can prove were bought.
    */
   async voiceMakeLimit(requestId: string): Promise<number> {
-    const packs = await voiceMakeTopUpService.packsBought(requestId).catch((err) => {
-      console.error("[voice-makes] could not read bought packs:", err);
+    const purchased = await voiceMakeTopUpService.purchasedMakes(requestId).catch((err) => {
+      console.error("[voice-makes] could not read purchased makes:", err);
       return 0;
     });
-    return voiceMakeLimitForPacks(packs);
+    return voiceMakeLimitForPurchasedMakes(purchased);
   }
 
   /** The voice-make allowance of one request, for the studio to show. */
@@ -5528,6 +5528,20 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     } catch (err) {
       console.error(
         `[quota] could not refund the allowance for request ${requestId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+    // For single-unlock new requests (submitted via VideoDownloadUnlockService
+    // with submitNew: true, no package window), also return the unlock credits.
+    // Non-throwing so a refund failure cannot break the failure handling path.
+    try {
+      const { videoDownloadUnlockService } = await import(
+        "@/services/VideoDownloadUnlockService"
+      );
+      await videoDownloadUnlockService.refundSingleUnlock(requestId);
+    } catch (err) {
+      console.error(
+        `[unlock-refund] could not refund single unlock for request ${requestId}:`,
         err instanceof Error ? err.message : err
       );
     }

@@ -36,8 +36,8 @@
  * store product. `assertStoreCatalogueVerified()` fails while any row is
  * unverified, so a release build cannot silently ship a guess. Flip a row to
  * true only after its `productId` exists in the console and its price point has
- * been chosen there. As of 2026-10-27 all rows are unverified after the
- * repricing — reconcile in App Store Connect and Play Console before release.
+ * been chosen there. As of 2026-10-28 all rows are unverified — reconcile in
+ * App Store Connect and Play Console before release.
  *
  * Web (Stripe PromptPay/Card) keeps 1 credit = ฿1 and lives in `TOPUP_BUNDLES`
  * in src/config/credits.ts. That one IS authoritative, because we charge it.
@@ -95,9 +95,10 @@ export const STORE_COMMISSION = {
  * Flat 1.20 ฿/credit as of the 2026-10-27 repricing. All rows set to
  * verified: false — reconcile in App Store Connect before release.
  *
- * A 30-credit pack was added for the 29-credit voice top-up, and a 40-credit
- * pack was added for the 39-credit single video unlock — both are single store
- * purchases at 1.20×.
+ * The 30-credit pack covers the 12-credit voice top-up (2026-10-28) in one
+ * store purchase. The 39-credit single video unlock is covered by the 50-credit
+ * pack; a dedicated 40-credit pack was removed on 2026-10-28 to keep the
+ * ladder tight.
  *
  * Apple's THB ladder turned out to contain every point Play was already using,
  * so the two tables are currently IDENTICAL. That is a fact about today's
@@ -106,7 +107,6 @@ export const STORE_COMMISSION = {
  */
 export const IOS_STORE_PRODUCTS: readonly StoreProduct[] = [
   { productId: "com.rclipper.credits.30", credits: 30, plannedPriceBaht: 36, verified: false },
-  { productId: "com.rclipper.credits.40", credits: 40, plannedPriceBaht: 48, verified: false },
   { productId: "com.rclipper.credits.50", credits: 50, plannedPriceBaht: 60, verified: false },
   { productId: "com.rclipper.credits.100", credits: 100, plannedPriceBaht: 120, verified: false },
   { productId: "com.rclipper.credits.200", credits: 200, plannedPriceBaht: 240, verified: false },
@@ -121,13 +121,13 @@ export const IOS_STORE_PRODUCTS: readonly StoreProduct[] = [
  * Flat 1.20 ฿/credit as of the 2026-10-27 repricing. All rows set to
  * verified: false — reconcile in Play Console before release.
  *
- * A 30-credit pack (for the 29-credit voice top-up) and a 40-credit pack (for
- * the 39-credit single video unlock) were added on 2026-10-27. The 2,000 rung
- * covers the dearest on-sale plan (Pro 12mo = 1,790) in one transaction.
+ * The 30-credit pack covers the 12-credit voice top-up. The 39-credit single
+ * video unlock is covered by the 50-credit pack. The 40-credit pack was
+ * removed on 2026-10-28. The 2,000 rung covers the dearest on-sale plan
+ * (Pro 12mo = 1,790) in one transaction.
  */
 export const ANDROID_STORE_PRODUCTS: readonly StoreProduct[] = [
   { productId: "com.rclipper.credits.30", credits: 30, plannedPriceBaht: 36, verified: false },
-  { productId: "com.rclipper.credits.40", credits: 40, plannedPriceBaht: 48, verified: false },
   { productId: "com.rclipper.credits.50", credits: 50, plannedPriceBaht: 60, verified: false },
   { productId: "com.rclipper.credits.100", credits: 100, plannedPriceBaht: 120, verified: false },
   { productId: "com.rclipper.credits.200", credits: 200, plannedPriceBaht: 240, verified: false },

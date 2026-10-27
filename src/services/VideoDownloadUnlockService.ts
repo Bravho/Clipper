@@ -61,6 +61,39 @@ const CHECK_UNLOCK_SQL = `
      AND reference_id = $2
      AND type = 'video_download_unlock'`;
 
+/**
+ * Fetches the original video_download_unlock charge for a request.
+ * Returns (user_id, amount_charged) or null if no row exists.
+ */
+const GET_UNLOCK_CHARGE_SQL = `
+  SELECT user_id, ABS(amount)::int AS amount_charged
+    FROM credit_transactions
+   WHERE reference_id = $1
+     AND type = 'video_download_unlock'
+   LIMIT 1`;
+
+/**
+ * Description prefix used to identify a single-unlock render-failure refund.
+ * Matched with LIKE 'Refund: single video unlock%' in idempotency checks, so
+ * any future variants (e.g. localised descriptions) that share this prefix are
+ * still counted and will not cause a double refund.
+ */
+const SINGLE_UNLOCK_REFUND_DESC = "Refund: single video unlock (render failed)";
+
+/**
+ * Checks under the wallet lock whether a refund for this request has already
+ * been issued by this path (idempotency guard). The description prefix is what
+ * distinguishes this refund from a manual admin request_refund on the same
+ * request, which would have a different description.
+ */
+const CHECK_SINGLE_UNLOCK_REFUND_SQL = `
+  SELECT COUNT(*)::int AS n
+    FROM credit_transactions
+   WHERE user_id = $1
+     AND reference_id = $2
+     AND type = 'request_refund'
+     AND description LIKE 'Refund: single video unlock%'`;
+
 export class VideoDownloadUnlockService {
   constructor(private readonly db: Db = pool) {}
 
@@ -185,6 +218,112 @@ export class VideoDownloadUnlockService {
         balanceCredits: Number(debited.rows[0].balance),
         unlockedUntil: params.submitNew ? null : unlockedUntil,
       };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Refund the video_download_unlock charge when a single-unlock new request
+   * fails to render.
+   *
+   * A "single-unlock new request" is one submitted via purchase({ submitNew: true })
+   * — it has a video_download_unlock ledger row, pricing_tier='paid', and NO
+   * video_allowance_window_id (unlike package requests). Only THOSE requests get
+   * a credit back on render failure; free requests, package requests, and
+   * requests that delivered successfully are left alone.
+   *
+   * IDEMPOTENCY. The check for an existing refund row (matching description prefix)
+   * is performed under the wallet FOR UPDATE lock, so two concurrent failure
+   * callbacks cannot each insert a refund row. A description-prefix match is used
+   * rather than a plain reference_id + type check because a manual admin
+   * request_refund for the same request would share the same type and reference
+   * and must NOT prevent this automatic refund from being issued.
+   *
+   * NON-THROWING. Returns true when the refund was issued, false when skipped
+   * (not applicable, already done, or request was delivered). Callers should
+   * wrap in try/catch and log any thrown error, consistent with _refundAllowance.
+   */
+  async refundSingleUnlock(requestId: string): Promise<boolean> {
+    // Quick pre-check: is there a video_download_unlock charge for this request?
+    // Avoids opening a transaction for non-unlock requests.
+    const chargeResult = await this.db.query<{ user_id: string; amount_charged: number }>(
+      GET_UNLOCK_CHARGE_SQL,
+      [requestId]
+    );
+    const chargeRow = chargeResult.rows[0];
+    if (!chargeRow) return false;
+
+    const { user_id: userId, amount_charged: refundAmount } = chargeRow;
+
+    const client: PoolClient = await this.db.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Lock the request row; verify it has no allowance window (single-unlock
+      // path, not a package) and has not been delivered. Delivered requests
+      // rendered successfully — no refund.
+      const reqResult = await client.query<{
+        video_allowance_window_id: string | null;
+        status: string;
+        pricing_tier: string;
+      }>(
+        `SELECT video_allowance_window_id, status, pricing_tier
+           FROM clip_requests WHERE id = $1 FOR UPDATE`,
+        [requestId]
+      );
+      const req = reqResult.rows[0];
+      // Only NEW paid unlock requests (submitNew sets pricing_tier = 'paid'); an
+      // existing free video unlocked later stays pricing_tier 'free' and is never
+      // refunded here.
+      if (
+        !req ||
+        req.pricing_tier !== "paid" ||
+        req.video_allowance_window_id !== null ||
+        ["delivered", "published", "scheduled_for_publishing"].includes(req.status)
+      ) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+
+      // Lock wallet to serialise concurrent refund attempts.
+      const walletResult = await client.query<{ id: string; balance: number }>(
+        `SELECT id, balance FROM credit_wallets WHERE user_id = $1 FOR UPDATE`,
+        [userId]
+      );
+      const wallet = walletResult.rows[0];
+      if (!wallet) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+
+      // Idempotency: if a single-unlock refund row already exists for this
+      // request, do nothing. Checked under the lock so concurrent calls cannot
+      // both pass this gate.
+      const existingResult = await client.query<{ n: number }>(
+        CHECK_SINGLE_UNLOCK_REFUND_SQL,
+        [userId, requestId]
+      );
+      if (Number(existingResult.rows[0]?.n ?? 0) > 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+
+      await client.query(
+        `INSERT INTO credit_transactions (user_id, amount, type, description, reference_id)
+         VALUES ($1, $2, 'request_refund', $3, $4)`,
+        [userId, refundAmount, SINGLE_UNLOCK_REFUND_DESC, requestId]
+      );
+      await client.query(
+        `UPDATE credit_wallets SET balance = balance + $1, updated_at = NOW() WHERE id = $2`,
+        [refundAmount, wallet.id]
+      );
+
+      await client.query("COMMIT");
+      return true;
     } catch (err) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw err;
