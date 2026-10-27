@@ -113,7 +113,7 @@ describe("RequestPresentationService.getDueDateDisplay", () => {
     const d = svc.getDueDateDisplay(req);
     expect(d.show).toBe(true);
     expect(d.formattedDate).toBeNull();
-    expect(d.message).toContain("อยู่ระหว่างการตรวจสอบ");
+    expect(d.message).toContain("อยู่ระหว่างการประมวลผล");
   });
 
   it("shows confirmed date for AcceptedForProduction when staff confirmed", () => {
@@ -138,7 +138,7 @@ describe("RequestPresentationService.getDueDateDisplay", () => {
     const d = svc.getDueDateDisplay(req);
     expect(d.show).toBe(true);
     expect(d.formattedDate).toBeNull();
-    expect(d.message).toContain("อยู่ระหว่างการตรวจสอบ");
+    expect(d.message).toContain("อยู่ระหว่างการประมวลผล");
   });
 
   it("does not show due date for OnHold", () => {
@@ -195,12 +195,15 @@ describe("RequestPresentationService.getQueueDisplay", () => {
     expect(d.show).toBe(false);
   });
 
-  it("shows queue message for Submitted with position", () => {
+  it("confirms a Submitted request without a queue count, even with a position", () => {
+    // Since 2e6387a: the pre-production position does not reflect the render
+    // line, so only the submission is confirmed.
     const d = svc.getQueueDisplay(
       makeRequest({ status: RequestStatus.Submitted, queuePosition: 4 })
     );
     expect(d.show).toBe(true);
-    expect(d.message).toContain("4");
+    expect(d.message).toBe("คำขอของคุณถูกส่งแล้ว");
+    expect(d.message).not.toContain("4");
   });
 
   it("shows fallback message for Submitted without position", () => {

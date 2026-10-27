@@ -41,6 +41,7 @@ jest.mock("@/repositories/index", () => ({
   videoGenerationJobRepository: new (require("@/repositories/mock/MockVideoGenerationJobRepository").MockVideoGenerationJobRepository)(new Map()),
   videoPublishRecordRepository: new (require("@/repositories/mock/MockVideoPublishRecordRepository").MockVideoPublishRecordRepository)(new Map()),
   publishingLinkRepository: new (require("@/repositories/mock/MockPublishingLinkRepository").MockPublishingLinkRepository)(new Map()),
+  renderTaskRepository: new (require("@/repositories/mock/MockRenderTaskRepository").MockRenderTaskRepository)(new Map()),
 }));
 
 // ── Mock social publishing services (Phase 8 distribution-review) ────────────
@@ -1179,8 +1180,11 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
       await new Promise((r) => setTimeout(r, 20));
 
       const updated = await mockJobRepo.findById(job.id);
-      expect(updated?.renderState).toBe("queued");
-      expect(updated?.renderStep).toBe("overlay_composition");
+      // Since 7ed7efc the queue is its own table: the step is a render task,
+      // not renderState/renderStep on the job row.
+      const { renderTaskRepository } = jest.requireMock("@/repositories/index");
+      const task = await renderTaskRepository.findActiveByJob(job.id);
+      expect(task).toMatchObject({ step: "overlay_composition", state: "queued" });
       expect(updated?.currentStep).toBe(VideoGenerationStep.GeneratingOverlay);
       // The web server did NOT render — that's the worker's job now.
       expect(renderTemplatedVideoMock).not.toHaveBeenCalled();
@@ -1211,7 +1215,8 @@ describe("VideoGenerationService — Phase 7 subtitle/motion overlay", () => {
 
     const updated = await mockJobRepo.findById(job.id);
     // No worker → ran inline, so it rendered and advanced past GeneratingOverlay.
-    expect(updated?.renderState ?? null).not.toBe("queued");
+    const { renderTaskRepository } = jest.requireMock("@/repositories/index");
+    expect(await renderTaskRepository.findActiveByJob(job.id)).toBeNull();
     expect(renderTemplatedVideoMock).toHaveBeenCalled();
     expect(updated?.currentStep).toBe(VideoGenerationStep.AwaitingOverlayApproval);
   });
