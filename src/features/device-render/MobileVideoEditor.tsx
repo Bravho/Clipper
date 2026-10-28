@@ -379,7 +379,6 @@ function StudioEditor({
     null
   );
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [standaloneUnlock, setStandaloneUnlock] = useState(false);
   // Originals this phone lost since submitting (reinstall, cleared data,
   // Android freeing space); the person can pick them again.
   const [missingOriginals, setMissingOriginals] = useState<LocalMediaDescriptor[]>([]);
@@ -1118,7 +1117,7 @@ function StudioEditor({
     if (!requestId) return;
     // Nothing left this period: say so, with the way to buy more, before any
     // original is copied or anything is sent.
-    if (!standaloneUnlock && quota && !quota.canSubmit) {
+    if (quota && !quota.canSubmit) {
       // Check again first: a package may have been bought since this was read.
       const fresh = await reloadQuota();
       if (!fresh || !fresh.canSubmit) {
@@ -1137,7 +1136,6 @@ function StudioEditor({
       await submitStudioRequest({
         requestId,
         sources: chosen,
-        downloadUnlocked: standaloneUnlock,
         onProgress: (done, total) => setSubmitProgress({ done, total }),
         t,
       });
@@ -1185,7 +1183,7 @@ function StudioEditor({
       setSubmitting(false);
       setSubmitProgress(null);
     }
-  }, [document, quota, refreshContent, reloadQuota, requestId, standaloneUnlock, t]);
+  }, [document, quota, refreshContent, reloadQuota, requestId, t]);
 
   const approveScript = useCallback(async () => {
     if (!requestId || !script) return;
@@ -2516,9 +2514,7 @@ function StudioEditor({
                   onConfirm={setConfirmed}
                   onSubmit={() => void submitMedia()}
                   onGoToBrief={() => setStep("brief")}
-                  quota={submitted || standaloneUnlock ? null : quota}
-                  standaloneUnlock={standaloneUnlock}
-                  onStandaloneUnlock={setStandaloneUnlock}
+                  quota={submitted ? null : quota}
                   disabled={busy || preparingMedia}
                 />
               ) : null

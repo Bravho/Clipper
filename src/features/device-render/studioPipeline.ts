@@ -26,7 +26,6 @@ import {
   STUDIO_GRAPHICS_TIMEOUT_MS,
 } from "./studioTextGraphics";
 import { FREE_REQUESTS_TOTAL } from "@/config/videoPackages";
-import { VIDEO_DOWNLOAD_UNLOCK } from "@/config/requestLimits";
 import { VIDEO_LIFETIME_DAYS } from "@/config/retention";
 import {
   readImagePoster,
@@ -174,7 +173,6 @@ async function posterDataUrl(posterUrl: string | null): Promise<string | undefin
 export async function submitStudioRequest(input: {
   requestId: string;
   sources: EditorSource[];
-  downloadUnlocked?: boolean;
   onProgress?: (done: number, total: number) => void;
   /** The studio's language for the sentences this can fail with. */
   t?: StudioT;
@@ -225,7 +223,6 @@ export async function submitStudioRequest(input: {
       creditConfirmed: true,
       rightsConfirmed: true,
       aiProcessingConfirmed: true,
-      downloadUnlocked: input.downloadUnlocked === true,
       localMedia: {
         mode: "local-first",
         materials,
@@ -240,16 +237,13 @@ export async function submitStudioRequest(input: {
   if (!response.ok) {
     if (response.status === 402) {
       const body = (await response.json().catch(() => null)) as
-        | { code?: string; nextFreeSlotAt?: string | null; error?: string; requiredCredits?: number }
+        | { code?: string; nextFreeSlotAt?: string | null; error?: string }
         | null;
       if (body?.code === "quota_exhausted") {
         throw new StudioQuotaError(
           quotaMessage(t, body.nextFreeSlotAt ?? null),
           body.nextFreeSlotAt ?? null
         );
-      }
-      if (body?.code === "insufficient_credits") {
-        throw new Error(t("studio.access.unlockInsufficient", { required: body.requiredCredits ?? VIDEO_DOWNLOAD_UNLOCK.priceCredits }));
       }
       throw new Error(body?.error ?? t("studio.pipe.submitFailed"));
     }

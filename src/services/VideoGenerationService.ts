@@ -5531,20 +5531,6 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         err instanceof Error ? err.message : err
       );
     }
-    // For single-unlock new requests (submitted via VideoDownloadUnlockService
-    // with submitNew: true, no package window), also return the unlock credits.
-    // Non-throwing so a refund failure cannot break the failure handling path.
-    try {
-      const { videoDownloadUnlockService } = await import(
-        "@/services/VideoDownloadUnlockService"
-      );
-      await videoDownloadUnlockService.refundSingleUnlock(requestId);
-    } catch (err) {
-      console.error(
-        `[unlock-refund] could not refund single unlock for request ${requestId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
   }
 
   private async _getJobAtStep(

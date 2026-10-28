@@ -259,3 +259,34 @@ describe("accessFor — the safety net behind the purchase hook", () => {
     expect((await requests.findById(free.id))?.downloadUnlocked).toBe(false);
   });
 });
+
+describe("describeAccess — unlock choices for a finished free video (Tho, 28 Oct)", () => {
+  // The unlock screen (VideoAccessNote, studio on web and in the app) shows the
+  // packages link whenever downloadBlock is "package_required", and the
+  // 39-credit single unlock next to it when canPurchaseUnlock is true.
+  const now = new Date("2026-10-28T00:00:00Z");
+  const later = new Date(now.getTime() + 10 * DAY);
+  const earlier = new Date(now.getTime() - DAY);
+  const free = {
+    id: "r", userId: USER, status: RequestStatus.Delivered,
+    pricingTier: RequestPricingTier.Free, downloadUnlocked: false, videosExpireAt: later,
+  } as ClipRequest;
+
+  it("a locked free video offers both the packages and the single unlock", () => {
+    const access = describeAccess(free, false, now);
+    expect(access.downloadBlock).toBe("package_required");
+    expect(access.canPurchaseUnlock).toBe(true);
+  });
+
+  it("no single unlock once the free video is unlocked", () => {
+    expect(describeAccess({ ...free, downloadUnlocked: true }, false, now).canPurchaseUnlock).toBe(false);
+  });
+
+  it("no single unlock for an expired free video", () => {
+    expect(describeAccess({ ...free, videosExpireAt: earlier }, false, now).canPurchaseUnlock).toBe(false);
+  });
+
+  it("no single unlock for a package (paid) request", () => {
+    expect(describeAccess({ ...free, pricingTier: RequestPricingTier.Paid }, false, now).canPurchaseUnlock).toBe(false);
+  });
+});

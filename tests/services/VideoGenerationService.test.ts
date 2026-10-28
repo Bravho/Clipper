@@ -49,9 +49,11 @@ const tiktokUploadMock = jest.fn(async () => ({ platformVideoId: "tt1", platform
 const youtubeUploadMock = jest.fn(async () => ({ platformVideoId: "yt1", platformUrl: "https://www.youtube.com/watch?v=yt1" }));
 const facebookUploadMock = jest.fn(async () => ({ platformVideoId: "fb1", platformUrl: "https://www.facebook.com/x/videos/fb1" }));
 const instagramUploadMock = jest.fn(async () => ({ platformVideoId: "ig1", platformUrl: "https://www.instagram.com/p/ig1" }));
-// The render-failure path also returns single-unlock credits; keep it off the real pg pool.
+// The render-failure path no longer auto-refunds the 39-credit single
+// unlock (pay-at-submit was removed), but we still mock the module so
+// nothing touches the real pg pool via a stray import.
 jest.mock("@/services/VideoDownloadUnlockService", () => ({
-  videoDownloadUnlockService: { refundSingleUnlock: jest.fn(async () => false) },
+  videoDownloadUnlockService: {},
 }));
 jest.mock("@/lib/social/tiktokService", () => ({ uploadVideo: (...a: unknown[]) => tiktokUploadMock(...(a as [])) }));
 jest.mock("@/lib/social/youtubeService", () => ({ uploadVideo: (...a: unknown[]) => youtubeUploadMock(...(a as [])) }));

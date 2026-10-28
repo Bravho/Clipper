@@ -70,17 +70,17 @@ describe("POST /api/requests/[id]/submit — idempotent recovery", () => {
       }),
     });
 
-  it("passes the explicit standalone unlock choice to submission and recovers idempotently", async () => {
+  it("ignores a legacy downloadUnlocked field in the body — submission is always via the quota", async () => {
     getOwnedRequestMock.mockResolvedValue({ ...submittedRequest, status: RequestStatus.Draft, durationSeconds: 15 });
-    submitRequestMock.mockResolvedValue({ ...submittedRequest, downloadUnlocked: true });
+    submitRequestMock.mockResolvedValue(submittedRequest);
     findAssetsMock.mockResolvedValue([]);
-    getCurrentJobMock.mockResolvedValue({ id: "job-paid" });
+    getCurrentJobMock.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    initializePipelineMock.mockResolvedValue({ id: "job-new" });
     const response = await POST(request({ downloadUnlocked: true }), { params: Promise.resolve({ id: "req-1" }) });
     expect(response.status).toBe(200);
-    expect(submitRequestMock).toHaveBeenCalledWith("req-1", "user-1", true, true, true, true);
-    getOwnedRequestMock.mockResolvedValue({ ...submittedRequest, downloadUnlocked: true });
-    await POST(request({ downloadUnlocked: true }), { params: Promise.resolve({ id: "req-1" }) });
-    expect(submitRequestMock).toHaveBeenCalledTimes(1);
+    // Only the three legal confirmations are forwarded. No sixth argument.
+    expect(submitRequestMock).toHaveBeenCalledWith("req-1", "user-1", true, true, true);
+    expect(submitRequestMock.mock.calls[0]).toHaveLength(5);
   });
 
   it("returns the existing job when the first response was lost after submission", async () => {

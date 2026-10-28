@@ -31,9 +31,11 @@ import { VideoGenerationJobStatus } from "@/domain/enums/VideoGenerationJobStatu
 import { orderSourceAssets } from "@/lib/sourceAssets";
 import type { ScenePlan } from "@/domain/models/VideoGenerationJob";
 
-// The render-failure path also returns single-unlock credits; keep it off the real pg pool.
+// The render-failure path no longer auto-refunds a single-unlock credit
+// (pay-at-submit was removed), but we still mock the module so no stray
+// import ever hits the real pg pool.
 jest.mock("@/services/VideoDownloadUnlockService", () => ({
-  videoDownloadUnlockService: { refundSingleUnlock: jest.fn(async () => false) },
+  videoDownloadUnlockService: {},
 }));
 jest.mock("@/repositories/index", () => ({
   clipRequestRepository: new (require("@/repositories/mock/MockClipRequestRepository").MockClipRequestRepository)(new Map()),

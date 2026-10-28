@@ -1,9 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { ROUTES } from "@/config/routes";
-import { VIDEO_DOWNLOAD_UNLOCK } from "@/config/requestLimits";
 
 import { useIsIosApp } from "@/lib/mobile/platform";
 
@@ -37,8 +34,6 @@ export function SubmitMedia({
   onGoToBrief,
   disabled,
   quota = null,
-  standaloneUnlock = false,
-  onStandaloneUnlock,
 }: {
   /** The brief has been saved as a request. */
   hasRequest: boolean;
@@ -54,8 +49,6 @@ export function SubmitMedia({
   disabled: boolean;
   /** The account's allowance: a line under Submit, or the buy prompt when none is left. */
   quota?: StudioQuota | null;
-  standaloneUnlock?: boolean;
-  onStandaloneUnlock?: (selected: boolean) => void;
 }) {
   const t = useStudioT();
   const [termsOpen, setTermsOpen] = useState(false);
@@ -108,12 +101,6 @@ export function SubmitMedia({
           </button>
           <TermsDialog open={termsOpen} onClose={() => setTermsOpen(false)} />
 
-          {onStandaloneUnlock && <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 14 }}>
-            <input type="checkbox" checked={standaloneUnlock} disabled={disabled || submitting}
-              onChange={(event) => onStandaloneUnlock(event.target.checked)} />
-            {t("studio.submit.standaloneChoice", { price: VIDEO_DOWNLOAD_UNLOCK.priceCredits })}
-          </label>}
-
           <button
             type="button"
             className="studio-button studio-button-primary"
@@ -124,17 +111,16 @@ export function SubmitMedia({
               ? progress
                 ? t("studio.submit.keeping", { done: progress.done, total: progress.total })
                 : t("studio.submit.submitting")
-              : standaloneUnlock ? t("studio.submit.standaloneConfirm", { price: VIDEO_DOWNLOAD_UNLOCK.priceCredits }) : t("studio.submit.submit")}
+              : t("studio.submit.submit")}
           </button>
           <p className="studio-counter" style={{ textAlign: "left", margin: 0 }}>
-            {standaloneUnlock ? t("studio.submit.standaloneNote", { days: VIDEO_DOWNLOAD_UNLOCK.days }) : t("studio.submit.note")}
+            {t("studio.submit.note")}
           </p>
           <QuotaStatus quota={quota} />
         </>
       )}
 
       {error && <p className="studio-note studio-note-danger">{error}</p>}
-      {error && standaloneUnlock && <Link href={ROUTES.CREDITS} className="studio-button">{t("studio.quota.topup")}</Link>}
     </div>
   );
 }
