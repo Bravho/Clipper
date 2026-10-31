@@ -6,6 +6,7 @@ import {
 } from "@/domain/models/RenderTask";
 import { RenderStep } from "@/domain/enums/RenderStep";
 import { RENDER_QUEUE } from "@/config/renderQueue";
+import { isRenderLaneEnabled } from "@/config/reviewSystem";
 import { pool } from "@/lib/db";
 
 /**
@@ -67,13 +68,47 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
   constructor(private db = pool) {}
 
   async enqueue(input: EnqueueRenderTaskInput): Promise<RenderTask> {
-    // Idempotent per job: at most one ACTIVE task per job (uq_render_tasks_active_job,
-    // a partial unique index over state IN ('queued','claimed')). A re-dispatch
-    // therefore REPLACES the job's active task in place — resetting it to a fresh
-    // queued step at the BACK of the line (new enqueued_at) — rather than stacking
-    // a second row. Done atomically via ON CONFLICT so there is no delete/insert
-    // race. Steps are serialised by approval gates, so this realistically only
-    // fires when retrying the same step.
+    // RENDER_LANE_ENABLED=false (default): use pre-migration-049 SQL without render_lane column.
+    // RENDER_LANE_ENABLED=true: lane-aware SQL (requires migration 049).
+    if (!isRenderLaneEnabled()) {
+      // Byte-for-byte pre-migration-049 INSERT — no render_lane column touched.
+      const { rows } = await this.db.query(
+        `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload, priority, device_only)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (job_id) WHERE state IN ('queued', 'claimed')
+       DO UPDATE SET
+         request_id   = EXCLUDED.request_id,
+         requester_id = EXCLUDED.requester_id,
+         step         = EXCLUDED.step,
+         payload      = EXCLUDED.payload,
+         priority     = EXCLUDED.priority,
+         device_only  = EXCLUDED.device_only,
+         state        = 'queued',
+         attempts     = 0,
+         enqueued_at  = NOW(),
+         claimed_by   = NULL,
+         claimed_at   = NULL,
+         heartbeat_at = NULL,
+         started_at   = NULL,
+         finished_at  = NULL,
+         duration_ms  = NULL,
+         error        = NULL,
+         updated_at   = NOW()
+       RETURNING *`,
+        [
+          input.jobId,
+          input.requestId,
+          input.requesterId ?? null,
+          input.step,
+          input.payload == null ? null : JSON.stringify(input.payload),
+          input.priority ?? 0,
+          input.deviceOnly ?? false,
+        ]
+      );
+      return rowToTask(rows[0]);
+    }
+
+    // Lane-enabled path (migration 049 applied):
     const { rows } = await this.db.query(
       `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload, priority, device_only, render_lane)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -117,21 +152,50 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     staleClaimSeconds: number,
     lane?: string | null
   ): Promise<RenderTask | null> {
-    // Lane routing:
+    if (!isRenderLaneEnabled()) {
+      // Byte-for-byte pre-migration-049 claim SQL — no lane filtering.
+      // Mac Mini worker uses this until migration 049 is applied.
+      const { rows } = await this.db.query(
+        `WITH next AS (
+         SELECT id FROM render_tasks
+          WHERE device_only = FALSE
+            AND (state = 'queued'
+             OR (state = 'claimed'
+                 AND COALESCE(heartbeat_at, claimed_at)
+                     < NOW() - ($2 || ' seconds')::interval))
+          ORDER BY ${effectivePriorityExpr("render_tasks", "$3", "$4")} DESC,
+                   enqueued_at ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+       )
+       UPDATE render_tasks t
+          SET state       = 'claimed',
+              claimed_by  = $1,
+              claimed_at  = NOW(),
+              heartbeat_at = NOW(),
+              started_at  = COALESCE(t.started_at, NOW()),
+              attempts    = t.attempts + 1,
+              updated_at  = NOW()
+         FROM next
+        WHERE t.id = next.id
+       RETURNING t.*`,
+        [workerId, String(staleClaimSeconds), RENDER_QUEUE.agingCapPoints, RENDER_QUEUE.agingPointsPerHour]
+      );
+      return rows[0] ? rowToTask(rows[0]) : null;
+    }
+
+    // Lane-enabled path:
     //   lane='operator_pc' → only claim tasks with render_lane='operator_pc' (Mar-PC worker)
     //   lane=null/undefined → Mac Mini: claim tasks where render_lane IS DISTINCT FROM 'operator_pc'
-    const laneClause =
-      lane != null
-        ? `AND render_lane = $5`
-        : `AND render_lane IS DISTINCT FROM 'operator_pc'`;
-    const params: unknown[] = [
-      workerId,
-      String(staleClaimSeconds),
-      RENDER_QUEUE.agingCapPoints,
-      RENDER_QUEUE.agingPointsPerHour,
-    ];
-    if (lane != null) params.push(lane);
-
+    const backup = lane === 'backup' || lane === 'operator_pc';
+    const laneClause = backup ? `AND render_lane = 'mac_mini' AND (
+      NOT EXISTS (SELECT 1 FROM render_lane_heartbeats WHERE lane = 'main'
+        AND last_seen_at > NOW() - ($5 || ' seconds')::interval)
+      OR enqueued_at < NOW() - ($6 || ' seconds')::interval)` :
+      `AND render_lane IS DISTINCT FROM 'operator_device'`;
+    const params: unknown[] = [workerId, String(staleClaimSeconds),
+      RENDER_QUEUE.agingCapPoints, RENDER_QUEUE.agingPointsPerHour];
+    if (backup) params.push(process.env.RENDER_MAIN_STALE_SECONDS ?? '90', process.env.RENDER_BACKUP_QUEUE_SECONDS ?? '600');
     const { rows } = await this.db.query(
       `WITH next AS (
          SELECT id FROM render_tasks

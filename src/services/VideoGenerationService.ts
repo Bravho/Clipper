@@ -1,3 +1,9 @@
+import { isReviewSystemEnabled } from '@/config/reviewSystem';
+import { onLineReviewGate } from '@/services/review/lineReviewGate';
+import { withLineStorage } from '@/lib/line/storageContext';
+import { applyShopRules } from '@/services/review/ShopRulesEngine';
+import { assertDurationAllowed, assertRevisionAllowed } from '@/services/review/ReviewService';
+import { assertLicensedMusic } from '@/config/musicWhitelist';
 import {
   videoGenerationJobRepository,
   uploadedAssetRepository,
@@ -550,7 +556,7 @@ export class VideoGenerationService {
     if (params.localMedia?.length) {
       // The server keeps only opaque descriptors. localId is meaningful solely
       // inside the requester's app storage and cannot be dereferenced here.
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         renderPayload: {
           mediaMode: "local-first",
           localMedia: params.localMedia,
@@ -567,7 +573,7 @@ export class VideoGenerationService {
     // Run Gemini analysis and update job when complete
     this._runChatGptAnalysis(job.id, requestId, params).catch(async (err) => {
       console.error("Gemini analysis failed:", err);
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.AnalyzingContent,
@@ -587,7 +593,7 @@ export class VideoGenerationService {
     jobId: string,
     assetCount: number
   ): Promise<VideoGenerationJob> {
-    return videoGenerationJobRepository.update(
+    return this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.AwaitingContentApproval,
@@ -645,7 +651,7 @@ export class VideoGenerationService {
       businessProfileContext,
     });
 
-    await videoGenerationJobRepository.update(jobId, {
+    await this._updateJob(jobId, {
       currentStep: VideoGenerationStep.AwaitingContentApproval,
       scenePlan: null,
       scriptThai: output.scriptThai,
@@ -865,7 +871,7 @@ export class VideoGenerationService {
       roughDurationHint: Math.round(sceneSeconds[index] * 10) / 10,
       scriptLine: output.sceneLines[index] ?? "",
     }));
-    await videoGenerationJobRepository.update(jobId, {
+    await this._updateJob(jobId, {
       scriptThai: output.scriptThai,
       scriptEnglish: null,
       storyboard: JSON.stringify(storyboard),
@@ -949,7 +955,7 @@ export class VideoGenerationService {
     const scriptThai = sanitizeThaiVoiceScript(approved.scriptThai);
     if (!scriptThai) throw new Error("No approved Thai script available for TTS");
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
+    const updated = await this._updateJob(jobId, {
       currentStep: VideoGenerationStep.GeneratingVoice,
       approvedScenePlan: sanitizeScenePlanJson(approved.scenePlan),
       approvedScriptThai: scriptThai,
@@ -966,7 +972,7 @@ export class VideoGenerationService {
 
     this._runIAppTtsGeneration(updated).catch(async (err) => {
       console.error("[ElevenLabs] Voice generation failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
+      await this._updateJob(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingVoice,
@@ -1252,7 +1258,7 @@ export class VideoGenerationService {
     while (segments.length <= sceneIndex) segments.push(null);
     segments[sceneIndex] = asset.id;
 
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       sceneVideoAssetIds: segments,
       videoGenLastPolledAt: new Date(),
     });
@@ -1319,7 +1325,7 @@ export class VideoGenerationService {
 
     const onFail = async (err: unknown) => {
       console.error(`[render:${renderStep}] failed:`, err);
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: RENDER_STEP_FAILED_AT[renderStep],
@@ -1332,7 +1338,8 @@ export class VideoGenerationService {
     // still on the server pipeline from before the switch is queued for the
     // Mac Mini even while its worker is down, and waits there rather than
     // falling back to an inline render on this machine.
-    const noInlineRender = isStudioOnly();
+    const dispatchRequest = await clipRequestRepository.findById(job.requestId);
+    const noInlineRender = isStudioOnly() || dispatchRequest?.intakeChannel === 'line';
 
     if (RENDER_QUEUE.enabled || noInlineRender) {
       try {
@@ -1362,6 +1369,7 @@ export class VideoGenerationService {
             // worker would claim it, fail for want of media, and burn the
             // requester's allowance on a render that was never possible.
             deviceOnly: request?.renderLocation === "device",
+            renderLane: request?.intakeChannel === "line" ? "mac_mini" : null,
           });
           return;
         }
@@ -1535,7 +1543,7 @@ export class VideoGenerationService {
     }
 
     if (nextStep) updates.currentStep = nextStep;
-    await videoGenerationJobRepository.update(job.id, updates, SYSTEM_ACTOR);
+    await this._updateJob(job.id, updates, SYSTEM_ACTOR);
 
     console.log(
       `[device-render] job ${job.id}: ${input.step} ${input.ratio} → asset ${input.assetId}` +
@@ -1647,7 +1655,12 @@ export class VideoGenerationService {
    * reimplemented. Throws on failure so the worker can mark the claim 'failed'
    * (see `recordRenderStepFailure`).
    */
-  async runQueuedRenderStep(
+  async runQueuedRenderStep(job: VideoGenerationJob, step: RenderStep, payload: Record<string, unknown> | null = null): Promise<void> {
+    const request = await clipRequestRepository.findById(job.requestId);
+    return withLineStorage(request?.intakeChannel === 'line', () => this._runQueuedRenderStep(job, step, payload));
+  }
+
+  private async _runQueuedRenderStep(
     job: VideoGenerationJob,
     step: RenderStep,
     payload: Record<string, unknown> | null = null
@@ -1709,14 +1722,14 @@ export class VideoGenerationService {
     // requester can retry it. This also guards the worker-guard case, where the
     // step is rejected before `_runTravyVideoGeneration`'s own try/catch runs.
     if (step === RenderStep.TravyGeneration) {
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         travyVideoStatus: "failed",
         travyVideoError: "การสร้างวิดีโอ Travy ล้มเหลว กรุณากดลองใหม่",
       });
       return;
     }
 
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       status: VideoGenerationJobStatus.Failed,
       currentStep: VideoGenerationStep.Failed,
       failedAtStep: step ? RENDER_STEP_FAILED_AT[step] : VideoGenerationStep.Failed,
@@ -1758,7 +1771,7 @@ export class VideoGenerationService {
 
     await this._refundAllowance(job.requestId);
 
-    return videoGenerationJobRepository.update(job.id, {
+    return this._updateJob(job.id, {
       status: VideoGenerationJobStatus.Failed,
       currentStep: VideoGenerationStep.Failed,
       failedAtStep: step ? RENDER_STEP_FAILED_AT[step] : VideoGenerationStep.Failed,
@@ -1770,7 +1783,7 @@ export class VideoGenerationService {
     const assetId = await this._renderSceneInto(job, sceneIndex, (f) =>
       writeProgress(f * 100, { unit: `scene ${sceneIndex + 1}` })
     );
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       currentStep: VideoGenerationStep.AwaitingVideoApproval,
       baseVideoAssetId: assetId,
       videoGenStatus: null,
@@ -1813,7 +1826,7 @@ export class VideoGenerationService {
     const firstSegment =
       (latest?.sceneVideoAssetIds ?? []).find((id): id is string => !!id) ?? null;
 
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       currentStep: VideoGenerationStep.AwaitingVideoApproval,
       // Representative id so the review panel renders; the real concatenated
       // base is built at "Approve all" (approveBaseVideoByRequester).
@@ -1985,7 +1998,7 @@ export class VideoGenerationService {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
     if (selectedMusicTrack !== null) {
-      await videoGenerationJobRepository.update(jobId, { selectedMusicTrack });
+      await this._updateJob(jobId, { selectedMusicTrack });
     }
     return this.approveBaseVideoByRequester(jobId, staffId);
   }
@@ -2003,13 +2016,13 @@ export class VideoGenerationService {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
 
     if (backToStep === "content") {
-      return videoGenerationJobRepository.update(jobId, {
+      return this._updateJob(jobId, {
         currentStep: VideoGenerationStep.AwaitingContentApproval,
       });
     }
 
     // Re-render the whole batch from a clean slate, then return to review.
-    const prepared = await videoGenerationJobRepository.update(jobId, {
+    const prepared = await this._updateJob(jobId, {
       currentStep: VideoGenerationStep.GeneratingBaseVideo,
       currentSceneIndex: 0,
       sceneVideoAssetIds: null,
@@ -2098,6 +2111,11 @@ export class VideoGenerationService {
   }
 
   private async _assertRevisable(job: VideoGenerationJob, what: string): Promise<void> {
+    const request = await clipRequestRepository.findById(job.requestId);
+    if (request?.intakeChannel === 'line') {
+      assertRevisionAllowed(request.revisionCount ?? 0);
+      await clipRequestRepository.updateStatus(request.id, request.status, { revisionCount: (request.revisionCount ?? 0) + 1 });
+    }
     if (LOCK_AFTER_APPROVAL && (await this._isDeviceRendered(job.requestId))) {
       throw new StepLockedAfterApprovalError(what);
     }
@@ -2114,6 +2132,10 @@ export class VideoGenerationService {
    * Uses job.approvedScriptThai (the staff/requester-approved speaking script).
    */
   private async _runIAppTtsGeneration(job: VideoGenerationJob): Promise<void> {
+    const request = await clipRequestRepository.findById(job.requestId);
+    return withLineStorage(request?.intakeChannel === 'line', () => this._runLineAwareTtsGeneration(job));
+  }
+  private async _runLineAwareTtsGeneration(job: VideoGenerationJob): Promise<void> {
     await this.requireAiProcessingConsent(job.requestId);
     const scriptThai = sanitizeThaiVoiceScript(job.approvedScriptThai ?? job.scriptThai ?? "");
     if (!scriptThai) throw new Error("No approved Thai script available for TTS");
@@ -2123,7 +2145,7 @@ export class VideoGenerationService {
       scriptThai !== (job.approvedScriptThai ?? job.scriptThai ?? "") ||
       job.rvcVoiceModel !== voiceId
     ) {
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         scriptThai,
         approvedScriptThai: scriptThai,
         rvcVoiceModel: voiceId,
@@ -2195,7 +2217,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         } catch {
           /* keep whatever we already had */
         }
-        await videoGenerationJobRepository.update(job.id, {
+        await this._updateJob(job.id, {
           scriptEnglish,
           approvedScriptEnglish: scriptEnglish,
           scriptChinese,
@@ -2221,7 +2243,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       console.error("[GeminiAlignment] Failed to align voice timestamps:", err);
     }
 
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       currentStep: VideoGenerationStep.AwaitingVoiceApproval,
       voiceRecordingAssetId: asset.id,
       processedVoiceAssetId: asset.id,
@@ -2286,7 +2308,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
 
     const selectedVoiceId = requestedVoiceId ?? resolveElevenLabsVoiceId(job.rvcVoiceModel);
-    const updated = await videoGenerationJobRepository.update(jobId, {
+    const updated = await this._updateJob(jobId, {
       status: VideoGenerationJobStatus.Active,
       currentStep: VideoGenerationStep.GeneratingVoice,
       failedAtStep: null,
@@ -2319,7 +2341,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     this._runIAppTtsGeneration(updated).catch(async (err) => {
       console.error("[iAppTTS] Regeneration failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
+      await this._updateJob(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingVoice,
@@ -2351,7 +2373,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       throw new Error("Base video asset not found for animation step");
     }
 
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       currentStep: VideoGenerationStep.AwaitingAnimationApproval,
       animatedVideoAssetId: job.baseVideoAssetId,
       animatedOverlayAssetIds: {},
@@ -2385,7 +2407,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await clipRequestRepository.update(job.requestId, { targetPlatforms });
     }
 
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.ComposingFinalVideo,
@@ -2418,7 +2440,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
     await this._assertRevisable(lockedJob, "The video");
 
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingAnimations,
@@ -2544,7 +2566,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       montageTargetSeconds
     );
 
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
       scenePlan: JSON.stringify(scenePlanToPersist),
       hookThai: output.hookThai,
@@ -2561,14 +2583,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     void _selectedMusicTrack; // retained for signature parity with the requester path
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVoiceApproval);
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
+    const updated = await this._updateJob(jobId, {
       currentStep: VideoGenerationStep.GeneratingSceneDesign,
       voiceApprovedBy: staffId,
     });
 
     this._runSceneDesignGeneration(updated).catch(async (err) => {
       console.error("Scene design generation failed:", err);
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingSceneDesign,
@@ -2661,7 +2683,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await this._setDistributionChannels(job.requestId, targetPlatforms);
     }
 
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingSceneDesign,
@@ -2672,7 +2694,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     this._runSceneDesignGeneration(updated).catch(async (err) => {
       console.error("Scene design generation failed:", err);
-      await videoGenerationJobRepository.update(jobId, {
+      await this._updateJob(jobId, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingSceneDesign,
@@ -2741,7 +2763,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // then reviews every scene video together and clicks "Approve all" to merge.
     //
     // Fresh batch — clear any stale segment state in the same update.
-    const cleared = await videoGenerationJobRepository.update(
+    const cleared = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingBaseVideo,
@@ -2819,7 +2841,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       scenePlan = normalizeClipMotion(storedPlan);
       scenePlan[sceneIndex] = normalizeClipMotion([submittedPlan[sceneIndex]])[0];
     }
-    await videoGenerationJobRepository.update(jobId, {
+    await this._updateJob(jobId, {
       approvedScenePlan: JSON.stringify(scenePlan),
       ...(edits.hookThai !== undefined ? { approvedHookThai: edits.hookThai } : {}),
       ...(edits.scriptThai !== undefined ? { approvedScriptThai: edits.scriptThai } : {}),
@@ -2848,7 +2870,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (!motion) return;
 
     scene.assets = scene.assets.map((a) => (a.kind === "image" ? { ...a, motion } : a));
-    await videoGenerationJobRepository.update(jobId, {
+    await this._updateJob(jobId, {
       approvedScenePlan: JSON.stringify(plan),
     });
   }
@@ -2871,7 +2893,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingSceneScriptApproval);
     await this._persistSceneEdits(jobId, edits);
 
-    const job = await videoGenerationJobRepository.update(
+    const job = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingBaseVideo,
@@ -2935,7 +2957,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       const { clipRequestRepository } = await import("@/repositories/index");
       const request = await clipRequestRepository.findById(job.requestId);
       if (request?.renderLocation === "device" && job.baseVideoAssetId) {
-        const merged = await videoGenerationJobRepository.update(
+        const merged = await this._updateJob(
           jobId,
           {
             currentStep: VideoGenerationStep.GeneratingAnimations,
@@ -2957,7 +2979,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // the offline fallback. `_runMontageMerge` performs the concat and advances to
     // animation. The API route returns promptly; the pipeline-status poller shows
     // the existing "Generating base video" state while it runs.
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       jobId,
       {
         // The concat merge is its own visible pipeline phase ("รวมคลิปแต่ละฉาก")
@@ -2991,7 +3013,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
    */
   private async _runMontageMerge(job: VideoGenerationJob): Promise<void> {
     const baseVideoAssetId = await this._concatMontageBaseVideo(job);
-    const updated = await videoGenerationJobRepository.update(job.id, {
+    const updated = await this._updateJob(job.id, {
       currentStep: VideoGenerationStep.GeneratingAnimations,
       baseVideoAssetId,
     });
@@ -3020,7 +3042,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
   ): Promise<VideoGenerationJob> {
     const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingVideoApproval);
     await this._assertRevisable(lockedJob, "The scene design");
-    return videoGenerationJobRepository.update(
+    return this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
@@ -3065,7 +3087,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     if (active) {
       throw new Error("This video is still being made. Wait for it to finish, then remake it.");
     }
-    return videoGenerationJobRepository.update(
+    return this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.AwaitingSceneDesignApproval,
@@ -3111,7 +3133,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // the actor for the gate-event row this transition closes.
     const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingAnimationApproval);
     await this._assertRevisable(lockedJob, "The video");
-    return videoGenerationJobRepository.update(
+    return this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.AwaitingVideoApproval,
@@ -3151,7 +3173,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     await this._reinferSceneMotion(jobId, idx);
 
     // Keep ALL existing segments; only scene `idx` is replaced when it re-renders.
-    const prepared = await videoGenerationJobRepository.update(
+    const prepared = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingBaseVideo,
@@ -3201,7 +3223,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // request. Instead, the requester's chosen subtitle languages + motion
     // template are persisted and the styled/subtitle render begins (primary
     // ratio first). Delivery happens once that is approved.
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingOverlay,
@@ -3585,7 +3607,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       // on-demand instead, persist it, and carry on.
       console.log(`[overlay:${ratio}] no merged master — composing it on-demand`);
       masterAssetId = await this._composeMasterForRatio(job, ratio, ctx);
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         [this._finalExportFieldForRatio(ratio)]: masterAssetId,
       } as UpdateVideoGenerationJobInput);
     }
@@ -3743,7 +3765,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       renderProgressDetail: null,
     };
     updates[this._captionedFieldForRatio(primaryRatio)] = captionedId;
-    await videoGenerationJobRepository.update(job.id, updates, SYSTEM_ACTOR);
+    await this._updateJob(job.id, updates, SYSTEM_ACTOR);
   }
 
   /** Requester re-renders the overlay (optionally changing subtitle languages). */
@@ -3755,7 +3777,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
     await this._assertRevisable(lockedJob, "The video");
 
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingOverlay,
@@ -3787,7 +3809,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // the actor for the gate-event row this transition closes.
     const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingOverlayApproval);
     await this._assertRevisable(lockedJob, "The video");
-    return videoGenerationJobRepository.update(
+    return this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.AwaitingFinalApproval,
@@ -3825,7 +3847,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     if (remaining.length > 0) {
       // More channel formats to produce — wait for the explicit button.
-      const gated = await videoGenerationJobRepository.update(
+      const gated = await this._updateJob(
         jobId,
         {
           currentStep: VideoGenerationStep.AwaitingAdditionalRatios,
@@ -3924,7 +3946,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
             console.error(`[VideoGeneration] job ${jobId}: channel framing not saved:`, err);
           }
         }
-        const started = await videoGenerationJobRepository.update(
+        const started = await this._updateJob(
           jobId,
           {
             currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
@@ -3940,7 +3962,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
     }
 
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
@@ -4018,7 +4040,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           );
           const u: UpdateVideoGenerationJobInput = {};
           u[this._captionedFieldForRatio(ratio)] = id;
-          await videoGenerationJobRepository.update(job.id, u);
+          await this._updateJob(job.id, u);
           unitsDone++;
           writeProgress((unitsDone / unitsTotal) * 100, {
             unit: ratio,
@@ -4115,7 +4137,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
     }
 
-    const updated = await videoGenerationJobRepository.update(
+    const updated = await this._updateJob(
       job.id,
       updates,
       opts.actor
@@ -4187,7 +4209,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         (f) => writeProgress(f * 95, { unit: "travy" })
       );
 
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         finalExport_travy_assetId: travyAssetId,
         travyVideoStatus: "ready",
         travyVideoError: null,
@@ -4227,7 +4249,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       throw new Error("Travy video is not in a failed state");
     }
 
-    const updated = await videoGenerationJobRepository.update(jobId, {
+    const updated = await this._updateJob(jobId, {
       travyVideoStatus: "generating",
       travyVideoError: null,
     });
@@ -4487,7 +4509,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       previewImageUrl: d.previewImageUrl ?? priorPreview.get(d.platform) ?? null,
     }));
 
-    return videoGenerationJobRepository.update(jobId, {
+    return this._updateJob(jobId, {
       publishingDrafts: withPreviews,
     });
   }
@@ -4536,7 +4558,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         error: prior?.error ?? null,
       };
     });
-    return videoGenerationJobRepository.update(jobId, { publishingDrafts: merged });
+    return this._updateJob(jobId, { publishingDrafts: merged });
   }
 
   /**
@@ -4566,7 +4588,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     const { RequestStatus } = await import("@/domain/enums/RequestStatus");
     await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
-    return videoGenerationJobRepository.update(jobId, {
+    return this._updateJob(jobId, {
       currentStep: VideoGenerationStep.Complete,
       finalApprovedBy: userId || job.finalApprovedBy,
     });
@@ -4687,7 +4709,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       publishableDrafts.every((d) => d.status === "posted");
 
     if (!allPosted) {
-      const updated = await videoGenerationJobRepository.update(jobId, {
+      const updated = await this._updateJob(jobId, {
         publishingDrafts: mergedDrafts,
       });
       return {
@@ -4699,7 +4721,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     const { RequestStatus } = await import("@/domain/enums/RequestStatus");
     await clipRequestRepository.updateStatus(job.requestId, RequestStatus.Delivered);
-    const updated = await videoGenerationJobRepository.update(jobId, {
+    const updated = await this._updateJob(jobId, {
       publishingDrafts: mergedDrafts,
       currentStep: VideoGenerationStep.Complete,
       finalApprovedBy: userId || job.finalApprovedBy,
@@ -4882,7 +4904,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         // the entire batch exits the loop.
         const updates: UpdateVideoGenerationJobInput = {};
         updates[this._finalExportFieldForRatio(ratio)] = assetId;
-        await videoGenerationJobRepository.update(job.id, updates);
+        await this._updateJob(job.id, updates);
         unitsDone++;
         // Do not publish a final active-step percentage after the last unit:
         // the next authoritative write changes the step to its review gate.
@@ -4914,7 +4936,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
     // Single authoritative completion transition. Clearing progress in the same
     // update ensures no completed job remains rendered as "100% + loading".
-    await videoGenerationJobRepository.update(job.id, {
+    await this._updateJob(job.id, {
       currentStep: VideoGenerationStep.AwaitingFinalApproval,
       renderProgress: null,
       renderProgressDetail: null,
@@ -5019,7 +5041,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     staffId: string
   ): Promise<VideoGenerationJob> {
     await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
-    return videoGenerationJobRepository.update(jobId, {
+    return this._updateJob(jobId, {
       currentStep: VideoGenerationStep.Publishing,
       finalApprovedBy: staffId,
     });
@@ -5039,7 +5061,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // the actor for the gate-event row this transition closes.
     const lockedJob = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingFinalApproval);
     await this._assertRevisable(lockedJob, "The sound");
-    return videoGenerationJobRepository.update(
+    return this._updateJob(
       jobId,
       {
         currentStep: VideoGenerationStep.AwaitingAnimationApproval,
@@ -5072,7 +5094,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       composition: VideoGenerationStep.ComposingFinalVideo,
     };
 
-    return videoGenerationJobRepository.update(jobId, {
+    return this._updateJob(jobId, {
       currentStep: stepMap[backToStep],
       finalExport_9_16_assetId: backToStep === "composition" ? null : undefined,
       finalExport_16_9_assetId: backToStep === "composition" ? null : undefined,
@@ -5116,7 +5138,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // Job was pre-created by the analyze endpoint at AwaitingContentApproval.
     // Update it with the requester-approved (possibly edited) data and start the pipeline.
     if (existing?.currentStep === VideoGenerationStep.AwaitingContentApproval) {
-      const updated = await videoGenerationJobRepository.update(existing.id, {
+      const updated = await this._updateJob(existing.id, {
         currentStep: VideoGenerationStep.GeneratingVoice,
         approvedScenePlan: sanitizeScenePlanJson(analysis.scenePlan),
         approvedScriptThai: scriptThai,
@@ -5139,7 +5161,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
       this._runIAppTtsGeneration(updated).catch(async (err) => {
         console.error("[ElevenLabs] Voice generation failed:", err);
-        await videoGenerationJobRepository.update(existing.id, {
+        await this._updateJob(existing.id, {
           status: VideoGenerationJobStatus.Failed,
           currentStep: VideoGenerationStep.Failed,
           failedAtStep: VideoGenerationStep.GeneratingVoice,
@@ -5211,7 +5233,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
     this._runIAppTtsGeneration(job).catch(async (err) => {
       console.error("[ElevenLabs] Voice generation failed:", err);
-      await videoGenerationJobRepository.update(job.id, {
+      await this._updateJob(job.id, {
         status: VideoGenerationJobStatus.Failed,
         currentStep: VideoGenerationStep.Failed,
         failedAtStep: VideoGenerationStep.GeneratingVoice,
@@ -5291,7 +5313,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
               motionNotes: editedContent.scenes[i]?.motionNotes ?? s.motionNotes,
             }))
           : existingPlan;
-      await videoGenerationJobRepository.update(jobId, {
+      await this._updateJob(jobId, {
         approvedScenePlan: JSON.stringify(sanitizeScenePlanDescriptions(updatedScenePlan)),
         approvedScriptThai:
           editedContent.scriptThai === null
@@ -5304,7 +5326,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
 
     // Reset to active + clear failedAtStep
-    await videoGenerationJobRepository.update(jobId, {
+    await this._updateJob(jobId, {
       status: VideoGenerationJobStatus.Active,
       failedAtStep: null,
     });
@@ -5324,7 +5346,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           const material = readLocalMediaDescriptors(job.renderPayload);
           return this._readyOrderedStoryboard(jobId, material.length || imageUrls.length);
         }
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.AnalyzingContent,
           scenePlan: null, scriptThai: null, scriptEnglish: null,
           hookThai: null, hookEnglish: null,
@@ -5340,7 +5362,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
           localMedia: readLocalMediaDescriptors(job.renderPayload),
         }).catch(async (err) => {
           console.error("Gemini analysis failed on retry:", err);
-          await videoGenerationJobRepository.update(jobId, {
+          await this._updateJob(jobId, {
             status: VideoGenerationJobStatus.Failed,
             currentStep: VideoGenerationStep.Failed,
             failedAtStep: VideoGenerationStep.AnalyzingContent,
@@ -5352,7 +5374,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       case VideoGenerationStep.GeneratingBaseVideo: {
         // The batch render of all scenes failed somewhere; re-render the whole
         // batch from a clean slate, then return to the combined review.
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.GeneratingBaseVideo,
           currentSceneIndex: 0,
           sceneVideoAssetIds: null,
@@ -5368,7 +5390,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       case VideoGenerationStep.MergingScenes: {
         // The scene segments are already valid; retry only their concat/merge
         // instead of discarding and re-rendering every scene.
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.MergingScenes,
           baseVideoAssetId: null,
         });
@@ -5379,7 +5401,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       case VideoGenerationStep.GeneratingVoice: {
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.GeneratingVoice,
           ttsTaskId: null,
           voiceRecordingAssetId: null,
@@ -5387,7 +5409,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         });
         this._runIAppTtsGeneration(updated).catch(async (err) => {
           console.error("[iAppTTS] Retry failed:", err);
-          await videoGenerationJobRepository.update(jobId, {
+          await this._updateJob(jobId, {
             status: VideoGenerationJobStatus.Failed,
             currentStep: VideoGenerationStep.Failed,
             failedAtStep: VideoGenerationStep.GeneratingVoice,
@@ -5397,14 +5419,14 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       case VideoGenerationStep.GeneratingSceneDesign: {
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.GeneratingSceneDesign,
           scenePlan: null,
           hookThai: null,
         });
         this._runSceneDesignGeneration(updated).catch(async (err) => {
           console.error("Scene design retry failed:", err);
-          await videoGenerationJobRepository.update(jobId, {
+          await this._updateJob(jobId, {
             status: VideoGenerationJobStatus.Failed,
             currentStep: VideoGenerationStep.Failed,
             failedAtStep: VideoGenerationStep.GeneratingSceneDesign,
@@ -5414,7 +5436,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       case VideoGenerationStep.GeneratingAnimations: {
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.GeneratingAnimations,
           animatedVideoAssetId: null,
           animatedOverlayAssetIds: null,
@@ -5426,7 +5448,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       case VideoGenerationStep.ComposingFinalVideo: {
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.ComposingFinalVideo,
           finalExport_9_16_assetId: null,
           finalExport_16_9_assetId: null,
@@ -5440,7 +5462,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       case VideoGenerationStep.GeneratingOverlay: {
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.GeneratingOverlay,
         });
         await this._dispatchHeavy(updated, RenderStep.OverlayComposition, () =>
@@ -5450,7 +5472,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       }
 
       case VideoGenerationStep.GeneratingAdditionalRatios: {
-        const updated = await videoGenerationJobRepository.update(jobId, {
+        const updated = await this._updateJob(jobId, {
           currentStep: VideoGenerationStep.GeneratingAdditionalRatios,
         });
         await this._dispatchHeavy(updated, RenderStep.AdditionalRatios, () =>
@@ -5486,7 +5508,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         "Job is still processing — retry becomes available only once it has stalled."
       );
     }
-    await videoGenerationJobRepository.update(jobId, {
+    await this._updateJob(jobId, {
       status: VideoGenerationJobStatus.Failed,
       currentStep: VideoGenerationStep.Failed,
       failedAtStep: job.currentStep,
@@ -5496,13 +5518,42 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
 
   /** Mark job as complete (called after all platforms published). */
   async markComplete(jobId: string): Promise<VideoGenerationJob> {
-    return videoGenerationJobRepository.update(jobId, {
+    return this._updateJob(jobId, {
       status: VideoGenerationJobStatus.Complete,
       currentStep: VideoGenerationStep.Complete,
     });
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
+
+  private async _updateJob(...args: Parameters<typeof videoGenerationJobRepository.update>) {
+    const previous = await videoGenerationJobRepository.findById(args[0]);
+    const request = previous ? await clipRequestRepository.findById(previous.requestId) : null;
+    if (request?.intakeChannel === 'line') {
+      const data = args[1] as Record<string, unknown>;
+      for (const field of ['scriptThai','approvedScriptThai','captionThai','approvedCaptionThai']) {
+        if (typeof data[field] === 'string') data[field] = applyShopRules(data[field] as string, request.shopRules ?? {}).text;
+      }
+      if (typeof data.selectedMusicTrack === 'string' && data.selectedMusicTrack !== 'none') {
+        const track = findMusicTrack(data.selectedMusicTrack);
+        if (!track) throw new Error('unlicensed_music');
+        assertLicensedMusic(track.file);
+      }
+      if (typeof data.voiceDurationSeconds === 'number') assertDurationAllowed(data.voiceDurationSeconds);
+      for (const field of ['scenePlan', 'approvedScenePlan']) {
+        if (typeof data[field] === 'string') {
+          const scenes = JSON.parse(data[field] as string) as ScenePlan[];
+          assertDurationAllowed(scenes.reduce((sum, scene) => sum + Number(scene.durationSeconds ?? 0), 0));
+        }
+      }
+    }
+    const updated = await videoGenerationJobRepository.update(...args);
+    if (request?.intakeChannel === 'line' && isReviewSystemEnabled()) {
+      try { await onLineReviewGate(request, updated); }
+      catch (error) { console.error('[LINE review gate]', error); }
+    }
+    return updated;
+  }
 
   private async _getJob(jobId: string): Promise<VideoGenerationJob> {
     const job = await videoGenerationJobRepository.findById(jobId);

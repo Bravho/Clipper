@@ -34,7 +34,8 @@ export interface IReviewItemRepository {
         | 'supersedesId'
         | 'priority'
       >
-    >
+    >,
+    opts?: { expectedVersion?: number; expectedStatus?: ReviewItemStatus }
   ): Promise<ReviewItem>;
   listPending(filters?: {
     shopUserId?: string;

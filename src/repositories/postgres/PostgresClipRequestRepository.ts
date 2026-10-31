@@ -80,6 +80,12 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     updatedAt: new Date(row.updated_at as string),
     effortClass: (row.effort_class as EffortClass) ?? null,
     assignedStaffId: (row.assigned_staff_id as string) ?? null,
+    intakeChannel: ((row.intake_channel as string) ?? 'studio') as ClipRequest['intakeChannel'],
+    renderLane: (row.render_lane as string) ?? null,
+    packageOrderId: (row.package_order_id as string) ?? null,
+    externalRef: (row.external_ref as string) ?? null,
+    shopReviewPreferences: (row.shop_review_preferences as ClipRequest['shopReviewPreferences']) ?? {},
+    shopRules: (row.shop_rules as ClipRequest['shopRules']) ?? {},
   };
 }
 
@@ -126,6 +132,10 @@ const STATUS_EXTRA_COLS: Record<string, string> = {
   videoAllowanceWindowId: "video_allowance_window_id",
   allowanceRefundedAt: "allowance_refunded_at",
   videosExpireAt: "videos_expire_at",
+  intakeChannel: "intake_channel",
+  renderLane: "render_lane",
+  packageOrderId: "package_order_id",
+  externalRef: "external_ref",
 };
 
 export class PostgresClipRequestRepository
@@ -265,12 +275,14 @@ export class PostgresClipRequestRepository
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   async create(input: CreateClipRequestInput): Promise<ClipRequest> {
+    const intakeChannel = (input as Record<string, unknown>)['intakeChannel'] ?? 'studio';
+    const renderLane = (input as Record<string, unknown>)['renderLane'] ?? null;
     const { rows } = await this.db.query(
       `INSERT INTO clip_requests (
          user_id, title, place_name, latitude, longitude, description, target_audience,
          target_platforms, preferred_style, preferred_language,
-         duration_seconds, credits_cost
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         duration_seconds, credits_cost, intake_channel, render_lane, package_order_id, external_ref, shop_review_preferences, shop_rules
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING *`,
       [
         input.userId,
@@ -287,6 +299,9 @@ export class PostgresClipRequestRepository
         // Legacy `credits_cost` column: requests are drawn from a monthly quota and
         // cost no credits, so every modern row is 0.
         0,
+        intakeChannel,
+        renderLane,
+        input.packageOrderId ?? null, input.externalRef ?? null, JSON.stringify(input.shopReviewPreferences ?? {}), JSON.stringify(input.shopRules ?? {}),
       ]
     );
     return rowToClipRequest(rows[0]);

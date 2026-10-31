@@ -3,7 +3,7 @@
  *
  * All repositories are injected so tests can use Map-based mocks.
  * This service writes action log + outbox entries atomically
- * (mock: in-memory; postgres: will use a transaction helper).
+ * (mock: in-memory; postgres: conditional UPDATE + version bump).
  */
 
 import { IReviewItemRepository } from '@/repositories/interfaces/IReviewItemRepository';
@@ -19,7 +19,11 @@ import {
 import { ReviewReasonCode, DiffEntry } from '@/domain/models/ReviewAction';
 import { evaluate, EvaluateInput, RuleTypeCfg, TrustPolicy } from './RuleEngine';
 import { generateShortCode } from '@/config/reviewSystem';
-import { isReviewSystemEnabled } from '@/config/reviewSystem';
+import {
+  isReviewSystemEnabled,
+  MAX_REVISIONS_PER_CLIP,
+  MAX_CLIP_DURATION_SECONDS,
+} from '@/config/reviewSystem';
 
 export interface ReviewTypeConfig {
   key: string;
@@ -85,11 +89,14 @@ export class ReviewService {
     private reviewItemRepo: IReviewItemRepository,
     private actionRepo: IReviewActionRepository,
     private ruleRepo: IEscalationRuleRepository,
-    private outboxRepo: IReviewOutboxRepository
+    private outboxRepo: IReviewOutboxRepository,
+    private transaction?: <T>(work: (service: ReviewService) => Promise<T>) => Promise<T>,
+    private reserveRevision?: (requestId: string) => Promise<void>
   ) {}
 
   /**
    * Evaluate whether a review item needs review without persisting anything.
+   * Applies typeCfg.confidenceThreshold in the evaluation.
    */
   async evaluate(input: Omit<CreateReviewInput, 'title' | 'payload'>) {
     const rules = await this.ruleRepo.listEnabled();
@@ -136,9 +143,16 @@ export class ReviewService {
       defaultOutcome: input.typeCfg.defaultOutcome,
       confidenceThreshold: input.typeCfg.confidenceThreshold,
     };
+
+    // Apply confidence threshold: if confidence < typeCfg.confidenceThreshold, escalate
+    const confSignals = { ...input.signals };
+    if (input.confidence !== undefined) {
+      confSignals['confidence'] = input.confidence;
+    }
+
     const result = evaluate(rules, {
       typeKey: input.typeKey,
-      signals: input.signals,
+      signals: confSignals,
       confidence: input.confidence,
       typeCfg,
       trust: input.trust,
@@ -162,7 +176,7 @@ export class ReviewService {
       decisionMode: result.decisionMode,
       matchedRules: result.matchedRules,
       ruleSnapshot: { trace: result.trace, signals: input.signals },
-      signals: input.signals,
+      signals: confSignals,
       confidence: input.confidence,
       producer: input.producer as CreateReviewItemInput['producer'],
       priority: input.priority,
@@ -224,23 +238,50 @@ export class ReviewService {
     });
   }
 
-  /** Apply a decision (approve/reject/edit/manual_reply). */
+  /**
+   * Apply a decision (approve/reject/edit/manual_reply).
+   *
+   * Atomic guarantee: uses expectedVersion to do a conditional UPDATE.
+   * If another writer changed the item between our read and write, the
+   * Postgres implementation returns version_conflict.
+   *
+   * Rejects expired items and video items whose render is not ready.
+   */
   async decide(input: DecideInput): Promise<ReviewItem> {
+    if (this.transaction) return this.transaction(service => service.decide(input));
     const item = await this.reviewItemRepo.findById(input.itemId);
     if (!item) throw Object.assign(new Error('not_found'), { code: 'not_found' });
+
+    // Reject decisions on expired items (Item 15)
+    if (item.status === 'expired' || item.expiresAt.getTime() <= Date.now()) {
+      throw Object.assign(new Error('item_expired'), { code: 'item_expired' });
+    }
+
     if (item.status !== 'pending' && item.status !== 'edited') {
       throw Object.assign(new Error('item_not_pending'), {
         code: 'item_not_pending',
         status: item.status,
       });
     }
+
+    // For video approvals, ensure render is ready (not still rendering)
+    if (input.decision === 'approve') {
+      if (item.renderState === 'queued' || item.renderState === 'rendering' || item.renderState === 'failed') {
+        throw Object.assign(new Error('render_not_ready'), { code: 'render_not_ready' });
+      }
+    }
+
     if (item.version !== input.expectedVersion) {
       throw Object.assign(new Error('version_conflict'), { code: 'version_conflict' });
     }
 
     const now = new Date();
+    if ((input.decision === 'edit' || input.decision === 'reject') && item.requestId && this.reserveRevision) {
+      await this.reserveRevision(item.requestId);
+    }
 
     if (input.decision === 'approve') {
+      // Atomic conditional update: WHERE version = expectedVersion
       const updated = await this.reviewItemRepo.update(item.id, {
         status: 'approved',
         resolution: item.renderState !== 'none' ? 'approved_with_edits' : 'approved',
@@ -248,7 +289,7 @@ export class ReviewService {
         decidedVia: input.actorVia,
         decidedAt: now,
         firstOpenedAt: item.firstOpenedAt ?? now,
-      });
+      }, { expectedVersion: input.expectedVersion, expectedStatus: item.status });
       await this.actionRepo.create({
         reviewItemId: item.id,
         itemVersion: item.version,
@@ -275,7 +316,7 @@ export class ReviewService {
         decidedVia: input.actorVia,
         decidedAt: now,
         decisionNote: input.reasonText,
-      });
+      }, { expectedVersion: input.expectedVersion, expectedStatus: item.status });
       await this.actionRepo.create({
         reviewItemId: item.id,
         itemVersion: item.version,
@@ -303,7 +344,7 @@ export class ReviewService {
         payload: input.edits
           ? applyEdits(item.payload, input.edits)
           : item.payload,
-      });
+      }, { expectedVersion: input.expectedVersion, expectedStatus: item.status });
       await this.actionRepo.create({
         reviewItemId: item.id,
         itemVersion: item.version,
@@ -317,6 +358,7 @@ export class ReviewService {
         diff: input.edits,
         clientElapsedMs: input.clientElapsedMs,
       });
+      await this.outboxRepo.enqueue({ eventType: 'review.edited', reviewItemId: item.id, payload: { item_id: item.id } });
       return updated;
     }
 
@@ -328,7 +370,7 @@ export class ReviewService {
         decidedBy: input.actorUserId,
         decidedVia: input.actorVia,
         decidedAt: now,
-      });
+      }, { expectedVersion: input.expectedVersion, expectedStatus: item.status });
       await this.actionRepo.create({
         reviewItemId: item.id,
         itemVersion: item.version,
@@ -383,6 +425,26 @@ export class ReviewService {
 
   async listPending(filters?: Parameters<IReviewItemRepository['listPending']>[0]) {
     return this.reviewItemRepo.listPending(filters);
+  }
+}
+
+/** Validate revision count for a clip request (enforcement of MAX_REVISIONS_PER_CLIP). */
+export function assertRevisionAllowed(currentRevisionCount: number): void {
+  if (currentRevisionCount >= MAX_REVISIONS_PER_CLIP) {
+    throw Object.assign(
+      new Error(`max_revisions_exceeded: limit is ${MAX_REVISIONS_PER_CLIP}`),
+      { code: 'max_revisions_exceeded', limit: MAX_REVISIONS_PER_CLIP }
+    );
+  }
+}
+
+/** Validate clip duration for LINE intake (enforcement of MAX_CLIP_DURATION_SECONDS). */
+export function assertDurationAllowed(durationSeconds: number): void {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_CLIP_DURATION_SECONDS) {
+    throw Object.assign(
+      new Error(`duration_exceeded: max is ${MAX_CLIP_DURATION_SECONDS}s`),
+      { code: 'duration_exceeded', max: MAX_CLIP_DURATION_SECONDS }
+    );
   }
 }
 

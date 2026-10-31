@@ -214,6 +214,10 @@ export interface ClipRequest {
    * Added by migration 049.
    */
   intakeChannel?: 'studio' | 'web' | 'line';
+  packageOrderId?: string | null;
+  externalRef?: string | null;
+  shopReviewPreferences?: { storyboard?: boolean; voice?: boolean };
+  shopRules?: import('@/services/review/ShopRulesEngine').ShopRules;
 
   /**
    * Render lane for this request. null = Mac Mini (default).
@@ -224,7 +228,7 @@ export interface ClipRequest {
 }
 
 /** Input for creating a new draft request. */
-export type CreateClipRequestInput = {
+export type CreateClipRequestInput = Pick<ClipRequest, 'intakeChannel' | 'renderLane' | 'packageOrderId' | 'externalRef' | 'shopReviewPreferences' | 'shopRules'> & {
   userId: string;
   title: string;
   placeName?: string;

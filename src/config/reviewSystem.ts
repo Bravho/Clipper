@@ -16,6 +16,16 @@ export function isLineIntakeEnabled(): boolean {
 }
 
 /**
+ * Render lane routing flag (default OFF).
+ * When OFF: INSERT and claim SQL use the pre-migration-049 queries (no render_lane column)
+ * so the Mac Mini worker keeps working before migration 049 is applied.
+ * When ON: lane-aware queries route LINE jobs to Mac Mini and Mar-PC backup.
+ */
+export function isRenderLaneEnabled(): boolean {
+  return process.env.RENDER_LANE_ENABLED === 'true';
+}
+
+/**
  * Rule keys that are HARD-LOCKED in code: even if a shop has a trust policy,
  * these rules can never be bypassed by auto-approve.
  */

@@ -6,6 +6,16 @@ import {
 } from "@/domain/models/UploadedAsset";
 import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
 import { pool } from "@/lib/db";
+import { spacesSignedUrl } from '@/lib/spaces';
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
+async function readableAsset(row: Record<string, unknown>): Promise<UploadedAsset> {
+  const asset = rowToAsset(row);
+  if (asset.storageKey.startsWith('line_uploads/') || (!asset.storageUrl && asset.storageKey) || isPrivateLineStorage()) {
+    asset.storageUrl = await spacesSignedUrl(asset.storageKey, 900);
+    if (asset.thumbnailKey) asset.thumbnailUrl = await spacesSignedUrl(asset.thumbnailKey, 900);
+  }
+  return asset;
+}
 
 function rowToAsset(row: Record<string, unknown>): UploadedAsset {
   return {
@@ -44,7 +54,7 @@ export class PostgresUploadedAssetRepository
       "SELECT * FROM uploaded_assets WHERE request_id = $1 ORDER BY created_at ASC",
       [requestId]
     );
-    return rows.map(rowToAsset);
+    return Promise.all(rows.map(readableAsset));
   }
 
   async findById(id: string): Promise<UploadedAsset | null> {
@@ -52,7 +62,7 @@ export class PostgresUploadedAssetRepository
       "SELECT * FROM uploaded_assets WHERE id = $1",
       [id]
     );
-    return rows[0] ? rowToAsset(rows[0]) : null;
+    return rows[0] ? readableAsset(rows[0]) : null;
   }
 
   async findWatermarkedPreviewFor(
@@ -65,7 +75,7 @@ export class PostgresUploadedAssetRepository
         LIMIT 1`,
       [sourceAssetId, AssetType.WatermarkedPreview]
     );
-    return rows[0] ? rowToAsset(rows[0]) : null;
+    return rows[0] ? readableAsset(rows[0]) : null;
   }
 
   async create(input: CreateUploadedAssetInput): Promise<UploadedAsset> {
@@ -86,7 +96,7 @@ export class PostgresUploadedAssetRepository
         input.fileSizeBytes,
         input.mimeType,
         input.storageKey,
-        input.storageUrl,
+        isPrivateLineStorage() ? "" : input.storageUrl,
         input.thumbnailKey,
         input.thumbnailUrl,
         input.uploadStatus,
@@ -97,7 +107,7 @@ export class PostgresUploadedAssetRepository
         input.deviceLocalId ?? null,
       ]
     );
-    return rowToAsset(rows[0]);
+    return readableAsset(rows[0]);
   }
 
   async update(
@@ -133,7 +143,7 @@ export class PostgresUploadedAssetRepository
         [id]
       );
       if (!rows[0]) throw new Error(`UploadedAsset not found: ${id}`);
-      return rowToAsset(rows[0]);
+      return readableAsset(rows[0]);
     }
 
     sets.push(`updated_at = NOW()`);
@@ -144,7 +154,7 @@ export class PostgresUploadedAssetRepository
       values
     );
     if (!rows[0]) throw new Error(`UploadedAsset not found: ${id}`);
-    return rowToAsset(rows[0]);
+    return readableAsset(rows[0]);
   }
 
   async deleteById(id: string): Promise<void> {

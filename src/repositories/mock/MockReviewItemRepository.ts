@@ -104,10 +104,13 @@ export class MockReviewItemRepository implements IReviewItemRepository {
     return null;
   }
 
-  async update(id: string, data: Partial<ReviewItem>): Promise<ReviewItem> {
+  async update(id: string, data: Partial<ReviewItem>, opts?: { expectedVersion?: number; expectedStatus?: string }): Promise<ReviewItem> {
     const item = this.store.get(id);
     if (!item) throw new Error(`ReviewItem ${id} not found`);
-    const updated = { ...item, ...data, updatedAt: new Date() };
+    if (opts && (item.version !== opts.expectedVersion || item.status !== opts.expectedStatus)) {
+      throw Object.assign(new Error('version_conflict'), { code: 'version_conflict' });
+    }
+    const updated = { ...item, ...data, version: data.status ? item.version + 1 : item.version, updatedAt: new Date() };
     this.store.set(id, updated);
     return { ...updated };
   }

@@ -1,3 +1,4 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -232,7 +233,7 @@ export async function spacesUpload(params: {
   acl?: "public-read" | "private";
 }): Promise<void> {
   const body = Buffer.isBuffer(params.body) ? params.body : Buffer.from(params.body);
-  const acl = params.acl ?? "public-read";
+  const acl = isPrivateLineStorage() ? "private" : params.acl ?? "public-read";
 
   // Small enough to clear the intermediary's per-request cap in one shot.
   if (body.length <= SPACES_PART_SIZE) {

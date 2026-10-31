@@ -1,78 +1,36 @@
-import { MockRenderTaskRepository } from '@/repositories/mock/MockRenderTaskRepository';
+jest.mock('@/lib/db', () => ({ pool: {} }));
+import { PostgresRenderTaskRepository } from '@/repositories/postgres/PostgresRenderTaskRepository';
 import { RenderStep } from '@/domain/enums/RenderStep';
-
-function makeRepo() {
-  return new MockRenderTaskRepository(new Map());
-}
-
-const BASE_ENQUEUE = {
-  jobId: 'job-001',
-  requestId: 'req-001',
-  step: RenderStep.FfmpegComposition,
-  payload: null,
-};
-
-describe('RenderQueue lane routing', () => {
-  it('Mac Mini (no lane) never sees operator_pc tasks', async () => {
-    const repo = makeRepo();
-    await repo.enqueue({ ...BASE_ENQUEUE, renderLane: 'operator_pc' });
-
-    const claimed = await repo.claimNext('mac-mini-worker', 60, undefined);
-    expect(claimed).toBeNull();
-  });
-
-  it('Mac Mini claims tasks with no render lane', async () => {
-    const repo = makeRepo();
-    await repo.enqueue({ ...BASE_ENQUEUE, renderLane: null });
-
-    const claimed = await repo.claimNext('mac-mini-worker', 60, undefined);
-    expect(claimed).not.toBeNull();
-    expect(claimed?.renderLane).toBeNull();
-  });
-
-  it('operator_pc worker only claims its own lane', async () => {
-    const repo = makeRepo();
-    // Enqueue one server task (null lane) and one operator_pc task
-    await repo.enqueue({ ...BASE_ENQUEUE, jobId: 'job-server', renderLane: null });
-    await repo.enqueue({ ...BASE_ENQUEUE, jobId: 'job-line', renderLane: 'operator_pc' });
-
-    const claimed = await repo.claimNext('mar-pc-worker', 60, 'operator_pc');
-    expect(claimed).not.toBeNull();
-    expect(claimed?.renderLane).toBe('operator_pc');
-    expect(claimed?.jobId).toBe('job-line');
-  });
-
-  it('operator_pc worker does NOT claim null-lane tasks', async () => {
-    const repo = makeRepo();
-    await repo.enqueue({ ...BASE_ENQUEUE, renderLane: null });
-
-    const claimed = await repo.claimNext('mar-pc-worker', 60, 'operator_pc');
-    expect(claimed).toBeNull();
-  });
-
-  it('enqueued task records renderLane correctly', async () => {
-    const repo = makeRepo();
-    const task = await repo.enqueue({ ...BASE_ENQUEUE, renderLane: 'operator_pc' });
-    expect(task.renderLane).toBe('operator_pc');
-  });
-
-  it('null renderLane task is not claimed by operator_pc lane', async () => {
-    const repo = makeRepo();
-    await repo.enqueue({ ...BASE_ENQUEUE, renderLane: null });
-
-    const claimed = await repo.claimNext('worker', 60, 'operator_pc');
-    expect(claimed).toBeNull();
-  });
-
-  it('multiple workers on different lanes can claim concurrently', async () => {
-    const repo = makeRepo();
-    await repo.enqueue({ ...BASE_ENQUEUE, jobId: 'j1', renderLane: null });
-    await repo.enqueue({ ...BASE_ENQUEUE, jobId: 'j2', renderLane: 'operator_pc' });
-
-    const macClaim = await repo.claimNext('mac', 60, undefined);
-    const marClaim = await repo.claimNext('mar', 60, 'operator_pc');
-
-    expect(macClaim?.jobId).toBe('j1');
-    expect(marClaim?.jobId).toBe('j2');
-  });
+import baseline from './fixtures/pre049.json';
+const task = { jobId: 'j', requestId: 'r', step: RenderStep.FfmpegComposition, renderLane: 'mac_mini' };
+afterEach(() => { delete process.env.RENDER_LANE_ENABLED; });
+test('disabled flag uses byte-for-byte original INSERT and claim SQL without migration 049', async () => {
+  const query = jest.fn().mockResolvedValue({ rows: [{ id: 't' }] });
+  const repo = new PostgresRenderTaskRepository({ query } as never);
+  await repo.enqueue(task); await repo.claimNext('main',60);
+  expect(query.mock.calls[0][0]).toBe(baseline.insert);
+  expect(query.mock.calls[1][0]).toBe(baseline.claim);
+  expect(query.mock.calls[0][1]).toHaveLength(7);
+  expect(query.mock.calls[1][1]).toHaveLength(4);
+});
+test('enabled LINE enqueue carries main lane and backup claims only on stale heartbeat or excessive wait', async () => {
+  process.env.RENDER_LANE_ENABLED = 'true';
+  const query = jest.fn().mockResolvedValue({ rows: [{ id: 't' }] });
+  const repo = new PostgresRenderTaskRepository({ query } as never);
+  await repo.enqueue(task); await repo.claimNext('mar',60,'backup');
+  expect(query.mock.calls[0][1][7]).toBe('mac_mini');
+  const [sql, params] = query.mock.calls[1];
+  expect(sql).toContain('FOR UPDATE SKIP LOCKED');
+  expect(sql).toContain("render_lane = 'mac_mini'");
+  expect(sql).toContain('NOT EXISTS (SELECT 1 FROM render_lane_heartbeats');
+  expect(sql).toContain("lane = 'main'");
+  expect(sql).toContain("OR enqueued_at < NOW()");
+  expect(params.slice(4)).toEqual(['90','600']);
+});
+test('enabled main worker still claims studio and LINE jobs', async () => {
+  process.env.RENDER_LANE_ENABLED = 'true';
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  await new PostgresRenderTaskRepository({ query } as never).claimNext('mac',60,'main');
+  expect(query.mock.calls[0][0]).not.toContain('NOT EXISTS');
+  expect(query.mock.calls[0][1]).toHaveLength(4);
 });

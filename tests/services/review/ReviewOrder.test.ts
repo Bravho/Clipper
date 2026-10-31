@@ -1,95 +1,22 @@
-/**
- * Tests for review ordering and revision limit enforcement.
- *
- * MAX_REVISIONS_PER_CLIP: a requester may request at most 2 revisions per clip.
- * MAX_CLIP_DURATION_SECONDS: 90s maximum.
- */
-
-import { MAX_REVISIONS_PER_CLIP, MAX_CLIP_DURATION_SECONDS } from '@/config/reviewSystem';
-
-describe('reviewSystem constants', () => {
-  it('MAX_REVISIONS_PER_CLIP is 2', () => {
-    expect(MAX_REVISIONS_PER_CLIP).toBe(2);
-  });
-
-  it('MAX_CLIP_DURATION_SECONDS is 90', () => {
-    expect(MAX_CLIP_DURATION_SECONDS).toBe(90);
-  });
+jest.mock('@/repositories', () => ({ createReviewService: jest.fn(), uploadedAssetRepository: { findById: jest.fn() } }));
+import { gateAudience, onLineReviewGate, LINE_REVIEW_GATES } from '@/services/review/lineReviewGate';
+import { createReviewService } from '@/repositories';
+import { assertDurationAllowed, assertRevisionAllowed } from '@/services/review/ReviewService';
+test('production gate hook chooses one audience and visits storyboard, voice, then video', async () => {
+  process.env.REVIEW_SYSTEM_ENABLED = 'true';
+  const createItem = jest.fn();
+  (createReviewService as jest.Mock).mockReturnValue({ createItem });
+  const request = { id: 'r', userId: 'shop', intakeChannel: 'line', shopReviewPreferences: { storyboard: true, voice: true } } as never;
+  for (const step of LINE_REVIEW_GATES) await onLineReviewGate(request, { id: 'j', currentStep: step } as never);
+  expect(createItem.mock.calls.map(([input]) => input.typeKey)).toEqual(['script','tts','video']);
+  expect(createItem.mock.calls.map(([input]) => input.payload.audience)).toEqual(['shop','shop','admin']);
+  expect(gateAudience({ shopReviewPreferences: { storyboard: false } } as never, LINE_REVIEW_GATES[0])).toBe('admin');
+  await onLineReviewGate({ intakeChannel: 'studio' } as never, { currentStep: LINE_REVIEW_GATES[0] } as never);
+  expect(createItem).toHaveBeenCalledTimes(3);
 });
-
-describe('revision limit enforcement (unit logic)', () => {
-  function canRequestRevision(revisionCount: number): boolean {
-    return revisionCount < MAX_REVISIONS_PER_CLIP;
-  }
-
-  it('allows first revision (revisionCount=0)', () => {
-    expect(canRequestRevision(0)).toBe(true);
-  });
-
-  it('allows second revision (revisionCount=1)', () => {
-    expect(canRequestRevision(1)).toBe(true);
-  });
-
-  it('blocks third revision (revisionCount=2)', () => {
-    expect(canRequestRevision(2)).toBe(false);
-  });
-
-  it('blocks excessive revisions', () => {
-    expect(canRequestRevision(5)).toBe(false);
-  });
-});
-
-describe('clip duration enforcement (unit logic)', () => {
-  function isDurationValid(seconds: number): boolean {
-    return seconds > 0 && seconds <= MAX_CLIP_DURATION_SECONDS;
-  }
-
-  it('accepts 30 seconds', () => {
-    expect(isDurationValid(30)).toBe(true);
-  });
-
-  it('accepts exactly 90 seconds', () => {
-    expect(isDurationValid(90)).toBe(true);
-  });
-
-  it('rejects 91 seconds', () => {
-    expect(isDurationValid(91)).toBe(false);
-  });
-
-  it('rejects 0 seconds', () => {
-    expect(isDurationValid(0)).toBe(false);
-  });
-
-  it('rejects negative duration', () => {
-    expect(isDurationValid(-5)).toBe(false);
-  });
-});
-
-describe('review item priority ordering', () => {
-  interface Item { id: string; priority: number; dueAt: Date }
-
-  function sortByPriority(items: Item[]): Item[] {
-    return [...items].sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority - b.priority;
-      return a.dueAt.getTime() - b.dueAt.getTime();
-    });
-  }
-
-  it('lower priority number sorts first (urgent)', () => {
-    const items: Item[] = [
-      { id: 'b', priority: 100, dueAt: new Date('2026-11-02') },
-      { id: 'a', priority: 10, dueAt: new Date('2026-11-02') },
-    ];
-    const sorted = sortByPriority(items);
-    expect(sorted[0].id).toBe('a');
-  });
-
-  it('breaks ties by dueAt (earlier first)', () => {
-    const items: Item[] = [
-      { id: 'b', priority: 100, dueAt: new Date('2026-11-05') },
-      { id: 'a', priority: 100, dueAt: new Date('2026-11-03') },
-    ];
-    const sorted = sortByPriority(items);
-    expect(sorted[0].id).toBe('a');
-  });
+test('production limits accept boundaries and reject excess, zero, and non-finite durations', () => {
+  expect(() => assertRevisionAllowed(1)).not.toThrow();
+  expect(() => assertRevisionAllowed(2)).toThrow('max_revisions');
+  expect(() => assertDurationAllowed(90)).not.toThrow();
+  for (const duration of [91,0,-1,NaN,Infinity]) expect(() => assertDurationAllowed(duration)).toThrow();
 });

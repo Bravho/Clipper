@@ -84,6 +84,17 @@ export function applyShopRules(
     }
   }
 
+  for (const name of rules.menuNames ?? []) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\  return { text: result.trim(), corrections };');
+    result = result.replace(new RegExp(escaped, 'gi'), name);
+    if (!result.includes(name)) result += '\n' + name;
+  }
+  for (const promo of rules.promotions ?? []) {
+    if (!result.includes(promo)) {
+      corrections.push({ field: 'promotion', original: '', corrected: promo, reason: 'fixed shop promotion' });
+      result += '\n' + promo;
+    }
+  }
   return { text: result.trim(), corrections };
 }
 

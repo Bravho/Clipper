@@ -154,18 +154,53 @@ import { PostgresMerchantCampaignRepository } from "./postgres/PostgresMerchantC
 
 export const merchantCampaignRepository = new PostgresMerchantCampaignRepository();
 
-// ── Review System — Mock (TODO: replace with Postgres implementations) ────────
-// Requires migrations 048_review_core.sql and 049_line_intake.sql.
-import { MockReviewItemRepository } from "./mock/MockReviewItemRepository";
-import { MockReviewActionRepository } from "./mock/MockReviewActionRepository";
-import { MockEscalationRuleRepository } from "./mock/MockEscalationRuleRepository";
-import { MockReviewOutboxRepository } from "./mock/MockReviewOutboxRepository";
-import { MockLineAccountRepository } from "./mock/MockLineAccountRepository";
-import { MockServicePackageRepository } from "./mock/MockServicePackageRepository";
+// ── Review System — PostgreSQL ────────────────────────────────────────────────
+// Requires migrations 048_review_core.sql, 049_line_intake.sql, 050_service_packages.sql.
+import { PostgresReviewItemRepository } from "./postgres/PostgresReviewItemRepository";
+import { PostgresReviewActionRepository } from "./postgres/PostgresReviewActionRepository";
+import { PostgresEscalationRuleRepository } from "./postgres/PostgresEscalationRuleRepository";
+import { PostgresReviewOutboxRepository } from "./postgres/PostgresReviewOutboxRepository";
+import { PostgresLineAccountRepository } from "./postgres/PostgresLineAccountRepository";
+import { PostgresServicePackageRepository } from "./postgres/PostgresServicePackageRepository";
 
-export const reviewItemRepository = new MockReviewItemRepository();
-export const reviewActionRepository = new MockReviewActionRepository();
-export const escalationRuleRepository = new MockEscalationRuleRepository();
-export const reviewOutboxRepository = new MockReviewOutboxRepository();
-export const lineAccountRepository = new MockLineAccountRepository();
-export const servicePackageRepository = new MockServicePackageRepository();
+export const reviewItemRepository = new PostgresReviewItemRepository();
+export const reviewActionRepository = new PostgresReviewActionRepository();
+export const escalationRuleRepository = new PostgresEscalationRuleRepository();
+export const reviewOutboxRepository = new PostgresReviewOutboxRepository();
+export const lineAccountRepository = new PostgresLineAccountRepository();
+export const servicePackageRepository = new PostgresServicePackageRepository();
+
+import { pool } from '@/lib/db';
+import { ReviewService } from '@/services/review/ReviewService';
+
+// Every decision uses one checked-out connection; failures roll back the item,
+// audit record and outbox together. No connection is opened on module import.
+export function createReviewService(): ReviewService {
+  return new ReviewService(reviewItemRepository, reviewActionRepository,
+    escalationRuleRepository, reviewOutboxRepository, async work => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const db = client as unknown as typeof pool;
+        const result = await work(new ReviewService(new PostgresReviewItemRepository(db),
+          new PostgresReviewActionRepository(db), escalationRuleRepository,
+          new PostgresReviewOutboxRepository(db), undefined, async requestId => {
+            const result = await client.query(`UPDATE clip_requests SET revision_count=revision_count+1
+              WHERE id=$1 AND intake_channel='line' AND revision_count < 2 RETURNING id`, [requestId]);
+            if (!result.rowCount) throw Object.assign(new Error('max_revisions_exceeded'), { code: 'max_revisions_exceeded' });
+          }));
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally { client.release(); }
+    });
+}
+
+export async function recordRenderLaneHeartbeat(lane: string): Promise<void> {
+  if (process.env.RENDER_LANE_ENABLED !== 'true') return;
+  const normalized = lane === 'backup' || lane === 'operator_pc' ? 'backup' : 'main';
+  await pool.query(`INSERT INTO render_lane_heartbeats (lane,last_seen_at) VALUES ($1,NOW())
+    ON CONFLICT (lane) DO UPDATE SET last_seen_at=NOW()`, [normalized]);
+}

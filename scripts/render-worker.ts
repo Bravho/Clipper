@@ -184,6 +184,8 @@ async function recordResourceSample(): Promise<void> {
 async function heartbeatTick(): Promise<void> {
   try {
     await videoGenerationJobRepository.recordWorkerHeartbeat(WORKER_ID);
+    const { recordRenderLaneHeartbeat } = await import('../src/repositories/index');
+    await recordRenderLaneHeartbeat(process.env.RENDER_LANE ?? 'main');
     await Promise.all(
       [...inFlight].map((taskId) => renderTaskRepository.touch(taskId).catch(() => {}))
     );
@@ -357,7 +359,8 @@ async function workerSlot(slot: number): Promise<void> {
     try {
       task = await renderTaskRepository.claimNext(
         WORKER_ID,
-        RENDER_QUEUE.staleClaimSeconds
+        RENDER_QUEUE.staleClaimSeconds,
+        process.env.RENDER_LANE ?? 'main'
       );
     } catch (err) {
       log("claim query failed", { slot, error: String(err) });
