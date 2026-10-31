@@ -1,3 +1,5 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
+import { spacesSignedUrl as lineSignedUrl } from '@/lib/spaces';
 import * as fs from "fs/promises";
 import * as path from "path";
 import { exec } from "child_process";
@@ -210,7 +212,7 @@ async function uploadFromTmp(localPath: string, storageKey: string): Promise<str
   // Multipart: a large animated clip times out on a single PutObject (~50s
   // window) and DO Spaces returns an opaque 400. Split into small parts.
   await spacesUpload({ key: storageKey, body: data, contentType: "video/mp4" });
-  return spacesPublicUrl(storageKey);
+  return (isPrivateLineStorage() ? await lineSignedUrl(storageKey, 900) : spacesPublicUrl(storageKey));
 }
 
 export async function renderAnimationsOnVideo(params: {

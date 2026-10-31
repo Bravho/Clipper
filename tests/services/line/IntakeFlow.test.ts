@@ -8,6 +8,11 @@ import { MockUploadedAssetRepository } from '@/repositories/mock/MockUploadedAss
 jest.mock('@/lib/line/lineStorage', () => ({ uploadLineAsset: jest.fn() }));
 import { uploadLineAsset } from '@/lib/line/lineStorage';
 import { RequestStatus } from '@/domain/enums/RequestStatus';
+import { ReviewService, getDefaultTypeCfg } from '@/services/review/ReviewService';
+import { MockReviewItemRepository } from '@/repositories/mock/MockReviewItemRepository';
+import { MockReviewActionRepository } from '@/repositories/mock/MockReviewActionRepository';
+import { MockEscalationRuleRepository } from '@/repositories/mock/MockEscalationRuleRepository';
+import { MockReviewOutboxRepository } from '@/repositories/mock/MockReviewOutboxRepository';
 
 test('real state machine blocks unpaid checkout, collects preferences and privately stores media', async () => {
   const accounts = new MockLineAccountRepository();
@@ -17,7 +22,14 @@ test('real state machine blocks unpaid checkout, collects preferences and privat
     requests, new MockUploadedAssetRepository(new Map()));
   const reply = jest.fn();
   const push = jest.fn();
-  const escalation = jest.fn();
+  process.env.REVIEW_SYSTEM_ENABLED = 'true';
+  const reviews = new MockReviewItemRepository(new Map());
+  const reviewService = new ReviewService(reviews, new MockReviewActionRepository(new Map()),
+    new MockEscalationRuleRepository(new Map()), new MockReviewOutboxRepository(new Map()));
+  const escalation = jest.fn(async (input: { text: string; intent: string }) => {
+    await reviewService.createItem({ typeKey: 'customer_reply', shopUserId: 'u', title: input.intent,
+      payload: { text: input.text }, signals: {}, typeCfg: getDefaultTypeCfg('customer_reply') });
+  });
   const opts = { lineChannelId: 'c', lineAccountRepo: accounts, lineClient: { reply, push },
     choosePackage: (user: string, code: string) => intake.choosePackage(user, code),
     isPaid: (order: string, user: string) => intake.isPaid(order, user),
@@ -44,4 +56,5 @@ test('real state machine blocks unpaid checkout, collects preferences and privat
   expect(push).not.toHaveBeenCalled();
   await send('human');
   expect(escalation).toHaveBeenCalledWith(expect.objectContaining({ intent: 'wants_human' }));
+  expect(await reviews.listPending()).toHaveLength(1);
 });

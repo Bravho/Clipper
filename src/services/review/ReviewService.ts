@@ -190,20 +190,8 @@ export class ReviewService {
 
     // Auto-approve
     if (result.outcome === 'auto_send') {
-      item = await this.reviewItemRepo.update(item.id, {
-        status: 'approved',
-        resolution: 'auto_approved',
-        decidedVia: 'auto',
-        decidedAt: now,
-      });
-      await this.actionRepo.create({
-        reviewItemId: item.id,
-        itemVersion: 1,
-        action: 'auto_approved',
-        actorVia: 'auto',
-        fromStatus: 'pending',
-        toStatus: 'approved',
-      });
+      item = await this.decide({ itemId: item.id, expectedVersion: item.version,
+        actorVia: 'auto', decision: 'approve' });
     } else {
       await this.actionRepo.create({
         reviewItemId: item.id,
@@ -265,7 +253,7 @@ export class ReviewService {
     }
 
     // For video approvals, ensure render is ready (not still rendering)
-    if (input.decision === 'approve') {
+    {
       if (item.renderState === 'queued' || item.renderState === 'rendering' || item.renderState === 'failed') {
         throw Object.assign(new Error('render_not_ready'), { code: 'render_not_ready' });
       }
@@ -284,7 +272,7 @@ export class ReviewService {
       // Atomic conditional update: WHERE version = expectedVersion
       const updated = await this.reviewItemRepo.update(item.id, {
         status: 'approved',
-        resolution: item.renderState !== 'none' ? 'approved_with_edits' : 'approved',
+        resolution: input.actorVia === 'auto' ? 'auto_approved' : item.renderState !== 'none' ? 'approved_with_edits' : 'approved',
         decidedBy: input.actorUserId,
         decidedVia: input.actorVia,
         decidedAt: now,
@@ -293,7 +281,7 @@ export class ReviewService {
       await this.actionRepo.create({
         reviewItemId: item.id,
         itemVersion: item.version,
-        action: 'approved',
+        action: input.actorVia === 'auto' ? 'auto_approved' : 'approved',
         actorUserId: input.actorUserId,
         actorVia: input.actorVia,
         fromStatus: item.status,

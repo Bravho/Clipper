@@ -186,6 +186,16 @@ async function heartbeatTick(): Promise<void> {
     await videoGenerationJobRepository.recordWorkerHeartbeat(WORKER_ID);
     const { recordRenderLaneHeartbeat } = await import('../src/repositories/index');
     await recordRenderLaneHeartbeat(process.env.RENDER_LANE ?? 'main');
+    if (process.env.REVIEW_SYSTEM_ENABLED === 'true' && process.env.LINE_INTAKE_ENABLED === 'true') {
+      try {
+        const { reviewOutboxRepository, reviewItemRepository, lineAccountRepository } = await import('../src/repositories/index');
+        const { processLineReviewOutbox } = await import('../src/services/line/LineReviewOutboxWorker');
+        const { executeReviewDecision } = await import('../src/services/review/lineReviewGate');
+        const { LineClient } = await import('../src/lib/line/LineClient');
+        await processLineReviewOutbox({ outbox: reviewOutboxRepository, items: reviewItemRepository,
+          accounts: lineAccountRepository, client: new LineClient(), execute: executeReviewDecision });
+      } catch (error) { log('LINE outbox failed', { error: String(error) }); }
+    }
     await Promise.all(
       [...inFlight].map((taskId) => renderTaskRepository.touch(taskId).catch(() => {}))
     );

@@ -137,12 +137,39 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
   async updateOrderStatus(id: string, status: PackageOrder['status'], paidReference?: string): Promise<void> {
     await this.db.query(
       `UPDATE package_orders SET status=$2, paid_reference=COALESCE($3, paid_reference), updated_at=NOW()
-       WHERE id=$1`,
+       WHERE id=$1 AND ($2 <> 'active' OR status='pending_payment')`,
       [id, status, paidReference ?? null]
     );
   }
 
-  async recordUsage(input: {
+  async recordUsage(input: Parameters<IServicePackageRepository['recordUsage']>[0]): Promise<PackageUsage> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query('SELECT * FROM package_orders WHERE id=$1 FOR UPDATE', [input.packageOrderId]);
+      const order = locked.rows[0];
+      if (!order || order.status !== 'active' || new Date(order.expires_at) <= new Date()) throw new Error('inactive_package');
+      if (!Number.isInteger(input.units ?? 1) || (input.units ?? 1) <= 0) throw new Error('invalid_units');
+      if (input.kind === 'clip') {
+        const existing = await client.query("SELECT * FROM package_usage WHERE request_id=$1 AND kind='clip'", [input.requestId]);
+        if (existing.rows[0]) { await client.query('COMMIT'); return rowToUsage(existing.rows[0]); }
+        const used = await client.query(`SELECT COALESCE(SUM(CASE WHEN kind='clip' THEN units WHEN kind='refund_clip' THEN -units ELSE 0 END),0)::int AS used
+          FROM package_usage WHERE package_order_id=$1`, [input.packageOrderId]);
+        if (Number(used.rows[0]?.used) + (input.units ?? 1) > Number(order.clips_included)) throw new Error('package_exhausted');
+      }
+      if (input.kind === 'revision') {
+        const used = await client.query(`SELECT COALESCE(SUM(units),0)::int AS used FROM package_usage
+          WHERE package_order_id=$1 AND request_id=$2 AND kind='revision'`, [input.packageOrderId,input.requestId]);
+        if (Number(used.rows[0]?.used) + (input.units ?? 1) > Math.min(2,Number(order.revisions_per_clip))) throw new Error('max_revisions_exceeded');
+      }
+      const result = await new PostgresServicePackageRepository(client as unknown as typeof pool)._insertUsage(input);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
+  private async _insertUsage(input: {
     packageOrderId: string;
     requestId: string;
     kind: PackageUsage['kind'];

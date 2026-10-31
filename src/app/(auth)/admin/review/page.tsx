@@ -14,7 +14,7 @@ export default async function ReviewQueue() {
     if (decision !== 'approve' && decision !== 'reject') throw new Error('Invalid decision');
     const item = await createReviewService().decide({ itemId: String(form.get('itemId')),
       expectedVersion: Number(form.get('version')), actorUserId: user.id, actorVia: 'web', decision });
-    await executeReviewDecision(item.id);
+
     revalidatePath('/admin/review');
   }
   return <main className="p-8 space-y-4"><h1>Review queue</h1>{items.filter(item => item.payload.audience !== 'shop').map(item =>

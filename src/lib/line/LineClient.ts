@@ -27,16 +27,17 @@ export class LineClient implements ILineClient {
     }
   }
 
-  async push(userId: string, messages: LineMessage[]): Promise<void> {
+  async push(userId: string, messages: LineMessage[], retryKey?: string): Promise<void> {
     const res = await fetch(LINE_PUSH_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${this.token}`,
+        ...(retryKey ? { 'X-Line-Retry-Key': retryKey } : {}),
       },
       body: JSON.stringify({ to: userId, messages }),
     });
-    if (!res.ok) {
+    if (!res.ok && res.status !== 409) {
       const body = await res.text().catch(() => '');
       throw new Error(`LINE push failed ${res.status}: ${body}`);
     }

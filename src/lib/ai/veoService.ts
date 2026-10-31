@@ -1,3 +1,5 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
+import { spacesSignedUrl as lineSignedUrl } from '@/lib/spaces';
 import { AI_CONFIG } from "@/config/aiTools";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import { buildAiVideoKey } from "@/lib/spacesKeys";
@@ -286,5 +288,5 @@ export async function downloadAndStore(
     })
   );
 
-  return { storageKey, storageUrl: spacesPublicUrl(storageKey), fileSizeBytes: buffer.length };
+  return { storageKey, storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(storageKey, 900) : spacesPublicUrl(storageKey)), fileSizeBytes: buffer.length };
 }

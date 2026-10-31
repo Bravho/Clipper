@@ -1,3 +1,5 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
+import { spacesSignedUrl as lineSignedUrl } from '@/lib/spaces';
 /**
  * elevenLabsTtsService.ts
  *
@@ -114,7 +116,7 @@ export async function synthesizeAndStore(
 
   return {
     storageKey,
-    storageUrl: spacesPublicUrl(storageKey),
+    storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(storageKey, 900) : spacesPublicUrl(storageKey)),
     fileSizeBytes: buffer.byteLength,
     mimeType: "audio/mpeg",
     fileName: ELEVENLABS_VOICE_FILE_NAME,

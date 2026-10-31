@@ -1,6 +1,10 @@
 import { applyShopRules, extractPriceSignals, ShopRules } from '@/services/review/ShopRulesEngine';
 
 describe('ShopRulesEngine.applyShopRules', () => {
+  it('removes an unapproved promotion before inserting shop promotions', () => {
+    const result = applyShopRules('Free everything, 90% discount!', { promotions: ['Lunch set available'] });
+    expect(result.text).toBe('Lunch set available');
+  });
   it('corrects wrong price for a menu item', () => {
     const text = 'ข้าวผัด 80 บาท';
     const rules: ShopRules = {

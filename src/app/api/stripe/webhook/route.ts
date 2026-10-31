@@ -101,7 +101,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Reject live-mode events unless explicitly allowed
-  if (event.livemode && !STRIPE_ALLOW_LIVE) {
+  if (event.livemode !== false && !STRIPE_ALLOW_LIVE) {
     console.warn('[stripe/webhook] live-mode event rejected (STRIPE_ALLOW_LIVE not set)');
     return NextResponse.json({ error: 'Live mode not allowed.' }, { status: 400 });
   }

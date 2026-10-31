@@ -275,6 +275,7 @@ export class PostgresClipRequestRepository
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   async create(input: CreateClipRequestInput): Promise<ClipRequest> {
+    if (input.intakeChannel !== "line") return this._createStudio(input);
     const intakeChannel = (input as Record<string, unknown>)['intakeChannel'] ?? 'studio';
     const renderLane = (input as Record<string, unknown>)['renderLane'] ?? null;
     const { rows } = await this.db.query(
@@ -302,6 +303,34 @@ export class PostgresClipRequestRepository
         intakeChannel,
         renderLane,
         input.packageOrderId ?? null, input.externalRef ?? null, JSON.stringify(input.shopReviewPreferences ?? {}), JSON.stringify(input.shopRules ?? {}),
+      ]
+    );
+    return rowToClipRequest(rows[0]);
+  }
+
+  private async _createStudio(input: CreateClipRequestInput): Promise<ClipRequest> {
+    const { rows } = await this.db.query(
+      `INSERT INTO clip_requests (
+         user_id, title, place_name, latitude, longitude, description, target_audience,
+         target_platforms, preferred_style, preferred_language,
+         duration_seconds, credits_cost
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING *`,
+      [
+        input.userId,
+        input.title,
+        input.placeName,
+        input.latitude,
+        input.longitude,
+        input.description,
+        input.targetAudience,
+        input.targetPlatforms,
+        input.preferredStyle,
+        input.preferredLanguage,
+        input.durationSeconds,
+        // Legacy `credits_cost` column: requests are drawn from a monthly quota and
+        // cost no credits, so every modern row is 0.
+        0,
       ]
     );
     return rowToClipRequest(rows[0]);

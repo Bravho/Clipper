@@ -593,3 +593,20 @@ describe("VideoGenerationService — montage engine (Phase 3)", () => {
   });
 });
 // end of montage Phase 3 suite
+
+// LINE policy is exercised through the real pipeline persistence path.
+test('LINE pipeline applies fixed menu/promo copy and rejects unlicensed music and excessive duration', async () => {
+  const studio = await createRequestWithImages(1);
+  const request = await mockClipRepo.create({ ...studio, intakeChannel: 'line',
+    shopRules: { menuNames: ['Noodles'], menuPrices: { Noodles: 75 }, promotions: ['Lunch deal'] } });
+  const job = await createMontageJob(request.id, VideoGenerationStep.GeneratingVoice);
+  const service = new VideoGenerationService() as unknown as {
+    _updateJob: (id: string, data: Record<string, unknown>) => Promise<unknown>;
+  };
+  await service._updateJob(job.id, { approvedScriptThai: 'Invented burger 999 THB, free everything', captionThai: 'Fake promo' });
+  const saved = await mockJobRepo.findById(job.id);
+  expect(saved?.approvedScriptThai).toBe('Noodles 75 THB\nLunch deal');
+  expect(saved?.captionThai).toBe('Noodles 75 THB\nLunch deal');
+  await expect(service._updateJob(job.id, { selectedMusicTrack: 'unknown-unlicensed-track' })).rejects.toThrow('unlicensed_music');
+  await expect(service._updateJob(job.id, { voiceDurationSeconds: 91 })).rejects.toThrow('duration_exceeded');
+});

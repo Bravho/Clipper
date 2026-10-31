@@ -31,7 +31,7 @@ test.each(['queued','rendering','failed','expired'])('service rejects unsafe sta
   await expect(service.decide({ itemId: item.id, expectedVersion: 1, decision: 'approve', actorVia: 'web' })).rejects.toThrow();
 });
 test('real Postgres decision update conditions on status and version and reports lost race', async () => {
-  const query = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+  const query = jest.fn(async (_sql: string, _params: unknown[]) => ({ rows: [], rowCount: 0 }));
   const repo = new PostgresReviewItemRepository({ query } as never);
   await expect(repo.update('i', { status: 'approved' }, { expectedVersion: 2, expectedStatus: 'pending' })).rejects.toMatchObject({ code: 'version_conflict' });
   expect(query.mock.calls[0][0]).toContain('AND version = $3 AND status = $4 AND expires_at > NOW()');

@@ -77,7 +77,7 @@ export class LineIntakeService {
     await this.packages.recordUsage({ packageOrderId: orderId, requestId: request.id, kind: 'clip' });
     await this.requests.updateStatus(request.id, RequestStatus.Submitted, {
       submittedAt: new Date(), creditConfirmed: true, rightsConfirmed: true, aiProcessingConfirmed: true,
-      downloadUnlocked: true });
+      aiConsentVersion: "1.0.0", aiConsentAcceptedAt: new Date(), downloadUnlocked: true });
     return { requestId: request.id };
   }
 }

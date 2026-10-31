@@ -40,7 +40,9 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
     const { rows } = await this.db.query(
       `INSERT INTO review_outbox
          (event_type, channel, review_item_id, dedupe_key, payload, next_attempt_at)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (channel,dedupe_key) WHERE dedupe_key IS NOT NULL
+       DO UPDATE SET dedupe_key=EXCLUDED.dedupe_key RETURNING *`,
       [
         input.eventType,
         input.channel ?? 'grokbot_app',
@@ -55,10 +57,10 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
 
   async claimNext(): Promise<OutboxEvent | null> {
     const { rows } = await this.db.query(
-      `UPDATE review_outbox SET state='sending', attempts=attempts+1
+      `UPDATE review_outbox SET state='sending', attempts=attempts+1, next_attempt_at=NOW() + interval '2 minutes'
         WHERE id = (
           SELECT id FROM review_outbox
-           WHERE state IN ('queued','failed') AND next_attempt_at <= NOW()
+           WHERE state IN ('queued','failed','sending') AND next_attempt_at <= NOW()
            ORDER BY next_attempt_at ASC
            FOR UPDATE SKIP LOCKED
            LIMIT 1

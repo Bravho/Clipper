@@ -121,6 +121,15 @@ export class MockServicePackageRepository implements IServicePackageRepository {
     note?: string;
     createdBy?: string;
   }): Promise<PackageUsage> {
+    if (input.kind === 'revision') {
+      const used = [...this.usages.values()].filter(u => u.packageOrderId === input.packageOrderId &&
+        u.requestId === input.requestId && u.kind === 'revision').reduce((sum,u) => sum + u.units,0);
+      if (used + (input.units ?? 1) > 2) throw new Error('max_revisions_exceeded');
+    }
+    if (input.kind === 'clip') {
+      const existing = [...this.usages.values()].find(u => u.requestId === input.requestId && u.kind === 'clip');
+      if (existing) return { ...existing };
+    }
     const usage: PackageUsage = {
       id: String(++this.seq),
       packageOrderId: input.packageOrderId,

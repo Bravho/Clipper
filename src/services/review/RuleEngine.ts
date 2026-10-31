@@ -146,6 +146,11 @@ export function evaluate(
   }
 
   // ── 4. Trusted shop path ───────────────────────────────────────────────────
+  const effectiveConfidence = confidence ?? (signals['confidence'] as number | undefined);
+  if (effectiveConfidence !== undefined && effectiveConfidence < typeCfg.confidenceThreshold) {
+    return { outcome: 'needs_review', decisionMode: 'review', matchedRules,
+      trace: [...trace, 'type.confidenceThreshold not met'] };
+  }
   if (trust?.enabled && trust.allowedTypes.includes(typeKey)) {
     const conf = confidence ?? (signals['confidence'] as number | undefined);
     const minConf = trust.minConfidence;

@@ -193,7 +193,10 @@ export class PostgresReviewItemRepository implements IReviewItemRepository {
 
     if (opts?.expectedStatus !== undefined) {
       values.push(opts.expectedStatus);
-      whereClause += ` AND status = ${idx++} AND expires_at > NOW()`;
+      whereClause += ` AND status = $${idx++} AND expires_at > NOW()`;
+    }
+    if (data.status === 'approved') {
+      whereClause += " AND render_state IN ('none', 'done')";
     }
     const { rows, rowCount } = await this.db.query(
       `UPDATE review_items SET ${sets.join(', ')} ${whereClause} RETURNING *`,

@@ -10,7 +10,7 @@ import { spacesSignedUrl } from '@/lib/spaces';
 import { isPrivateLineStorage } from '@/lib/line/storageContext';
 async function readableAsset(row: Record<string, unknown>): Promise<UploadedAsset> {
   const asset = rowToAsset(row);
-  if (asset.storageKey.startsWith('line_uploads/') || (!asset.storageUrl && asset.storageKey) || isPrivateLineStorage()) {
+  if (asset.storageKey.startsWith('line_uploads/') || (!asset.storageUrl && asset.storageKey && asset.uploadStatus === AssetUploadStatus.Uploaded) || isPrivateLineStorage()) {
     asset.storageUrl = await spacesSignedUrl(asset.storageKey, 900);
     if (asset.thumbnailKey) asset.thumbnailUrl = await spacesSignedUrl(asset.thumbnailKey, 900);
   }

@@ -306,7 +306,7 @@ export async function processLineEvent(
 
   if (state === 'awaiting_payment') {
     if (!opts.isPaid || !await opts.isPaid(String(context.orderId), lineUserId)) {
-      if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: '??????????????????? ?????????????????????????' }]);
+      if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: '\u0e23\u0e2d\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19\u0e0a\u0e33\u0e23\u0e30\u0e40\u0e07\u0e34\u0e19' }]);
       return { escalated: false, intent: 'payment_pending' };
     }
     await opts.lineAccountRepo.upsertConversationState(opts.lineChannelId, lineUserId, 'awaiting_brief', context);

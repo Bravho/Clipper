@@ -1,3 +1,5 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
+import { spacesSignedUrl as lineSignedUrl } from '@/lib/spaces';
 import { execFile } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs/promises";
@@ -515,7 +517,7 @@ export async function concatVideos(
       const { size } = await fs.stat(single);
       return {
         storageKey: outputStorageKey,
-        storageUrl: spacesPublicUrl(outputStorageKey),
+        storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(outputStorageKey, 900) : spacesPublicUrl(outputStorageKey)),
         fileSizeBytes: size,
       };
     }
@@ -569,7 +571,7 @@ export async function concatVideos(
     const { size } = await fs.stat(outPath);
     return {
       storageKey: outputStorageKey,
-      storageUrl: spacesPublicUrl(outputStorageKey),
+      storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(outputStorageKey, 900) : spacesPublicUrl(outputStorageKey)),
       fileSizeBytes: size,
     };
   } finally {
@@ -778,7 +780,7 @@ export async function overlayOnMaster(params: {
     const { size } = await fs.stat(outPath);
     return {
       storageKey: outputStorageKey,
-      storageUrl: spacesPublicUrl(outputStorageKey),
+      storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(outputStorageKey, 900) : spacesPublicUrl(outputStorageKey)),
       fileSizeBytes: size,
     };
   } finally {
@@ -918,7 +920,7 @@ export async function applyTiledWatermark(params: {
     );
     return {
       storageKey: outputStorageKey,
-      storageUrl: spacesPublicUrl(outputStorageKey),
+      storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(outputStorageKey, 900) : spacesPublicUrl(outputStorageKey)),
       fileSizeBytes: size,
     };
   } finally {
@@ -1078,7 +1080,7 @@ export async function concatVideosWithCrossfade(
     const { size } = await fs.stat(outPath);
     return {
       storageKey: outputStorageKey,
-      storageUrl: spacesPublicUrl(outputStorageKey),
+      storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(outputStorageKey, 900) : spacesPublicUrl(outputStorageKey)),
       fileSizeBytes: size,
     };
   } catch (err) {
@@ -1134,7 +1136,7 @@ export async function concatLocalVideosWithCrossfade(
     const { size } = await fs.stat(outPath);
     return {
       storageKey: outputStorageKey,
-      storageUrl: spacesPublicUrl(outputStorageKey),
+      storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(outputStorageKey, 900) : spacesPublicUrl(outputStorageKey)),
       fileSizeBytes: size,
     };
   } finally {
@@ -1240,7 +1242,7 @@ export async function composeAndExport(
         const storageKey = buildFinalClipKey(params.userId, params.requestId, ratio);
         await uploadToSpaces(outPath, storageKey);
         console.log(`[compose:${ratio}] uploaded → ${storageKey}`);
-        results[ratio] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+        results[ratio] = { storageKey, storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(storageKey, 900) : spacesPublicUrl(storageKey)) };
       })
     );
     console.log(`[compose] request ${params.requestId}: all ${targetRatios.length} ratio master(s) composed + uploaded`);
@@ -1268,7 +1270,7 @@ export async function composeAndExport(
 
       const storageKey = buildFinalClipKey(params.userId, params.requestId, "travy");
       await uploadToSpaces(outPath, storageKey);
-      results["travy"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+      results["travy"] = { storageKey, storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(storageKey, 900) : spacesPublicUrl(storageKey)) };
     } else if (
       params.assSubtitlesContentTravy &&
       params.assSubtitlesContentTravy !== params.assSubtitlesContent
@@ -1294,7 +1296,7 @@ export async function composeAndExport(
 
       const storageKey = buildFinalClipKey(params.userId, params.requestId, "travy");
       await uploadToSpaces(outPath, storageKey);
-      results["travy"] = { storageKey, storageUrl: spacesPublicUrl(storageKey) };
+      results["travy"] = { storageKey, storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(storageKey, 900) : spacesPublicUrl(storageKey)) };
     }
 
     return { exports: results };

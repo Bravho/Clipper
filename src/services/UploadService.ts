@@ -1,3 +1,7 @@
+import { clipRequestRepository } from '@/repositories';
+import { isLineIntakeEnabled } from '@/config/reviewSystem';
+import { withLineStorage, isPrivateLineStorage } from '@/lib/line/storageContext';
+import { spacesSignedUrl } from '@/lib/spaces';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -343,6 +347,7 @@ export class UploadService {
       Bucket: SPACES_BUCKET,
       Key: key,
       ContentType: input.mimeType,
+      ...((isLineIntakeEnabled() && (await clipRequestRepository.findById(input.requestId))?.intakeChannel === 'line') ? { ACL: 'private' as const } : {}),
     });
 
     const presignedUrl = await getSignedUrl(spacesClient, command, {
@@ -404,6 +409,7 @@ export class UploadService {
         Bucket: SPACES_BUCKET,
         Key: key,
         ContentType: input.mimeType,
+        ...(('requestId' in input && isLineIntakeEnabled() && (await clipRequestRepository.findById(input.requestId as string))?.intakeChannel === 'line') ? { ACL: 'private' as const } : {}),
       })
     );
     if (!created.UploadId) {
@@ -602,7 +608,12 @@ export class UploadService {
    * Thumbnail generation (image resize / video frame) must be handled separately
    * by a background worker — this method only reserves the key path.
    */
-  async confirmUpload(
+  async confirmUpload(assetId: string, userId: string, posterDataUrl?: string): Promise<UploadedAsset> {
+    const asset = await uploadedAssetRepository.findById(assetId);
+    const line = isLineIntakeEnabled() && !!asset && (await clipRequestRepository.findById(asset.requestId))?.intakeChannel === 'line';
+    return withLineStorage(line, () => this._confirmUpload(assetId, userId, posterDataUrl));
+  }
+  private async _confirmUpload(
     assetId: string,
     userId: string,
     /**
@@ -665,7 +676,7 @@ export class UploadService {
         CopySource: `${SPACES_BUCKET}/${asset.storageKey}`,
         Key: destKey,
         ContentType: asset.mimeType,
-        ACL: "public-read",
+        ACL: isPrivateLineStorage() ? "private" : "public-read",
       })
     );
 
@@ -730,9 +741,9 @@ export class UploadService {
 
     return uploadedAssetRepository.update(assetId, {
       storageKey: destKey,
-      storageUrl: spacesPublicUrl(destKey),
+      storageUrl: isPrivateLineStorage() ? "" : spacesPublicUrl(destKey),
       thumbnailKey: thumbnailGenerated ? thumbKey : "",
-      thumbnailUrl: thumbnailGenerated ? spacesPublicUrl(thumbKey) : "",
+      thumbnailUrl: thumbnailGenerated ? (isPrivateLineStorage() ? "" : spacesPublicUrl(thumbKey)) : "",
       uploadStatus: AssetUploadStatus.Uploaded,
       // Persist the probed clip length (null for images / failed probe).
       durationSeconds: clipDurationSeconds,

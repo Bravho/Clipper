@@ -143,13 +143,17 @@ export async function POST(
 
   try {
     const beforeSubmit = await clipRequestService.getOwnedRequest(id, session.user.id);
+    if (beforeSubmit.intakeChannel === 'line') {
+      const { assertDurationAllowed } = await import('@/services/review/ReviewService');
+      assertDurationAllowed(beforeSubmit.durationSeconds);
+    }
     // A studio brief may ask for up to 90 seconds because the PHONE renders it.
     // If this submission is not going to be rendered on the phone after all,
     // the server's own 30-second limit applies — refuse before anything is
     // charged or stored, rather than start a video the server cannot finish.
     if (
       beforeSubmit.status === RequestStatus.Draft &&
-      !rendersOnDevice &&
+      !rendersOnDevice && beforeSubmit.intakeChannel !== 'line' &&
       (beforeSubmit.durationSeconds ?? 0) > PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
     ) {
       return NextResponse.json(

@@ -1,3 +1,5 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
+import { spacesSignedUrl as lineSignedUrl } from '@/lib/spaces';
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
@@ -157,7 +159,7 @@ export async function renderScene(
 
     return {
       storageKey: params.outputStorageKey,
-      storageUrl: spacesPublicUrl(params.outputStorageKey),
+      storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(params.outputStorageKey, 900) : spacesPublicUrl(params.outputStorageKey)),
       fileSizeBytes: data.length,
     };
   } finally {

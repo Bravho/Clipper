@@ -1,3 +1,4 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
 import sharp from "sharp";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { Readable } from "stream";
@@ -109,7 +110,7 @@ async function compressAndUpload(sourceBuffer: Buffer, destKey: string): Promise
       Key: destKey,
       Body: thumbBuffer,
       ContentType: "image/jpeg",
-      ACL: "public-read",
+      ACL: isPrivateLineStorage() ? "private" : "public-read",
     })
   );
 

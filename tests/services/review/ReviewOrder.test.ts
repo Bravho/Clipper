@@ -1,4 +1,4 @@
-jest.mock('@/repositories', () => ({ createReviewService: jest.fn(), uploadedAssetRepository: { findById: jest.fn() } }));
+jest.mock('@/repositories', () => ({ createReviewService: jest.fn(), uploadedAssetRepository: { findById: jest.fn() }, reviewItemRepository: { findOpenByJobGate: jest.fn(async () => null) } }));
 import { gateAudience, onLineReviewGate, LINE_REVIEW_GATES } from '@/services/review/lineReviewGate';
 import { createReviewService } from '@/repositories';
 import { assertDurationAllowed, assertRevisionAllowed } from '@/services/review/ReviewService';

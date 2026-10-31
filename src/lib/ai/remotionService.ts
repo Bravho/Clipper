@@ -1,3 +1,5 @@
+import { isPrivateLineStorage } from '@/lib/line/storageContext';
+import { spacesSignedUrl as lineSignedUrl } from '@/lib/spaces';
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
@@ -153,7 +155,7 @@ export async function renderOverlay(params: RenderOverlayParams): Promise<string
     // Multipart: a large overlay clip times out on a single PutObject (~50s
     // window) and DO Spaces returns an opaque 400. Split into small parts.
     await spacesUpload({ key: outputStorageKey, body: data, contentType: "video/webm" });
-    return spacesPublicUrl(outputStorageKey);
+    return (isPrivateLineStorage() ? await lineSignedUrl(outputStorageKey, 900) : spacesPublicUrl(outputStorageKey));
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
@@ -269,7 +271,7 @@ async function renderTemplatedVideoFrom(
     await spacesUpload({ key: params.outputStorageKey, body: data, contentType: "video/mp4" });
     return {
       storageKey: params.outputStorageKey,
-      storageUrl: spacesPublicUrl(params.outputStorageKey),
+      storageUrl: (isPrivateLineStorage() ? await lineSignedUrl(params.outputStorageKey, 900) : spacesPublicUrl(params.outputStorageKey)),
       fileSizeBytes: data.length,
     };
   } finally {

@@ -14,5 +14,5 @@ export interface ILineClient {
   /** Reply to a webhook event using the reply token. */
   reply(replyToken: string, messages: LineMessage[]): Promise<void>;
   /** Push a message to a specific user (LINE userId). */
-  push(userId: string, messages: LineMessage[]): Promise<void>;
+  push(userId: string, messages: LineMessage[], retryKey?: string): Promise<void>;
 }

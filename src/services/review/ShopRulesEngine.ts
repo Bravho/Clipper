@@ -84,10 +84,22 @@ export function applyShopRules(
     }
   }
 
+  // When fixed menu facts are supplied, use those facts as the authoritative
+  // copy. This deliberately removes invented menu names and promotion claims.
+  if (rules.menuNames?.length) {
+    result = rules.menuNames.map(name => name + (rules.menuPrices?.[name] !== undefined ?
+      ' ' + rules.menuPrices[name] + ' THB' : '')).join('\n');
+  }
   for (const name of rules.menuNames ?? []) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\  return { text: result.trim(), corrections };');
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, match => '\\' + match);
     result = result.replace(new RegExp(escaped, 'gi'), name);
     if (!result.includes(name)) result += '\n' + name;
+  }
+  if (rules.promotions !== undefined) {
+    // Remove unsupported promotional claims before inserting the approved set.
+    const promoClaim = /discount|\bfree\b|\bbuy\s+\d|\d+\s*%|โปรโมชั่น|ซื้อ.+แถม|ฟรี/i;
+    result = result.split(/\n|(?<=[.!?])\s+/).filter(line =>
+      !promoClaim.test(line) || rules.promotions!.some(promo => line.trim() === promo)).join('\n');
   }
   for (const promo of rules.promotions ?? []) {
     if (!result.includes(promo)) {

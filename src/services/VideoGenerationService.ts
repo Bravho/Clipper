@@ -1,6 +1,7 @@
+import { hasReservedLineRevision } from '@/lib/line/revisionContext';
 import { isReviewSystemEnabled } from '@/config/reviewSystem';
 import { onLineReviewGate } from '@/services/review/lineReviewGate';
-import { withLineStorage } from '@/lib/line/storageContext';
+import { isPrivateLineStorage, withLineStorage } from '@/lib/line/storageContext';
 import { applyShopRules } from '@/services/review/ShopRulesEngine';
 import { assertDurationAllowed, assertRevisionAllowed } from '@/services/review/ReviewService';
 import { assertLicensedMusic } from '@/config/musicWhitelist';
@@ -2112,9 +2113,9 @@ export class VideoGenerationService {
 
   private async _assertRevisable(job: VideoGenerationJob, what: string): Promise<void> {
     const request = await clipRequestRepository.findById(job.requestId);
-    if (request?.intakeChannel === 'line') {
-      assertRevisionAllowed(request.revisionCount ?? 0);
-      await clipRequestRepository.updateStatus(request.id, request.status, { revisionCount: (request.revisionCount ?? 0) + 1 });
+    if (request?.intakeChannel === 'line' && !hasReservedLineRevision()) {
+      const { reserveLineRevision } = await import('@/repositories');
+      await reserveLineRevision(request.id);
     }
     if (LOCK_AFTER_APPROVAL && (await this._isDeviceRendered(job.requestId))) {
       throw new StepLockedAfterApprovalError(what);
@@ -2294,6 +2295,10 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       throw new Error(
         `Expected pipeline step ${VideoGenerationStep.AwaitingVoiceApproval} but job is at ${job.currentStep}`
       );
+    }
+
+    if (!isFailedPipeline && (await clipRequestRepository.findById(job.requestId))?.intakeChannel === 'line') {
+      await this._assertRevisable(job, "The voice");
     }
 
     // Phone-made requests: the voice is locked once approved, and a request
@@ -2644,9 +2649,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     // A phone-rendered request may run to the studio's longer limit; every
     // other request keeps the server's.
     const deviceRendered = await this._isDeviceRendered(job.requestId);
-    const videoLimitSeconds = deviceRendered
-      ? STUDIO_MAX_DURATION_SECONDS
-      : PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS;
+    const videoLimitSeconds = await this._pipelineDurationLimit(job.requestId);
     const maximumVoiceSeconds = videoLimitSeconds - minMontageTotalSeconds(0);
     if ((job.voiceDurationSeconds as number) > maximumVoiceSeconds + 1e-6) {
       throw new Error(
@@ -2722,9 +2725,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
     const durationSeconds = clampPipelineDurationSeconds(
       job.voiceDurationSeconds ?? approved.durationSeconds,
-      (await this._isDeviceRendered(job.requestId))
-        ? STUDIO_MAX_DURATION_SECONDS
-        : PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS
+      await this._pipelineDurationLimit(job.requestId)
     );
     const parsedScenePlan = sanitizeScenePlanDescriptions(
       JSON.parse(approved.scenePlan) as ScenePlan[]
@@ -3281,6 +3282,20 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     let stepOnEntry: VideoGenerationStep | null = null;
     try {
       const job = await this._getJob(jobId);
+      const lineRequest = await clipRequestRepository.findById(job.requestId);
+      if (lineRequest?.intakeChannel === 'line' && isReviewSystemEnabled()) {
+        if (job.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval) {
+          await this.approveSceneDesignByRequester(job.id, lineRequest.userId, {
+            scenePlan: job.scenePlan ?? '[]', durationSeconds: lineRequest.durationSeconds });
+        } else if (job.currentStep === VideoGenerationStep.AwaitingVideoApproval) {
+          await this.approveBaseVideoByRequester(job.id, lineRequest.userId);
+        } else if (job.currentStep === VideoGenerationStep.AwaitingAnimationApproval) {
+          await this.approveAnimationByRequester(job.id, lineRequest.userId);
+        } else if (job.currentStep === VideoGenerationStep.AwaitingFinalApproval) {
+          await this.approveFinalVideoByRequester(job.id, lineRequest.userId);
+        }
+        return; // LINE review gates are never bypassed by the studio express lane.
+      }
       if (!job.autoApproveRemaining) return;
       stepOnEntry = job.currentStep;
 
@@ -5549,10 +5564,26 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     }
     const updated = await videoGenerationJobRepository.update(...args);
     if (request?.intakeChannel === 'line' && isReviewSystemEnabled()) {
-      try { await onLineReviewGate(request, updated); }
+      try {
+        await onLineReviewGate(request, updated);
+        if (updated.currentStep === VideoGenerationStep.AwaitingDistributionReview || updated.currentStep === VideoGenerationStep.Complete) {
+          const { reviewOutboxRepository } = await import('@/repositories');
+          const finalId = updated.finalExport_9_16_assetId ?? updated.finalExport_16_9_assetId;
+          const asset = finalId ? await uploadedAssetRepository.findById(finalId) : null;
+          if (asset) await reviewOutboxRepository.enqueue({ eventType: 'line.delivery', channel: 'line_notify',
+            dedupeKey: 'delivery:' + updated.id, payload: { user_id: request.userId, storage_key: asset.storageKey } });
+        }
+        if (updated.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval &&
+            previous?.currentStep !== updated.currentStep) await this._autoAdvanceIfEnabled(updated.id);
+      }
       catch (error) { console.error('[LINE review gate]', error); }
     }
     return updated;
+  }
+
+  private async _pipelineDurationLimit(requestId: string): Promise<number> {
+    const request = await clipRequestRepository.findById(requestId);
+    return request?.intakeChannel === 'line' || request?.renderLocation === 'device' ? 90 : PIPELINE_STEP_COSTS.MAX_DURATION_SECONDS;
   }
 
   private async _getJob(jobId: string): Promise<VideoGenerationJob> {
@@ -5612,7 +5643,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         Bucket: bucket,
         CopySource: `${bucket}/${sourceKey}`,
         Key: destKey,
-        ACL: "public-read",
+        ACL: isPrivateLineStorage() ? "private" : "public-read",
       })
     );
     await spacesClient.send(new DeleteObjectCommand({ Bucket: bucket, Key: sourceKey }));

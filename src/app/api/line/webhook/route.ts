@@ -45,7 +45,12 @@ async function tryRecordEvent(eventId: string, eventType: string, payload: unkno
      WHERE line_webhook_events.completed_at IS NULL AND
        (line_webhook_events.claimed_at IS NULL OR line_webhook_events.claimed_at < NOW() - interval '2 minutes') RETURNING event_id`,
     [eventId, eventType, LINE_CHANNEL_ID, JSON.stringify(payload)]);
-  return (result.rowCount ?? 0) > 0;
+  if ((result.rowCount ?? 0) > 0) return true;
+  const existing = await pool.query('SELECT completed_at FROM line_webhook_events WHERE event_id=$1', [eventId]);
+  if (existing.rows[0]?.completed_at) return false;
+  // A concurrent handler or crashed lease must be retried, not acknowledged
+  // as completed. A later redelivery can take over the expired lease.
+  throw new Error('event_in_progress');
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -144,7 +149,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (!res.ok) throw new Error('media_download_failed');
           const buffer = Buffer.from(await res.arrayBuffer());
           if (buffer.length > 100 * 1024 * 1024) throw new Error('media_too_large');
-          return { buffer, contentType: res.headers.get('content-type') ?? 'application/octet-stream' };
+          const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
+          if (!contentType.startsWith('image/') && !contentType.startsWith('video/')) throw new Error('unsupported_media');
+          if (contentType.startsWith('video/')) {
+            const { validateLineFootage } = await import('@/lib/line/footageValidation');
+            await validateLineFootage(buffer);
+          }
+          return { buffer, contentType };
         },
         createReviewItem: async ({ lineUserId, text, intent }) => {
           const account = await intake.ensureAccount(lineUserId);

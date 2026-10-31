@@ -204,3 +204,9 @@ export async function recordRenderLaneHeartbeat(lane: string): Promise<void> {
   await pool.query(`INSERT INTO render_lane_heartbeats (lane,last_seen_at) VALUES ($1,NOW())
     ON CONFLICT (lane) DO UPDATE SET last_seen_at=NOW()`, [normalized]);
 }
+
+export async function reserveLineRevision(requestId: string): Promise<void> {
+  const result = await pool.query(`UPDATE clip_requests SET revision_count=revision_count+1
+    WHERE id=$1 AND intake_channel='line' AND revision_count < 2 RETURNING id`, [requestId]);
+  if (!result.rowCount) throw new Error('max_revisions_exceeded');
+}

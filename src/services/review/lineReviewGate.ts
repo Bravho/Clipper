@@ -1,6 +1,7 @@
 import { ClipRequest } from '@/domain/models/ClipRequest';
 import { VideoGenerationJob } from '@/domain/models/VideoGenerationJob';
-import { createReviewService, uploadedAssetRepository } from '@/repositories';
+import { createReviewService, uploadedAssetRepository, reviewItemRepository } from '@/repositories';
+import { withReservedLineRevision } from '@/lib/line/revisionContext';
 import { getDefaultTypeCfg } from './ReviewService';
 import { createVoiceReviewMp4 } from '@/lib/line/voiceReviewPreview';
 import { isReviewSystemEnabled } from '@/config/reviewSystem';
@@ -16,8 +17,11 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
   const typeKey = index === 0 ? 'script' : index === 1 ? 'tts' : 'video';
   const assetId = index === 1 ? job.processedVoiceAssetId : job.animatedVideoAssetId;
   let asset = assetId ? await uploadedAssetRepository.findById(assetId) : null;
+  const existing = await reviewItemRepository.findOpenByJobGate(job.id, job.currentStep);
+  if (existing && existing.assetRefs[0]?.asset_id === asset?.id) return;
+  if (existing) await reviewItemRepository.update(existing.id, { status: 'expired', resolution: 'superseded' });
   if (index === 1 && asset && asset.mimeType !== 'video/mp4') {
-    const destination = 'line_reviews/' + request.id + '/' + job.id + '-voice.mp4';
+    const destination = 'line_reviews/' + request.id + '/' + asset.id + '-voice.mp4';
     await createVoiceReviewMp4(asset.storageKey, destination);
     asset = { ...asset, storageKey: destination, mimeType: 'video/mp4' };
   }
@@ -27,7 +31,7 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
       storyboard: job.approvedStoryboard ?? job.storyboard, audience: gateAudience(request, job.currentStep) },
     assetRefs: asset ? [{ asset_id: asset.id, storage_key: asset.storageKey, mime: asset.mimeType, role: index === 1 ? 'voice' : 'preview' }] : [],
     signals: {}, typeCfg: { ...getDefaultTypeCfg(typeKey), alwaysReview: true },
-    idempotencyKey: 'gate:' + job.id + ':' + job.currentStep });
+    idempotencyKey: 'gate:' + job.id + ':' + job.currentStep + ':' + (asset?.id ?? request.revisionCount ?? 0) });
 }
 
 // Called after the transactional decision commits. Retries are safe because the
@@ -35,10 +39,23 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
 export async function executeReviewDecision(itemId: string) {
   const { reviewItemRepository, videoGenerationJobRepository } = await import('@/repositories');
   const item = await reviewItemRepository.findById(itemId);
-  if (!item || item.status !== 'approved' || !item.jobId) return;
+  if (!item || !item.jobId) return;
   const job = await videoGenerationJobRepository.findById(item.jobId);
   if (!job || job.currentStep !== item.gateStep) return;
   const { videoGenerationService: pipeline } = await import('@/services/VideoGenerationService');
+  if (item.status === 'rejected' || (item.status === 'edited' && item.renderState === 'queued')) {
+    await withReservedLineRevision(async () => {
+      if (item.typeKey === 'tts') await pipeline.regenerateVoice(job.id, item.shopUserId, undefined, String(item.payload.script ?? ''));
+      else if (item.typeKey === 'video') await pipeline.regenerateOverlayByRequester(job.id, item.shopUserId);
+      else {
+        const { clipRequestRepository } = await import('@/repositories');
+        const request = await clipRequestRepository.findById(job.requestId);
+        if (request) await onLineReviewGate(request, job);
+      }
+    });
+    return;
+  }
+  if (item.status !== 'approved') return;
   if (item.gateStep === LINE_REVIEW_GATES[0]) {
     await pipeline.approveContent(job.id, item.shopUserId, {
       scenePlan: job.scenePlan, scriptThai: String(item.payload.script ?? job.scriptThai ?? ''),
