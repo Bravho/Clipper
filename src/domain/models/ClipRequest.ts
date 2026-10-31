@@ -206,6 +206,21 @@ export interface ClipRequest {
    * Kept for backward compatibility with existing staff workflow services.
    */
   assignedStaffId?: string | null;
+
+  /**
+   * How this request entered the system.
+   * 'studio' = mobile/web app (default).
+   * 'line'   = LINE OA intake via grokbot (exempt from STUDIO_ONLY gate).
+   * Added by migration 049.
+   */
+  intakeChannel?: 'studio' | 'web' | 'line';
+
+  /**
+   * Render lane for this request. null = Mac Mini (default).
+   * 'operator_pc' = Mar-PC (LINE-intake jobs).
+   * Added by migration 049.
+   */
+  renderLane?: string | null;
 }
 
 /** Input for creating a new draft request. */

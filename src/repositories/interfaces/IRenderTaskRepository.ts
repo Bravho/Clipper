@@ -23,10 +23,15 @@ export interface IRenderTaskRepository {
    * has gone stale — a crashed worker), skipping rows another worker has locked.
    * Postgres uses `... FOR UPDATE SKIP LOCKED` so concurrent workers never grab
    * the same task. Returns the claimed task, or null if the line is empty.
+   *
+   * Lane routing:
+   *   undefined / null → Mac Mini behaviour: excludes tasks with render_lane='operator_pc'
+   *   'operator_pc'    → Mar-PC: only claims tasks with render_lane='operator_pc'
    */
   claimNext(
     workerId: string,
-    staleClaimSeconds: number
+    staleClaimSeconds: number,
+    lane?: string | null
   ): Promise<RenderTask | null>;
 
   /**

@@ -153,3 +153,19 @@ export const managementJobRepository = new PostgresManagementJobRepository();
 import { PostgresMerchantCampaignRepository } from "./postgres/PostgresMerchantCampaignRepository";
 
 export const merchantCampaignRepository = new PostgresMerchantCampaignRepository();
+
+// ── Review System — Mock (TODO: replace with Postgres implementations) ────────
+// Requires migrations 048_review_core.sql and 049_line_intake.sql.
+import { MockReviewItemRepository } from "./mock/MockReviewItemRepository";
+import { MockReviewActionRepository } from "./mock/MockReviewActionRepository";
+import { MockEscalationRuleRepository } from "./mock/MockEscalationRuleRepository";
+import { MockReviewOutboxRepository } from "./mock/MockReviewOutboxRepository";
+import { MockLineAccountRepository } from "./mock/MockLineAccountRepository";
+import { MockServicePackageRepository } from "./mock/MockServicePackageRepository";
+
+export const reviewItemRepository = new MockReviewItemRepository();
+export const reviewActionRepository = new MockReviewActionRepository();
+export const escalationRuleRepository = new MockEscalationRuleRepository();
+export const reviewOutboxRepository = new MockReviewOutboxRepository();
+export const lineAccountRepository = new MockLineAccountRepository();
+export const servicePackageRepository = new MockServicePackageRepository();

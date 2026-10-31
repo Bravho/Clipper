@@ -69,6 +69,12 @@ export interface RenderTask {
   /** Wall-clock of the finished step, for the admin monitor / duration profile. */
   durationMs: number | null;
   error: string | null;
+  /**
+   * Which worker lane this task is routed to.
+   * null / undefined = old Mac Mini behaviour (unchanged).
+   * 'operator_pc' = Mar-PC worker (LINE-intake jobs).
+   */
+  renderLane?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -89,4 +95,9 @@ export interface EnqueueRenderTaskInput {
    * that has them can run this step. Omit for the normal server path.
    */
   deviceOnly?: boolean;
+  /**
+   * Lane routing. null/undefined = Mac Mini (default). 'operator_pc' = Mar-PC.
+   * Set to clip_requests.render_lane at enqueue time.
+   */
+  renderLane?: string | null;
 }

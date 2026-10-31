@@ -105,7 +105,10 @@ export async function POST(
     const current = await clipRequestService
       .getOwnedRequest(id, session.user.id)
       .catch(() => null);
-    if (!current || current.status === RequestStatus.Draft) {
+    // LINE-intake requests are exempt: they arrive via the LINE OA bot, not the
+    // mobile studio, so they can never carry a device-render manifest.
+    const isLineIntake = current?.intakeChannel === 'line';
+    if (!isLineIntake && (!current || current.status === RequestStatus.Draft)) {
       return NextResponse.json(
         {
           error:

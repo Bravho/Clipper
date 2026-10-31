@@ -58,6 +58,7 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
       attempts: 0,
       priority: input.priority ?? 0,
       deviceOnly: input.deviceOnly ?? false,
+      renderLane: input.renderLane ?? null,
       enqueuedAt: now,
       claimedBy: null,
       claimedAt: null,
@@ -75,7 +76,8 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
 
   async claimNext(
     workerId: string,
-    staleClaimSeconds: number
+    staleClaimSeconds: number,
+    lane?: string | null
   ): Promise<RenderTask | null> {
     const staleBefore = Date.now() - staleClaimSeconds * 1000;
     const candidates = [...this.store.values()]
@@ -84,6 +86,13 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
         // claim here could only ever end in a failed step. Excluding it from
         // the CLAIM makes that impossible rather than merely handled.
         if (t.deviceOnly) return false;
+        // Lane routing: operator_pc worker only sees its own lane.
+        // Mac Mini (no lane) never sees operator_pc tasks.
+        if (lane != null) {
+          if (t.renderLane !== lane) return false;
+        } else {
+          if (t.renderLane === 'operator_pc') return false;
+        }
         if (t.state === "queued") return true;
         if (t.state === "claimed") {
           const keepAlive = (t.heartbeatAt ?? t.claimedAt)?.getTime() ?? 0;

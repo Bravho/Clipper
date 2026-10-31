@@ -57,6 +57,7 @@ function rowToTask(row: Record<string, unknown>): RenderTask {
     finishedAt: toDate(row.finished_at),
     durationMs: row.duration_ms == null ? null : Number(row.duration_ms),
     error: (row.error as string) ?? null,
+    renderLane: (row.render_lane as string) ?? null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -74,8 +75,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     // race. Steps are serialised by approval gates, so this realistically only
     // fires when retrying the same step.
     const { rows } = await this.db.query(
-      `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload, priority, device_only)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO render_tasks (job_id, request_id, requester_id, step, payload, priority, device_only, render_lane)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (job_id) WHERE state IN ('queued', 'claimed')
        DO UPDATE SET
          request_id   = EXCLUDED.request_id,
@@ -84,6 +85,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
          payload      = EXCLUDED.payload,
          priority     = EXCLUDED.priority,
          device_only  = EXCLUDED.device_only,
+         render_lane  = EXCLUDED.render_lane,
          state        = 'queued',
          attempts     = 0,
          enqueued_at  = NOW(),
@@ -104,6 +106,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
         input.payload == null ? null : JSON.stringify(input.payload),
         input.priority ?? 0,
         input.deviceOnly ?? false,
+        input.renderLane ?? null,
       ]
     );
     return rowToTask(rows[0]);
@@ -111,12 +114,29 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
 
   async claimNext(
     workerId: string,
-    staleClaimSeconds: number
+    staleClaimSeconds: number,
+    lane?: string | null
   ): Promise<RenderTask | null> {
+    // Lane routing:
+    //   lane='operator_pc' → only claim tasks with render_lane='operator_pc' (Mar-PC worker)
+    //   lane=null/undefined → Mac Mini: claim tasks where render_lane IS DISTINCT FROM 'operator_pc'
+    const laneClause =
+      lane != null
+        ? `AND render_lane = $5`
+        : `AND render_lane IS DISTINCT FROM 'operator_pc'`;
+    const params: unknown[] = [
+      workerId,
+      String(staleClaimSeconds),
+      RENDER_QUEUE.agingCapPoints,
+      RENDER_QUEUE.agingPointsPerHour,
+    ];
+    if (lane != null) params.push(lane);
+
     const { rows } = await this.db.query(
       `WITH next AS (
          SELECT id FROM render_tasks
           WHERE device_only = FALSE
+            ${laneClause}
             AND (state = 'queued'
              OR (state = 'claimed'
                  AND COALESCE(heartbeat_at, claimed_at)
@@ -137,12 +157,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
          FROM next
         WHERE t.id = next.id
        RETURNING t.*`,
-      [
-        workerId,
-        String(staleClaimSeconds),
-        RENDER_QUEUE.agingCapPoints,
-        RENDER_QUEUE.agingPointsPerHour,
-      ]
+      params
     );
     return rows[0] ? rowToTask(rows[0]) : null;
   }
