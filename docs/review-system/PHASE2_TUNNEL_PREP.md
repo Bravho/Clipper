@@ -165,32 +165,90 @@ Production server (`/root/rc2`): all of the above remain at their defaults (off/
 - `STRIPE_ALLOW_LIVE=false` — the webhook route rejects live Stripe events when this is false.
 - Payment Links in `.env.local` must be Stripe test Payment Links (`buy.stripe.com/test/...`).
 
-### 3e. Live database mutation audit (Round 4b)
+### 3e. Live database mutation audit (Round 5 — is_test job isolation)
 
 The LINE flow is **not append-only**. It inserts into existing tables and updates rows that can predate the current test session. A live database is not isolated by feature flags or render lanes. The audit below lists SQL mutation sites reachable through intake, review and rendering, including shared worker bookkeeping. It does not authorize running any of them during offline verification.
 
-| SQL source (file:line) | Tables | Actual mutation / isolation |
+#### Guarantees added in this revision
+
+**render_tasks — old Mac Mini invisibility via test state values (strongest guarantee)**
+
+The old Mac Mini worker (deployed before this branch) claims `render_tasks` with:
+```sql
+WHERE device_only = FALSE AND (state = 'queued' OR (state = 'claimed' AND ...stale...))
+```
+It never sees `state = 'test_queued'` or `state = 'test_claimed'`.
+
+When `LINE_TEST_MODE=true`, `PostgresRenderTaskRepository.enqueue()` inserts with `state = 'test_queued'` (not `'queued'`). The `claimNext()` in test mode only claims `test_queued`/`test_claimed` tasks; in non-test mode it only claims `queued`/`claimed` tasks. The `release()` / `releaseClaim()` operations use a SQL `CASE` to restore to the correct namespace (`test_claimed → test_queued`; `claimed → queued`). The stale-reclaim path is protected by the same state filter: the old Mac Mini's stale-reclaim only promotes `state = 'claimed'` rows — `test_claimed` is invisible.
+
+**Requires migration 057** (`src/db/migrations/057_test_job_isolation.sql`) to be applied before any test render jobs are enqueued. Migration 057 adds `uq_render_tasks_active_test_job` (prevents double-queueing the same test job) and `idx_render_tasks_test_active` (index for the test-worker claim scan). Apply after 054 and 049.
+
+**enqueue DO NOTHING — no more reset of active tasks**
+
+`PostgresRenderTaskRepository.enqueue()` (all paths, all modes) uses `ON CONFLICT ... DO NOTHING` (replacing the previous `DO UPDATE SET state='queued', attempts=0 ...`). If a task is already `queued` or `claimed`, `enqueue()` returns the existing row unchanged rather than resetting it. Callers that relied on the reset for retries are safe: a re-enqueue only happens after a step fails (state `failed`), which is not in the conflict predicate, so a new row is inserted correctly. This change eliminates the risk of resetting a live render-task claim.
+
+**video_generation_jobs — claimNextQueuedRenderStep JOIN guard**
+
+`PostgresVideoGenerationJobRepository.claimNextQueuedRenderStep()` now joins `clip_requests` and filters by `cr.is_test` based on `LINE_TEST_MODE`. Note: the old Mac Mini worker does NOT call this method (it uses the `render_tasks` queue). The JOIN guard protects any NEW code calling this path; `is_test` state-value isolation is not needed here.
+
+**asset_visual_analyses — claim JOIN guard**
+
+`PostgresAssetVisualAnalysisRepository.claim()` now joins `uploaded_assets → clip_requests` and filters by `cr.is_test`. Non-test worker skips assets from test requests; test worker claims only test-request assets. LEFT JOINs mean assets with no associated request (orphaned uploads) are treated as non-test. Requires migration 054 for `cr.is_test`.
+
+**review_outbox — already guarded**
+
+`PostgresReviewOutboxRepository.claimNext()` already had `LINE_TEST_MODE` filtering (EXISTS join on `clip_requests.is_test`). No change needed.
+
+| SQL source | Tables | Mutation / isolation |
 |---|---|---|
-| `src/repositories/postgres/PostgresUserRepository.ts:41` | `users` | INSERT; deterministic LINE email reuse is read-only. Test emails use a separate :test hash namespace. |
-| `src/repositories/postgres/PostgresLineAccountRepository.ts:49`<br>`src/repositories/postgres/PostgresLineAccountRepository.ts:66`<br>`src/repositories/postgres/PostgresLineAccountRepository.ts:73`<br>`src/repositories/postgres/PostgresLineAccountRepository.ts:104`<br>`src/repositories/postgres/PostgresLineAccountRepository.ts:107` | `line_accounts / line_conversation_states` | INSERT and UPDATE, including lazy takeover expiry and conversation upsert. Account reuse is blocked if LINE_TEST_MODE=true and is_test=false; conversations have no is_test column. |
-| `src/repositories/postgres/PostgresServicePackageRepository.ts:97`<br>`src/repositories/postgres/PostgresServicePackageRepository.ts:162`<br>`src/repositories/postgres/PostgresServicePackageRepository.ts:188`<br>`src/repositories/postgres/PostgresServicePackageRepository.ts:225` | `package_orders / package_usage / clip_requests` | Pending order INSERT or locked reuse; Stripe activation UPDATE; atomic oldest-balance usage INSERT and request order UPDATE. Existing test orders and balances may be reused across sessions. Active lookup is test-filtered; consumption matches order is_test. |
-| `src/repositories/postgres/PostgresClipRequestRepository.ts:283`<br>`src/repositories/postgres/PostgresClipRequestRepository.ts:315`<br>`src/repositories/postgres/PostgresClipRequestRepository.ts:367`<br>`src/repositories/postgres/PostgresClipRequestRepository.ts:400`<br>`src/repositories/postgres/PostgresClipRequestRepository.ts:475` | `clip_requests` | INSERT and UPDATE metadata/status. Service targets request IDs, including resumed earlier test intakes; adapters have no universal test-only UPDATE guard. |
-| `src/repositories/postgres/PostgresUploadedAssetRepository.ts:83`<br>`src/repositories/postgres/PostgresUploadedAssetRepository.ts:153` | `uploaded_assets` | INSERT intake/AI/render outputs; UPDATE upload/storage/derivative metadata through shared adapters. Scoped by request or asset ID, not an is_test predicate. |
-| `src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:266`<br>`src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:387`<br>`src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:541`<br>`src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:573`<br>`src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:575`<br>`src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:608`<br>`src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:623`<br>`src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:632` | `video_generation_jobs / video_generation_step_history / render_worker_heartbeat` | INSERT job/history/heartbeat; UPDATE pipeline state, worker claims, heartbeat and release. Shared workers can mutate pre-existing jobs; no universal is_test guard. |
-| `src/repositories/postgres/PostgresRenderTaskRepository.ts:76`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:79`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:113`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:116`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:171`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:213`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:240`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:258`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:267`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:279`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:290`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:303`<br>`src/repositories/postgres/PostgresRenderTaskRepository.ts:319` | `render_tasks` | INSERT enqueue; conflict UPDATE may reset an existing queued/claimed task; UPDATE claim, device claim, heartbeat/touch, completion/failure and release. Render lane routing is not test-data isolation. |
-| `src/repositories/postgres/PostgresReviewItemRepository.ts:72`<br>`src/repositories/postgres/PostgresReviewItemRepository.ts:204`<br>`src/repositories/postgres/PostgresReviewItemRepository.ts:251` | `review_items` | INSERT gate/escalation; UPDATE decision, supersede, opened and reminder claim/send bookkeeping. Reminder job and admin list are not globally test-filtered. |
+| `src/repositories/postgres/PostgresUserRepository.ts:41` | `users` | INSERT; test emails use a separate `:test` hash namespace. |
+| `src/repositories/postgres/PostgresLineAccountRepository.ts:49,66,73,104,107` | `line_accounts / line_conversation_states` | INSERT and UPDATE. Account reuse blocked if `LINE_TEST_MODE=true` and `is_test=false`. Conversations lack `is_test`; use a distinct test channel. |
+| `src/repositories/postgres/PostgresServicePackageRepository.ts:97,162,188,225` | `package_orders / package_usage / clip_requests` | INSERT/UPDATE. Active-order lookup is test-filtered; consumption matched to order `is_test`. |
+| `src/repositories/postgres/PostgresClipRequestRepository.ts:283,315,367,400,475` | `clip_requests` | INSERT and UPDATE metadata/status. Adapters target request IDs; no universal test-only UPDATE guard (writes are scoped to the test request). |
+| `src/repositories/postgres/PostgresUploadedAssetRepository.ts:83,153` | `uploaded_assets` | INSERT intake/AI/render outputs; UPDATE metadata. Scoped by request or asset ID. |
+| `src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:266,387,541,573,575,608,623,632` | `video_generation_jobs / step_history / heartbeat` | INSERT job/history/heartbeat; UPDATE pipeline state and claims. `claimNextQueuedRenderStep` is now guarded by `cr.is_test` JOIN filter. Other `update()` calls are scoped by job ID (owned by the test request). |
+| `src/repositories/postgres/PostgresRenderTaskRepository.ts` | `render_tasks` | **GUARDED.** Test jobs enqueued as `test_queued`; claimed as `test_claimed`. Old Mac Mini worker cannot see or reclaim test tasks. `enqueue()` is now DO NOTHING (never resets active tasks). |
+| `src/repositories/postgres/PostgresAssetVisualAnalysisRepository.ts` | `asset_visual_analyses` | **GUARDED.** `claim()` joins to `clip_requests.is_test`; non-test worker skips test assets. Requires migration 054. |
+| `src/repositories/postgres/PostgresReviewItemRepository.ts:72,204,251` | `review_items` | INSERT gate/escalation; UPDATE decision and reminder bookkeeping. Reminder job and admin list are not globally test-filtered. |
 | `src/repositories/postgres/PostgresReviewActionRepository.ts:35` | `review_actions` | INSERT immutable decision/action audit. |
-| `src/repositories/postgres/PostgresReviewOutboxRepository.ts:41`<br>`src/repositories/postgres/PostgresReviewOutboxRepository.ts:45`<br>`src/repositories/postgres/PostgresReviewOutboxRepository.ts:60`<br>`src/repositories/postgres/PostgresReviewOutboxRepository.ts:83`<br>`src/repositories/postgres/PostgresReviewOutboxRepository.ts:90`<br>`src/repositories/postgres/PostgresReviewOutboxRepository.ts:101` | `review_outbox` | INSERT or dedupe UPDATE; UPDATE claim lease/attempts, sent, failed, dead. In LINE_TEST_MODE=true only events linked to test requests/accounts or explicitly tagged is_test are claimed. This includes prior test-session events. |
-| `src/app/api/line/webhook/route.ts:43`<br>`src/app/api/line/webhook/route.ts:169`<br>`src/app/api/line/webhook/route.ts:172` | `line_webhook_events` | INSERT or conflict UPDATE lease; UPDATE completed_at or clear lease on failure. No is_test column; shared channel/event IDs can overlap another process. |
-| `scripts/render-worker.ts:159` | `render_worker_samples` | INSERT worker telemetry. Worker also calls shared job/task heartbeat, claim, complete and release adapters listed above. |
+| `src/repositories/postgres/PostgresReviewOutboxRepository.ts:41,45,60,83,90,101` | `review_outbox` | **ALREADY GUARDED.** `claimNext()` only processes test events in `LINE_TEST_MODE=true`. |
+| `src/app/api/line/webhook/route.ts:43,169,172` | `line_webhook_events` | INSERT or conflict UPDATE lease; UPDATE completed/failure. No `is_test` column; use a distinct test channel. |
+| `scripts/render-worker.ts:159` | `render_worker_samples` | INSERT telemetry. Worker uses the guarded `renderTaskRepository.claimNext()` and `reviewOutboxRepository.claimNext()`. |
 
-Key production callers: `src/services/line/LineIntakeService.ts:25` (account reuse/create), `src/services/line/LineIntakeService.ts:49` (pending order reuse), `src/services/line/LineIntakeService.ts:68` (request/assets/usage/status), `src/services/VideoGenerationService.ts:503` (job creation), `src/services/VideoGenerationService.ts:1360` (render queue), `src/services/VideoGenerationService.ts:2412` (request metadata), `src/services/VideoGenerationService.ts:4165` (delivery status), `src/services/line/LineReviewOutboxWorker.ts:14` (outbox worker), `src/services/review/ReviewReminderService.ts:27` (one-time reminder reservation).
+#### Old Mac Mini worker — residual risk assessment
 
-**DELETE audit:** No SQL DELETE is invoked by the normal LINE intake/review/render progression. Shared adapters expose DELETE methods at `src/repositories/postgres/PostgresUserRepository.ts:90`, `src/repositories/postgres/PostgresClipRequestRepository.ts:483`, `src/repositories/postgres/PostgresUploadedAssetRepository.ts:161`, and `src/repositories/postgres/PostgresUploadedAssetRepository.ts:166`; these are not called by that progression. The separate optional cleanup helper `src/services/line/cleanupLineAssets.ts:19` deletes storage objects, not DB rows, only with execute=true. Do not run cleanup for this audit.
+The old deployed Mac Mini worker's claim paths:
+- `render_tasks`: `WHERE device_only = FALSE AND (state = 'queued' OR (state = 'claimed' AND ...stale...))` — **SAFE.** Test jobs use `test_queued`/`test_claimed`; invisible by construction.
+- `video_generation_jobs.claimNextQueuedRenderStep`: **NOT CALLED** by the old worker (it uses the `render_tasks` queue). No risk.
+- `asset_visual_analyses.claim()`: the visual analysis worker code was introduced in the same branch as this guard. If the old deployed Mac Mini doesn't have the visual analysis worker code at all, no claim is made. If it does, the guard was not present in the old code — but the old Mac Mini claiming test visual analyses only writes to `asset_visual_analyses` (no production data mutation) and is harmless; the test worker would then find the analysis already done.
+- `render_worker_heartbeat`, `render_worker_samples`: shared telemetry tables, no production data risk.
 
-**Limits that remain:** render task enqueue/claim/complete and worker telemetry are shared, without test-only predicates. Reminder selection and admin review APIs can see earlier/production reviews; do not run the reminder script or use an unfiltered admin list against the shared live DB as a test. Conversation states and webhook leases lack is_test, so use a distinct test channel and test shop identity. LINE_TEST_MODE blocks reuse of a non-test account (including takeover mutation) rather than retagging it; it does not silently convert production accounts. Test users have a separate deterministic email namespace. Package/payment IDs still require normal authenticated ownership and Stripe test-event validation. Existing test balances may be reused, and multiple previously paid orders are deliberately retained and consumed oldest-first under a user lock rather than discarding purchased clips. Non-LINE shared adapter methods are unchanged.
+#### Management jobs — unguarded (acceptable)
 
-Only Mar-PC may enable these test flags; never enable them on production /root/rc2. Keep STRIPE_ALLOW_LIVE=false and use Stripe test links. Apply migrations manually in the exact 048, 049, 050, 051, 052, 053, 054 order listed above; none was applied here. is_test tags remain required on accounts, orders and requests. These measures reduce scope but do not establish full live-database isolation.
+`management_jobs` does not have `is_test` and is not directly linked to `clip_requests` at the claim level. The management worker reconciles publications. If a test publication creates a management job, the management worker would process it — this could trigger social-publishing API calls for the test publication. **Mitigation:** keep `STRIPE_ALLOW_LIVE=false` and avoid setting up social publishing credentials on Mar-PC. Management jobs from the test run would simply fail to reconcile (no credentials), which is acceptable.
+
+#### Migration apply order (updated)
+
+Apply migrations **in this exact order** before the Phase 2 test run:
+
+| # | File | Purpose |
+|---|------|---------|
+| 048 | `048_review_core.sql` | Review items, actions, outbox, escalation rules |
+| 049 | `049_line_intake.sql` | line_accounts, conversation states, render lane |
+| 050 | `050_service_packages.sql` | service_packages, package_orders, package_usage |
+| 051 | `051_line_webhook_events.sql` | line_webhook_events deduplication |
+| 052 | `052_line_runtime.sql` | Render lane columns, LINE runtime fields |
+| 053 | `053_review_reminder_takeover.sql` | Reminder and takeover columns |
+| 054 | `054_is_test_flag.sql` | **is_test boolean on line_accounts, package_orders, clip_requests** |
+| 055 | `055_asset_visual_analyses.sql` | asset_visual_analyses table |
+| 056 | `056_storyboard_versions.sql` | Storyboard versioning |
+| **057** | **`057_test_job_isolation.sql`** | **Unique index + scan index for test_queued/test_claimed states — REQUIRED before first test render job** |
+
+**DELETE audit:** No SQL DELETE is invoked by the normal LINE intake/review/render progression. Shared adapters expose DELETE methods that are not called by that progression. The optional cleanup helper `src/services/line/cleanupLineAssets.ts:19` deletes storage objects (not DB rows) only with `execute=true`. Do not run cleanup for this audit.
+
+**Remaining limits:** Conversation states (`line_conversation_states`) and webhook leases (`line_webhook_events`) lack `is_test` — use a distinct test LINE channel and test shop identity. Reminder selection and admin review APIs can see earlier/production reviews; do not run the reminder script or use an unfiltered admin list against the live DB as a test. `clip_requests` and `video_generation_jobs` adapter methods (update/status) are scoped by ID, not by `is_test` predicate — they will only touch rows the test flow created. Management jobs are unguarded (see above).
+
+Only Mar-PC may enable these test flags; never enable them on production `/root/rc2`. Keep `STRIPE_ALLOW_LIVE=false`. Apply migrations 048–057 before starting the test server.
 
 ---
 

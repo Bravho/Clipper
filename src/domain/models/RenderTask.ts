@@ -14,7 +14,14 @@ import { RenderStep } from "@/domain/enums/RenderStep";
  * video_generation_jobs: those could only represent one queued step per job with
  * no global ordering, no honest position, and no duration history.
  */
-export type RenderTaskState = "queued" | "claimed" | "done" | "failed";
+export type RenderTaskState =
+  | "queued"
+  | "claimed"
+  | "done"
+  | "failed"
+  /** LINE test-mode states — invisible to the old Mac Mini worker. */
+  | "test_queued"
+  | "test_claimed";
 
 export interface RenderTask {
   id: string;

@@ -26,6 +26,23 @@ export function isRenderLaneEnabled(): boolean {
 }
 
 /**
+ * True when this process is the LINE test worker (Mar-PC).
+ *
+ * In test mode:
+ *  - render_tasks are enqueued with state='test_queued' (invisible to the old
+ *    Mac Mini worker whose claim SQL only sees state='queued').
+ *  - claimNext claims only 'test_queued'/'test_claimed' tasks.
+ *  - video_generation_jobs and asset_visual_analyses claim paths join
+ *    clip_requests.is_test and only process rows where is_test=TRUE.
+ *
+ * Requires migrations 054 (is_test columns) and 057 (test-state indices)
+ * to be applied before enabling.
+ */
+export function isLineTestMode(): boolean {
+  return process.env.LINE_TEST_MODE === 'true';
+}
+
+/**
  * Rule keys that are HARD-LOCKED in code: even if a shop has a trust policy,
  * these rules can never be bypassed by auto-approve.
  */

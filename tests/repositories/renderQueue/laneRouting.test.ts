@@ -7,8 +7,9 @@ afterEach(() => {
   delete process.env.RENDER_LANE_ENABLED;
   delete process.env.RENDER_MAIN_STALE_SECONDS;
   delete process.env.RENDER_BACKUP_QUEUE_SECONDS;
+  delete process.env.LINE_TEST_MODE;
 });
-test('disabled flag uses byte-for-byte original INSERT and claim SQL without migration 049', async () => {
+test('disabled flag uses pre-049 INSERT (DO NOTHING CTE, no render_lane column) and original claim SQL', async () => {
   const query = jest.fn().mockResolvedValue({ rows: [{ id: 't' }] });
   const repo = new PostgresRenderTaskRepository({ query } as never);
   await repo.enqueue(task); await repo.claimNext('main',60);
@@ -44,6 +45,36 @@ test('enabled main worker still claims studio and LINE jobs', async () => {
   process.env.RENDER_LANE_ENABLED = 'true';
   const query = jest.fn().mockResolvedValue({ rows: [] });
   await new PostgresRenderTaskRepository({ query } as never).claimNext('mac',60,'main');
-  expect(query.mock.calls[0][0]).not.toContain('NOT EXISTS');
+  expect(query.mock.calls[0][0]).not.toContain('NOT EXISTS (SELECT 1 FROM render_lane_heartbeats');
   expect(query.mock.calls[0][1]).toHaveLength(4);
+});
+test('LINE_TEST_MODE enqueue uses test_queued state (invisible to old Mac Mini worker)', async () => {
+  process.env.LINE_TEST_MODE = 'true';
+  const query = jest.fn().mockResolvedValue({ rows: [{ id: 't' }] });
+  const repo = new PostgresRenderTaskRepository({ query } as never);
+  await repo.enqueue(task);
+  const [sql, params] = query.mock.calls[0];
+  expect(sql).toContain("'test_queued'");
+  expect(sql).toContain("state IN ('test_queued', 'test_claimed')");
+  expect(sql).toContain('DO NOTHING');
+  expect(params).toHaveLength(8); // lane-enabled path in test mode always includes render_lane
+});
+test('LINE_TEST_MODE claimNext updates to test_claimed (old worker stale-reclaim cannot grab these)', async () => {
+  process.env.LINE_TEST_MODE = 'true';
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  await new PostgresRenderTaskRepository({ query } as never).claimNext('mar-pc', 60);
+  const [sql] = query.mock.calls[0];
+  expect(sql).toContain("state = 'test_queued'");
+  expect(sql).toContain("state = 'test_claimed'");
+  expect(sql).toContain("state        = 'test_claimed'");
+  expect(sql).not.toContain("state = 'queued'");
+});
+test('non-test claimNext only looks for queued/claimed — test_queued is invisible', async () => {
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  await new PostgresRenderTaskRepository({ query } as never).claimNext('mac', 60);
+  const [sql] = query.mock.calls[0];
+  expect(sql).toContain("state = 'queued'");
+  expect(sql).toContain("state = 'claimed'");
+  expect(sql).not.toContain('test_queued');
+  expect(sql).not.toContain('test_claimed');
 });

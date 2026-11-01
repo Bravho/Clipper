@@ -19,6 +19,7 @@ import {
   isAwaitingGate,
   type GateResolution,
 } from "@/services/analytics/GateEventService";
+import { isLineTestMode } from "@/config/reviewSystem";
 import { pool } from "@/lib/db";
 
 function parseJsonField<T>(value: unknown, fallback: T): T {
@@ -596,15 +597,26 @@ export class PostgresVideoGenerationJobRepository
     // Atomic claim: pick one queued job (or a claimed one whose keep-alive has
     // gone stale — a crashed worker), skipping rows another worker has locked,
     // and mark it claimed in the same statement.
+    //
+    // is_test guard: join clip_requests to filter by is_test so a non-test
+    // worker skips test jobs and a test worker claims only test jobs.
+    // Requires migration 054 (clip_requests.is_test) to be applied.
+    // Note: the old Mac Mini worker doesn't call this method (it uses the
+    // render_tasks queue instead), so old-worker invisibility via state values
+    // is not required here — a JOIN filter is sufficient.
+    const testMode = isLineTestMode();
     const { rows } = await this.db.query(
       `WITH next AS (
-         SELECT id FROM video_generation_jobs
-          WHERE render_state = 'queued'
-             OR (render_state = 'claimed'
-                 AND COALESCE(render_heartbeat_at, claimed_at)
-                     < NOW() - ($2 || ' seconds')::interval)
-          ORDER BY claimed_at NULLS FIRST, updated_at
-          FOR UPDATE SKIP LOCKED
+         SELECT j.id FROM video_generation_jobs j
+         JOIN clip_requests cr ON cr.id = j.request_id
+          WHERE (j.render_state = 'queued'
+             OR (j.render_state = 'claimed'
+                 AND COALESCE(j.render_heartbeat_at, j.claimed_at)
+                     < NOW() - ($2 || ' seconds')::interval))
+            AND ($3::boolean = FALSE OR cr.is_test = TRUE)
+            AND ($3::boolean = TRUE  OR COALESCE(cr.is_test, FALSE) = FALSE)
+          ORDER BY j.claimed_at NULLS FIRST, j.updated_at
+          FOR UPDATE OF j SKIP LOCKED
           LIMIT 1
        )
        UPDATE video_generation_jobs j
@@ -615,7 +627,7 @@ export class PostgresVideoGenerationJobRepository
          FROM next
         WHERE j.id = next.id
        RETURNING j.*`,
-      [workerId, String(staleClaimSeconds)]
+      [workerId, String(staleClaimSeconds), testMode]
     );
     return rows[0] ? rowToJob(rows[0]) : null;
   }

@@ -8,7 +8,9 @@ test('Postgres queue uses conflict-safe key, atomic skip-locked claim and immuta
   await repo.pending('asset','1'); await repo.expireClaims('1',900);
   const calls = query.mock.calls as unknown as [string,unknown[]][];
   expect(calls[0][0]).toContain('ON CONFLICT DO NOTHING');
-  expect(calls[1][0]).toContain('FOR UPDATE SKIP LOCKED'); expect(calls[1][1]).toEqual(['1']);
+  expect(calls[1][0]).toContain('FOR UPDATE OF ava SKIP LOCKED');
+  // Second param is testMode (false when LINE_TEST_MODE is unset)
+  expect(calls[1][1]).toEqual(['1', false]);
   expect(calls[2][0]).toContain("state='done'");
   expect(calls[3][0]).toContain("AND state='claimed'");
   expect(calls[5][0]).toContain("state='failed'"); expect(calls[5][1]).toEqual(['1',900]);

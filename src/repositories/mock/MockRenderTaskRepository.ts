@@ -6,6 +6,7 @@ import {
 } from "@/domain/models/RenderTask";
 import { RenderStep } from "@/domain/enums/RenderStep";
 import { compareRenderOrder } from "@/config/renderQueue";
+import { isLineTestMode } from "@/config/reviewSystem";
 
 // TODO: PostgreSQL — this mock mirrors PostgresRenderTaskRepository's SQL
 // behaviour (priority + ageing claim order, stale reclaim, position count) for
@@ -24,9 +25,27 @@ function getStore(): Map<string, RenderTask> {
   return global.__mockRenderTaskStore;
 }
 
-/** Active = still in the line (waiting or rendering). */
+/** Returns the active-state pair for the current mode. */
+function activeStatePair(): [RenderTaskState, RenderTaskState] {
+  return isLineTestMode()
+    ? ["test_queued", "test_claimed"]
+    : ["queued", "claimed"];
+}
+
+/** Active = still in the line for the current mode's worker. */
 function isActive(t: RenderTask): boolean {
-  return t.state === "queued" || t.state === "claimed";
+  return (
+    t.state === "queued" ||
+    t.state === "claimed" ||
+    t.state === "test_queued" ||
+    t.state === "test_claimed"
+  );
+}
+
+/** Active = visible to the CURRENT mode's worker specifically. */
+function isActiveForMode(t: RenderTask): boolean {
+  const [stateA, stateB] = activeStatePair();
+  return t.state === stateA || t.state === stateB;
 }
 
 export class MockRenderTaskRepository implements IRenderTaskRepository {
@@ -37,14 +56,17 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
   }
 
   private activeSorted(): RenderTask[] {
-    return [...this.store.values()].filter(isActive).sort(compareRenderOrder);
+    return [...this.store.values()].filter(isActiveForMode).sort(compareRenderOrder);
   }
 
   async enqueue(input: EnqueueRenderTaskInput): Promise<RenderTask> {
-    // Idempotent per job: replace any existing active task for this job so we
-    // never stack two queued steps for the same job.
-    for (const [id, t] of this.store) {
-      if (t.jobId === input.jobId && isActive(t)) this.store.delete(id);
+    const [stateA, stateB] = activeStatePair();
+    // DO NOTHING: if an active task already exists for this job in the current
+    // mode's namespace, return it unchanged (mirrors PostgreSQL ON CONFLICT DO NOTHING).
+    for (const t of this.store.values()) {
+      if (t.jobId === input.jobId && (t.state === stateA || t.state === stateB)) {
+        return { ...t };
+      }
     }
     const now = new Date();
     const task: RenderTask = {
@@ -54,7 +76,7 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
       requesterId: input.requesterId ?? null,
       step: input.step,
       payload: input.payload ?? null,
-      state: "queued",
+      state: stateA,
       attempts: 0,
       priority: input.priority ?? 0,
       deviceOnly: input.deviceOnly ?? false,
@@ -80,21 +102,25 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
     lane?: string | null
   ): Promise<RenderTask | null> {
     const staleBefore = Date.now() - staleClaimSeconds * 1000;
+    const [stateA, stateB] = activeStatePair();
     const candidates = [...this.store.values()]
       .filter((t) => {
         // The worker has no copy of a device-held request's footage, so a
         // claim here could only ever end in a failed step. Excluding it from
         // the CLAIM makes that impossible rather than merely handled.
         if (t.deviceOnly) return false;
-        // Lane routing: operator_pc worker only sees its own lane.
-        // Mac Mini (no lane) never sees operator_pc tasks.
-        if (lane != null) {
-          if (t.renderLane !== lane) return false;
-        } else {
-          if (t.renderLane === 'operator_pc') return false;
+        // Test worker claims only test-namespace tasks; non-test claims only production.
+        if (t.state !== stateA && t.state !== stateB) return false;
+        // Lane routing (production mode only — test mode uses state-based isolation).
+        if (!isLineTestMode()) {
+          if (lane != null) {
+            if (t.renderLane !== lane) return false;
+          } else {
+            if (t.renderLane === 'operator_pc') return false;
+          }
         }
-        if (t.state === "queued") return true;
-        if (t.state === "claimed") {
+        if (t.state === stateA) return true;
+        if (t.state === stateB) {
           const keepAlive = (t.heartbeatAt ?? t.claimedAt)?.getTime() ?? 0;
           return keepAlive < staleBefore;
         }
@@ -109,7 +135,7 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
     const now = new Date();
     const claimed: RenderTask = {
       ...next,
-      state: "claimed",
+      state: stateB,
       claimedBy: workerId,
       claimedAt: now,
       heartbeatAt: now,
@@ -151,28 +177,28 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
 
   async touchClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
     const task = this.store.get(taskId);
-    if (!task || task.state !== "claimed" || task.claimedBy !== deviceClaimId) return false;
+    if (!task || !["claimed", "test_claimed"].includes(task.state) || task.claimedBy !== deviceClaimId) return false;
     this.store.set(taskId, { ...task, heartbeatAt: new Date(), updatedAt: new Date() });
     return true;
   }
 
   async completeClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
     const task = this.store.get(taskId);
-    if (!task || task.state !== "claimed" || task.claimedBy !== deviceClaimId) return false;
+    if (!task || !["claimed", "test_claimed"].includes(task.state) || task.claimedBy !== deviceClaimId) return false;
     await this.complete(taskId, "done");
     return true;
   }
 
   async releaseClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
     const task = this.store.get(taskId);
-    if (!task || task.state !== "claimed" || task.claimedBy !== deviceClaimId) return false;
+    if (!task || !["claimed", "test_claimed"].includes(task.state) || task.claimedBy !== deviceClaimId) return false;
     await this.release(taskId);
     return true;
   }
 
   async touch(taskId: string): Promise<void> {
     const t = this.store.get(taskId);
-    if (t && t.state === "claimed") {
+    if (t && ["claimed", "test_claimed"].includes(t.state)) {
       this.store.set(taskId, { ...t, heartbeatAt: new Date(), updatedAt: new Date() });
     }
   }
@@ -200,9 +226,11 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
   async release(taskId: string): Promise<void> {
     const t = this.store.get(taskId);
     if (!t) return;
+    // Preserve test namespace: test_claimed → test_queued, claimed → queued.
+    const newState: RenderTaskState = t.state === "test_claimed" ? "test_queued" : "queued";
     this.store.set(taskId, {
       ...t,
-      state: "queued",
+      state: newState,
       claimedBy: null,
       claimedAt: null,
       heartbeatAt: null,
@@ -212,27 +240,27 @@ export class MockRenderTaskRepository implements IRenderTaskRepository {
 
   async findActiveByJob(jobId: string): Promise<RenderTask | null> {
     for (const t of this.store.values()) {
-      if (t.jobId === jobId && isActive(t)) return { ...t };
+      if (t.jobId === jobId && isActiveForMode(t)) return { ...t };
     }
     return null;
   }
 
   async findActiveByRequest(requestId: string): Promise<RenderTask | null> {
     for (const t of this.store.values()) {
-      if (t.requestId === requestId && isActive(t)) return { ...t };
+      if (t.requestId === requestId && isActiveForMode(t)) return { ...t };
     }
     return null;
   }
 
   async countAhead(taskId: string): Promise<number | null> {
     const target = this.store.get(taskId);
-    if (!target || !isActive(target)) return null;
+    if (!target || !isActiveForMode(target)) return null;
     // Tasks that would be CLAIMED first — not merely enqueued earlier. With
     // priorities those differ, and the enqueue-time count would understate the
     // wait for a low-priority task sitting behind a stream of paid work.
     let ahead = 0;
     for (const t of this.store.values()) {
-      if (t.id === taskId || !isActive(t)) continue;
+      if (t.id === taskId || !isActiveForMode(t)) continue;
       if (compareRenderOrder(t, target) < 0) ahead += 1;
     }
     return ahead;

@@ -2,6 +2,7 @@ import {
   IVideoGenerationJobRepository,
   JobUpdateActor,
 } from "@/repositories/interfaces/IVideoGenerationJobRepository";
+import { isLineTestMode } from "@/config/reviewSystem";
 import {
   VideoGenerationJob,
   CreateVideoGenerationJobInput,
@@ -148,7 +149,15 @@ export class MockVideoGenerationJobRepository
     staleClaimSeconds: number
   ): Promise<VideoGenerationJob | null> {
     const staleBefore = Date.now() - staleClaimSeconds * 1000;
+    const testMode = isLineTestMode();
+    // is_test guard: the mock has no clip_requests to JOIN, so we rely on a
+    // 'isTest' property on the job if set, otherwise fall back to false.
+    // In test mode: only claim jobs explicitly marked isTest=true.
+    // In non-test mode: skip jobs explicitly marked isTest=true.
     const candidates = [...this.store.values()].filter((j) => {
+      const jobIsTest = Boolean((j as VideoGenerationJob & { isTest?: boolean }).isTest);
+      if (testMode && !jobIsTest) return false;
+      if (!testMode && jobIsTest) return false;
       if (j.renderState === "queued") return true;
       if (j.renderState === "claimed") {
         const keepAlive = (j.renderHeartbeatAt ?? j.claimedAt)?.getTime() ?? 0;

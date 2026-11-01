@@ -150,15 +150,18 @@ describe("render-task FIFO queue", () => {
     expect(await repo.countAhead(head!.id)).toBeNull();
   });
 
-  it("re-enqueue replaces a job's active task instead of stacking a second", async () => {
+  it("re-enqueue of an active job returns existing task unchanged (DO NOTHING — never resets progress)", async () => {
     const store = new Map<string, RenderTask>();
     const repo = new MockRenderTaskRepository(store);
-    await repo.enqueue({ jobId: "j", requestId: "r", step: RenderStep.MontageMerge });
-    await repo.enqueue({ jobId: "j", requestId: "r", step: RenderStep.OverlayComposition });
+    const first = await repo.enqueue({ jobId: "j", requestId: "r", step: RenderStep.MontageMerge });
+    const second = await repo.enqueue({ jobId: "j", requestId: "r", step: RenderStep.OverlayComposition });
 
+    // Only one active task; the original step is preserved (not overwritten).
     const active = await repo.listActive();
     expect(active).toHaveLength(1);
-    expect(active[0].step).toBe(RenderStep.OverlayComposition);
+    expect(active[0].step).toBe(RenderStep.MontageMerge);
+    // The second enqueue returns the same task ID as the first.
+    expect(second.id).toBe(first.id);
   });
 
   it("records duration on completion for the admin monitor", async () => {
