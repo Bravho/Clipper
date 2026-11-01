@@ -18,6 +18,10 @@ export interface OutboxEvent {
 }
 
 export interface IReviewOutboxRepository {
+  reserveHandoffNotification?(shopUserId: string): Promise<boolean>;
+  findByDedupeKey(key: string): Promise<OutboxEvent | null>;
+  listRecentReplies(accountId?: string, since?: Date): Promise<OutboxEvent[]>;
+  countEscalations(shopUserId: string, since: Date): Promise<number>;
   enqueue(input: {
     eventType: string;
     channel?: string;

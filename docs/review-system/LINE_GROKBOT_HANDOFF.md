@@ -1,6 +1,6 @@
-# LINE → Grok Bot (RCaveBot) customer hand-off — design (no code yet)
+# LINE → Grok Bot (RCaveBot) customer hand-off
 
-Status: DESIGN ONLY, 2026-11-01. Written from the code on `feat/ai-editing-line` (HEAD at time of writing: e5fbcba + the 2026-11-01 LINE intake fixes). No secret values appear here. `GROKBOT_REVIEW_WEBHOOK_URL` is intentionally **not** set on Mar-PC.
+Status: handoff admin endpoints and escalation notices IMPLEMENTED, 2026-11-01. Other proposals remain design-only unless explicitly marked implemented. Written from the code on `feat/ai-editing-line` (HEAD at time of writing: e5fbcba + the 2026-11-01 LINE intake fixes). No secret values appear here. `GROKBOT_REVIEW_WEBHOOK_URL` is intentionally **not** set on Mar-PC.
 
 Goal: unrecognised customer text in the LINE OA (and an explicit "ติดต่อ" / "คุยกับคน" request) is forwarded from our server to a dedicated customer-facing Grok Bot (**RCaveBot**). RCaveBot answers the shop through a token-authed admin endpoint that pushes a LINE message to that user.
 
@@ -41,10 +41,10 @@ Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` 
 - This is the only place the customer's text is available to a bot today.
 
 **b) Decide a review item (approve / reject / free-text reply)** — `POST /api/admin/review/{id}/decision`
-- Body: `{ "version": number, "decision": "approve" | "reject" | "manual_reply", "replyText"?: string }` (`replyText` required for `manual_reply`).
+- Body: `{ "version": number, "decision": "approve" | "reject" | "manual_reply", "replyText"?: string, "allowDuringTakeover"?: boolean }` (`replyText` required for `manual_reply`).
 - `actorVia` is recorded as `grokbot_app`, `actorUserId` null.
 - Responses: `200 { "item": ReviewItem }`; `400 {"error":"Invalid JSON."}` / `400 {"error":"version (number) and decision (approve|reject|manual_reply) are required."}` / `400 {"error":"replyText is required for manual_reply."}`; `409 {"error":"version_conflict"|"render_not_ready"|"not_found"}`; `500 {"error":"Internal error."}`.
-- `manual_reply` = **the existing way to send a free-text reply to the shop**: status → `edited`, `finalPayload.reply_text = replyText`, outbox `review.decided`; the worker then `push`es `reply_text` as a LINE text message to every active LINE account of that shop. An explicit human/`grokbot_app` manual reply **bypasses the takeover flag** (by design: it is the human channel).
+- `manual_reply` = **the existing way to send a free-text reply to the shop**: status → `edited`, `finalPayload.reply_text = replyText`, outbox `review.decided`; the worker then `push`es `reply_text` as a LINE text message to every active LINE account of that shop. A manual reply during active takeover requires explicit `allowDuringTakeover: true`; the worker checks the flag again at delivery.
 - Example: `POST /api/admin/review/28625f5e-…/decision` `{"version":1,"decision":"manual_reply","replyText":"ได้รับแล้วค่ะ ทีมงานกำลังตรวจสอบไฟล์ทั้ง 3 ไฟล์"}` → `200 {"item":{…,"status":"edited","resolution":"manual_reply",…}}`.
 - "Revise" (`decision: "edit"` with edits) exists in `ReviewService.decide` but is **not exposed** by this route (route accepts only approve|reject|manual_reply).
 
@@ -81,6 +81,7 @@ Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` 
   "notifiedAt": "ISO timestamp"
 }
 ```
+- **Escalation notice IMPLEMENTED:** customer-reply notices use only the allowlisted fields shown in section 3.3. Per-shop delivery cap is counted from sent escalation outbox rows over the preceding 60 seconds (default 6, `LINE_HANDOFF_FORWARD_PER_SHOP_PER_MIN`). At the cap, the worker defers the row for 60 seconds without calling the webhook. The review item remains stored. No customer text, reason, LINE identity, audience, signals, or asset links are forwarded.
 - Which event when: `review.created` → `escalation` for `customer_reply`/`complaint`/`out_of_package`, else `review_needed`; reminder sweep → `reminder`; takeover on → `takeover_on` (generic, no identity).
 - **No PII by design: the customer's text and LINE user id are NOT in the payload.** A bot must call `GET /api/admin/review` to read `payload.text`.
 
@@ -136,53 +137,93 @@ Flow (unchanged parts in italics):
 Headers: the existing `X-Grokbot-Timestamp` and `X-Grokbot-Signature` scheme with `GROKBOT_CUSTOMER_WEBHOOK_KEY`. No customer text and no LINE user id in the trigger body.
 5. Coalescing: if the same shop sends several texts within 10 s, forward one `customer.message` (the latest item) and let the fetch endpoint return all unanswered texts.
 
-### 3.3 New endpoints (token-authed, `Authorization: Bearer <REVIEW_ADMIN_TOKEN>`; a dedicated `RCAVEBOT_ADMIN_TOKEN` can be added so the customer bot cannot approve renders)
+### 3.3 Admin handoff endpoints — IMPLEMENTED
 
-**GET `/api/admin/line/handoff/{itemId}`** — fetch the context for one hand-off.
-Response 200:
+All three endpoints use exact-prefix `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` with timing-safe comparison.
+Common responses: 503 `{"error":"Not configured."}` when unset; 401 `{"error":"Unauthorized."}` for missing/wrong token; 404 `{"error":"not_found"}` for missing or out-of-scope items/accounts.
+Scope is symmetric: `LINE_TEST_MODE === 'true'` exposes only test accounts/items; every other value exposes only non-test accounts/items. Item ownership is resolved through its LINE account in `LINE_CHANNEL_ID` (default `default`), or an active account of its shop when the item has no LINE identity.
+
+**POST `/api/admin/line/reply`**
+
+Body fields:
+- `itemId?: string(UUID)`, `conversationRef?: string(UUID, line_accounts.id)`: at least one required; both must identify the same account.
+- `text: string`: trimmed, 1-1000 characters.
+- `idempotencyKey: string`: 8-100 characters, only `[A-Za-z0-9_.:-]`.
+- `expectedVersion?: positive integer`: required with `itemId` and `resolve: true`.
+- `resolve?: boolean` (default false).
+- `actor: "rcavebot" | "human"`.
+- `allowDuringTakeover?: boolean` (default false).
+
+Example body: `{"conversationRef":"11111111-1111-4111-8111-111111111111","text":"Hello","idempotencyKey":"answer:12345678","actor":"human","allowDuringTakeover":true}`.
+
+Responses:
+- 202 `{"queued":true,"outboxEventId":"22222222-2222-4222-8222-222222222222"}`.
+- 200 `{"duplicate":true,"outboxEventId":"22222222-2222-4222-8222-222222222222"}`: same dedupe key, no second enqueue, resolution, or push.
+- 400 `{"error":"invalid_input","detail":"bad_json"}` for malformed JSON; field validation uses the field name (e.g. `text`, `actor`, `idempotencyKey`, `expectedVersion`, `allowDuringTakeover`), or Zod's object error. Missing ids: `{"error":"invalid_input","detail":"missing_ids"}`; missing version for resolution: `{"error":"invalid_input","detail":"expectedVersion_required"}`; mismatched ids: `{"error":"invalid_input","detail":"conversationRef_mismatch"}`.
+- Common 401/503/404 responses above.
+- 409 `{"error":"takeover_active"}`: active, unexpired takeover blocks every rcavebot reply, and human replies without `allowDuringTakeover: true`.
+- 409 `{"error":"version_conflict"}`: resolution version differs.
+- 429 `{"error":"rate_limited"}`, header `Retry-After: 3600` (actual seconds until the oldest counted row exits the window, minimum 1). Limits count all `line.reply` rows created in the last hour: per account `LINE_HANDOFF_REPLY_PER_SHOP_PER_HOUR` default 20, global `LINE_HANDOFF_REPLY_GLOBAL_PER_HOUR` default 200.
+
+The transaction serializes reply quota/dedupe checks, enqueue, audit, and optional manual-reply resolution. Dedupe key is `line.reply:<idempotencyKey>`. Server-only outbox payload holds `lineAccountId`, `itemId|null`, `text`, `actor`, `allowDuringTakeover`, `resolve`, and `expectedVersion|null`. Resolution records `actorVia: grokbot_app` and suppresses the usual `review.decided` push. Only `line.reply` delivers it.
+The worker checks account scope/status and takeover again, marks blocked rows dead with `takeover_active`, and pushes using the UUID outbox event id as `X-Line-Retry-Key`. Text never goes to the notifier.
+
+**GET `/api/admin/line/handoff/{itemId}`**
+
+Read-only: no item-open records, state updates, or takeover expiry writes. No body.
+200 example (nullable conversation/request/job fields shown):
 ```json
 {
-  "itemId": "uuid", "version": 1, "status": "pending",
-  "conversationRef": "uuid", "isTest": true, "takeoverActive": false,
-  "messages": [{ "text": "มีทั้งหมด 3 ไฟล์นะครับ", "receivedAt": "ISO", "itemId": "uuid" }],
-  "conversation": { "state": "in_progress", "requestId": "uuid|null", "packageCode": "trial|…", "filesCount": 3 },
-  "request": { "status": "submitted", "currentStep": "analyzing_content|failed|…" } ,
-  "allowedActions": ["reply", "escalate_human"]
+  "itemId":"11111111-1111-4111-8111-111111111111", "version":1,
+  "status":"pending", "typeKey":"customer_reply", "shortCode":"ABC123",
+  "isTest":false, "conversationRef":"22222222-2222-4222-8222-222222222222",
+  "takeoverActive":false, "takeoverExpiresAt":null, "customerText":"Hello",
+  "messages":[{"itemId":"11111111-1111-4111-8111-111111111111","text":"Hello","receivedAt":"2026-11-01T00:00:00.000Z","status":"pending"}],
+  "replies":[{"outboxEventId":"33333333-3333-4333-8333-333333333333","text":"Hello back","actor":"human","status":"sent","createdAt":"2026-11-01T00:01:00.000Z"}],
+  "conversation":{"state":"in_progress","requestId":null},
+  "request":null, "job":null
 }
 ```
-`404 not_found` (also for non-test items when `LINE_TEST_MODE=true`).
+Messages: up to 10 most recent customer_reply items for the same shop and LINE user, newest last, across all statuses. Replies: up to 10 most recent line.reply rows for the account, newest first, across all statuses/ages. `customerText` is nullable. An absent conversation returns `{"state":null,"requestId":null}`. A linked request returns `{"id":"uuid","status":"Submitted"}`; a linked job returns `{"status":"awaiting_content_approval","currentStep":"analyzing_content"}` using stored enum values. No files or other context is exposed.
+Other responses: common 401/503/404 above.
 
-**POST `/api/admin/line/reply`** — push free text to a shop (new; covers both "answer an item" and "proactive message").
-Body:
+**POST `/api/admin/line/handoff/{itemId}/escalate`**
+
+Body: `{"reason"?: string (at most 500 characters)}`; example `{"reason":"Needs a human"}` or `{}`.
+Sets `signals.wants_human = true` and optional `signals.escalation_reason` server-side. Enqueues `handoff.escalate`, dedupe key `handoff.escalate:<itemId>`.
+Responses: 200 `{"ok":true}`; repeat 200 `{"ok":true,"duplicate":true}`; 400 `{"error":"invalid_input","detail":"bad_json"}` or `{"error":"invalid_input","detail":"reason"}`; common 401/503/404 above.
+No takeover changes. The worker delivers notifier event `escalation` with the same per-shop cap as customer-reply review.created.
+
+Escalation payload example (exact allowlist; no reason, customer text, or LINE ids):
 ```json
 {
-  "itemId": "uuid (optional if conversationRef given)",
-  "conversationRef": "uuid (line_accounts.id, optional if itemId given)",
-  "text": "string, 1..1000 chars, plain text",
-  "idempotencyKey": "string 8..100 (required)",
-  "expectedVersion": 1,
-  "resolve": true,
-  "actor": "rcavebot | human"
+  "event":"escalation", "requestId":null,
+  "itemId":"11111111-1111-4111-8111-111111111111", "shortCode":"ABC123",
+  "typeKey":"customer_reply", "orderId":null,
+  "summaryTh":"ลูกค้าส่งข้อความที่ระบบตอบไม่ได้ — รอทีมงาน/RCaveBot ตอบ",
+  "previewLinks":[], "notifiedAt":"2026-11-01T00:00:00.000Z"
 }
 ```
-Behaviour: validate scope (`LINE_TEST_MODE=true` → account must be `is_test`; the item must belong to that account) and rate limits; if `itemId` is given and `resolve`, apply `manual_reply` to the item (same as §1.2b, `actorVia: 'rcavebot'`); otherwise enqueue outbox `line.reply` with `dedupe_key = 'reply:' + idempotencyKey`. The worker `push`es via `LineClient.push(lineUserId, [{type:'text', text}], retryKey = outbox event id)` (LINE `X-Line-Retry-Key`, so retries never double-send).
-Responses: `202 { "queued": true, "outboxEventId": "uuid" }`; `200 { "duplicate": true }` for a repeated idempotency key; `400 invalid_input`; `404 not_found`; `409 version_conflict | takeover_active`; `429 rate_limited` with `Retry-After`.
 
-**POST `/api/admin/line/handoff/{itemId}/escalate`** — RCaveBot gives up and asks for a human: sets `signals.wants_human`, re-notifies the admin review bot (`GROKBOT_REVIEW_WEBHOOK_URL`, event `escalation`) and optionally turns the takeover on (body `{ "takeover": boolean, "hours"?: number }`).
+**Existing POST `/api/admin/review/{id}/decision` — takeover change IMPLEMENTED**
 
-Existing endpoints stay as they are (§1.2).
+Adds optional `allowDuringTakeover?: boolean`. Example: `{"version":1,"decision":"manual_reply","replyText":"Hello","allowDuringTakeover":true}`.
+For manual_reply, missing/out-of-scope account/item returns 404 `{"error":"not_found"}`; active takeover without the flag returns 409 `{"error":"takeover_active"}`. Invalid flag type returns 400 `{"error":"invalid_input"}`. Success remains 200 `{"item":{"id":"uuid","status":"edited","resolution":"manual_reply","version":2}}` (full ReviewItem).
+The flag is persisted in review.decided payload and enforced again before manual delivery. All other decisions retain existing semantics and responses in section 1.2b.
+
+No migration is required by this implementation. Escalation limits count sent review_outbox rows in the last 60 seconds; review_items signals and review_outbox columns store flags and replies. A concurrently created, untracked 059_line_handoff.sql was left untouched and is not used by these routes or worker.
 
 ### 3.4 Rate limits and quotas
 - Inbound: at most `LINE_HANDOFF_FORWARD_PER_SHOP_PER_MIN` forwards per shop per minute, with coalescing (§3.2.5); always create the review item (no customer text is lost), only the webhook call is limited.
-- Outbound: per shop per hour and global per hour (§3.1), counted from outbox `line.reply` and `review.decided` manual replies; `429` with `Retry-After`. Message length is capped at 1000 characters, plain text only (no URLs unless they are on an allowlist, e.g. our own review links).
+- Outbound IMPLEMENTED: per account per hour and global per hour (§3.3), counted from outbox `line.reply` rows; `429` with `Retry-After`. Message length is capped at 1000 characters, plain text.
 - LINE quota: reply tokens are free but single-use and expire in about a minute, so bot answers arrive as **push** messages, which count against the OA's monthly message quota. The global cap protects it; log the count per day.
 - Webhook: 5 s timeout; outbox retries with backoff (existing), then `failed` after N attempts so that one broken trigger cannot block the queue.
 
 ### 3.5 Takeover interplay
 - Takeover ON (human handling the shop): the inbound webhook already stops automated replies. With hand-off enabled, still create the review item, but **do not forward to RCaveBot**: send `customer_message` with `takeoverActive: true` to the admin/human channel (`GROKBOT_REVIEW_WEBHOOK_URL`) instead.
-- `POST /api/admin/line/reply` with `actor: 'rcavebot'` returns `409 takeover_active` while takeover is on; `actor: 'human'` (or the existing `manual_reply` decision) is allowed, matching today's rule that an explicit human reply bypasses takeover.
+- IMPLEMENTED: takeover blocks rcavebot replies; human replies and manual_reply decisions require explicit `allowDuringTakeover: true` to bypass. The worker re-checks before delivery.
 - When takeover is switched OFF or expires, unanswered items stay pending; RCaveBot may pick them up on its next run (send a `customer_message` for the newest one).
-- RCaveBot can request takeover through `/escalate` (§3.3); it can never switch takeover off.
+- IMPLEMENTED: `/escalate` flags and notifies for human attention; it does not modify takeover.
 
 ### 3.6 is_test
 - The server forwards only accounts in the server's mode: with `LINE_TEST_MODE=true` only `is_test` accounts; on production only non-test accounts. The flag is carried in the payload (`isTest`) and enforced again on every fetch and reply endpoint (404 for out-of-scope ids).

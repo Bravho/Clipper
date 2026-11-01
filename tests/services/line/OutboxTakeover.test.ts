@@ -1,10 +1,10 @@
 jest.mock('@/lib/spaces', () => ({ spacesSignedUrl: jest.fn(async () => 'signed-video') }));
-jest.mock('@/repositories', () => ({ createReviewService: jest.fn() }));
+jest.mock('@/repositories', () => ({ createReviewService: jest.fn(), lineAccountRepository: { findByUserId: jest.fn() } }));
 jest.mock('@/services/VideoGenerationService', () => ({ videoGenerationService: { runStoryboardVoiceTask: jest.fn() } }));
 import { videoGenerationService } from '@/services/VideoGenerationService';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/admin/review/[id]/decision/route';
-import { createReviewService } from '@/repositories';
+import { lineAccountRepository, createReviewService } from '@/repositories';
 import { ReviewService } from '@/services/review/ReviewService';
 import { MockReviewActionRepository } from '@/repositories/mock/MockReviewActionRepository';
 import { MockReviewItemRepository } from '@/repositories/mock/MockReviewItemRepository';
@@ -57,9 +57,10 @@ test('explicit admin API reply is delivered during takeover without executing au
   await d.outbox.markSent(d.event.id);
   const service = new ReviewService(d.items, new MockReviewActionRepository(new Map()), new MockEscalationRuleRepository(new Map()), d.outbox);
   (createReviewService as jest.Mock).mockReturnValue(service);
+  (lineAccountRepository.findByUserId as jest.Mock).mockResolvedValue([await d.accounts.findById(d.account.id)]);
   process.env.REVIEW_ADMIN_TOKEN = 'fixture-token';
   try {
-    const response = await POST(new NextRequest('http://localhost/api/admin/review/item/decision', { method: 'POST', headers: { authorization: 'Bearer fixture-token' }, body: JSON.stringify({ version: d.item.version, decision: 'manual_reply', replyText: 'Tho typed this reply' }) }), { params: { id: d.item.id } });
+    const response = await POST(new NextRequest('http://localhost/api/admin/review/item/decision', { method: 'POST', headers: { authorization: 'Bearer fixture-token' }, body: JSON.stringify({ version: d.item.version, decision: 'manual_reply', replyText: 'Tho typed this reply', allowDuringTakeover: true }) }), { params: { id: d.item.id } });
     expect(response.status).toBe(200);
     await processLineReviewOutbox(d);
     expect(d.execute).not.toHaveBeenCalled();

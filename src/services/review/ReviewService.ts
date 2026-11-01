@@ -65,6 +65,8 @@ export interface DecideInput {
   edits?: DiffEntry[];
   rerender?: boolean;
   replyText?: string;
+  allowDuringTakeover?: boolean;
+  suppressReplyOutbox?: boolean;
   clientElapsedMs?: number;
 }
 
@@ -205,7 +207,7 @@ export class ReviewService {
       await this.outboxRepo.enqueue({
         eventType: 'review.created',
         reviewItemId: item.id,
-        payload: { item_id: item.id, short_code: item.shortCode, type: item.typeKey },
+        payload: { shopUserId: item.shopUserId, item_id: item.id, short_code: item.shortCode, type: item.typeKey },
       });
     }
 
@@ -370,10 +372,11 @@ export class ReviewService {
         toStatus: 'edited',
         reasonCode: input.reasonCode,
       });
-      await this.outboxRepo.enqueue({
+      if (!input.suppressReplyOutbox) await this.outboxRepo.enqueue({
         eventType: 'review.decided',
         reviewItemId: item.id,
         payload: {
+          allowDuringTakeover: input.allowDuringTakeover === true,
           item_id: item.id,
           decision: 'manual_reply',
           reply_text: input.replyText,

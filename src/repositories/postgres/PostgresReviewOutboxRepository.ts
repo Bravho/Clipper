@@ -27,8 +27,32 @@ function rowToEvent(row: Record<string, unknown>): OutboxEvent {
 }
 
 export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
-  constructor(private db = pool) {}
+  constructor(private db = pool, private notificationBudget?: (shopUserId: string) => Promise<boolean>) {}
 
+  async reserveHandoffNotification(shopUserId: string): Promise<boolean> {
+    if (!this.notificationBudget) throw new Error('handoff_notification_budget_not_configured');
+    return this.notificationBudget(shopUserId);
+  }
+
+  async findByDedupeKey(key: string): Promise<OutboxEvent | null> {
+    const { rows } = await this.db.query("SELECT * FROM review_outbox WHERE channel='grokbot_app' AND dedupe_key=$1", [key]);
+    return rows[0] ? rowToEvent(rows[0]) : null;
+  }
+  async listRecentReplies(accountId?: string, since?: Date): Promise<OutboxEvent[]> {
+    const { rows } = await this.db.query(`SELECT o.*, COALESCE(ri.shop_user_id::text, la.user_id::text) AS owner_shop_id
+      FROM review_outbox o LEFT JOIN review_items ri ON ri.id=o.review_item_id
+      LEFT JOIN line_accounts la ON la.id::text=o.payload->>'lineAccountId'
+      WHERE o.channel='grokbot_app' AND o.event_type='line.reply'
+      AND ($2::timestamptz IS NULL OR o.created_at > $2)
+      AND ($1::text IS NULL OR o.payload->>'lineAccountId'=$1)
+      ORDER BY o.created_at DESC`, [accountId ?? null, since ?? null]);
+    return rows.map(row => ({ ...rowToEvent(row), payload: { ...parseJson<Record<string, unknown>>(row.payload, {}),
+      ...(row.owner_shop_id ? { shopUserId: row.owner_shop_id } : {}) } }));
+  }
+  async countEscalations(shopUserId: string, since: Date): Promise<number> {
+    const { rows } = await this.db.query("SELECT count(*) AS count FROM review_outbox o JOIN review_items i ON i.id=o.review_item_id WHERE i.shop_user_id::text=$1 AND o.state='sent' AND o.sent_at>$2 AND (o.event_type='handoff.escalate' OR (o.event_type='review.created' AND i.type_key IN ('customer_reply','complaint','out_of_package')))", [shopUserId, since]);
+    return Number(rows[0].count);
+  }
   async enqueue(input: {
     eventType: string;
     channel?: string;
@@ -61,9 +85,11 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
         WHERE id = (
           SELECT id FROM review_outbox
            WHERE state IN ('queued','failed','sending') AND next_attempt_at <= NOW()
-             AND (SELECT COALESCE(cr.is_test, po.is_test,
+             AND (SELECT CASE WHEN review_outbox.event_type='line.reply' THEN
+                 (SELECT is_test FROM line_accounts WHERE id::text=review_outbox.payload->>'lineAccountId')
+                 ELSE COALESCE(cr.is_test, po.is_test,
                  (SELECT bool_or(la.is_test) FROM line_accounts la
-                  WHERE la.user_id::text=COALESCE(ri.shop_user_id::text, review_outbox.payload->>'user_id')))
+                  WHERE la.user_id::text=COALESCE(ri.shop_user_id::text, review_outbox.payload->>'user_id'))) END
                FROM (SELECT 1) owner_anchor
                LEFT JOIN review_items ri ON ri.id=review_outbox.review_item_id
                LEFT JOIN storyboard_versions sv ON sv.id::text=review_outbox.payload->>'version_id'

@@ -5,6 +5,7 @@ import {
 } from '@/domain/models/ReviewItem';
 
 export interface IReviewItemRepository {
+  listCustomerMessages(shopUserId: string, lineUserId: string): Promise<ReviewItem[]>;
   create(input: CreateReviewItemInput): Promise<ReviewItem>;
   findById(id: string): Promise<ReviewItem | null>;
   findByShortCode(shortCode: string): Promise<ReviewItem | null>;
@@ -34,6 +35,7 @@ export interface IReviewItemRepository {
         | 'customerNoticedAt'
         | 'supersedesId'
         | 'priority'
+        | 'signals'
       >
     >,
     opts?: { expectedVersion?: number; expectedStatus?: ReviewItemStatus }

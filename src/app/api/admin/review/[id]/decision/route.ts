@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { timingSafeEqual } from 'crypto';
-import { createReviewService } from '@/repositories';
+import { createReviewService, lineAccountRepository } from '@/repositories';
 
 function checkAdminToken(request: NextRequest): boolean {
   const expected = process.env.REVIEW_ADMIN_TOKEN;
@@ -32,6 +32,8 @@ function checkAdminToken(request: NextRequest): boolean {
     return false;
   }
 }
+
+import { itemAccount, takeoverActive } from '@/services/line/handoffAdmin';
 
 const VALID_DECISIONS = new Set(['approve', 'reject', 'manual_reply']);
 
@@ -53,7 +55,10 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid JSON.' }, { status: 400 });
   }
 
-  const { version, decision, replyText } = body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return NextResponse.json({ error: 'Invalid JSON.' }, { status: 400 });
+  const { version, decision, replyText, allowDuringTakeover } = body;
+  if (allowDuringTakeover !== undefined && typeof allowDuringTakeover !== 'boolean')
+    return NextResponse.json({ error: 'invalid_input' }, { status: 400 });
 
   if (typeof version !== 'number' || !VALID_DECISIONS.has(decision as string)) {
     return NextResponse.json(
@@ -67,7 +72,17 @@ export async function POST(
   }
 
   try {
-    const item = await createReviewService().decide({
+    const service = createReviewService();
+    if (decision === 'manual_reply') {
+      const current = await service.findById(params.id);
+      if (!current) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+      const account = await itemAccount(current);
+      if (!account) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+      if ((await lineAccountRepository.findByUserId(current.shopUserId)).some(takeoverActive) && allowDuringTakeover !== true)
+        return NextResponse.json({ error: 'takeover_active' }, { status: 409 });
+    }
+    const item = await service.decide({
+      allowDuringTakeover: allowDuringTakeover === true,
       itemId: params.id,
       expectedVersion: version as number,
       // Token automation has no users-row identity; leave the nullable UUID FK null.
@@ -82,7 +97,7 @@ export async function POST(
     if (code === 'version_conflict' || code === 'render_not_ready' || code === 'not_found') {
       return NextResponse.json({ error: code }, { status: 409 });
     }
-    console.error('[admin/review/decision] unexpected error:', err);
+    console.error('[admin/review/decision] unexpected error');
     return NextResponse.json({ error: 'Internal error.' }, { status: 500 });
   }
 }

@@ -29,7 +29,7 @@ export interface GrokBotPayload {
   itemId: string;
   shortCode: string;
   typeKey: string;
-  audience: string;
+  audience?: string;
   orderId: string | null;
   summaryTh: string;
   previewLinks: { role: string; url: string; mime: string }[];
@@ -100,8 +100,9 @@ export async function notifyGrokBot(
   const webhookKey = process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
   if (!webhookUrl || !webhookKey) return;
 
-  const previewLinks = await Promise.all(
-    (item.assetRefs ?? []).map(async (ref) => ({
+  const escalation = opts.event === 'escalation' || item.typeKey === 'customer_reply';
+  const previewLinks = escalation ? [] : await Promise.all(
+    (item.typeKey === 'customer_reply' ? [] : item.assetRefs ?? []).map(async (ref) => ({
       role: ref.role,
       mime: ref.mime,
       url: await opts.signedUrl(ref.storage_key, DEFAULT_TTL).catch(() => ''),
@@ -119,12 +120,12 @@ export async function notifyGrokBot(
     itemId: item.id,
     shortCode: item.shortCode,
     typeKey: item.typeKey,
-    audience: String(item.payload.audience ?? 'admin'),
+    ...(!escalation ? { audience: String(item.payload.audience ?? 'admin') } : {}),
     orderId: item.packageOrderId ?? null,
-    summaryTh: opts.summaryTh ?? buildSummaryTh(item),
+    summaryTh: escalation ? 'ลูกค้าส่งข้อความที่ระบบตอบไม่ได้ — รอทีมงาน/RCaveBot ตอบ' : opts.summaryTh ?? buildSummaryTh(item),
     previewLinks,
-    ...(precheckIssues ? { precheckIssues } : {}),
-    ...(Array.isArray(item.signals?.visualShotFlags) ? { visualShotFlags: item.signals.visualShotFlags.flatMap((raw: unknown) => {
+    ...(!escalation && precheckIssues ? { precheckIssues } : {}),
+    ...(!escalation && Array.isArray(item.signals?.visualShotFlags) ? { visualShotFlags: item.signals.visualShotFlags.flatMap((raw: unknown) => {
       if (!raw || typeof raw !== 'object') return [];
       const f = raw as Record<string, unknown>;
       const rules = ['min_shot','hero_hold','first_hold','last_hold','cut_gap','ambiguous_assets','analysis_missing','usable_duration','source_cut','low_confidence','product_center','product_area','product_clipped','total_duration','analysis_error','empty_plan'];
@@ -134,7 +135,14 @@ export async function notifyGrokBot(
     notifiedAt: new Date().toISOString(),
   };
 
-  const body = JSON.stringify(payload);
+  // Strict allowlist for handoffs: customer-controlled fields never leave here.
+  const body = JSON.stringify(item.typeKey === 'customer_reply' ? {
+    event: opts.event ?? 'escalation', requestId: item.requestId ?? null,
+    itemId: item.id, shortCode: item.shortCode, typeKey: item.typeKey, orderId: item.packageOrderId ?? null,
+    summaryTh: opts.event === 'takeover_on' ? 'ทีมงานเข้ารับช่วงการสนทนาแล้ว (takeover)'
+      : 'ลูกค้าส่งข้อความที่ระบบตอบไม่ได้ — รอทีมงาน/RCaveBot ตอบ', previewLinks: [],
+    notifiedAt: payload.notifiedAt,
+  } : payload);
   const timestamp = Math.floor(Date.now() / 1000);
   const sig = sign(body, webhookKey, timestamp);
   const headers = {

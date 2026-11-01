@@ -214,3 +214,29 @@ export async function reserveLineRevision(requestId: string): Promise<void> {
     WHERE id=$1 AND intake_channel='line' AND revision_count < 2 RETURNING id`, [requestId]);
   if (!result.rowCount) throw new Error('max_revisions_exceeded');
 }
+
+// Serialize reply quota checks and dedupe with enqueue + resolution on one connection.
+// The worker cannot claim a reply until its review decision commits.
+export async function withLineHandoffTransaction<T>(work: (deps: {
+  lineAccountRepository: typeof lineAccountRepository;
+  reviewItemRepository: typeof reviewItemRepository;
+  reviewOutboxRepository: typeof reviewOutboxRepository;
+  createReviewService: () => ReviewService;
+}) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('line.handoff.reply'))");
+    const db = client as unknown as typeof pool;
+    const items = new PostgresReviewItemRepository(db);
+    const outbox = new PostgresReviewOutboxRepository(db);
+    const accounts = new PostgresLineAccountRepository(db);
+    const result = await work({ lineAccountRepository: accounts, reviewItemRepository: items, reviewOutboxRepository: outbox,
+      createReviewService: () => new ReviewService(items, new PostgresReviewActionRepository(db), escalationRuleRepository, outbox) });
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}

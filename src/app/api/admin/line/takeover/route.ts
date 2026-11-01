@@ -67,7 +67,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const account = await lineAccountRepository.findByLineUser(lineChannelId, lineUserId);
-  if (!account || (process.env.LINE_TEST_MODE === 'true' && !account.isTest)) {
+  if (!account || ((account.isTest === true) !== (process.env.LINE_TEST_MODE === 'true'))) {
     return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
   }
 

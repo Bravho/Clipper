@@ -23,6 +23,10 @@ export class MockReviewItemRepository implements IReviewItemRepository {
     this.store = store ?? getStore();
   }
 
+  async listCustomerMessages(shopUserId: string, lineUserId: string): Promise<ReviewItem[]> {
+    return [...this.store.values()].filter(i => i.shopUserId === shopUserId && i.typeKey === 'customer_reply' && i.payload.lineUserId === lineUserId)
+      .sort((a,b) => a.createdAt.getTime()-b.createdAt.getTime()).slice(-10);
+  }
   async create(input: CreateReviewItemInput): Promise<ReviewItem> {
     const now = new Date();
     const item: ReviewItem = {

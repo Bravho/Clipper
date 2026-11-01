@@ -14,7 +14,9 @@ let mockDecideResult: unknown = null;
 let mockDecideError: Error | null = null;
 
 jest.mock('@/repositories', () => ({
+  lineAccountRepository: { findByUserId: jest.fn(async () => [{ userId: 'shop', status: 'active', isTest: false, takeoverActive: false }]) },
   createReviewService: () => ({
+    findById: jest.fn(async () => ({ shopUserId: 'shop', payload: {} })),
     listPending: jest.fn(async () => mockItems),
     decide: jest.fn(async () => {
       if (mockDecideError) throw mockDecideError;

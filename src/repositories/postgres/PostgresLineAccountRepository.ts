@@ -28,6 +28,15 @@ function rowToAccount(row: Record<string, unknown>): LineAccount {
 export class PostgresLineAccountRepository implements ILineAccountRepository {
   constructor(private db = pool) {}
 
+  async lockShop(userId: string): Promise<LineAccount[]> {
+    const { rows } = await this.db.query('SELECT * FROM line_accounts WHERE user_id=$1 ORDER BY id FOR UPDATE', [userId]);
+    return rows.map(rowToAccount);
+  }
+
+  async findById(id: string): Promise<LineAccount | null> {
+    const { rows } = await this.db.query('SELECT * FROM line_accounts WHERE id=$1', [id]);
+    return rows[0] ? rowToAccount(rows[0]) : null;
+  }
   async beginUpload(channel: string, user: string): Promise<boolean> {
     const { rows } = await this.db.query(`UPDATE line_conversation_states
       SET context=jsonb_set(context, '{pendingUploads}', to_jsonb(COALESCE((context->>'pendingUploads')::int,0)+1)), updated_at=NOW()

@@ -17,6 +17,9 @@ export class MockLineAccountRepository implements ILineAccountRepository {
     return `${lineChannelId}:${lineUserId}`;
   }
 
+  async findById(id: string): Promise<LineAccount | null> {
+    return [...this.accounts.values()].find(a => a.id === id) ?? null;
+  }
   async beginUpload(channel: string, user: string): Promise<boolean> {
     const s = this.states.get(this.stateKey(channel,user));
     if (s?.state !== 'awaiting_files') return false;

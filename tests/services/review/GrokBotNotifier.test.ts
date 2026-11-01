@@ -144,7 +144,7 @@ test('uses correct Thai summary for different typeKeys', async () => {
     ['script', 'สคริปต์รอตรวจ'],
     ['tts', 'เสียงพากย์รอตรวจ'],
     ['video', 'วิดีโอรอตรวจ'],
-    ['customer_reply', 'ลูกค้าต้องการคุยกับทีม'],
+    ['customer_reply', 'ลูกค้าส่งข้อความที่ระบบตอบไม่ได้ — รอทีมงาน/RCaveBot ตอบ'],
     ['complaint', 'ร้องเรียน — ด่วน'],
     ['out_of_package', 'แพ็กเกจหมด — รอดูแล'],
   ];

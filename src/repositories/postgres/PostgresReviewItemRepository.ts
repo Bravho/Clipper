@@ -67,6 +67,10 @@ function rowToReviewItem(row: Record<string, unknown>): ReviewItem {
 export class PostgresReviewItemRepository implements IReviewItemRepository {
   constructor(private db = pool) {}
 
+  async listCustomerMessages(shopUserId: string, lineUserId: string): Promise<ReviewItem[]> {
+    const { rows } = await this.db.query("SELECT * FROM review_items WHERE shop_user_id=$1 AND type_key='customer_reply' AND payload->>'lineUserId'=$2 ORDER BY created_at DESC LIMIT 10", [shopUserId, lineUserId]);
+    return rows.map(rowToReviewItem).reverse();
+  }
   async create(input: CreateReviewItemInput): Promise<ReviewItem> {
     const { rows } = await this.db.query(
       `INSERT INTO review_items (
@@ -166,9 +170,10 @@ export class PostgresReviewItemRepository implements IReviewItemRepository {
       customerNoticedAt: 'customer_noticed_at',
       supersedesId: 'supersedes_id',
       priority: 'priority',
+      signals: 'signals',
     };
 
-    const jsonFields = new Set(['finalPayload', 'payload']);
+    const jsonFields = new Set(['finalPayload', 'payload', 'signals']);
 
     for (const [key, col] of Object.entries(fieldMap)) {
       const val = (data as Record<string, unknown>)[key];

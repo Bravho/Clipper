@@ -22,8 +22,7 @@ export class LineClient implements ILineClient {
       body: JSON.stringify({ replyToken, messages }),
     });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`LINE reply failed ${res.status}: ${body}`);
+      throw new Error(`LINE reply failed ${res.status}`);
     }
   }
 
@@ -38,8 +37,7 @@ export class LineClient implements ILineClient {
       body: JSON.stringify({ to: userId, messages }),
     });
     if (!res.ok && res.status !== 409) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`LINE push failed ${res.status}: ${body}`);
+      throw new Error(`LINE push failed ${res.status}`);
     }
   }
 }
