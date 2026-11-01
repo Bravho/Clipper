@@ -1,6 +1,9 @@
 import { LineAccount, LineConversationState } from '@/domain/models/LineAccount';
 
 export interface ILineAccountRepository {
+  beginUpload(channel: string, user: string): Promise<boolean>;
+  finishUpload(channel: string, user: string, file?: { storageKey: string; fileSizeBytes: number }): Promise<{ count: number; pending: number } | null>;
+  claimSubmission(channel: string, user: string): Promise<Record<string, unknown> | null>;
   findByLineUser(lineChannelId: string, lineUserId: string): Promise<LineAccount | null>;
   findByUserId(userId: string): Promise<LineAccount[]>;
   create(input: Omit<LineAccount, 'id' | 'createdAt' | 'updatedAt' | 'takeoverActive' | 'takeoverExpiresAt'>): Promise<LineAccount>;

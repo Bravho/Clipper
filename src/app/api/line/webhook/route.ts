@@ -24,7 +24,8 @@ import { verifyLineSignature, processLineEvent } from '@/services/line/LineWebho
 import { getLineChannelSecret } from '@/config/lineIntake';
 import { LineClient } from '@/lib/line/LineClient';
 import { lineAccountRepository, userRepository, servicePackageRepository, clipRequestRepository,
-  uploadedAssetRepository, createReviewService } from '@/repositories/index';
+  uploadedAssetRepository, videoGenerationJobRepository, createReviewService } from '@/repositories/index';
+import { lineRequestStatus } from '@/services/line/lineRequestStatus';
 import { LineIntakeService } from '@/services/line/LineIntakeService';
 import { getDefaultTypeCfg } from '@/services/review/ReviewService';
 import { createHash } from 'crypto';
@@ -129,6 +130,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (!base) throw new Error('REVIEW_PUBLIC_ORIGIN not configured');
           return [{ type: 'text', text: String(item.payload.script ?? '') + '\n' + base + '/r/' + token }];
         },
+        requestStatus: async (requestId, lineUserId) => {
+          const account = await lineAccountRepository.findByLineUser(LINE_CHANNEL_ID, lineUserId);
+          const request = await clipRequestRepository.findById(requestId);
+          if (!request || request.userId !== account?.userId) return 'ไม่พบงานค่ะ กรุณาติดต่อทีมงาน';
+          const job = await videoGenerationJobRepository.findByRequestId(requestId);
+          return lineRequestStatus(request.status, job);
+        },
         sceneEditMessages: (user, text) => handleSceneEditMessage(LINE_CHANNEL_ID, user, text),
         findActiveBalance: (user) => intake.findActiveOrderWithBalance(user),
         choosePackage: (user, code) => intake.choosePackage(user, code),
@@ -141,7 +149,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const assets = await uploadedAssetRepository.findByRequestId(request.id);
           const { withLineStorage } = await import('@/lib/line/storageContext');
           await withLineStorage(true, () => videoGenerationService.initializePipeline(request.id, request.userId, {
-            imageUrls: assets.map(asset => asset.storageUrl), title: request.title,
+            imageUrls: assets.map(asset => asset.storageKey || asset.storageUrl), title: request.title,
             description: request.description, targetAudience: request.targetAudience,
             targetPlatforms: request.targetPlatforms, preferredStyle: request.preferredStyle }));
           return submitted;

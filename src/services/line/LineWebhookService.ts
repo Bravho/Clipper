@@ -153,6 +153,7 @@ export interface ProcessWebhookOptions {
   lineChannelId: string;
   lineClient: ILineClient;
   lineAccountRepo: ILineAccountRepository;
+  requestStatus?: (requestId: string, lineUserId: string) => Promise<string>;
   reviewMessages?: (lineUserId: string) => Promise<LineMessage[]>;
   choosePackage?: (lineUserId: string, code: string) => Promise<{ orderId: string; paymentUrl: string | null }>;
   isPaid?: (orderId: string, lineUserId: string) => Promise<boolean>;
@@ -213,32 +214,39 @@ export async function processLineEvent(
     if (state === 'awaiting_files' && (event.message?.type === 'image' || event.message?.type === 'video')) {
       const messageId = event.message?.id;
       if (messageId && opts.fetchMediaContent) {
+        if (!await opts.lineAccountRepo.beginUpload(opts.lineChannelId, lineUserId)) {
+          if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: 'ส่งงานแล้วค่ะ ไม่สามารถเพิ่มไฟล์ในงานนี้ได้' }]);
+          return { escalated: false, intent: 'already_submitted' };
+        }
+        let finished = false;
         try {
           const { buffer, contentType } = await opts.fetchMediaContent(messageId);
           const key = `line_uploads/${opts.lineChannelId}/${lineUserId}/${messageId}.${event.message?.type === 'video' ? 'mp4' : 'jpg'}`;
           await uploadLineAsset({ key, body: buffer, contentType });
 
-          const context = { ...(convState?.context ?? {})} as Record<string, unknown>;
-          const files = (context['files'] as string[] | undefined) ?? [];
-          if (files.length >= 20) throw new Error('file_limit');
-          files.push(key);
-          context['files'] = files;
-          await opts.lineAccountRepo.upsertConversationState(
-            opts.lineChannelId, lineUserId, 'awaiting_files', context
-          );
-          if (replyToken) {
-            await opts.lineClient.reply(replyToken, [
-              { type: 'text', text: fileReceivedMsg(particle, files.length) },
-            ]);
+          const result = await opts.lineAccountRepo.finishUpload(opts.lineChannelId, lineUserId, { storageKey: key, fileSizeBytes: buffer.length });
+          finished = true;
+          if (replyToken && result?.pending === 0) {
+            await opts.lineClient.reply(replyToken, [{ type: 'text', text: fileReceivedMsg(particle, result.count) }]);
           }
           return { escalated: false, intent: 'file_received' };
         } catch (err) {
+          if (!finished) {
+            const result = await opts.lineAccountRepo.finishUpload(opts.lineChannelId, lineUserId);
+            if (replyToken && result?.pending === 0) {
+              await opts.lineClient.reply(replyToken, [{ type: 'text', text: fileReceivedMsg(particle, result.count) + '\nมีไฟล์ที่รับไม่สำเร็จ กรุณาส่งไฟล์นั้นอีกครั้งค่ะ' }]);
+            }
+          }
           console.error('[LINE] media download failed:', err);
           return { escalated: false, intent: 'file_error' };
         }
       }
     }
 
+    if ((state === 'in_progress' || state === 'submitting') && replyToken && (event.message?.type === 'image' || event.message?.type === 'video')) {
+      await opts.lineClient.reply(replyToken, [{ type: 'text', text: 'ส่งงานแล้วค่ะ ไม่สามารถเพิ่มไฟล์ในงานนี้ได้' }]);
+      return { escalated: false, intent: 'already_submitted' };
+    }
     return { escalated: false, intent: 'non_text' };
   }
 
@@ -271,6 +279,11 @@ export async function processLineEvent(
         if (replyToken) await opts.lineClient.reply(replyToken, messages);
         return { escalated: false, intent };
       }
+    }
+    if (intent === 'status' && state === 'in_progress' && context.requestId && opts.requestStatus) {
+      const status = await opts.requestStatus(String(context.requestId), lineUserId);
+      if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: status }]);
+      return { escalated: false, intent };
     }
     let reply: string;
     switch (intent) {
@@ -367,15 +380,15 @@ export async function processLineEvent(
     return { escalated: false, intent: 'payment_confirmed' };
   }
   if (state === 'awaiting_storyboard_preference' || state === 'awaiting_voice_preference') {
-    const yes = /^(yes|\u0e43\u0e0a\u0e48|\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23)$/i.test(text.trim());
-    const no = /^(no|\u0e44\u0e21\u0e48|\u0e44\u0e21\u0e48\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23)$/i.test(text.trim());
+    const yes = /^(yes|ok|โอเค|\u0e43\u0e0a\u0e48|\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23)$/i.test(text.trim());
+    const no = /^(no|ไม่ใช่|\u0e44\u0e21\u0e48|\u0e44\u0e21\u0e48\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23)$/i.test(text.trim());
     if (yes || no) {
       const storyboard = state === 'awaiting_storyboard_preference';
       context[storyboard ? 'reviewStoryboard' : 'reviewVoice'] = yes;
       await opts.lineAccountRepo.upsertConversationState(opts.lineChannelId, lineUserId,
         storyboard ? 'awaiting_voice_preference' : 'awaiting_files', context);
       if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: storyboard ?
-        '\u0e15\u0e23\u0e27\u0e08\u0e40\u0e2a\u0e35\u0e22\u0e07 (.mp4 + script)? yes / no' : filesPromptMsg(particle) + '\n\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19 = \u0e22\u0e34\u0e19\u0e22\u0e2d\u0e21 AI \u0e41\u0e25\u0e30\u0e23\u0e31\u0e1a\u0e23\u0e2d\u0e07\u0e2a\u0e34\u0e17\u0e18\u0e34\u0e4c\u0e44\u0e1f\u0e25\u0e4c' }]);
+        'ต้องการตรวจสอบเสียงพากย์ก่อนการตัดต่อจริงหรือไม่? yes / no' : filesPromptMsg(particle) + '\n\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19 = \u0e22\u0e34\u0e19\u0e22\u0e2d\u0e21 AI \u0e41\u0e25\u0e30\u0e23\u0e31\u0e1a\u0e23\u0e2d\u0e07\u0e2a\u0e34\u0e17\u0e18\u0e34\u0e4c\u0e44\u0e1f\u0e25\u0e4c' }]);
       return { escalated: false, intent: 'review_preference' };
     }
   }
@@ -387,7 +400,7 @@ export async function processLineEvent(
     );
     if (replyToken) {
       await opts.lineClient.reply(replyToken, [
-        { type: 'text', text: '\u0e15\u0e23\u0e27\u0e08\u0e2a\u0e15\u0e2d\u0e23\u0e35\u0e1a\u0e2d\u0e23\u0e4c\u0e14? yes / no' },
+        { type: 'text', text: 'ต้องการตรวจสอบร่างโครงวิดีโอก่อนการตัดต่อจริงหรือไม่? yes / no' },
       ]);
     }
     return { escalated: false, intent: 'brief_collected' };
@@ -395,7 +408,17 @@ export async function processLineEvent(
 
   // Confirm: awaiting_files → create and submit clip request
   if (intent === 'confirm' && state === 'awaiting_files') {
-    const files = (context['files'] as string[] | undefined) ?? [];
+    let latest = convState;
+    for (let attempt = 0; Number(latest?.context.pendingUploads ?? 0) > 0 && attempt < 100; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      latest = await opts.lineAccountRepo.getConversationState(opts.lineChannelId, lineUserId);
+    }
+    if (Number(latest?.context.pendingUploads ?? 0) > 0) {
+      if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: 'กำลังรับไฟล์ค่ะ กรุณารอสักครู่แล้วส่ง "ยืนยัน" อีกครั้ง' }]);
+      return { escalated: false, intent: 'uploads_pending' };
+    }
+    Object.assign(context, latest?.context);
+    const files = (context['files'] as unknown[] | undefined) ?? [];
     if (files.length === 0) {
       if (replyToken) {
         await opts.lineClient.reply(replyToken, [
@@ -407,7 +430,10 @@ export async function processLineEvent(
 
     if (opts.submitClipRequest) {
       try {
-        const { requestId } = await opts.submitClipRequest({ lineUserId, context });
+        const finalContext = await opts.lineAccountRepo.claimSubmission(opts.lineChannelId, lineUserId);
+        if (!finalContext) return { escalated: false, intent: 'submission_busy' };
+        Object.assign(context, finalContext);
+        const { requestId } = await opts.submitClipRequest({ lineUserId, context: finalContext });
         await opts.lineAccountRepo.upsertConversationState(
           opts.lineChannelId, lineUserId, 'in_progress', { requestId }
         );
@@ -418,6 +444,10 @@ export async function processLineEvent(
         }
         return { escalated: false, intent: 'job_submitted' };
       } catch (err) {
+        const current = await opts.lineAccountRepo.getConversationState(opts.lineChannelId, lineUserId);
+        if (current?.state === 'submitting') {
+          await opts.lineAccountRepo.upsertConversationState(opts.lineChannelId, lineUserId, 'awaiting_files', context);
+        }
         console.error('[LINE] submitClipRequest failed:', err);
         if (replyToken) {
           await opts.lineClient.reply(replyToken, [

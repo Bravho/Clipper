@@ -28,6 +28,34 @@ function rowToAccount(row: Record<string, unknown>): LineAccount {
 export class PostgresLineAccountRepository implements ILineAccountRepository {
   constructor(private db = pool) {}
 
+  async beginUpload(channel: string, user: string): Promise<boolean> {
+    const { rows } = await this.db.query(`UPDATE line_conversation_states
+      SET context=jsonb_set(context, '{pendingUploads}', to_jsonb(COALESCE((context->>'pendingUploads')::int,0)+1)), updated_at=NOW()
+      WHERE line_channel_id=$1 AND line_user_id=$2 AND state='awaiting_files' RETURNING state`, [channel,user]);
+    return rows.length > 0;
+  }
+  async finishUpload(channel: string, user: string, file?: { storageKey: string; fileSizeBytes: number }): Promise<{ count: number; pending: number } | null> {
+    const { rows } = await this.db.query(`UPDATE line_conversation_states SET context=
+      jsonb_set(jsonb_set(context, '{files}', CASE WHEN $3::jsonb IS NOT NULL
+        AND jsonb_array_length(COALESCE(context->'files','[]'::jsonb)) < 20
+        AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(context->'files','[]'::jsonb)) f
+          WHERE f->>'storageKey'=($3::jsonb)->>'storageKey' OR f #>> '{}'=($3::jsonb)->>'storageKey')
+        THEN COALESCE(context->'files','[]'::jsonb) || jsonb_build_array($3::jsonb)
+        ELSE COALESCE(context->'files','[]'::jsonb) END),
+        '{pendingUploads}', to_jsonb(GREATEST(0,COALESCE((context->>'pendingUploads')::int,0)-1))), updated_at=NOW()
+      WHERE line_channel_id=$1 AND line_user_id=$2 AND state='awaiting_files'
+      RETURNING jsonb_array_length(context->'files') AS count, (context->>'pendingUploads')::int AS pending`,
+      [channel,user,file ? JSON.stringify(file) : null]);
+    return rows[0] ?? null;
+  }
+  async claimSubmission(channel: string, user: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.db.query(`UPDATE line_conversation_states SET state='submitting', updated_at=NOW()
+      WHERE line_channel_id=$1 AND line_user_id=$2 AND state='awaiting_files'
+      AND COALESCE((context->>'pendingUploads')::int,0)=0
+      AND jsonb_array_length(COALESCE(context->'files','[]'::jsonb))>0 RETURNING context`, [channel,user]);
+    return rows[0] ? parseJson(rows[0].context, {}) : null;
+  }
+
   async findByLineUser(lineChannelId: string, lineUserId: string): Promise<LineAccount | null> {
     const { rows } = await this.db.query(
       'SELECT * FROM line_accounts WHERE line_channel_id=$1 AND line_user_id=$2',

@@ -84,7 +84,7 @@ export class LineIntakeService {
     if (!await this.isPaid(orderId, lineUserId)) throw new Error('payment_required');
     const duration = Number(context.durationSeconds ?? 30);
     assertDurationAllowed(duration);
-    const files = context.files as string[];
+    const files = context.files as (string | { storageKey: string; fileSizeBytes: number })[];
     if (!files?.length) throw new Error('files_required');
     const request = existing ?? await this.requests.create({ userId: account.userId, title: 'LINE shop video',
       description: String(context.brief ?? ''), targetAudience: '', targetPlatforms: [Platform.TikTok],
@@ -93,12 +93,15 @@ export class LineIntakeService {
       shopReviewPreferences: { storyboard: context.reviewStoryboard === true, voice: context.reviewVoice === true },
       isTest: isTestRun(lineUserId) });
     const existingAssets = await this.assets.findByRequestId(request.id);
-    for (const file of files) {
+    for (const entry of files) {
+      const file = typeof entry === 'string' ? entry : entry.storageKey;
       if (existingAssets.some(asset => asset.storageKey === file)) continue;
       const video = file.endsWith('.mp4');
+      // An internal object reference, not a public URL: Vision's authenticated
+      // GetObject reader accepts raw keys, and LINE assets remain private.
       const asset = await this.assets.create({ requestId: request.id, userId: account.userId, fileName: file.split('/').pop()!,
-        assetType: video ? AssetType.Video : AssetType.Image, fileSizeBytes: 0,
-        mimeType: video ? 'video/mp4' : 'image/jpeg', storageKey: file, storageUrl: '',
+        assetType: video ? AssetType.Video : AssetType.Image, fileSizeBytes: typeof entry === 'string' ? 0 : entry.fileSizeBytes,
+        mimeType: video ? 'video/mp4' : 'image/jpeg', storageKey: file, storageUrl: file,
         thumbnailKey: '', thumbnailUrl: '', uploadStatus: AssetUploadStatus.Uploaded,
         scheduledDeletionAt: new Date(Date.now() + 7 * 86400000) });
       const { visualEnabled, visualConfig } = await import('@/config/storyboardVisual');

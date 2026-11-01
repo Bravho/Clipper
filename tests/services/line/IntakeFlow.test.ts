@@ -18,8 +18,9 @@ test('real state machine blocks unpaid checkout, collects preferences and privat
   const accounts = new MockLineAccountRepository();
   const packages = new MockServicePackageRepository();
   const requests = new MockClipRequestRepository(new Map());
+  const assets = new MockUploadedAssetRepository(new Map());
   const intake = new LineIntakeService('c', accounts, new MockUserRepository(new Map()), packages,
-    requests, new MockUploadedAssetRepository(new Map()));
+    requests, assets);
   const reply = jest.fn();
   const push = jest.fn();
   process.env.REVIEW_SYSTEM_ENABLED = 'true';
@@ -45,12 +46,17 @@ test('real state machine blocks unpaid checkout, collects preferences and privat
   await packages.updateOrderStatus(String(state!.context.orderId), 'active');
   await send('continue');
   await send('A restaurant serving noodles');
-  await send('yes'); await send('no');
+  expect(reply.mock.calls.at(-1)?.[1][0].text).toBe('ต้องการตรวจสอบร่างโครงวิดีโอก่อนการตัดต่อจริงหรือไม่? yes / no');
+  await send('โอเค');
+  expect(reply.mock.calls.at(-1)?.[1][0].text).toBe('ต้องการตรวจสอบเสียงพากย์ก่อนการตัดต่อจริงหรือไม่? yes / no');
+  await send('ไม่ใช่');
   await processLineEvent({ type: 'message', source: { userId: 'u' }, replyToken: 'r', message: { type: 'image', id: 'm' } }, opts);
   expect(uploadLineAsset).toHaveBeenCalledWith(expect.objectContaining({ key: 'line_uploads/c/u/m.jpg' }));
+  await processLineEvent({ type: 'message', source: { userId: 'u' }, replyToken: 'r2', message: { type: 'video', id: 'm2' } }, opts);
   expect((await send('ok')).intent).toBe('job_submitted');
   const account = await accounts.findByLineUser('c','u');
   const [request] = await requests.findByUserId(account!.userId);
+  expect(await assets.findByRequestId(request.id)).toEqual([expect.objectContaining({ storageKey: 'line_uploads/c/u/m.jpg', storageUrl: 'line_uploads/c/u/m.jpg', fileSizeBytes: 5 }), expect.objectContaining({ storageKey: 'line_uploads/c/u/m2.mp4', storageUrl: 'line_uploads/c/u/m2.mp4', fileSizeBytes: 5 })]);
   expect(request.status).toBe(RequestStatus.Submitted);
   expect(request.intakeChannel).toBe('line');
   expect(push).not.toHaveBeenCalled();
