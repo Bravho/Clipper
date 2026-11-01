@@ -15,7 +15,15 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
   if (request.intakeChannel !== 'line' || !isReviewSystemEnabled() || !LINE_REVIEW_GATES.includes(job.currentStep as never)) return;
   const index = LINE_REVIEW_GATES.indexOf(job.currentStep as never);
   const typeKey = index === 0 ? 'script' : index === 1 ? 'tts' : 'video';
-  const assetId = index === 1 ? job.processedVoiceAssetId : job.animatedVideoAssetId;
+  // For the video gate the composition step CLEARS animatedVideoAssetId and
+  // writes the finished overlay into a captioned_export_* field. Use the first
+  // non-null captioned export so the review has the correct finished video.
+  const videoAssetId = job.captionedExport_9_16_assetId
+    ?? job.captionedExport_16_9_assetId
+    ?? job.captionedExport_1_1_assetId
+    ?? job.captionedExport_4_5_assetId
+    ?? null;
+  const assetId = index === 1 ? job.processedVoiceAssetId : index === 2 ? videoAssetId : null;
   let asset = assetId ? await uploadedAssetRepository.findById(assetId) : null;
   const existing = await reviewItemRepository.findOpenByJobGate(job.id, job.currentStep);
   if (existing && existing.assetRefs[0]?.asset_id === asset?.id) return;
