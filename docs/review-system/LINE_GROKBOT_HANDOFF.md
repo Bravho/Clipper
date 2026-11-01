@@ -60,7 +60,9 @@ Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` 
 
 ### 1.3 Grok Bot notifier (`src/services/review/GrokBotNotifier.ts`)
 - Enabled only when both `GROKBOT_REVIEW_WEBHOOK_URL` and `GROKBOT_REVIEW_WEBHOOK_KEY` are set. `POST` with 5 s timeout; non-2xx → error (outbox retries).
-- Headers: `Content-Type: application/json`, `X-Grokbot-Timestamp: <unix seconds>`, `X-Grokbot-Signature: sha256=<hex>`.
+- Headers: `Content-Type: application/json`, **`Authorization: Bearer <GROKBOT_REVIEW_WEBHOOK_KEY>`** (added 2026-11-01 — this is what the RCaveBot Grok Bot routine trigger verifies), plus `X-Grokbot-Timestamp: <unix seconds>` and `X-Grokbot-Signature: sha256=<hex>` (kept; harmless for receivers that ignore them).
+- The key, the `Authorization` header and the webhook URL are never logged; delivery errors are redacted (`[REDACTED]`) before they are logged or rethrown to the outbox.
+- Synthetic test: `node scripts/send-test-notifier-event.cjs` sends one `review_pending` event (`requestId`/`itemId` = `test-…`, `summaryTh` = "ทดสอบการแจ้งเตือนจากระบบ RClipper (test)", no customer data) through `notifyGrokBot` and prints only the HTTP status.
 - Signature: `HMAC-SHA256(key = GROKBOT_REVIEW_WEBHOOK_KEY, message = "<timestamp>.<raw JSON body>")`, hex-encoded. Receiver should recompute over the exact raw body bytes and reject timestamps older than ~5 minutes.
 - Payload (same schema for every event):
 ```json
@@ -82,7 +84,7 @@ Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` 
 - Which event when: `review.created` → `escalation` for `customer_reply`/`complaint`/`out_of_package`, else `review_needed`; reminder sweep → `reminder`; takeover on → `takeover_on` (generic, no identity).
 - **No PII by design: the customer's text and LINE user id are NOT in the payload.** A bot must call `GET /api/admin/review` to read `payload.text`.
 
-**Grok Bot routine webhook trigger caveats (to verify on the Grok Bot side):** a routine trigger URL usually authenticates by a secret embedded in the URL and passes the body to the routine as text; it most likely cannot verify a custom `X-Grokbot-Signature` HMAC before the routine runs, and may not expose request headers to the routine at all. Treat the trigger URL itself as the secret, and do not rely on HMAC verification there. The design below therefore uses **notify-then-fetch**: the webhook carries only opaque ids; RCaveBot fetches the content over HTTPS with the Bearer token, so a forged trigger call can at most cause a harmless fetch.
+**Grok Bot routine webhook trigger:** RCaveBot's routine trigger authenticates with `Authorization: Bearer <key>` (the same value as `GROKBOT_REVIEW_WEBHOOK_KEY`); it does not verify the HMAC headers, so treat both the trigger URL and the key as secrets. The design still uses **notify-then-fetch**: the webhook carries only opaque ids, and RCaveBot fetches content over HTTPS with `REVIEW_ADMIN_TOKEN`, so a leaked trigger can at most cause a harmless fetch.
 
 ---
 

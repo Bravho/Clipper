@@ -156,3 +156,38 @@ test('uses correct Thai summary for different typeKeys', async () => {
     expect(captured.body?.summaryTh).toBe(expectedSummary);
   }
 });
+
+test('sends Authorization: Bearer <key> alongside the HMAC headers', async () => {
+  const captured: { body?: GrokBotPayload; headers?: Record<string, string> } = {};
+  await notifyGrokBot(BASE_ITEM, makeOpts(captured));
+  expect(captured.headers?.Authorization).toBe('Bearer test-secret-key');
+  expect(captured.headers?.['X-Grokbot-Signature']).toMatch(/^sha256=[a-f0-9]{64}$/);
+  expect(captured.headers?.['X-Grokbot-Timestamp']).toMatch(/^\d+$/);
+});
+
+test('never logs the key, the Authorization header or the URL on failure', async () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_URL = 'https://hooks.example.com/trigger/secret-path-token';
+  const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const postFn = jest.fn(async (url: string, _b: string, headers: Record<string, string>) => {
+    throw new Error(`boom ${url} ${headers.Authorization} test-secret-key`);
+  });
+  await notifyGrokBot(BASE_ITEM, { signedUrl: async () => '', postFn });
+  const logged = spy.mock.calls.flat().map(String).join(' ');
+  expect(logged).not.toContain('test-secret-key');
+  expect(logged).not.toContain('secret-path-token');
+  expect(logged).toContain('[REDACTED]');
+  spy.mockRestore();
+});
+
+test('rethrows a redacted error when throwOnFailure is set', async () => {
+  const postFn = jest.fn(async (_u: string, _b: string, h: Record<string, string>) => { throw new Error(`x ${h.Authorization}`); });
+  await expect(notifyGrokBot(BASE_ITEM, { signedUrl: async () => '', postFn, throwOnFailure: true }))
+    .rejects.toThrow(/Bearer \[REDACTED\]/);
+});
+
+test('skips when the key is unset', async () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  const opts = makeOpts();
+  await notifyGrokBot(BASE_ITEM, opts);
+  expect(opts.postFn).not.toHaveBeenCalled();
+});

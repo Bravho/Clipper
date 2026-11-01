@@ -4,16 +4,18 @@
  *
  * Config env vars (from .env.example):
  *   GROKBOT_REVIEW_WEBHOOK_URL  — POST target (omit to disable)
- *   GROKBOT_REVIEW_WEBHOOK_KEY  — HMAC-SHA256 signing key
+ *   GROKBOT_REVIEW_WEBHOOK_KEY  — bearer token for the receiver (also the HMAC-SHA256 key)
  *
  * Request headers:
- *   X-Grokbot-Signature: sha256=<hex>
+ *   Authorization: Bearer <GROKBOT_REVIEW_WEBHOOK_KEY>   (what Grok Bot routine triggers verify)
+ *   X-Grokbot-Signature: sha256=<hex>                    (optional extra check for receivers that can)
  *   X-Grokbot-Timestamp: <unix epoch seconds>
  *   Content-Type: application/json
  *
  * Payload intentionally contains no PII — only IDs, typeKey, and expiring
  * signed preview links. Callers should always await and catch; failures are
- * logged but must never block the review pipeline.
+ * logged but must never block the review pipeline. The key, the Authorization
+ * header and the webhook URL (which may itself embed a secret) are never logged.
  */
 
 import { createHmac } from 'crypto';
@@ -44,6 +46,18 @@ export interface GrokBotNotifierOptions {
   signedUrl: (storageKey: string, ttlSeconds: number) => Promise<string>;
   /** Perform the HTTP POST. Injected so tests can mock it. */
   postFn?: (url: string, body: string, headers: Record<string, string>) => Promise<{ ok: boolean; status: number }>;
+  /** Override the generated Thai summary (used by the synthetic test event script). */
+  summaryTh?: string;
+}
+
+/** Remove secrets from an error before it is logged or rethrown. */
+export function redactSecrets(err: unknown, secrets: (string | undefined)[]): Error {
+  let msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+  const cause = err instanceof Error && err.cause instanceof Error ? ` (cause: ${err.cause.message})` : '';
+  msg += cause;
+  for (const s of secrets) if (s) msg = msg.split(s).join('[REDACTED]');
+  msg = msg.replace(/Bearer\s+[^\s"',)]+/gi, 'Bearer [REDACTED]');
+  return new Error(msg);
 }
 
 const DEFAULT_TTL = 3600; // 1-hour preview links
@@ -64,7 +78,7 @@ function sign(body: string, key: string, timestamp: number): string {
   return createHmac('sha256', key).update(`${timestamp}.${body}`).digest('hex');
 }
 
-async function defaultPost(
+export async function defaultPost(
   url: string,
   body: string,
   headers: Record<string, string>,
@@ -107,7 +121,7 @@ export async function notifyGrokBot(
     typeKey: item.typeKey,
     audience: String(item.payload.audience ?? 'admin'),
     orderId: item.packageOrderId ?? null,
-    summaryTh: buildSummaryTh(item),
+    summaryTh: opts.summaryTh ?? buildSummaryTh(item),
     previewLinks,
     ...(precheckIssues ? { precheckIssues } : {}),
     ...(Array.isArray(item.signals?.visualShotFlags) ? { visualShotFlags: item.signals.visualShotFlags.flatMap((raw: unknown) => {
@@ -125,6 +139,7 @@ export async function notifyGrokBot(
   const sig = sign(body, webhookKey, timestamp);
   const headers = {
     'Content-Type': 'application/json',
+    'Authorization': `Bearer ${webhookKey}`,
     'X-Grokbot-Signature': `sha256=${sig}`,
     'X-Grokbot-Timestamp': String(timestamp),
   };
@@ -136,7 +151,8 @@ export async function notifyGrokBot(
       throw new Error(`GrokBot webhook returned ${res.status}`);
     }
   } catch (err) {
-    if (opts.throwOnFailure) throw err;
-    console.error('[GrokBotNotifier] failed to deliver webhook:', err);
+    const safe = redactSecrets(err, [webhookKey, webhookUrl]);
+    if (opts.throwOnFailure) throw safe;
+    console.error('[GrokBotNotifier] failed to deliver webhook:', safe.message);
   }
 }
