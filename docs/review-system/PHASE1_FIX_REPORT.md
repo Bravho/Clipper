@@ -307,3 +307,56 @@ All verification uses the existing, untouched scripts/offline-verification.cjs p
 Final npm run build passed (exit 0), including compilation, 86 static pages and build traces. Next config skips internal type/lint checks; the standalone TypeScript check above passed. Logs: round5-tsc.log, round5-final-jest.log, round5-build.log (untracked verification artifacts).
 
 HEAD remains adc2af6. Per this round's explicit instruction, no git add/commit was attempted because .git is read-only. All changes are left in the working tree for MarBot. Suggested commit: feat(line-phase1): visual storyboard pre-check (detector interface, rules, auto-fix) behind STORYBOARD_VISUAL_PRECHECK_ENABLED. Do not stage offline/round5 logs or the owner's untracked scripts. No approval or permission bypass was attempted.
+
+## Round 6 (Nov 1 2026) - Storyboard versions and post-delivery LINE scene edits
+
+Item D is implemented in the working tree behind LINE_SCENE_EDIT_ENABLED (default off). No Git staging or commit was attempted: the operator explicitly reserves that work for MarBot. Suggested commit: `feat(line-phase1): storyboard versioning and post-delivery LINE scene edits behind LINE_SCENE_EDIT_ENABLED`.
+
+### Design and production wiring
+
+- Approved LINE storyboard/content and montage-plan updates append immutable snapshots through the repository registry. Each scene retains stable scene number, timings, source asset IDs, copy, voice lines, the original render plan and visual crop/zoom/source-start parameters. Snapshots record parent, shop/admin/system creator, reason and is_test. No version update/delete method is exposed. The request's current-version pointer is separate from delivered_storyboard_version_id; finished asset rows also record their version. Earlier asset records/storage objects are retained (existing output-key builders use unique UUIDs).
+- The real LINE webhook calls the edit handler after persisted/deduplicated receipt and the existing takeover guard, before generic intent classification. Only an owned LINE request at complete/distribution review with a saved version is eligible. Canonically ordered, uploaded source media from that request is the allowed asset set; another shop/request's asset ID cannot be used. Routine commands retain their normal route.
+- One JSON Flash parse call uses the existing Gemini JSON client boundary, now shared with StoryboardPrecheckService. Strict Zod operations support timing, asset replacement, onScreenText/voiceScript fixes and a complete permutation for reorder. Unknown scenes/assets, extra fields, malformed JSON and over-90-second results ask for clarification. The server generates the Thai summary and confirm/cancel message quick replies; the AI does not author the summary. Pending edits persist in the conversation with their exact base version.
+- Confirmation appends a version, checks/debits the existing clip revision counter (maximum two) and inserts storyboard.render in the existing durable outbox in ONE PostgreSQL transaction under the request-row lock. Competing stale parents fail. Cancel does not debit or render. Exhaustion replies in Thai that a new package/Tho approval is required and creates a customer_reply escalation. The worker dispatches the committed version; disabling the feature pauses these events for retry.
+- The worker runs A when enabled; with C enabled it follows the existing visual path (deterministic copy/music checks plus cached visual evidence/conditional Flash, rather than unconditional text scoring). Failed checks or proposed visual corrections create an admin script review with a version-bound payload. A confirmed version is not silently rewritten by a precheck. Tho may approve through the existing token-authenticated admin decision API. Precheck/review rejection does not debit the already-counted edit again.
+- ShopRulesEngine deterministically checks fixed menu names, prices, promotions, removals/changes of factual copy and explicit factual-edit language, independently of model labels. Valid proposals still receive a shop summary/confirmation, then route to Tho rather than applying. The existing review.created outbox -> Grok Bot notifier and admin decision -> review.decided worker are reused. An unparseable factual request goes to human clarification. Raw chat remains in protected review data; the notifier retains its existing generic/allowlisted payload policy.
+- Admin approval of a confirmed factual proposal appends an admin-authored version through the same atomic revision limit. Replayed approval outboxes recognize their previously created version. Authored, reviewed script copy is retained exactly (subject to normal speech sanitization); other AI-generated changes still pass the fixed shop rules.
+- Takeover prevents webhook edit parsing/replies and defers queued edit dispatch/admin proposal execution. Existing durable webhook persistence and deduplication are unchanged. A newer restore supersedes older undispatched version events, and an in-progress render finishes before a later version can restart the job.
+
+### Full versus partial re-render
+
+Full re-render is deliberate. The current pipeline can render an individual segment at an active scene-review gate, but its segment IDs and approvals belong to one mutable job; it has no version-keyed segment cache or durable dependency/invalidation map. Voice changes, duration changes and reorder also affect shared speech alignment, merge timing, captions and all ratio exports. Reusing those mutable segments after delivery cannot establish that they belong to the selected saved version.
+
+The new restart writes the confirmed montage plan, preserving original motions, relative per-asset durations, trims and crop parameters where applicable; clears stale segment/export/timeline references; regenerates voice/alignment; and retains the approved plan through voice approval instead of asking the AI scene designer to reinterpret edits. Existing montage_all_segments, merge, composition, styled export and review gates then run normally on the render worker. Exact per-scene Thai on-screen text is supplied to the caption timeline; selected translated speech captions are retained. Only one revision is charged for this workflow. Partial reuse is deferred until a version-aware cache/invalidation contract exists.
+
+### Admin restore
+
+`POST /api/admin/line/storyboard` uses the existing REVIEW_ADMIN_TOKEN with timing-safe Bearer authentication (401 wrong/missing token; 503 when unconfigured/disabled). Body:
+
+```json
+{"action":"restore","requestId":"<request-uuid>","versionId":"<old-version-uuid>","expectedVersionId":"<current-version-uuid>"}
+```
+
+It rejects another request/environment's version, checks the expected current version and appends a new admin version copying the old scenes, with reason restore:<old-id>. It queues the same checks/full render and retains every intermediate version. This explicit admin recovery action does not consume a shop revision. A normal factual review uses the existing `POST /api/admin/review/<review-id>/decision` with `{"version":1,"decision":"approve"}` and the same placeholder Bearer token.
+
+### Environment and migration
+
+New empty placeholders in .env.example:
+
+- LINE_SCENE_EDIT_ENABLED: default off; enable only after migration 056, with the existing LINE_INTAKE_ENABLED / REVIEW_SYSTEM_ENABLED workflow and outbox/render worker configured.
+- LINE_SCENE_EDIT_MODEL: default gemini-2.5-flash.
+- LINE_SCENE_EDIT_MAX_OUTPUT_TOKENS: default 1024; positive integer up to 8192, otherwise default.
+
+New migration only: `src/db/migrations/056_storyboard_versions.sql`. It creates storyboard_versions and adds current/delivered request, asset and job version references. Request IDs match the existing TEXT pipeline schema; version IDs are UUIDs. All statements are additive/idempotent. Carry-over is_test is checked/copied under the append lock; the existing test-mode outbox filter recognizes the event's is_test payload. No migration was applied.
+
+Operational limits: historical deliveries without an enabled-time saved snapshot keep the existing human intake path; there is no guessed backfill. Versions retain source IDs, not duplicate media bytes. Existing source-media retention still applies, so re-rendering an old version requires its source files to remain available. No retention policy or cleanup job was changed/run. Real SQL application, FFmpeg execution, LINE delivery and provider billing remain deployment checks; all tests here mock these boundaries.
+
+### Offline token estimate
+
+The existing `scripts/storyboard-precheck-estimate.ts` is extended to call the REAL edit prompt builder with an eight-scene Thai saved plan and a Thai timing/reorder request. It is executed by the Jest estimate case (no tsx/ts-node dependency, no provider call): **3351 prompt characters, approximately 1341 input tokens, 1024 configured maximum output tokens**. Method: ceil(chars / 2.5), a Thai-heavy mixed JSON/text planning heuristic, not measured provider billing. A second richer crop-bearing unit fixture also prints its estimate. The edit parse is one call; optional A/C prechecks and subsequent voice/render work are separate operations.
+
+### Verification
+
+Verification uses the pre-existing, untouched `scripts/offline-verification.cjs` preload to block secret-file reads and network/database I/O. No dev server, dependency install, real paid/network call, database connection or migration application was performed. New tests cover the real webhook reply/takeover/flag paths, Thai summary/confirm/cancel, invalid edits, deterministic factual escalation, revision exhaustion, immutable restore, stale competing parents, runtime precheck/render dispatch, visual routing, admin restore authentication/ownership and SQL transaction rollback/outbox atomicity. A production pipeline test checks exact retained plan/crop and stale-export clearing with mocked dispatch.
+
+Final verification on the completed Round 6 working tree: `npx tsc --noEmit` passed (exit 0); `npx jest --runInBand --no-coverage` passed **175 suites / 1818 tests** (exit 0); `npm run build` passed (exit 0), including 87 static pages and build traces. `git diff --check` passed. Next skips its internal type/lint checks; standalone TypeScript validation passed separately. Logs are round6-tsc.log, round6-full-jest.log, round6-build.log and round6-target.log, all verification artifacts to leave unstaged. The preload remains untouched. HEAD remains 2c97856; no new commit, staging or push was attempted.

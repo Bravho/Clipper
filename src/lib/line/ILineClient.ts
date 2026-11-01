@@ -6,6 +6,7 @@
 export interface LineTextMessage {
   type: 'text';
   text: string;
+  quickReply?: { items: Array<{ type: 'action'; action: { type: 'message'; label: string; text: string } }> };
 }
 
 export type LineMessage = LineTextMessage;

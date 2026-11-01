@@ -1765,6 +1765,29 @@ describe("VideoGenerationService — storyboard script call: business profile an
 });
 
 
+test('LINE version restart preserves exact plan and clears stale exports before voice/render dispatch', async () => {
+  const previous = process.env.LINE_SCENE_EDIT_ENABLED;
+  process.env.LINE_SCENE_EDIT_ENABLED = 'true';
+  try {
+    const request = await createRequest();
+    const line = await mockClipRepo.create({ ...request, intakeChannel: 'line' });
+    const job = await createJobAwaitingVoiceApproval(line.id, 20);
+    const service = new VideoGenerationService();
+    const approve = jest.spyOn(service, 'approveContent').mockResolvedValue(job);
+    const scene = { sceneNumber: 2, summary: 'ภาพอาหาร', assetIndexes: [0], assetIds: ['source'], roughDurationHint: 7,
+      onScreenText: 'ลองเลย', voiceScript: 'อร่อยทุกวัน', visualCrop: { x: .1, y: .2, w: .8, h: .7, zoom: 1, pad: false } };
+    await service.restartFromStoryboardVersion({ id: 'v2', requestId: line.id, parentVersionId: 'v1', scenes: [scene],
+      createdBy: 'shop', reason: 'line_scene_edit', isTest: true, createdAt: new Date().toISOString() }, [scene],
+      [{ id: 'source', index: 0, kind: 'image', url: 'private.jpg', thumbnailUrl: '', fileName: 'source.jpg' }]);
+    const saved = (await mockJobRepo.findById(job.id))!;
+    expect(saved.storyboardVersionId).toBe('v2'); expect(saved.sceneVideoAssetIds).toBeNull();
+    expect(saved.captionedExport_9_16_assetId).toBeNull(); expect(saved.subtitleTimeline).toBeNull();
+    expect(JSON.parse(saved.approvedScenePlan!)[0]).toEqual(expect.objectContaining({ durationSeconds: 7, imageIndexes: [0], assets: [expect.objectContaining({ durationSeconds: 7, visualCrop: scene.visualCrop })] }));
+    expect(approve).toHaveBeenCalledWith(job.id, line.userId, expect.objectContaining({ scriptThai: 'อร่อยทุกวัน' }));
+    approve.mockRestore();
+  } finally { if (previous === undefined) delete process.env.LINE_SCENE_EDIT_ENABLED; else process.env.LINE_SCENE_EDIT_ENABLED = previous; }
+});
+
 test.each([true, false])('LINE delivery selects approved captioned exports, fallback only if absent (%s)', async captioned => {
   const previous = process.env.REVIEW_SYSTEM_ENABLED;
   process.env.REVIEW_SYSTEM_ENABLED = 'true';

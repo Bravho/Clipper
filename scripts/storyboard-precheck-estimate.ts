@@ -18,6 +18,8 @@
  *   ts-node scripts/storyboard-precheck-estimate.ts
  */
 
+import { buildSceneEditPrompt, editParseConfig } from '../src/services/line/LineSceneEditService';
+
 const SAMPLE_SCRIPT_THAI =
   'ต้องมาลอง! บุฟเฟ่ต์อาหารทะเลสดใหม่ ราคาเพียง 599 บาท ปู กุ้ง หอย ปลา ครบ ทุกเมนู ' +
   'เปิดทุกวัน 11.00–22.00 น. ชั้น 3 ห้างเซ็นทรัล ลาดพร้าว สำรองที่นั่งได้เลย!';
@@ -103,3 +105,9 @@ console.log(`Est. input tokens   : ~${estimatedInputTokens}`);
 console.log(`Max output tokens   : ${maxOutputTokens}  (STORYBOARD_AI_PRECHECK_MAX_OUTPUT_TOKENS or default 1024)`);
 console.log('');
 console.log('Sample storyboard   : 8 scenes, Thai script ~150 chars, menu with 10 items');
+const editSample = { id: 'saved-storyboard-version', scenes: JSON.parse(SAMPLE_STORYBOARD).map((s: { sceneNumber: number; summary: string; assetIndexes: number[]; roughDurationHint: number }) => ({
+  ...s, assetIds: ['00000000-0000-4000-8000-000000000001'], onScreenText: s.summary,
+  voiceScript: 'อาหารทะเลสดใหม่ ปูนึ่ง กุ้งเผา พร้อมเสิร์ฟทุกวัน',
+})) };
+const editPrompt = buildSceneEditPrompt(editSample, 'ช่วยเพิ่มเวลาฉาก 2 เป็น 9 วินาที และสลับฉาก 3 กับฉาก 4', ['00000000-0000-4000-8000-000000000001']);
+console.log(`LINE scene edit REAL prompt: chars=${editPrompt.length}; estimated input tokens=${Math.ceil(editPrompt.length / 2.5)} (chars/2.5 Thai-heavy heuristic); max output tokens=${editParseConfig().maxOutputTokens}`);

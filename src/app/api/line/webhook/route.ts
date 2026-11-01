@@ -30,6 +30,7 @@ import { getDefaultTypeCfg } from '@/services/review/ReviewService';
 import { createHash } from 'crypto';
 import { isLineIntakeEnabled } from '@/config/reviewSystem';
 import { pool } from '@/lib/db';
+import { handleSceneEditMessage } from '@/services/line/lineSceneEditRuntime';
 
 const lineClient = new LineClient();
 const LINE_CHANNEL_ID = process.env.LINE_CHANNEL_ID ?? 'default';
@@ -128,6 +129,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (!base) throw new Error('REVIEW_PUBLIC_ORIGIN not configured');
           return [{ type: 'text', text: String(item.payload.script ?? '') + '\n' + base + '/r/' + token }];
         },
+        sceneEditMessages: (user, text) => handleSceneEditMessage(LINE_CHANNEL_ID, user, text),
         findActiveBalance: (user) => intake.findActiveOrderWithBalance(user),
         choosePackage: (user, code) => intake.choosePackage(user, code),
         isPaid: (order, user) => intake.isPaid(order, user),

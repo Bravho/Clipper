@@ -136,6 +136,11 @@ export async function callGeminiScoring(
     ` (${prompt.length} chars / 2.5); configured maxOutputTokens: ${config.maxOutputTokens}`,
   );
 
+  return parseGeminiResponse(await callGeminiJson(prompt, config, contactSheet));
+}
+
+/** Shared existing Flash client boundary for JSON scoring and LINE edit parsing. */
+export async function callGeminiJson(prompt: string, config: { model: string; maxOutputTokens: number }, contactSheet?: string): Promise<string> {
   const apiKey = requireGeminiApiKey();
   const ai = new GoogleGenAI({ apiKey });
   const result = await ai.models.generateContent({
@@ -148,7 +153,7 @@ export async function callGeminiScoring(
   });
 
   const text = (result.text ?? '').trim();
-  return parseGeminiResponse(text);
+  return text;
 }
 
 export function parseGeminiResponse(text: string): GeminiPrecheckResponse {

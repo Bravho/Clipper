@@ -173,6 +173,8 @@ import { PostgresAssetVisualAnalysisRepository } from './postgres/PostgresAssetV
 export const assetVisualAnalysisRepository = new PostgresAssetVisualAnalysisRepository();
 
 import { pool } from '@/lib/db';
+import { PostgresStoryboardVersionRepository } from './postgres/PostgresStoryboardVersionRepository';
+export const storyboardVersionRepository = new PostgresStoryboardVersionRepository();
 import { ReviewService } from '@/services/review/ReviewService';
 
 // Every decision uses one checked-out connection; failures roll back the item,

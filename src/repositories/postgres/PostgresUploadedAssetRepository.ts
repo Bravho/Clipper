@@ -20,6 +20,7 @@ async function readableAsset(row: Record<string, unknown>): Promise<UploadedAsse
 function rowToAsset(row: Record<string, unknown>): UploadedAsset {
   return {
     id: row.id as string,
+    storyboardVersionId: (row.storyboard_version_id as string) ?? null,
     requestId: row.request_id as string,
     userId: row.user_id as string,
     fileName: row.file_name as string,

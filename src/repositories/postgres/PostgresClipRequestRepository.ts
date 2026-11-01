@@ -22,6 +22,8 @@ function normalizeStoredPlatform(value: string): Platform {
 function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
   return {
     id: row.id as string,
+    storyboardVersionId: (row.storyboard_version_id as string) ?? null,
+    deliveredStoryboardVersionId: (row.delivered_storyboard_version_id as string) ?? null,
     userId: row.user_id as string,
     title: row.title as string,
     placeName: (row.place_name as string) ?? "",

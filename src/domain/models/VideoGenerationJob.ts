@@ -8,6 +8,7 @@ import type { MotionPreset, MontageTransition } from "@/config/montage";
  * pipeline steps the same job record is updated in place.
  */
 export interface VideoGenerationJob {
+  storyboardVersionId?: string | null;
   id: string;
   requestId: string;
 

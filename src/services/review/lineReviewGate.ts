@@ -127,6 +127,11 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
 export async function executeReviewDecision(itemId: string) {
   const { reviewItemRepository, videoGenerationJobRepository } = await import('@/repositories');
   const item = await reviewItemRepository.findById(itemId);
+  if (item?.status === 'approved' && process.env.LINE_SCENE_EDIT_ENABLED === 'true') {
+    const runtime = await import('@/services/line/lineSceneEditRuntime');
+    if (typeof item.payload.sceneEditVersionId === 'string') { await runtime.dispatchStoryboardVersion(item.payload.sceneEditVersionId, true); return; }
+    if (item.payload.sceneEditProposal) { await runtime.approveSceneEditProposal(item); return; }
+  }
   if (!item || !item.jobId) return;
   const job = await videoGenerationJobRepository.findById(item.jobId);
   if (!job || job.currentStep !== item.gateStep) return;

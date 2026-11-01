@@ -936,6 +936,50 @@ export class VideoGenerationService {
    * Staff approves the speaking script (with optional edits), then starts
    * iAppTTS voice generation.
    */
+  /** Full re-render: voice/alignment, all montage segments and downstream exports.
+   * The confirmed scene plan is retained across voice approval rather than
+   * asking the scene designer to reinterpret the customer's edit. */
+  async restartFromStoryboardVersion(
+    version: import('@/domain/models/StoryboardVersion').StoryboardVersion,
+    scenes: import('@/domain/models/StoryboardVersion').VersionScene[],
+    sources: import('@/lib/sourceAssets').OrderedSourceAsset[]
+  ): Promise<void> {
+    const request = await clipRequestRepository.findById(version.requestId);
+    const job = await videoGenerationJobRepository.findByRequestId(version.requestId);
+    if (process.env.LINE_SCENE_EDIT_ENABLED !== 'true' || request?.intakeChannel !== 'line' || !job) throw new Error('scene_edit_disabled');
+    if (job.storyboardVersionId === version.id && job.currentStep !== VideoGenerationStep.AwaitingContentApproval) return;
+    const plans: ScenePlan[] = scenes.map((s, i) => ({
+      ...(s.renderPlan ?? {}), sceneNumber: i + 1, durationSeconds: s.roughDurationHint ?? 5,
+      visualDescriptionThai: s.onScreenText, imageIndexes: s.assetIndexes,
+      assets: s.assetIndexes.map(index => {
+        const source = sources[index];
+        if (!source) throw new Error('unknown_asset');
+        const prior = s.renderPlan?.assets?.find(a => a.assetIndex === index);
+        const oldTotal = s.renderPlan?.assets?.reduce((sum, a) => sum + a.durationSeconds, 0) ?? 0;
+        const duration = (s.roughDurationHint ?? 5) * (prior && oldTotal > 0 ? prior.durationSeconds / oldTotal : 1 / s.assetIndexes.length);
+        const start = s.visualStartSeconds ?? prior?.trimStartSeconds ?? 0;
+        return { ...prior, assetIndex: index, kind: source.kind, motion: prior?.motion ?? 'static' as const, durationSeconds: duration,
+          visualCrop: s.visualCrop ?? prior?.visualCrop, ...(source.kind === 'clip' ? { trimStartSeconds: start, trimEndSeconds: start + duration } : {}) };
+      }),
+    }));
+    await videoGenerationJobRepository.update(job.id, {
+      currentStep: VideoGenerationStep.AwaitingContentApproval, storyboardVersionId: version.id,
+      status: VideoGenerationJobStatus.Active,
+      storyboard: JSON.stringify(scenes), approvedStoryboard: JSON.stringify(scenes),
+      scenePlan: JSON.stringify(plans), approvedScenePlan: JSON.stringify(plans),
+      scriptThai: scenes.map(s => s.voiceScript).join('\n'), scriptChinese: null, scriptEnglish: null,
+      autoApproveRemaining: true,
+      subtitleTimeline: null, voiceTimestamps: null, animationSpec: null,
+      sceneVideoAssetIds: null, baseVideoAssetId: null, animatedVideoAssetId: null,
+      captionedExport_9_16_assetId: null, captionedExport_16_9_assetId: null,
+      captionedExport_1_1_assetId: null, captionedExport_4_5_assetId: null,
+      finalExport_9_16_assetId: null, finalExport_16_9_assetId: null, finalExport_1_1_assetId: null, finalExport_4_5_assetId: null,
+    });
+    await this.approveContent(job.id, request.userId, { scriptThai: scenes.map(s => s.voiceScript).join('\n'),
+      scriptEnglish: '', hookEnglish: '', captionThai: job.captionThai ?? '', captionEnglish: '', captionChinese: '',
+      scenePlan: JSON.stringify(plans), storyboard: JSON.stringify(scenes) });
+  }
+
   async approveContent(
     jobId: string,
     staffId: string,
@@ -2686,6 +2730,11 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       await this._setDistributionChannels(job.requestId, targetPlatforms);
     }
 
+    if (process.env.LINE_SCENE_EDIT_ENABLED === 'true' && job.storyboardVersionId) {
+      await this._updateJob(jobId, { currentStep: VideoGenerationStep.AwaitingSceneDesignApproval, voiceApprovedBy: userId });
+      return this._getJob(jobId);
+    }
+
     const updated = await this._updateJob(
       jobId,
       {
@@ -3488,6 +3537,21 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       endSecond: s.endSecond + leadIn,
     }));
 
+    if (process.env.LINE_SCENE_EDIT_ENABLED === 'true' && job.storyboardVersionId) {
+      const { storyboardVersionRepository } = await import('@/repositories');
+      const version = await storyboardVersionRepository.get(job.storyboardVersionId);
+      if (!version) throw new Error('storyboard_version_missing');
+      let cursor = 0;
+      const exactText = version.scenes.map((s, i) => {
+        const startSecond = cursor;
+        cursor += s.roughDurationHint ?? 5;
+        const spoken = timeline.filter(t => t.startSecond < cursor && t.endSecond > startSecond);
+        return { sentenceNumber: i + 1, textThai: s.onScreenText, textEnglish: spoken.map(t => t.textEnglish).join(' '),
+          textChinese: spoken.map(t => t.textChinese ?? '').join(' '), startSecond, endSecond: cursor };
+      });
+      return { timeline: exactText, durationSeconds: Math.max(cursor, voiceDur + leadIn), palette };
+    }
+
     return { timeline, durationSeconds: voiceDur + leadIn, palette };
   }
 
@@ -3641,7 +3705,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
       templateId: legacyTemplateId(job.selectedMotionTemplate),
       palette: inputs.palette,
       timeline: inputs.timeline,
-      languages: languages.length > 0 ? languages : ["en", "zh"],
+      languages: process.env.LINE_SCENE_EDIT_ENABLED === 'true' && job.storyboardVersionId ? Array.from(new Set<'th' | 'en' | 'zh'>(['th', ...languages])) : languages.length > 0 ? languages : ["en", "zh"],
       outputStorageKey: outputKey,
       onProgress,
       browser: ctx?.browser,
@@ -5546,8 +5610,17 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
     const request = previous ? await clipRequestRepository.findById(previous.requestId) : null;
     if (request?.intakeChannel === 'line') {
       const data = args[1] as Record<string, unknown>;
+      let versionScript: string | undefined;
+      if (process.env.LINE_SCENE_EDIT_ENABLED === 'true' && previous?.storyboardVersionId &&
+          (typeof data.scriptThai === 'string' || typeof data.approvedScriptThai === 'string')) {
+        const { storyboardVersionRepository } = await import('@/repositories');
+        const version = await storyboardVersionRepository.get(previous.storyboardVersionId);
+        if (!version) throw new Error('storyboard_version_missing');
+        versionScript = sanitizeThaiVoiceScript(version.scenes.map(s => s.voiceScript).join('\n'));
+      }
       for (const field of ['scriptThai','approvedScriptThai','captionThai','approvedCaptionThai']) {
-        if (typeof data[field] === 'string') data[field] = applyShopRules(data[field] as string, request.shopRules ?? {}).text;
+        const confirmedCopy = (field === 'scriptThai' || field === 'approvedScriptThai') && versionScript !== undefined && sanitizeThaiVoiceScript(String(data[field])) === versionScript;
+        if (typeof data[field] === 'string' && !confirmedCopy) data[field] = applyShopRules(data[field] as string, request.shopRules ?? {}).text;
       }
       if (typeof data.selectedMusicTrack === 'string' && data.selectedMusicTrack !== 'none') {
         const track = findMusicTrack(data.selectedMusicTrack);
@@ -5562,6 +5635,13 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         }
       }
     }
+    if (previous && request?.intakeChannel === 'line' && process.env.LINE_SCENE_EDIT_ENABLED === 'true' && !previous.storyboardVersionId &&
+        (args[1].approvedStoryboard || args[1].approvedScenePlan)) {
+      const { snapshotApprovedStoryboard } = await import('@/services/line/lineSceneEditRuntime');
+      // Persist before advancing the gate: a storage failure must leave the
+      // approval retryable, rather than strand the job on an unstarted step.
+      await snapshotApprovedStoryboard(request, { ...previous, ...args[1] });
+    }
     const updated = await videoGenerationJobRepository.update(...args);
     if (request?.intakeChannel === 'line' && isReviewSystemEnabled()) {
       try {
@@ -5572,8 +5652,20 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
             ?? updated.captionedExport_1_1_assetId ?? updated.captionedExport_4_5_assetId
             ?? updated.finalExport_9_16_assetId ?? updated.finalExport_16_9_assetId;
           const asset = finalId ? await uploadedAssetRepository.findById(finalId) : null;
+          let deliveredVersion = process.env.LINE_SCENE_EDIT_ENABLED === 'true' ? updated.storyboardVersionId : undefined;
+          if (process.env.LINE_SCENE_EDIT_ENABLED === 'true') {
+            const { storyboardVersionRepository } = await import('@/repositories');
+            if (!deliveredVersion) {
+              const { snapshotApprovedStoryboard } = await import('@/services/line/lineSceneEditRuntime');
+              deliveredVersion = (await snapshotApprovedStoryboard(request, updated))?.id;
+            }
+            if (deliveredVersion) await storyboardVersionRepository.linkDelivery(request.id, deliveredVersion,
+              [updated.captionedExport_9_16_assetId, updated.captionedExport_16_9_assetId, updated.captionedExport_1_1_assetId,
+               updated.captionedExport_4_5_assetId, updated.finalExport_9_16_assetId, updated.finalExport_16_9_assetId,
+               updated.finalExport_1_1_assetId, updated.finalExport_4_5_assetId].filter((id): id is string => !!id));
+          }
           if (asset) await reviewOutboxRepository.enqueue({ eventType: 'line.delivery', channel: 'line_notify',
-            dedupeKey: 'delivery:' + updated.id, payload: { user_id: request.userId, storage_key: asset.storageKey } });
+            dedupeKey: 'delivery:' + updated.id + (deliveredVersion ? ':' + deliveredVersion : ''), payload: { user_id: request.userId, storage_key: asset.storageKey } });
         }
         if (updated.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval &&
             previous?.currentStep !== updated.currentStep) await this._autoAdvanceIfEnabled(updated.id);

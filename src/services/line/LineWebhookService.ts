@@ -145,6 +145,7 @@ export interface LineWebhookEvent {
 }
 
 export interface ProcessWebhookOptions {
+  sceneEditMessages?: (lineUserId: string, text: string) => Promise<LineMessage[] | null>;
   lineChannelId: string;
   lineClient: ILineClient;
   lineAccountRepo: ILineAccountRepository;
@@ -242,6 +243,13 @@ export async function processLineEvent(
   }
 
   const text = event.message.text ?? '';
+  if (process.env.LINE_SCENE_EDIT_ENABLED === 'true' && opts.sceneEditMessages) {
+    const messages = await opts.sceneEditMessages(lineUserId, text);
+    if (messages) {
+      if (replyToken && messages.length) await opts.lineClient.reply(replyToken, messages);
+      return { escalated: false, intent: 'scene_edit' };
+    }
+  }
   const intent = classifyIntent(text);
 
   // ── Load current conversation state ────────────────────────────────────────

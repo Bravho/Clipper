@@ -264,7 +264,8 @@ export class ReviewService {
     }
 
     const now = new Date();
-    if ((input.decision === 'edit' || input.decision === 'reject') && item.requestId && this.reserveRevision) {
+    const sceneEditReview = process.env.LINE_SCENE_EDIT_ENABLED === 'true' && (item.payload.sceneEditVersionId || item.payload.sceneEditProposal);
+    if ((input.decision === 'edit' || input.decision === 'reject') && item.requestId && this.reserveRevision && !sceneEditReview) {
       await this.reserveRevision(item.requestId);
     }
 

@@ -19,6 +19,19 @@ export interface ShopRules {
   bannedPhrases?: string[];
 }
 
+/** Conservative deterministic routing: factual copy changes require Tho even
+ * when the model labels them as harmless text fixes. Includes removal of facts. */
+export function requiresShopFactReview(message: string, before: Array<{ onScreenText: string; voiceScript: string }>, after: Array<{ onScreenText: string; voiceScript: string }>, rules: ShopRules): boolean {
+  const facts = [...(rules.menuNames ?? []), ...Object.keys(rules.menuPrices ?? {}), ...(rules.promotions ?? [])];
+  if (/เมนู|ราคา|โปรโม|โปรโมชั่น|ส่วนลด|แถม|ฟรี|บาท|฿|\bprice\b|\bpromo\b|\bmenu\b|\d+\s*%/i.test(message) || facts.some(f => message.includes(f))) return true;
+  return before.some(s => {
+    const next = after.find((_, i) => before.indexOf(s) === i);
+    const a = s.onScreenText + '\n' + s.voiceScript;
+    const b = next ? next.onScreenText + '\n' + next.voiceScript : '';
+    return a !== b && (facts.some(f => a.includes(f) || b.includes(f)) || /\d|บาท|โปรโม|ฟรี|แถม/i.test(a + b));
+  });
+}
+
 export interface OverrideResult {
   text: string;
   corrections: Array<{ field: string; original: string; corrected: string; reason: string }>;

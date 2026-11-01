@@ -14,6 +14,12 @@ export async function processLineReviewOutbox(deps: {
   const event = await deps.outbox.claimNext();
   if (!event) return;
   try {
+    if (event.eventType === 'storyboard.render') {
+      const { dispatchStoryboardVersion } = await import('./lineSceneEditRuntime');
+      await dispatchStoryboardVersion(String(event.payload.version_id));
+      await deps.outbox.markSent(event.id);
+      return;
+    }
     if (event.eventType === 'review.created') {
       const item = event.reviewItemId ? await deps.items.findById(event.reviewItemId) : null;
       if (!item) throw new Error('review_item_missing');

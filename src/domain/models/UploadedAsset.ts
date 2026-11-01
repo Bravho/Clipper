@@ -21,6 +21,7 @@ import { AssetType, AssetUploadStatus } from "@/domain/enums/AssetType";
  *   and set the storage key on confirmation.
  */
 export interface UploadedAsset {
+  storyboardVersionId?: string | null;
   id: string;
   requestId: string;
   userId: string;

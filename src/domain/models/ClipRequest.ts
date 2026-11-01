@@ -34,6 +34,8 @@ import { RequestPricingTier } from "@/domain/enums/RequestPricingTier";
  *     submittedAt      → submitted_at TIMESTAMPTZ NULLABLE
  */
 export interface ClipRequest {
+  storyboardVersionId?: string | null;
+  deliveredStoryboardVersionId?: string | null;
   id: string;
   userId: string;
 
