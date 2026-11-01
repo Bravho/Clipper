@@ -95,10 +95,10 @@ export class MockServicePackageRepository implements IServicePackageRepository {
     return o ? { ...o } : null;
   }
 
-  async findActiveOrderByUser(userId: string): Promise<PackageOrder | null> {
+  async findActiveOrderByUser(userId: string, isTest = process.env.LINE_TEST_MODE === 'true'): Promise<PackageOrder | null> {
     for (const o of [...this.orders.values()].sort((a,b) => a.createdAt.getTime() - b.createdAt.getTime())) {
       if (o.userId === userId && o.status === 'active' && o.expiresAt > new Date() &&
-        (process.env.LINE_TEST_MODE !== 'true' || o.isTest) && (await this.getBalance(o.id)).clipsLeft > 0) return { ...o };
+        (o.isTest === isTest) && (await this.getBalance(o.id)).clipsLeft > 0) return { ...o };
     }
     return null;
   }

@@ -7,15 +7,18 @@ const required = {
 };
 async function checkPhase2Schema(db) {
   const { rows } = await db.query(`SELECT c.relname AS name, i.indisunique, i.indisvalid,
-      pg_get_indexdef(i.indexrelid) AS definition
+      pg_get_indexdef(i.indexrelid, 1, true) AS key,
+      i.indnkeyatts, i.indnatts,
+      pg_get_expr(i.indpred, i.indrelid) AS predicate
     FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
     WHERE i.indrelid = 'render_tasks'::regclass`);
   for (const [name, states] of Object.entries(required)) {
     const index = rows.find(row => row.name === name);
+    const normalized = index?.predicate?.replace(/::text\[\]|::text/g, '').replace(/[\s()]/g, '').toLowerCase();
+    const values = states.map(state => "'" + state + "'").join(',');
     if (!index || !index.indisunique || !index.indisvalid
-        || !/\(job_id\)/.test(index.definition)
-        || !/WHERE/.test(index.definition)
-        || states.some(state => !index.definition.includes(`'${state}'`))) {
+        || index.key !== 'job_id' || Number(index.indnkeyatts) !== 1 || Number(index.indnatts) !== 1
+        || !["statein" + values, "state=anyarray[" + values + "]"].includes(normalized)) {
       throw new Error(`Phase 2 prerequisite missing/invalid: ${name}; verify migrations 057 and 058`);
     }
   }

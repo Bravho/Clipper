@@ -152,15 +152,15 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     return rows[0] ? rowToOrder(rows[0]) : null;
   }
 
-  async findActiveOrderByUser(userId: string): Promise<PackageOrder | null> {
+  async findActiveOrderByUser(userId: string, isTest = process.env.LINE_TEST_MODE === 'true'): Promise<PackageOrder | null> {
     const { rows } = await this.db.query(
       `SELECT * FROM package_orders
         WHERE user_id=$1 AND status='active' AND expires_at > NOW()
-          AND ($2::boolean = false OR is_test=true)
+          AND is_test=$2::boolean
           AND clips_included > (SELECT COALESCE(SUM(CASE WHEN kind='clip' THEN units WHEN kind='refund_clip' THEN -units ELSE 0 END),0)
             FROM package_usage WHERE package_order_id=package_orders.id)
         ORDER BY created_at ASC, id ASC LIMIT 1`,
-      [userId, process.env.LINE_TEST_MODE === 'true']
+      [userId, isTest]
     );
     return rows[0] ? rowToOrder(rows[0]) : null;
   }
@@ -185,6 +185,12 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
+      // Validate persisted request before idempotency or consumption.
+      const scope = await client.query(`SELECT cr.user_id, cr.is_test FROM clip_requests cr
+        JOIN package_orders po ON po.id=$2
+        WHERE cr.id=$1 AND cr.user_id=po.user_id AND cr.is_test=po.is_test
+        FOR UPDATE OF cr`, [input.requestId, input.packageOrderId]);
+      if (!scope.rows[0]) throw new Error('package_scope_mismatch');
       if (input.kind === 'clip') {
         const owner = await client.query('SELECT user_id, is_test FROM package_orders WHERE id=$1', [input.packageOrderId]);
         if (!owner.rows[0]) throw new Error('inactive_package');

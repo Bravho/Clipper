@@ -99,7 +99,8 @@ test('7: startup fails closed on missing or invalid unique indices', async () =>
   const { checkPhase2Schema } = require('../../scripts/check-phase2-schema.cjs');
   const names = ['uq_render_tasks_active_test_job', 'uq_render_tasks_active_all_job'];
   const rows = names.map(name => ({ name, indisunique: true, indisvalid: true,
-    definition: "CREATE UNIQUE INDEX x ON render_tasks (job_id) WHERE state IN ('queued', 'claimed', 'test_queued', 'test_claimed')" }));
+    key: 'job_id', indnkeyatts: 1, indnatts: 1,
+    predicate: name.includes('test_job') ? "state IN ('test_queued', 'test_claimed')" : "state IN ('queued', 'claimed', 'test_queued', 'test_claimed')" }));
   await expect(checkPhase2Schema({ query: async () => ({ rows }) })).resolves.toBeUndefined();
   for (const invalid of [[], rows.slice(0, 1), rows.map(row => ({ ...row, indisvalid: false }))]) {
     await expect(checkPhase2Schema({ query: async () => ({ rows: invalid }) })).rejects.toThrow('prerequisite');

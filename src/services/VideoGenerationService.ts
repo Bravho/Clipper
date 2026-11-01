@@ -5680,7 +5680,7 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
                updated.finalExport_1_1_assetId, updated.finalExport_4_5_assetId].filter((id): id is string => !!id));
           }
           if (asset) await reviewOutboxRepository.enqueue({ eventType: 'line.delivery', channel: 'line_notify',
-            dedupeKey: 'delivery:' + updated.id + (deliveredVersion ? ':' + deliveredVersion : ''), payload: { user_id: request.userId, storage_key: asset.storageKey } });
+            dedupeKey: 'delivery:' + updated.id + (deliveredVersion ? ':' + deliveredVersion : ''), payload: { request_id: request.id, user_id: request.userId, storage_key: asset.storageKey } });
         }
         if (updated.currentStep === VideoGenerationStep.AwaitingSceneDesignApproval &&
             previous?.currentStep !== updated.currentStep) await this._autoAdvanceIfEnabled(updated.id);

@@ -5,6 +5,7 @@ import { PostgresReviewOutboxRepository } from '@/repositories/postgres/Postgres
 const order = { id: 'oldest', user_id: 'shop', is_test: true, status: 'active', clips_included: 2, expires_at: new Date(Date.now()+86400000) };
 test('real SQL consumption locks user, picks oldest paid balance, updates request and records usage atomically', async () => {
   const query = jest.fn(async (sql: string, params?: unknown[]) => {
+    if (sql.startsWith('SELECT cr.user_id')) return { rows: [order] };
     if (sql.startsWith('SELECT user_id')) return { rows: [order] };
     if (sql.startsWith('SELECT * FROM package_orders po')) {
       expect(sql).toContain('ORDER BY created_at ASC, id ASC LIMIT 1 FOR UPDATE');
@@ -37,8 +38,8 @@ test('test worker SQL claims only test-associated events', async () => {
     await new PostgresReviewOutboxRepository({ query } as never).claimNext();
     const [sql, params] = (query.mock.calls as unknown[][])[0];
     expect(params).toEqual([true]);
-    expect(sql).toContain('cr.is_test=true');
-    expect(sql).toContain('la.is_test=true');
+    expect(sql).toContain('COALESCE(cr.is_test, po.is_test,');
+    expect(sql).toContain('= $1::boolean');
   } finally { delete process.env.LINE_TEST_MODE; }
 });
 

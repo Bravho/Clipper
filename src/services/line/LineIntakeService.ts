@@ -25,7 +25,7 @@ export class LineIntakeService {
   async ensureAccount(lineUserId: string) {
     const existing = await this.accounts.findByLineUser(this.channel, lineUserId);
     if (existing) {
-      if (process.env.LINE_TEST_MODE === 'true' && !existing.isTest) throw new Error('test_account_scope_mismatch');
+      if (existing.isTest !== isTestRun(lineUserId)) throw new Error('test_account_scope_mismatch');
       if (existing.status !== 'active') throw new Error('account_blocked');
       return existing;
     }
@@ -39,8 +39,8 @@ export class LineIntakeService {
   /** Return the active paid order if it has remaining clips, null otherwise. */
   async findActiveOrderWithBalance(lineUserId: string): Promise<{ orderId: string; clipsLeft: number } | null> {
     const account = await this.ensureAccount(lineUserId);
-    const order = await this.packages.findActiveOrderByUser(account.userId);
-    if (!order) return null;
+    const order = await this.packages.findActiveOrderByUser(account.userId, isTestRun(lineUserId));
+    if (!order || order.isTest !== isTestRun(lineUserId)) return null;
     const balance = await this.packages.getBalance(order.id);
     if (balance.clipsLeft <= 0) return null;
     return { orderId: order.id, clipsLeft: balance.clipsLeft };
@@ -50,8 +50,7 @@ export class LineIntakeService {
     const account = await this.ensureAccount(lineUserId);
     const pkg = findPackageByCode(code);
     if (!pkg) throw new Error('unknown_package');
-    const test = (process.env.LINE_TEST_MODE === 'true' && account.isTest) ||
-      (!!process.env.LINE_TEST_SHOP_ID && process.env.LINE_TEST_SHOP_ID === lineUserId);
+    const test = isTestRun(lineUserId);
     const bypass = process.env.PAYMENT_DISABLED === 'true' || test;
     if (bypass) {
       // Repository serializes concurrent grants and reuses the scoped active balance.
@@ -73,12 +72,13 @@ export class LineIntakeService {
   async isPaid(orderId: string, lineUserId: string) {
     const account = await this.ensureAccount(lineUserId);
     const order = await this.packages.findOrderById(orderId);
-    return !!order && (process.env.LINE_TEST_MODE !== 'true' || order.isTest) && order.userId === account.userId && order.status === 'active' && order.expiresAt > new Date();
+    return !!order && order.isTest === isTestRun(lineUserId) && order.userId === account.userId && order.status === 'active' && order.expiresAt > new Date();
   }
 
   async submit(lineUserId: string, context: Record<string, unknown>) {
     const account = await this.ensureAccount(lineUserId);
     const existing = (await this.requests.findByUserId(account.userId)).find(r => r.externalRef === context.intakeId);
+    if (existing && !!existing.isTest !== isTestRun(lineUserId)) throw new Error('test_request_scope_mismatch');
     if (existing && existing.status !== RequestStatus.Draft) return { requestId: existing.id };
     const orderId = existing?.packageOrderId ?? String(context.orderId ?? '');
     if (!await this.isPaid(orderId, lineUserId)) throw new Error('payment_required');

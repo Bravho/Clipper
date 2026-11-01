@@ -211,7 +211,7 @@ It never sees `state = 'test_queued'` or `state = 'test_claimed'`.
 
 Enqueue derives its namespace from persisted `clip_requests.is_test`: a test request always uses `test_queued`, even in a normal process. A test process refuses non-test requests. New worker claims additionally require matching request ownership; production device claims exclude test requests.
 
-Touch, complete and release only update the current mode's claimed state and matching request ownership, with claimed_by matching for the claim APIs. Repeated release is a no-op; done/failed tasks cannot be reopened. Releases preserve the namespace.
+Touch, complete and release only update the current mode's claimed state and matching request ownership, with claimed_by matching for the claim APIs. Repeated release is a no-op; done/failed tasks cannot be reopened. Releases preserve the namespace. **Pre-existing residual risk:** worker touch/complete/release do not check claimed_by. After stale reclaim, the old worker can mutate the new claim. This is not claim-token isolation; fixing it safely requires per-claim identity and handling rejected completion before downstream pipeline writes. Deferred here.
 
 **Prerequisites: migrations 054, 049, 057 and 058 must be applied before Phase 2.** 057 adds the test-state indices. Without its original explicit test-state conflict index PostgreSQL rejects enqueue; it does not silently insert duplicates. New enqueue requires 058's unique index across all four active states, preventing simultaneous production/test active rows for one job. The additive migration fails on existing duplicates; investigate before proceeding.
 
@@ -227,15 +227,15 @@ Touch, complete and release only update the current mode's claimed state and mat
 
 `PostgresAssetVisualAnalysisRepository.claim()` and `expireClaims()` join `uploaded_assets → clip_requests` and filters by `cr.is_test`, including expired IDs returned for follow-up. Asset IDs join as TEXT (`ua.id = ava.asset_id`). Non-test worker skips assets from test requests; test worker claims only test-request assets. LEFT JOINs mean assets with no associated request (orphaned uploads) are treated as non-test. Requires migration 054 for `cr.is_test`.
 
-**review_outbox — already guarded**
+**review_outbox ? exact owner scope**
 
-`PostgresReviewOutboxRepository.claimNext()` already had `LINE_TEST_MODE` filtering (EXISTS join on `clip_requests.is_test`). No change needed.
+Claims resolve persisted request ownership first, then package-order ownership, then the owning LINE account for account-only events. The resolved is_test must equal worker mode in both directions. Unknown ownership fails closed; payload is_test is not trusted. Delivery events now carry request_id.
 
 | SQL source | Tables | Mutation / isolation |
 |---|---|---|
 | `src/repositories/postgres/PostgresUserRepository.ts:41` | `users` | INSERT; test emails use a separate `:test` hash namespace. |
-| `src/repositories/postgres/PostgresLineAccountRepository.ts:49,66,73,104,107` | `line_accounts / line_conversation_states` | INSERT and UPDATE. Account reuse blocked if `LINE_TEST_MODE=true` and `is_test=false`. Conversations lack `is_test`; use a distinct test channel. |
-| `src/repositories/postgres/PostgresServicePackageRepository.ts:97,162,188,225` | `package_orders / package_usage / clip_requests` | INSERT/UPDATE. Active-order lookup is test-filtered; consumption matched to order `is_test`. |
+| `src/repositories/postgres/PostgresLineAccountRepository.ts:49,66,73,104,107` | `line_accounts / line_conversation_states` | INSERT and UPDATE. Intake rejects account/mode mismatch for global test mode and exact test-shop matching. Conversations lack `is_test`; use a distinct test channel. |
+| `src/repositories/postgres/PostgresServicePackageRepository.ts:97,162,188,225` | `package_orders / package_usage / clip_requests` | INSERT/UPDATE. Active-order lookup requires exact mode; consumption requires persisted request/order user and is_test equality. |
 | `src/repositories/postgres/PostgresClipRequestRepository.ts:283,315,367,400,475` | `clip_requests` | INSERT and UPDATE metadata/status. Adapters target request IDs; no universal test-only UPDATE guard (writes are scoped to the test request). |
 | `src/repositories/postgres/PostgresUploadedAssetRepository.ts:83,153` | `uploaded_assets` | INSERT intake/AI/render outputs; UPDATE metadata. Scoped by request or asset ID. |
 | `src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:266,387,541,573,575,608,623,632` | `video_generation_jobs / step_history / heartbeat` | INSERT job/history/heartbeat; UPDATE pipeline state and claims. `claimNextQueuedRenderStep` is now guarded by `cr.is_test` JOIN filter. Other `update()` calls are scoped by job ID (owned by the test request). |
@@ -243,7 +243,7 @@ Touch, complete and release only update the current mode's claimed state and mat
 | `src/repositories/postgres/PostgresAssetVisualAnalysisRepository.ts` | `asset_visual_analyses` | **GUARDED.** `claim()` and `expireClaims()` filter `clip_requests.is_test`; expired IDs are mode-scoped. TEXT asset joins. Requires migration 054. |
 | `src/repositories/postgres/PostgresReviewItemRepository.ts:72,204,251` | `review_items` | INSERT gate/escalation; UPDATE decision and reminder bookkeeping. Reminder job and admin list are not globally test-filtered. |
 | `src/repositories/postgres/PostgresReviewActionRepository.ts:35` | `review_actions` | INSERT immutable decision/action audit. |
-| `src/repositories/postgres/PostgresReviewOutboxRepository.ts:41,45,60,83,90,101` | `review_outbox` | **ALREADY GUARDED.** `claimNext()` only processes test events in `LINE_TEST_MODE=true`. |
+| `src/repositories/postgres/PostgresReviewOutboxRepository.ts:41,45,60,83,90,101` | `review_outbox` | **GUARDED.** Persisted owner scope must equal worker mode; unknown owners are skipped. |
 | `src/app/api/line/webhook/route.ts:43,169,172` | `line_webhook_events` | INSERT or conflict UPDATE lease; UPDATE completed/failure. No `is_test` column; use a distinct test channel. |
 | `scripts/render-worker.ts:159` | `render_worker_samples` | INSERT telemetry. Worker uses the guarded `renderTaskRepository.claimNext()` and `reviewOutboxRepository.claimNext()`. |
 
@@ -257,9 +257,9 @@ The old deployed Mac Mini worker's claim paths:
 - `asset_visual_analyses.claim()`: the visual analysis worker code was introduced in the same branch as this guard. If the old deployed Mac Mini doesn't have the visual analysis worker code at all, no claim is made. If it does, the guard was not present in the old code — but the old Mac Mini claiming test visual analyses only writes to `asset_visual_analyses` (no production data mutation) and is harmless; the test worker would then find the analysis already done.
 - `render_worker_heartbeat`, `render_worker_samples`: shared telemetry tables, no production data risk.
 
-#### Management jobs — unguarded (acceptable)
+#### Management jobs ? unguarded; test publishing blocked operationally
 
-`management_jobs` does not have `is_test` and is not directly linked to `clip_requests` at the claim level. The management worker reconciles publications. If a test publication creates a management job, the management worker would process it — this could trigger social-publishing API calls for the test publication. **Mitigation:** keep `STRIPE_ALLOW_LIVE=false` and avoid setting up social publishing credentials on Mar-PC. Management jobs from the test run would simply fail to reconcile (no credentials), which is acceptable.
+Do not permit the social-publishing phase for test requests in the shared production database until test-only queue routing or comprehensive creation/claim guards exist. management_jobs lacks is_test, and both repository enqueue and the provider webhook create jobs. No code guard is claimed here: a repository-only change would leave the webhook path open. Existing test publications/jobs can be processed by a production management worker with social credentials, including external publishing calls. Missing credentials on Mar-PC provides no protection against that worker. STRIPE_ALLOW_LIVE=false constrains Stripe, not social publishing. Do not create test publications or management jobs during Phase 2; this is an operational restriction, not enforced isolation.
 
 #### Migration apply order (updated)
 
@@ -299,7 +299,7 @@ To skip Stripe during Phase 2 testing, set `PAYMENT_DISABLED=true` in `.env.loca
 
 **Guarantees:**
 
-- **INSERT-only:** bypass inserts `package_orders` directly with `status='active'`, `starts_at`, expiry, included clips/revisions, `is_test` and `paid_reference='payment_disabled'`. It never updates existing orders, including pending Stripe orders. No schema changes are needed.
+- **Order creation/reuse:** bypass reuses an available active order in the same scope or inserts `package_orders` directly with `status='active'`, `starts_at`, expiry, included clips/revisions, `is_test` and `paid_reference='payment_disabled'`. It never updates existing orders, including pending Stripe orders. No schema changes are needed.
 - **Balance/usage:** the Stripe paid path only activates the order; there is no separate allowance grant row. Balance is `clips_included` minus net `package_usage`. Bypass inserts the same allowance on the order; no usage row is inserted until an actual request consumes a clip through the existing idempotent `recordUsage` path.
 - **Idempotency:** route event deduplication remains wired to `choosePackage` / `isPaid`. Repository creation holds the per-user/test-scope advisory transaction lock shared with usage consumption and reuses an unexpired active balance in that scope, even for concurrent deliveries or another package choice. It does not grant a second available balance or modify the existing balance.
 - **Stripe code is untouched:** the bypass is a conditional in `LineIntakeService.choosePackage`. All Stripe routes continue to function normally when `PAYMENT_DISABLED` is unset or `false`.
@@ -307,7 +307,7 @@ To skip Stripe during Phase 2 testing, set `PAYMENT_DISABLED=true` in `.env.loca
 
 **Never set `PAYMENT_DISABLED=true` on production (`/root/rc2`).** Keep it in `.env.local` on Mar-PC only.
 
-Test scope means `LINE_TEST_MODE=true` **and an `is_test` account**, or an exact `LINE_TEST_SHOP_ID` match. Global test mode rejects existing real accounts. Real shops otherwise receive a Stripe link unless `PAYMENT_DISABLED` is exactly `true`; that explicit override creates a real (`is_test=false`) active order with the audit marker above.
+Test scope means `LINE_TEST_MODE=true` **and an `is_test` account**, or an exact `LINE_TEST_SHOP_ID` match with an `is_test` account. Both global test mode and exact test-shop mode reject existing real accounts; normal mode rejects existing test accounts. Real shops otherwise receive a Stripe link unless `PAYMENT_DISABLED` is exactly `true`; that explicit override creates a real (`is_test=false`) active order with the audit marker above.
 
 ### 3g. Visual frame retention
 

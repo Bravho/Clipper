@@ -17,7 +17,7 @@ export interface IServicePackageRepository {
     activationReference?: 'payment_disabled';
   }): Promise<PackageOrder>;
   findOrderById(id: string): Promise<PackageOrder | null>;
-  findActiveOrderByUser(userId: string): Promise<PackageOrder | null>;
+  findActiveOrderByUser(userId: string, isTest?: boolean): Promise<PackageOrder | null>;
   findOrderByStripeSession(sessionId: string): Promise<PackageOrder | null>;
   updateOrderStatus(id: string, status: PackageOrder['status'], paidReference?: string): Promise<void>;
 
