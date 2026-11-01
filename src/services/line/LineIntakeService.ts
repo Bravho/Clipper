@@ -29,6 +29,16 @@ export class LineIntakeService {
       displayName: null, linkedVia: 'auto_created', status: 'active' });
   }
 
+  /** Return the active paid order if it has remaining clips, null otherwise. */
+  async findActiveOrderWithBalance(lineUserId: string): Promise<{ orderId: string; clipsLeft: number } | null> {
+    const account = await this.ensureAccount(lineUserId);
+    const order = await this.packages.findActiveOrderByUser(account.userId);
+    if (!order) return null;
+    const balance = await this.packages.getBalance(order.id);
+    if (balance.clipsLeft <= 0) return null;
+    return { orderId: order.id, clipsLeft: balance.clipsLeft };
+  }
+
   async choosePackage(lineUserId: string, code: string) {
     const account = await this.ensureAccount(lineUserId);
     const pkg = findPackageByCode(code);

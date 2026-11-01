@@ -128,6 +128,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (!base) throw new Error('REVIEW_PUBLIC_ORIGIN not configured');
           return [{ type: 'text', text: String(item.payload.script ?? '') + '\n' + base + '/r/' + token }];
         },
+        findActiveBalance: (user) => intake.findActiveOrderWithBalance(user),
         choosePackage: (user, code) => intake.choosePackage(user, code),
         isPaid: (order, user) => intake.isPaid(order, user),
         submitClipRequest: async ({ lineUserId, context }) => {

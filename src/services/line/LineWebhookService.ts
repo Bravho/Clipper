@@ -160,6 +160,11 @@ export interface ProcessWebhookOptions {
     lineUserId: string;
     context: Record<string, unknown>;
   }) => Promise<{ requestId: string }>;
+  /**
+   * Optional: return active paid balance for a LINE user so new jobs skip
+   * package selection and payment. If unset, every new job starts from scratch.
+   */
+  findActiveBalance?: (lineUserId: string) => Promise<{ orderId: string; clipsLeft: number } | null>;
 }
 
 /**
@@ -270,8 +275,22 @@ export async function processLineEvent(
 
   // ── State-specific handling ───────────────────────────────────────────────
 
-  // start_job: begin intake
+  // start_job: begin intake — skip package selection if a paid balance exists
   if (intent === 'start_job') {
+    const active = opts.findActiveBalance ? await opts.findActiveBalance(lineUserId) : null;
+    if (active) {
+      // Carry the existing paid order forward; skip package selection and payment
+      await opts.lineAccountRepo.upsertConversationState(
+        opts.lineChannelId, lineUserId, 'awaiting_brief',
+        { intakeId: randomUUID(), orderId: active.orderId }
+      );
+      if (replyToken) {
+        await opts.lineClient.reply(replyToken, [
+          { type: 'text', text: `คุณมีคลิปคงเหลือ ${active.clipsLeft} คลิป${particle} กรุณาบอกรายละเอียดงานใหม่${particle}` },
+        ]);
+      }
+      return { escalated: false, intent: 'start_job_carry_over' };
+    }
     await opts.lineAccountRepo.upsertConversationState(
       opts.lineChannelId, lineUserId, 'awaiting_package_choice', { intakeId: randomUUID() }
     );
