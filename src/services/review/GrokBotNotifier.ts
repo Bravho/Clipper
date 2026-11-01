@@ -65,14 +65,18 @@ export function resolveGrokBotWebhookAuth(): {
   authHeaderValue: string;
   key: string | undefined;
   rawAuthHeader: string;
+  /** The original trimmed env value before label-stripping (used for redaction). */
+  envAuthHeader: string;
   configured: boolean;
 } {
   const url = (process.env.GROKBOT_REVIEW_WEBHOOK_URL ?? '').trim();
-  const rawAuthHeader = (process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER ?? '').trim();
+  const envAuthHeader = (process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER ?? '').trim();
+  // Strip a leading "Authorization:" label (case-insensitive, optional surrounding whitespace).
+  const rawAuthHeader = envAuthHeader.replace(/^\s*authorization\s*:\s*/i, '').trim();
   const key = process.env.GROKBOT_REVIEW_WEBHOOK_KEY || undefined;
   const configured = !!url && (!!rawAuthHeader || !!key);
   const authHeaderValue = rawAuthHeader || (key ? `Bearer ${key}` : '');
-  return { url, authHeaderValue, key, rawAuthHeader, configured };
+  return { url, authHeaderValue, key, rawAuthHeader, envAuthHeader, configured };
 }
 
 /** Remove secrets from an error before it is logged or rethrown. */
@@ -121,7 +125,7 @@ export async function notifyGrokBot(
   item: NotifiableItem,
   opts: GrokBotNotifierOptions,
 ): Promise<void> {
-  const { url: webhookUrl, authHeaderValue, key: webhookKey, rawAuthHeader, configured } = resolveGrokBotWebhookAuth();
+  const { url: webhookUrl, authHeaderValue, key: webhookKey, rawAuthHeader, envAuthHeader, configured } = resolveGrokBotWebhookAuth();
   if (!configured) return;
 
   const escalation = opts.event === 'escalation' || item.typeKey === 'customer_reply';
@@ -177,8 +181,9 @@ export async function notifyGrokBot(
     headers['X-Grokbot-Signature'] = `sha256=${sign(body, webhookKey, timestamp)}`;
   }
 
-  // Build redaction list: key, URL, auth header value, and the token portion after any scheme.
+  // Build redaction list: key, URL, auth header value (cleaned and original env), token portion.
   const secretsToRedact: (string | undefined)[] = [webhookKey, webhookUrl];
+  if (envAuthHeader) secretsToRedact.push(envAuthHeader);
   if (rawAuthHeader) {
     secretsToRedact.push(rawAuthHeader);
     const spaceIdx = rawAuthHeader.indexOf(' ');

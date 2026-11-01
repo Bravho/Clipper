@@ -278,3 +278,67 @@ test('auth header token part (after scheme) is also redacted', async () => {
   expect(logged).not.toContain('only-the-token-part');
   spy.mockRestore();
 });
+
+// ---- Authorization: label stripping tests ----
+
+test('"Authorization: Bearer x" strips label -> Authorization header "Bearer x"', () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Authorization: Bearer x';
+  const result = resolveGrokBotWebhookAuth();
+  expect(result.authHeaderValue).toBe('Bearer x');
+  expect(result.rawAuthHeader).toBe('Bearer x');
+});
+
+test('"authorization:Bearer x" (no space, lowercase) strips label -> "Bearer x"', () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'authorization:Bearer x';
+  const result = resolveGrokBotWebhookAuth();
+  expect(result.authHeaderValue).toBe('Bearer x');
+});
+
+test('plain "Bearer x" (no label) is passed through unchanged', () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Bearer x';
+  const result = resolveGrokBotWebhookAuth();
+  expect(result.authHeaderValue).toBe('Bearer x');
+});
+
+test('bare "Authorization:" with KEY set -> falls back to Bearer <KEY>, configured=true', () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Authorization:';
+  const result = resolveGrokBotWebhookAuth();
+  expect(result.rawAuthHeader).toBe('');
+  expect(result.authHeaderValue).toBe('Bearer test-secret-key');
+  expect(result.configured).toBe(true);
+});
+
+test('"  authorization :  " (padded) with KEY set -> falls back to Bearer <KEY>', () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = '  authorization :  ';
+  const result = resolveGrokBotWebhookAuth();
+  expect(result.rawAuthHeader).toBe('');
+  expect(result.authHeaderValue).toBe('Bearer test-secret-key');
+});
+
+test('bare "Authorization:" with KEY unset -> not configured, no-op', async () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Authorization:';
+  const result = resolveGrokBotWebhookAuth();
+  expect(result.configured).toBe(false);
+  const opts = makeOpts();
+  await notifyGrokBot(BASE_ITEM, opts);
+  expect(opts.postFn).not.toHaveBeenCalled();
+});
+
+test('"  authorization :  " with KEY unset -> not configured, no-op', async () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = '  authorization :  ';
+  const opts = makeOpts();
+  await notifyGrokBot(BASE_ITEM, opts);
+  expect(opts.postFn).not.toHaveBeenCalled();
+});
+
+test('original full env value (with label) is also redacted from errors', async () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Authorization: Bearer secret-label-token';
+  const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const postFn = jest.fn(async () => { throw new Error('Authorization: Bearer secret-label-token leaked'); });
+  await notifyGrokBot(BASE_ITEM, { signedUrl: async () => '', postFn });
+  const logged = spy.mock.calls.flat().map(String).join(' ');
+  expect(logged).not.toContain('secret-label-token');
+  spy.mockRestore();
+});
