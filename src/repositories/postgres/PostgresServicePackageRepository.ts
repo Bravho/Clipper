@@ -92,12 +92,13 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     stripeSessionId?: string;
     expiresAt: Date;
     isTest?: boolean;
+    activationReference?: 'payment_disabled';
   }): Promise<PackageOrder> {
     const { rows } = await this.db.query(
       `INSERT INTO package_orders
          (user_id, package_code, clips_included, revisions_per_clip, price_baht,
-          stripe_session_id, expires_at, is_test)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+          stripe_session_id, expires_at, is_test, status, paid_reference)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         input.userId,
         input.packageCode,
@@ -107,6 +108,8 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
         input.stripeSessionId ?? null,
         input.expiresAt.toISOString(),
         input.isTest ?? false,
+        input.activationReference ? 'active' : 'pending_payment',
+        input.activationReference ?? null,
       ]
     );
     return rowToOrder(rows[0]);
@@ -118,6 +121,19 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
       await client.query('BEGIN');
       // Serialize pending-order creation per user and environment, including concurrent webhooks.
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [input.userId + ':' + !!input.isTest]);
+      if (input.activationReference) {
+        // Same lock as usage consumption: a retry cannot create another available balance.
+        const active = await client.query(
+          `SELECT * FROM package_orders po WHERE user_id=$1 AND is_test=$2
+             AND status='active' AND expires_at > NOW()
+             AND clips_included > (SELECT COALESCE(SUM(CASE WHEN kind='clip' THEN units WHEN kind='refund_clip' THEN -units ELSE 0 END),0)
+               FROM package_usage WHERE package_order_id=po.id)
+           ORDER BY created_at ASC, id ASC LIMIT 1`, [input.userId, input.isTest ?? false]);
+        const order = active.rows[0] ? rowToOrder(active.rows[0]) :
+          await new PostgresServicePackageRepository(client as unknown as typeof pool).insertOrder(input);
+        await client.query('COMMIT');
+        return order;
+      }
       const pending = await client.query(
         "SELECT * FROM package_orders WHERE user_id=$1 AND package_code=$2 AND is_test=$3 AND status='pending_payment' AND expires_at > NOW() ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
         [input.userId, input.packageCode, input.isTest ?? false]);

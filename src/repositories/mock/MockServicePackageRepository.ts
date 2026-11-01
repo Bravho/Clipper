@@ -57,8 +57,15 @@ export class MockServicePackageRepository implements IServicePackageRepository {
     stripeSessionId?: string;
     expiresAt: Date;
     isTest?: boolean;
+    activationReference?: 'payment_disabled';
   }): Promise<PackageOrder> {
-    const pending = [...this.orders.values()].find(o => o.userId === input.userId &&
+    // No await before insertion: concurrent mock calls observe the inserted balance.
+    const active = input.activationReference && [...this.orders.values()].find(o =>
+      o.userId === input.userId && o.isTest === (input.isTest ?? false) && o.status === 'active' &&
+      o.expiresAt > new Date() && o.clipsIncluded > [...this.usages.values()]
+        .filter(u => u.packageOrderId === o.id).reduce((n,u) => n + (u.kind === 'clip' ? u.units : u.kind === 'refund_clip' ? -u.units : 0), 0));
+    if (active) return { ...active };
+    const pending = !input.activationReference && [...this.orders.values()].find(o => o.userId === input.userId &&
       o.packageCode === input.packageCode && o.isTest === (input.isTest ?? false) &&
       o.status === 'pending_payment' && o.expiresAt > new Date());
     if (pending) return { ...pending };
@@ -70,8 +77,8 @@ export class MockServicePackageRepository implements IServicePackageRepository {
       clipsIncluded: input.clipsIncluded,
       revisionsPerClip: input.revisionsPerClip,
       priceBaht: input.priceBaht,
-      status: 'pending_payment',
-      paidReference: null,
+      status: input.activationReference ? 'active' : 'pending_payment',
+      paidReference: input.activationReference ?? null,
       stripeSessionId: input.stripeSessionId ?? null,
       startsAt: now,
       expiresAt: input.expiresAt,

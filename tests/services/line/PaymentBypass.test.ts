@@ -11,6 +11,11 @@ const enqueue = jest.fn(async () => {});
 jest.mock('@/repositories', () => ({ assetVisualAnalysisRepository: { enqueue: (...a: unknown[]) => enqueue(...a as []) } }));
 
 const original = process.env;
+beforeEach(() => {
+  process.env = { ...original };
+  delete process.env.PAYMENT_DISABLED;
+  delete process.env.LINE_TEST_SHOP_ID;
+});
 afterEach(() => { process.env = { ...original }; });
 
 function makeIntake() {
@@ -55,12 +60,65 @@ test('test shop: isPaid returns true immediately after choosePackage', async () 
 // ── Real shop, PAYMENT_DISABLED unset ────────────────────────────────────────
 
 test('real shop without flag: choosePackage returns Stripe payment URL', async () => {
-  process.env = { ...original, LINE_TEST_MODE: 'false', PAYMENT_DISABLED: 'false' };
+  process.env.LINE_TEST_MODE = 'false';
   const intake = makeIntake();
   const result = await intake.choosePackage('real-user', 'trial');
   expect(result.paymentUrl).toBeTruthy();
   expect(result.paymentUrl).toMatch(/buy\.stripe\.com/);
   expect(result.paymentUrl).toContain(result.orderId);
+});
+
+test('exact test shop ID grants only the matching shop and inserts directly active', async () => {
+  process.env.LINE_TEST_MODE = 'false';
+  process.env.LINE_TEST_SHOP_ID = 'test-user';
+  const packages = new MockServicePackageRepository(new Map(), new Map());
+  const update = jest.spyOn(packages, 'updateOrderStatus');
+  const usage = jest.spyOn(packages, 'recordUsage');
+  const create = jest.spyOn(packages, 'createOrder');
+  const intake = new LineIntakeService('ch1', new MockLineAccountRepository(new Map()),
+    new MockUserRepository(new Map()), packages, new MockClipRequestRepository(new Map()), new MockUploadedAssetRepository(new Map()));
+  const testOrder = await intake.choosePackage('test-user', 'trial');
+  expect(testOrder.paymentUrl).toBeNull();
+  expect(await packages.findOrderById(testOrder.orderId)).toMatchObject({ status: 'active', isTest: true });
+  expect(create.mock.calls[0][0]).toMatchObject({ activationReference: 'payment_disabled', isTest: true });
+  expect((await packages.getBalance(testOrder.orderId)).clipsLeft).toBe(2);
+  expect(update).not.toHaveBeenCalled();
+  expect(usage).not.toHaveBeenCalled();
+  const realOrder = await intake.choosePackage('other-user', 'trial');
+  expect(realOrder.paymentUrl).toContain('buy.stripe.com');
+  expect(await intake.isPaid(realOrder.orderId, 'other-user')).toBe(false);
+});
+
+test('global test mode refuses existing real accounts, even with payment disabled', async () => {
+  process.env.LINE_TEST_MODE = 'true';
+  process.env.PAYMENT_DISABLED = 'true';
+  const accounts = new MockLineAccountRepository(new Map());
+  await accounts.create({ userId: 'real', lineUserId: 'real-user', lineChannelId: 'ch1',
+    displayName: null, linkedVia: 'auto_created', status: 'active', isTest: false });
+  const packages = new MockServicePackageRepository(new Map(), new Map());
+  const create = jest.spyOn(packages, 'createOrder');
+  const intake = new LineIntakeService('ch1', accounts, new MockUserRepository(new Map()),
+    packages, new MockClipRequestRepository(new Map()), new MockUploadedAssetRepository(new Map()));
+  await expect(intake.choosePackage('real-user', 'trial')).rejects.toThrow('test_account_scope_mismatch');
+  expect(create).not.toHaveBeenCalled();
+});
+
+test('concurrent bypass redelivery reuses one balance and preserves pending Stripe orders', async () => {
+  process.env.LINE_TEST_MODE = 'false';
+  const packages = new MockServicePackageRepository(new Map(), new Map());
+  const intake = new LineIntakeService('ch1', new MockLineAccountRepository(new Map()),
+    new MockUserRepository(new Map()), packages, new MockClipRequestRepository(new Map()), new MockUploadedAssetRepository(new Map()));
+  const pending = await intake.choosePackage('real-user', 'trial');
+  const before = await packages.findOrderById(pending.orderId);
+  process.env.PAYMENT_DISABLED = 'true';
+  const update = jest.spyOn(packages, 'updateOrderStatus');
+  const [a,b] = await Promise.all([intake.choosePackage('real-user', 'trial'), intake.choosePackage('real-user', 'starter')]);
+  expect(a.orderId).toBe(b.orderId);
+  expect(a.orderId).not.toBe(pending.orderId);
+  expect(await packages.findOrderById(pending.orderId)).toEqual(before);
+  expect(await intake.isPaid(a.orderId, 'real-user')).toBe(true);
+  expect((await packages.getBalance(a.orderId)).clipsLeft).toBe(2);
+  expect(update).not.toHaveBeenCalled();
 });
 
 test('real shop without flag: order status is pending_payment', async () => {

@@ -95,7 +95,7 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
     const { rowCount } = await this.db.query(
       `UPDATE asset_visual_analyses
           SET result = jsonb_set(result, '{frames}',
-            (SELECT jsonb_agg(f - 'data') FROM jsonb_array_elements(result->'frames') AS f))
+            (SELECT jsonb_agg(jsonb_set(f, '{data}', 'null'::jsonb)) FROM jsonb_array_elements(result->'frames') AS f))
         WHERE ${where}`,
       [cutoffDate]
     );

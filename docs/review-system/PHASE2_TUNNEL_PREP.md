@@ -8,8 +8,38 @@
 ## 1. Running the LINE Webhook on Mar-PC Behind a cloudflared Quick-Tunnel
 
 ### Prerequisites
-- Node.js running on Mar-PC (the Next.js dev/start server, port 3000 unless changed)
-- `cloudflared` installed (download from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/ — no Cloudflare account needed for a quick tunnel)
+
+**Not started; pending Tho's OK.** cloudflared is **not yet installed** on Mar-PC (neither PATH nor a winget package). After Tho approves installation:
+
+```powershell
+winget install --id Cloudflare.cloudflared
+```
+
+Tho must apply migrations 048–057 in order first, including **054–057**; none were applied during this preparation. Populate the environment described in section 2, including LINE credentials, DB/storage credentials, review secrets, `REVIEW_SYSTEM_ENABLED=true`, `LINE_INTAKE_ENABLED=true`, `RENDER_LANE_ENABLED=true`, `RENDER_LANE=backup`, `STRIPE_ALLOW_LIVE=false` and **`LINE_TEST_MODE=true`**. Existing real accounts are refused in global test mode. Keep `PAYMENT_DISABLED=false`; test shops already bypass payment.
+
+### Exact start commands (only after Tho approves)
+
+From `D:\coding\clipper_agent`, in the server PowerShell terminal:
+
+```powershell
+$env:LINE_TEST_MODE = 'true'
+npm run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+`package.json` maps `dev` to `next dev`. Development mode is appropriate for this webhook test and needs no production build; explicit port **3000** prevents silently choosing another port. Next loads `.env.local`; exported shell variables take precedence.
+
+In a separate terminal, start the test render worker when rendering is needed:
+
+```powershell
+$env:LINE_TEST_MODE = 'true'
+npm run worker
+```
+
+`worker` runs `tsx scripts/render-worker.ts`, whose bootstrap loads `.env.local`. With test mode enabled, the repository claims only test jobs (`test_queued` / `test_claimed`), leaving production jobs alone. This process can use paid providers: start it only when Tho authorizes the actual test.
+
+Optional helper: export all required variables into the parent PowerShell environment (the read-only checker reads `process.env` only), then run `./scripts/phase2-start.ps1 -IConfirmThoApproved`. It refuses without the switch, exact `LINE_TEST_MODE=true`, cloudflared, passing preflight, or available port 3000. It opens separate server/tunnel windows; it does not apply migrations or start the worker.
+
+Read the random tunnel origin from the tunnel terminal, set `REVIEW_PUBLIC_ORIGIN` to it, then restart the server/worker with that value before review testing. Quick-tunnel hostnames change on each tunnel restart.
 
 ### Start the tunnel (one command)
 
@@ -264,12 +294,21 @@ To skip Stripe during Phase 2 testing, set `PAYMENT_DISABLED=true` in `.env.loca
 
 **Guarantees:**
 
-- **INSERT-only:** only the newly created `package_orders` row is updated (`pending_payment → active`). No existing rows are touched.
-- **Idempotency:** if `choosePackage` is retried (webhook re-delivery after a crash), `findActiveOrderByUser` finds the already-activated order and returns it without creating a second one.
+- **INSERT-only:** bypass inserts `package_orders` directly with `status='active'`, `starts_at`, expiry, included clips/revisions, `is_test` and `paid_reference='payment_disabled'`. It never updates existing orders, including pending Stripe orders. No schema changes are needed.
+- **Balance/usage:** the Stripe paid path only activates the order; there is no separate allowance grant row. Balance is `clips_included` minus net `package_usage`. Bypass inserts the same allowance on the order; no usage row is inserted until an actual request consumes a clip through the existing idempotent `recordUsage` path.
+- **Idempotency:** route event deduplication remains wired to `choosePackage` / `isPaid`. Repository creation holds the per-user/test-scope advisory transaction lock shared with usage consumption and reuses an unexpired active balance in that scope, even for concurrent deliveries or another package choice. It does not grant a second available balance or modify the existing balance.
 - **Stripe code is untouched:** the bypass is a conditional in `LineIntakeService.choosePackage`. All Stripe routes continue to function normally when `PAYMENT_DISABLED` is unset or `false`.
 - **Audit marker:** `package_orders.paidReference = 'payment_disabled'` (existing column, no schema change required) identifies bypass-activated orders.
 
 **Never set `PAYMENT_DISABLED=true` on production (`/root/rc2`).** Keep it in `.env.local` on Mar-PC only.
+
+Test scope means `LINE_TEST_MODE=true` **and an `is_test` account**, or an exact `LINE_TEST_SHOP_ID` match. Global test mode rejects existing real accounts. Real shops otherwise receive a Stripe link unless `PAYMENT_DISABLED` is exactly `true`; that explicit override creates a real (`is_test=false`) active order with the audit marker above.
+
+### 3g. Visual frame retention
+
+`scripts/cleanup-line-uploads.ts` remains dry-run unless `--execute` is supplied. In addition to the existing seven-day LINE upload prefixes (`request_mat/line/`, `line_uploads/`), it counts completed `asset_visual_analyses` rows created more than seven days ago with frame image data. Execute sets only each frame's `data` to JSON null in that new table; detections, timestamps, cuts and metrics remain available. No pre-existing table is written by frame cleanup. Counts are rows, not individual frames (`framesPurged` is the candidate count in dry-run).
+
+Visual frame extraction and contact sheets use FFmpeg memory pipes; no visual-analysis frame directories or S3 prefixes are written, so no extra file/object deletion scope is added. Consumers skip purged images and retain uncertain-shot flags if no contact sheet can be built. The cleanup script was not run during preparation.
 
 ---
 

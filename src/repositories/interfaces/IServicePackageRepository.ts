@@ -13,6 +13,8 @@ export interface IServicePackageRepository {
     stripeSessionId?: string;
     expiresAt: Date;
     isTest?: boolean;
+    /** Insert active with this audit reference; reuse the scoped active balance atomically. */
+    activationReference?: 'payment_disabled';
   }): Promise<PackageOrder>;
   findOrderById(id: string): Promise<PackageOrder | null>;
   findActiveOrderByUser(userId: string): Promise<PackageOrder | null>;

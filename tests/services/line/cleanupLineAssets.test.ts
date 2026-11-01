@@ -1,6 +1,9 @@
 import { cleanupLineAssets, LINE_UPLOAD_PREFIXES } from '@/services/line/cleanupLineAssets';
 import { MockAssetVisualAnalysisRepository } from '@/repositories/mock/MockAssetVisualAnalysisRepository';
 import type { AssetVisualAnalysis } from '@/domain/models/AssetVisualAnalysis';
+import { PostgresAssetVisualAnalysisRepository } from '@/repositories/postgres/PostgresAssetVisualAnalysisRepository';
+import { visualContactSheet } from '@/lib/ai/storyboardVisualMedia';
+jest.mock('@/lib/db', () => ({ pool: {} }));
 
 // Minimal S3 mock
 function makeS3(keys: { Key: string; LastModified: Date }[]) {
@@ -38,7 +41,7 @@ async function makeRepoWithEntries(opts: { old: boolean; hasData: boolean; count
     // claim + save to put into 'done' state
     entry.state = 'claimed';
     const inner = repo as unknown as { entries: Map<string, { state: string; value?: AssetVisualAnalysis; assetId: string; version: string; claimedAt?: number; createdAt: number }> };
-    inner.entries.set(assetId + ':1', { ...entry, state: 'done', value: makeAnalysis(assetId, opts.hasData),
+    inner.entries.set(assetId + ':1', { ...entry, assetId, version: '1', state: 'done', value: makeAnalysis(assetId, opts.hasData),
       createdAt: opts.old ? Date.now() - 8 * 86400000 : Date.now() });
   }
   return repo;
@@ -145,4 +148,50 @@ test('nothing outside LINE_UPLOAD_PREFIXES is deleted', async () => {
   const prefix = LINE_UPLOAD_PREFIXES;
   expect(prefix).toContain('line_uploads/');
   expect(prefix).toContain('request_mat/line/');
+});
+
+test.each([false, true])('Postgres frame cleanup only targets old completed analyses; execute=%s', async execute => {
+  const query = jest.fn(async (_sql: string, _params: unknown[]) => ({ rows: [{ count: 2 }], rowCount: 2 }));
+  const repo = new PostgresAssetVisualAnalysisRepository({ query } as never);
+  const cutoff = new Date('2026-10-25T00:00:00Z');
+  expect(await repo.purgeOldFrameData(cutoff, execute)).toEqual({ count: 2 });
+  const [sql, params] = query.mock.calls[0];
+  expect(params).toEqual([cutoff]);
+  expect(sql).toContain("state = 'done'");
+  expect(sql).toContain('created_at < $1');
+  expect(sql).toContain("f->>'data' IS NOT NULL");
+  expect(sql).not.toMatch(/uploaded_assets|clip_requests|DELETE/);
+  if (execute) {
+    expect(sql.trim()).toMatch(/^UPDATE asset_visual_analyses/);
+    expect(sql).toContain("jsonb_set(f, '{data}', 'null'::jsonb)");
+  } else {
+    expect(sql).toMatch(/^SELECT COUNT/);
+    expect(sql).not.toMatch(/UPDATE|INSERT/);
+  }
+});
+
+test('contact sheet skips purged images and never runs FFmpeg when all are gone', async () => {
+  const run = jest.fn(async (_args: string[], _input?: Buffer) => ({ stdout: Buffer.from('sheet'), stderr: '' }));
+  await expect(visualContactSheet([null], run)).rejects.toThrow('visual_frames_missing');
+  expect(run).not.toHaveBeenCalled();
+  await visualContactSheet([null, Buffer.from('frame').toString('base64')], run);
+  expect(run.mock.calls[0][1]).toEqual(Buffer.from('frame'));
+});
+
+test('only old done rows are stripped; detections and exact cutoff rows survive', async () => {
+  const cutoff = new Date('2026-10-25T00:00:00Z');
+  const analysis = makeAnalysis('old', true);
+  analysis.frames[0].detection = { confidence: 0.9, box: { x: 0, y: 0, w: 1, h: 1 } };
+  analysis.frames[0].areaRatio = 0.8;
+  const entries = new Map([
+    ['old:1', { assetId: 'old', version: '1', state: 'done', createdAt: cutoff.getTime()-1, value: analysis }],
+    ['edge:1', { assetId: 'edge', version: '1', state: 'done', createdAt: cutoff.getTime(), value: makeAnalysis('edge', true) }],
+    ['claimed:1', { assetId: 'claimed', version: '1', state: 'claimed', createdAt: 0, value: makeAnalysis('claimed', true) }],
+  ]);
+  const repo = new MockAssetVisualAnalysisRepository(entries);
+  expect(await repo.purgeOldFrameData(cutoff, true)).toEqual({ count: 1 });
+  expect((await repo.get('old', '1'))?.frames[0]).toEqual({ ...analysis.frames[0], data: null });
+  expect((await repo.get('edge', '1'))?.frames[0].data).toBe('abc123');
+  expect((await repo.get('claimed', '1'))?.frames[0].data).toBe('abc123');
+  expect(await repo.purgeOldFrameData(cutoff, true)).toEqual({ count: 0 });
 });

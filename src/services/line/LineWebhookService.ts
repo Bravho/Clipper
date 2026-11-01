@@ -337,7 +337,7 @@ export async function processLineEvent(
       context.orderId = checkout?.orderId;
       context['package_code'] = pkgCode;
       context['package_name'] = pkg.nameTh;
-      if (checkout?.paymentUrl == null) {
+      if (checkout && checkout.paymentUrl === null) {
         // bypass path: order already active — skip payment state, go straight to brief
         await opts.lineAccountRepo.upsertConversationState(opts.lineChannelId, lineUserId, 'awaiting_brief', context);
         if (replyToken) {
@@ -350,7 +350,7 @@ export async function processLineEvent(
       );
       if (replyToken) {
         await opts.lineClient.reply(replyToken, [
-          { type: 'text', text: packageChoiceMsg(particle, pkg.nameTh, checkout.paymentUrl) },
+          { type: 'text', text: packageChoiceMsg(particle, pkg.nameTh, checkout?.paymentUrl ?? pkg.paymentLinkUrl) },
         ]);
       }
       return { escalated: false, intent };
