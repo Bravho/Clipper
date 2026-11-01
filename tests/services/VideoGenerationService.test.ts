@@ -36,6 +36,7 @@ import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/config/elevenLabsVoices";
 
 // ── Mock repositories module (used via `@/repositories/index` singletons) ──
 jest.mock("@/repositories/index", () => ({
+  storyboardVersionRepository: { get: jest.fn(async () => null), enqueueVoiceDispatch: jest.fn() },
   reviewOutboxRepository: new (require("@/repositories/mock/MockReviewOutboxRepository").MockReviewOutboxRepository)(new Map()),
   clipRequestRepository: new (require("@/repositories/mock/MockClipRequestRepository").MockClipRequestRepository)(new Map()),
   uploadedAssetRepository: new (require("@/repositories/mock/MockUploadedAssetRepository").MockUploadedAssetRepository)(new Map()),
@@ -1783,9 +1784,46 @@ test('LINE version restart preserves exact plan and clears stale exports before 
     expect(saved.storyboardVersionId).toBe('v2'); expect(saved.sceneVideoAssetIds).toBeNull();
     expect(saved.captionedExport_9_16_assetId).toBeNull(); expect(saved.subtitleTimeline).toBeNull();
     expect(JSON.parse(saved.approvedScenePlan!)[0]).toEqual(expect.objectContaining({ durationSeconds: 7, imageIndexes: [0], assets: [expect.objectContaining({ durationSeconds: 7, visualCrop: scene.visualCrop })] }));
-    expect(approve).toHaveBeenCalledWith(job.id, line.userId, expect.objectContaining({ scriptThai: 'อร่อยทุกวัน' }));
+    expect(approve).toHaveBeenCalledWith(job.id, line.userId, expect.objectContaining({ scriptThai: 'อร่อยทุกวัน' }), 'v2');
     approve.mockRestore();
   } finally { if (previous === undefined) delete process.env.LINE_SCENE_EDIT_ENABLED; else process.env.LINE_SCENE_EDIT_ENABLED = previous; }
+});
+
+test('LINE restart recovers after enqueue failure and never redispatches a marked version', async () => {
+  const previous = process.env.LINE_SCENE_EDIT_ENABLED;
+  process.env.LINE_SCENE_EDIT_ENABLED = 'true';
+  const { storyboardVersionRepository: versions } = require('@/repositories/index');
+  const service = new VideoGenerationService();
+  const tts = jest.spyOn(service as any, '_runIAppTtsGeneration').mockResolvedValue(undefined);
+  try {
+    const request = await createRequest();
+    const line = await mockClipRepo.create({ ...request, intakeChannel: 'line' });
+    const job = await createJobAwaitingVoiceApproval(line.id, 20);
+    const scene = { sceneNumber: 1, summary: 'อาหาร', assetIndexes: [0], assetIds: ['source'], roughDurationHint: 7, onScreenText: 'ลองเลย', voiceScript: 'อร่อยทุกวัน' };
+    const version = { id: 'retry-version', requestId: line.id, parentVersionId: null, scenes: [scene], createdBy: 'shop' as const, reason: 'line_scene_edit', isTest: true, createdAt: new Date().toISOString() };
+    const sources = [{ id: 'source', index: 0, kind: 'image' as const, url: 'private.jpg', thumbnailUrl: '', fileName: 'source.jpg' }];
+    let marker = false;
+    versions.get.mockImplementation(async () => ({ ...version, dispatchedAt: marker ? new Date().toISOString() : null }));
+    versions.enqueueVoiceDispatch.mockReset();
+    versions.enqueueVoiceDispatch.mockRejectedValueOnce(new Error('queue unavailable')).mockImplementation(async () => { marker = true; });
+    await expect(service.restartFromStoryboardVersion(version, [scene], sources)).rejects.toThrow('queue unavailable');
+    expect((await mockJobRepo.findById(job.id))?.currentStep).toBe(VideoGenerationStep.GeneratingVoice);
+    expect(marker).toBe(false);
+    expect(tts).not.toHaveBeenCalled();
+    await service.restartFromStoryboardVersion(version, [scene], sources);
+    expect(marker).toBe(true);
+    expect(versions.enqueueVoiceDispatch).toHaveBeenCalledTimes(2);
+    await service.restartFromStoryboardVersion(version, [scene], sources);
+    expect(versions.enqueueVoiceDispatch).toHaveBeenCalledTimes(2);
+    expect(tts).not.toHaveBeenCalled();
+    await service.runStoryboardVoiceTask(job.id, version.id);
+    expect(tts).toHaveBeenCalledTimes(1);
+  } finally {
+    tts.mockRestore();
+    versions.get.mockReset().mockResolvedValue(null);
+    versions.enqueueVoiceDispatch.mockReset();
+    if (previous === undefined) delete process.env.LINE_SCENE_EDIT_ENABLED; else process.env.LINE_SCENE_EDIT_ENABLED = previous;
+  }
 });
 
 test.each([true, false])('LINE delivery selects approved captioned exports, fallback only if absent (%s)', async captioned => {

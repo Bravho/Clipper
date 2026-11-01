@@ -4,5 +4,6 @@ export interface IStoryboardVersionRepository {
   latest(requestId: string): Promise<StoryboardVersion | null>;
   /** Append under a request lock. Parent must be current; revisions debit atomically. */
   append(input: NewStoryboardVersion, consumeRevision?: boolean): Promise<StoryboardVersion>;
+  enqueueVoiceDispatch(versionId: string, jobId: string, userId: string): Promise<void>;
   linkDelivery(requestId: string, versionId: string, assetIds: string[]): Promise<void>;
 }

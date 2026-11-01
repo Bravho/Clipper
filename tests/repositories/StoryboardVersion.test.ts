@@ -28,3 +28,34 @@ describe('version/revision/outbox transaction (mock SQL)', () => {
   await expect(repo.append(input,true)).rejects.toThrow('outbox unavailable'); const calls = query.mock.calls; expect(calls[calls.length-1][0]).toBe('ROLLBACK');
  });
 });
+
+test.each([false, true])('dispatch task and marker commit atomically (already dispatched: %s)', async dispatched => {
+ const query = jest.fn(async (sql: string) => ({ rows: sql.startsWith('SELECT dispatched_at') ? [{ dispatched_at: dispatched ? new Date() : null, is_test: true }] : [] }));
+ const release = jest.fn();
+ const repo = new PostgresStoryboardVersionRepository({ connect: async () => ({ query, release }) } as never);
+ await repo.enqueueVoiceDispatch('version', 'job', 'shop');
+ const sql = query.mock.calls.map(c => c[0]);
+ expect(sql[0]).toBe('BEGIN'); expect(sql[1]).toContain('FOR UPDATE');
+ expect(sql.at(-1)).toBe('COMMIT');
+ expect(sql.filter(s => s.startsWith('INSERT')).length).toBe(dispatched ? 0 : 1);
+ if (!dispatched) {
+  expect(sql[2]).toContain("'storyboard.voice'");
+  expect(sql[3]).toContain('SET dispatched_at=NOW()');
+ }
+ expect(release).toHaveBeenCalled();
+});
+
+test('enqueue failure rolls back marker; retry can enqueue once', async () => {
+ let fail = true;
+ const query = jest.fn(async (sql: string) => {
+  if (sql.startsWith('INSERT') && fail) throw new Error('queue unavailable');
+  return { rows: sql.startsWith('SELECT') ? [{ dispatched_at: null, is_test: false }] : [] };
+ });
+ const repo = new PostgresStoryboardVersionRepository({ connect: async () => ({ query, release: jest.fn() }) } as never);
+ await expect(repo.enqueueVoiceDispatch('v', 'j', 'u')).rejects.toThrow('queue unavailable');
+ expect(query.mock.calls.map(c => c[0]).at(-1)).toBe('ROLLBACK');
+ expect(query.mock.calls.some(c => c[0].startsWith('UPDATE'))).toBe(false);
+ fail = false;
+ await repo.enqueueVoiceDispatch('v', 'j', 'u');
+ expect(query.mock.calls.map(c => c[0]).at(-1)).toBe('COMMIT');
+});

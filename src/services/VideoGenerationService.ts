@@ -947,7 +947,8 @@ export class VideoGenerationService {
     const request = await clipRequestRepository.findById(version.requestId);
     const job = await videoGenerationJobRepository.findByRequestId(version.requestId);
     if (process.env.LINE_SCENE_EDIT_ENABLED !== 'true' || request?.intakeChannel !== 'line' || !job) throw new Error('scene_edit_disabled');
-    if (job.storyboardVersionId === version.id && job.currentStep !== VideoGenerationStep.AwaitingContentApproval) return;
+    const { storyboardVersionRepository } = await import('@/repositories');
+    if ((await storyboardVersionRepository.get(version.id))?.dispatchedAt) return;
     const plans: ScenePlan[] = scenes.map((s, i) => ({
       ...(s.renderPlan ?? {}), sceneNumber: i + 1, durationSeconds: s.roughDurationHint ?? 5,
       visualDescriptionThai: s.onScreenText, imageIndexes: s.assetIndexes,
@@ -977,7 +978,14 @@ export class VideoGenerationService {
     });
     await this.approveContent(job.id, request.userId, { scriptThai: scenes.map(s => s.voiceScript).join('\n'),
       scriptEnglish: '', hookEnglish: '', captionThai: job.captionThai ?? '', captionEnglish: '', captionChinese: '',
-      scenePlan: JSON.stringify(plans), storyboard: JSON.stringify(scenes) });
+      scenePlan: JSON.stringify(plans), storyboard: JSON.stringify(scenes) }, version.id);
+  }
+
+  /** Durable scene-edit task. The outbox owns takeover checks and retry. */
+  async runStoryboardVoiceTask(jobId: string, versionId: string): Promise<void> {
+    const job = await this._getJob(jobId);
+    if (job.storyboardVersionId !== versionId || job.currentStep !== VideoGenerationStep.GeneratingVoice) return;
+    await this._runIAppTtsGeneration(job);
   }
 
   async approveContent(
@@ -994,7 +1002,8 @@ export class VideoGenerationService {
       captionChinese: string;
       /** Requester-edited storyboard (JSON). Falls back to the generated one. */
       storyboard?: string | null;
-    }
+    },
+    dispatchVersionId?: string
   ): Promise<VideoGenerationJob> {
     const job = await this._getJobAtStep(jobId, VideoGenerationStep.AwaitingContentApproval);
     const scriptThai = sanitizeThaiVoiceScript(approved.scriptThai);
@@ -1015,6 +1024,12 @@ export class VideoGenerationService {
       contentApprovedBy: staffId,
     });
 
+    if (dispatchVersionId) {
+      // Task and marker commit together; a crash before commit remains retryable.
+      const { storyboardVersionRepository } = await import('@/repositories');
+      await storyboardVersionRepository.enqueueVoiceDispatch(dispatchVersionId, jobId, staffId);
+      return this._getJob(jobId);
+    }
     this._runIAppTtsGeneration(updated).catch(async (err) => {
       console.error("[ElevenLabs] Voice generation failed:", err);
       await this._updateJob(jobId, {

@@ -3,7 +3,7 @@ import type { IAssetVisualAnalysisRepository } from '../interfaces/IAssetVisualA
 import type { AssetVisualAnalysis } from '@/domain/models/AssetVisualAnalysis';
 export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalysisRepository {
   constructor(private db = pool) {}
-  async enqueue(id: string, version: string) { await this.db.query(`INSERT INTO asset_visual_analyses(asset_id,analysis_version) VALUES($1,$2) ON CONFLICT DO NOTHING`, [id, version]); }
+  async enqueue(id: string, version: string) { await this.db.query(`INSERT INTO asset_visual_analyses(asset_id,analysis_version) VALUES($1::text,$2) ON CONFLICT DO NOTHING`, [id, version]); }
   async claim(version: string): Promise<string | null> {
     const { rows } = await this.db.query(`UPDATE asset_visual_analyses SET state='claimed',claimed_at=NOW() WHERE (asset_id,analysis_version)=(SELECT asset_id,analysis_version FROM asset_visual_analyses WHERE state='queued' AND analysis_version=$1 ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING asset_id`, [version]);
     return rows[0]?.asset_id ?? null;

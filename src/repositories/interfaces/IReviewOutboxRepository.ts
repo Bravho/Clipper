@@ -29,6 +29,8 @@ export interface IReviewOutboxRepository {
   /** Atomically claim the next queued/failed event ready to send. */
   claimNext(): Promise<OutboxEvent | null>;
   markSent(id: string): Promise<void>;
+  /** Release the lease without treating human takeover as a failed attempt. */
+  defer(id: string, nextAttemptAt: Date): Promise<void>;
   markFailed(id: string, error: string, statusCode?: number, nextAttemptAt?: Date): Promise<void>;
   markDead(id: string): Promise<void>;
 }

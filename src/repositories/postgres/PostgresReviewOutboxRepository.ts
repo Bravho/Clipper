@@ -85,6 +85,10 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
     );
   }
 
+  async defer(id: string, nextAttemptAt: Date): Promise<void> {
+    await this.db.query("UPDATE review_outbox SET state='queued', attempts=GREATEST(attempts-1,0), next_attempt_at=$2, updated_at=NOW() WHERE id=$1", [id, nextAttemptAt.toISOString()]);
+  }
+
   async markFailed(id: string, error: string, statusCode?: number, nextAttemptAt?: Date): Promise<void> {
     await this.db.query(
       `UPDATE review_outbox SET

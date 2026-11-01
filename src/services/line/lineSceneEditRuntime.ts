@@ -1,5 +1,6 @@
 import { storyboardVersionRepository, clipRequestRepository, videoGenerationJobRepository, uploadedAssetRepository,
  createReviewService, lineAccountRepository } from '@/repositories';
+import { hasActiveTakeover } from './lineTakeover';
 import { getDefaultTypeCfg } from '@/services/review/ReviewService';
 import { LineSceneEditService, parseSceneEdit, sceneEditEnabled, applySceneEdit, type PendingSceneEdit } from './LineSceneEditService';
 import type { VersionScene } from '@/domain/models/StoryboardVersion';
@@ -41,7 +42,7 @@ export async function snapshotApprovedStoryboard(request: ClipRequest, job: Vide
 export async function handleSceneEditMessage(channel: string, lineUserId: string, text: string) {
  if (!sceneEditEnabled()) return null;
  const account = await lineAccountRepository.findByLineUser(channel, lineUserId);
- if (!account || (account.takeoverActive && (!account.takeoverExpiresAt || account.takeoverExpiresAt > new Date()))) return null;
+ if (!account || await hasActiveTakeover(lineAccountRepository, [account])) return null;
  const conv = await lineAccountRepository.getConversationState(channel, lineUserId);
  const context = conv?.context ?? {};
  if (typeof context.requestId !== 'string') return null;
@@ -74,12 +75,12 @@ export async function dispatchStoryboardVersion(id: string, adminApproved = fals
  const job = await videoGenerationJobRepository.findByRequestId(v.requestId);
  if (!request || !job || request.intakeChannel !== 'line') throw new Error('request_missing');
  const accounts = await lineAccountRepository.findByUserId(request.userId);
- if (accounts.some(a => a.takeoverActive && (!a.takeoverExpiresAt || a.takeoverExpiresAt > new Date()))) throw new Error('takeover');
- if (job.storyboardVersionId === v.id && job.currentStep !== 'awaiting_content_approval') return;
+ if (await hasActiveTakeover(lineAccountRepository, accounts)) throw new Error('takeover');
+ if (v.dispatchedAt) return;
  const latest = await storyboardVersionRepository.latest(v.requestId);
  if (latest?.id !== v.id) return; // Superseded outbox entries cannot undo a newer restore/edit.
  if (!['complete','awaiting_distribution_review'].includes(job.currentStep) &&
-     !(job.storyboardVersionId === v.id && job.currentStep === 'awaiting_content_approval')) throw new Error('render_in_progress');
+     !(job.storyboardVersionId === v.id)) throw new Error('render_in_progress');
  const assets = await uploadedAssetRepository.findByRequestId(v.requestId);
  const sources = orderSourceAssets(assets);
  const scenes = v.scenes.map(s => ({ ...s, assetIndexes: s.assetIds.map(id => {
@@ -115,7 +116,7 @@ export async function approveSceneEditProposal(item: { id?: string; requestId: s
  if (!base || base.id !== p.baseId) throw new Error('version_conflict');
  const request = await clipRequestRepository.findById(base.requestId);
  const accounts = request ? await lineAccountRepository.findByUserId(request.userId) : [];
- if (accounts.some(a => a.takeoverActive && (!a.takeoverExpiresAt || a.takeoverExpiresAt > new Date()))) throw new Error('takeover');
+ if (await hasActiveTakeover(lineAccountRepository, accounts)) throw new Error('takeover');
  const sources = orderSourceAssets(await uploadedAssetRepository.findByRequestId(base.requestId));
  return storyboardVersionRepository.append({ requestId: base.requestId, parentVersionId: base.id,
   scenes: applySceneEdit(base, p.edit, sources.map(s => s.id)), createdBy: 'admin', reason, isTest: base.isTest }, true);

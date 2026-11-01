@@ -3,6 +3,7 @@ import type { StoryboardVersion, NewStoryboardVersion } from '@/domain/models/St
 import type { IStoryboardVersionRepository } from '../interfaces/IStoryboardVersionRepository';
 function map(r: Record<string, unknown>): StoryboardVersion {
  return { id: String(r.id), requestId: String(r.request_id), parentVersionId: r.parent_version_id as string | null,
+ dispatchedAt: r.dispatched_at ? new Date(r.dispatched_at as string).toISOString() : null,
  scenes: r.scenes as StoryboardVersion['scenes'], createdBy: r.created_by as StoryboardVersion['createdBy'], reason: String(r.reason), isTest: Boolean(r.is_test), createdAt: new Date(r.created_at as string).toISOString() };
 }
 export class PostgresStoryboardVersionRepository implements IStoryboardVersionRepository {
@@ -23,6 +24,20 @@ export class PostgresStoryboardVersionRepository implements IStoryboardVersionRe
    }
    await c.query('COMMIT'); return map(result.rows[0]);
   } catch(e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
+ }
+ async enqueueVoiceDispatch(versionId: string, jobId: string, userId: string) {
+  const c = await this.db.connect();
+  try {
+   await c.query('BEGIN');
+   const { rows } = await c.query('SELECT dispatched_at,is_test FROM storyboard_versions WHERE id=$1 FOR UPDATE', [versionId]);
+   if (!rows[0]) throw new Error('version_missing');
+   if (!rows[0].dispatched_at) {
+    await c.query("INSERT INTO review_outbox (event_type,channel,dedupe_key,payload) VALUES ('storyboard.voice','line_notify',$1,$2) ON CONFLICT DO NOTHING",
+     ['storyboard-voice:' + versionId, JSON.stringify({ version_id: versionId, job_id: jobId, user_id: userId, is_test: rows[0].is_test })]);
+    await c.query('UPDATE storyboard_versions SET dispatched_at=NOW() WHERE id=$1', [versionId]);
+   }
+   await c.query('COMMIT');
+  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
  }
  async linkDelivery(requestId: string, versionId: string, assetIds: string[]) {
   await this.db.query('UPDATE clip_requests SET delivered_storyboard_version_id=$2 WHERE id=$1 AND storyboard_version_id=$2', [requestId,versionId]);

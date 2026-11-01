@@ -14,5 +14,13 @@ export class MockStoryboardVersionRepository implements IStoryboardVersionReposi
     if (consumeRevision) this.revisions.set(input.requestId, (this.revisions.get(input.requestId) ?? 0) + 1);
     return structuredClone(row);
   }
+  public voiceTasks = new Map<string, { jobId: string; userId: string }>();
+  async enqueueVoiceDispatch(versionId: string, jobId: string, userId: string) {
+    const row = this.rows.get(versionId);
+    if (!row) throw new Error('version_missing');
+    if (row.dispatchedAt) return;
+    this.voiceTasks.set(versionId, { jobId, userId });
+    row.dispatchedAt = new Date().toISOString();
+  }
   async linkDelivery(requestId: string, versionId: string, assetIds: string[]) { this.deliveries.set(requestId, versionId); for (const id of assetIds) this.deliveries.set(id, versionId); }
 }

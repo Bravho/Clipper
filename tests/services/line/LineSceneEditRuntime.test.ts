@@ -67,6 +67,7 @@ test('superseded queued versions cannot overwrite a newer edit/restore', async (
  await dispatchStoryboardVersion('v2'); expect(runStoryboardPrecheck).not.toHaveBeenCalled();
 });
 test('completed dispatch retry does not render again', async () => {
+ (repos.storyboardVersionRepository.get as jest.Mock).mockResolvedValue({ ...version, dispatchedAt: new Date().toISOString() });
  (repos.videoGenerationJobRepository.findByRequestId as jest.Mock).mockResolvedValue({ ...job, storyboardVersionId: 'v2' });
  await dispatchStoryboardVersion('v2'); expect(videoGenerationService.restartFromStoryboardVersion).not.toHaveBeenCalled();
 });
@@ -82,4 +83,17 @@ test('approved snapshot resolves assets/timing and records creator/test scope', 
 test('admin-approved factual proposal uses same atomic revision path', async () => {
  await approveSceneEditProposal({ requestId: 'r1', payload: { sceneEditProposal: { baseId: 'v2', message: 'แก้ราคา', edit: { ops: [{ type: 'text', scene: 1, field: 'onScreenText', newText: 'ราคา 99 บาท' }] } } } });
  expect(repos.storyboardVersionRepository.append).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'admin', parentVersionId: 'v2', scenes: expect.arrayContaining([expect.objectContaining({ onScreenText: 'ราคา 99 บาท' })]) }), true);
+});
+
+test('crash after generating_voice but before durable enqueue retries dispatch', async () => {
+ (repos.videoGenerationJobRepository.findByRequestId as jest.Mock).mockResolvedValue({ ...job, storyboardVersionId: 'v2', currentStep: 'generating_voice' });
+ await dispatchStoryboardVersion('v2');
+ expect(videoGenerationService.restartFromStoryboardVersion).toHaveBeenCalledTimes(1);
+});
+
+test('durable task marker prevents duplicate dispatch even at approval step', async () => {
+ (repos.storyboardVersionRepository.get as jest.Mock).mockResolvedValue({ ...version, dispatchedAt: new Date().toISOString() });
+ (repos.videoGenerationJobRepository.findByRequestId as jest.Mock).mockResolvedValue({ ...job, storyboardVersionId: 'v2', currentStep: 'awaiting_content_approval' });
+ await dispatchStoryboardVersion('v2');
+ expect(videoGenerationService.restartFromStoryboardVersion).not.toHaveBeenCalled();
 });

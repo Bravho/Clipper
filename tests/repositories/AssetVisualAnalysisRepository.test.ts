@@ -13,3 +13,14 @@ test('Postgres queue uses conflict-safe key, atomic skip-locked claim and immuta
   expect(calls[3][0]).toContain("AND state='claimed'");
   expect(calls[5][0]).toContain("state='failed'"); expect(calls[5][1]).toEqual(['1',900]);
 });
+
+test('opaque non-UUID asset IDs round-trip as TEXT in the Postgres cache', async () => {
+ const analysis = { assetId: 'line-upload/photo-001', version: '1', frames: [] } as never;
+ const query = jest.fn(async (sql: string) => ({ rows: sql.startsWith('SELECT result') ? [{ result: analysis }] : sql.includes('RETURNING asset_id') ? [{ asset_id: 'line-upload/photo-001' }] : [] }));
+ const repo = new PostgresAssetVisualAnalysisRepository({ query } as never);
+ await repo.enqueue('line-upload/photo-001', '1');
+ expect(query.mock.calls[0]).toEqual([expect.stringContaining('$1::text'), ['line-upload/photo-001', '1']]);
+ expect(await repo.claim('1')).toBe('line-upload/photo-001');
+ expect(await repo.get('line-upload/photo-001', '1')).toEqual(analysis);
+ await repo.save(analysis);
+});

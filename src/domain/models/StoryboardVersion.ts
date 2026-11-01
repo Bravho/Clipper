@@ -14,5 +14,7 @@ export interface StoryboardVersion {
   reason: string;
   isTest: boolean;
   createdAt: string;
+  /** Committed atomically with the durable storyboard.voice task. */
+  dispatchedAt?: string | null;
 }
-export type NewStoryboardVersion = Omit<StoryboardVersion, 'id' | 'createdAt'>;
+export type NewStoryboardVersion = Omit<StoryboardVersion, 'id' | 'createdAt' | 'dispatchedAt'>;

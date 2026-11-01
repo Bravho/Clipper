@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS storyboard_versions (
  created_by TEXT NOT NULL CHECK (created_by IN ('shop','admin','system')),
  reason TEXT NOT NULL,
  is_test BOOLEAN NOT NULL DEFAULT FALSE,
+ dispatched_at TIMESTAMPTZ,
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS storyboard_versions_request ON storyboard_versions(request_id,created_at);
@@ -14,3 +15,4 @@ ALTER TABLE clip_requests ADD COLUMN IF NOT EXISTS storyboard_version_id UUID RE
 ALTER TABLE clip_requests ADD COLUMN IF NOT EXISTS delivered_storyboard_version_id UUID REFERENCES storyboard_versions(id);
 ALTER TABLE uploaded_assets ADD COLUMN IF NOT EXISTS storyboard_version_id UUID REFERENCES storyboard_versions(id);
 ALTER TABLE video_generation_jobs ADD COLUMN IF NOT EXISTS storyboard_version_id UUID REFERENCES storyboard_versions(id);
+ALTER TABLE storyboard_versions ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;

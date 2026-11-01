@@ -58,6 +58,11 @@ export class MockReviewOutboxRepository implements IReviewOutboxRepository {
     this.store.set(id, { ...ev, state: 'sent', sentAt: new Date() });
   }
 
+  async defer(id: string, nextAttemptAt: Date): Promise<void> {
+    const ev = this.store.get(id);
+    if (ev) this.store.set(id, { ...ev, state: 'queued', attempts: Math.max(0, ev.attempts - 1), nextAttemptAt });
+  }
+
   async markFailed(
     id: string,
     error: string,

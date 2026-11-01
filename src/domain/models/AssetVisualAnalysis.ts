@@ -7,6 +7,7 @@ export interface VisualFrame {
   areaRatio: number | null;
 }
 export interface AssetVisualAnalysis {
+  /** Opaque TEXT uploaded_assets.id; not restricted to UUIDs. */
   assetId: string;
   version: string;
   usableDuration: number;
