@@ -81,7 +81,7 @@ test('5: concurrent completion retries insert; persistent contention is bounded'
   await expect(new PostgresRenderTaskRepository({ query } as never).enqueue(input)).rejects.toThrow('retry limit');
   expect(query).toHaveBeenCalledTimes(7);
 });
-test.each([false, true])('3/4: TEXT asset joins and expiry ownership mode=%s', async mode => {
+test.each([false, true])('3/4: UUID asset joins and expiry ownership mode=%s', async mode => {
   process.env.LINE_TEST_MODE = String(mode);
   const query = jest.fn().mockResolvedValue({ rows: [{ asset_id: 'opaque/photo' }] });
   const repo = new PostgresAssetVisualAnalysisRepository({ query } as never);
@@ -90,6 +90,8 @@ test.each([false, true])('3/4: TEXT asset joins and expiry ownership mode=%s', a
   for (const [sql] of query.mock.calls) {
     expect(sql).toContain('ua.id = ava.asset_id'); expect(sql).not.toContain('asset_id::uuid');
     expect(sql).toContain('cr.is_test');
+    expect(sql).toContain('cr.id = ua.request_id');
+    expect(sql).not.toContain('cr.id::text = ua.request_id');
   }
   expect(query.mock.calls[1][1]).toEqual(['1', 90, mode]);
   expect(query.mock.calls[1][0]).toContain('RETURNING ava.asset_id');
@@ -101,7 +103,7 @@ test('7: startup fails closed on missing or invalid unique indices', async () =>
   const rows = names.map(name => ({ name, indisunique: true, indisvalid: true,
     key: 'job_id', indnkeyatts: 1, indnatts: 1,
     predicate: name.includes('test_job') ? "state IN ('test_queued', 'test_claimed')" : "state IN ('queued', 'claimed', 'test_queued', 'test_claimed')" }));
-  await expect(checkPhase2Schema({ query: async () => ({ rows }) })).resolves.toBeUndefined();
+  await expect(checkPhase2Schema({ query: jest.fn().mockResolvedValueOnce({ rows }).mockResolvedValue({ rows: [] }) })).rejects.toThrow('asset_visual_analyses.asset_id');
   for (const invalid of [[], rows.slice(0, 1), rows.map(row => ({ ...row, indisvalid: false }))]) {
     await expect(checkPhase2Schema({ query: async () => ({ rows: invalid }) })).rejects.toThrow('prerequisite');
   }

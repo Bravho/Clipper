@@ -22,6 +22,41 @@ async function checkPhase2Schema(db) {
       throw new Error(`Phase 2 prerequisite missing/invalid: ${name}; verify migrations 057 and 058`);
     }
   }
+  const columns = [
+    ['asset_visual_analyses', 'asset_id'], ['storyboard_versions', 'request_id'],
+    ['clip_requests', 'storyboard_version_id'], ['clip_requests', 'delivered_storyboard_version_id'],
+    ['uploaded_assets', 'storyboard_version_id'], ['video_generation_jobs', 'storyboard_version_id'],
+  ];
+  const catalog = await db.query(`SELECT c.relname AS table_name, a.attname AS column_name,
+      format_type(a.atttypid, a.atttypmod) AS data_type
+    FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname=current_schema() AND a.attnum>0 AND NOT a.attisdropped
+      AND c.relname = ANY($1::text[])`, [[...new Set(columns.map(([table]) => table))]]);
+  for (const [table, column] of columns) {
+    if (!catalog.rows.some(r => r.table_name === table && r.column_name === column && r.data_type === 'uuid')) {
+      throw new Error('Phase 2 prerequisite missing/invalid: ' + table + '.' + column + '; verify migrations 055 and 056');
+    }
+  }
+  const fks = await db.query(`SELECT c.relname AS table_name, a.attname AS column_name,
+      t.relname AS target_table, ta.attname AS target_column, f.confdeltype, f.convalidated
+    FROM pg_constraint f JOIN pg_class c ON c.oid=f.conrelid
+    JOIN pg_namespace n ON n.oid=c.relnamespace
+    JOIN pg_class t ON t.oid=f.confrelid
+    JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=f.conkey[1]
+    JOIN pg_attribute ta ON ta.attrelid=t.oid AND ta.attnum=f.confkey[1]
+    WHERE n.nspname=current_schema() AND f.contype='f'
+      AND cardinality(f.conkey)=1 AND cardinality(f.confkey)=1
+      AND c.relname IN ('asset_visual_analyses','storyboard_versions')`);
+  for (const [table, column, target, deletion] of [
+    ['asset_visual_analyses', 'asset_id', 'uploaded_assets', 'c'],
+    ['storyboard_versions', 'request_id', 'clip_requests', 'a'],
+  ]) {
+    if (!fks.rows.some(r => r.table_name===table && r.column_name===column && r.target_table===target
+        && r.target_column==='id' && r.confdeltype===deletion && r.convalidated)) {
+      throw new Error('Phase 2 prerequisite missing/invalid: ' + table + ' FK; verify migrations 055 and 056');
+    }
+  }
 }
 module.exports = { checkPhase2Schema };
 if (require.main === module) {
@@ -31,7 +66,7 @@ if (require.main === module) {
     ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 15000,
   });
   checkPhase2Schema(db)
-    .then(() => console.log('Phase 2 index prerequisites passed'))
-    .catch(() => { console.error('Phase 2 schema preflight failed; verify migrations 057 and 058'); process.exitCode = 1; })
+    .then(() => console.log('Phase 2 schema prerequisites passed'))
+    .catch(() => { console.error('Phase 2 schema preflight failed; verify migrations 055 through 058'); process.exitCode = 1; })
     .finally(() => db.end());
 }

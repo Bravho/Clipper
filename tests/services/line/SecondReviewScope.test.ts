@@ -55,7 +55,7 @@ test('schema preflight rejects extra restrictions and wrong keys using fake db o
   const {checkPhase2Schema}=require('../../../scripts/check-phase2-schema.cjs');
   const rows=['test','all'].map(kind=>({name:`uq_render_tasks_active_${kind}_job`,indisunique:true,indisvalid:true,key:'job_id',indnkeyatts:1,indnatts:1,
     predicate:`(state = ANY (ARRAY[${(kind==='test'?['test_queued','test_claimed']:['queued','claimed','test_queued','test_claimed']).map(s=>`'${s}'::text`).join(', ')}]))`}));
-  await expect(checkPhase2Schema({query:async()=>({rows})})).resolves.toBeUndefined();
+  await expect(checkPhase2Schema({query:jest.fn().mockResolvedValueOnce({rows}).mockResolvedValue({rows:[]})})).rejects.toThrow('asset_visual_analyses.asset_id');
   for(const change of [{predicate:rows[1].predicate+" AND device_only=false"},{key:'request_id'},{indnkeyatts:2},{indnatts:2},{predicate:"state IN ('queued','claimed','test_queued','test_claimed','done')"}]) {
     await expect(checkPhase2Schema({query:async()=>({rows:[rows[0],{...rows[1],...change}]})})).rejects.toThrow('prerequisite');
   }

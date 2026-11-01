@@ -225,7 +225,7 @@ Touch, complete and release only update the current mode's claimed state and mat
 
 **asset_visual_analyses — claim and expiry guards**
 
-`PostgresAssetVisualAnalysisRepository.claim()` and `expireClaims()` join `uploaded_assets → clip_requests` and filters by `cr.is_test`, including expired IDs returned for follow-up. Asset IDs join as TEXT (`ua.id = ava.asset_id`). Non-test worker skips assets from test requests; test worker claims only test-request assets. LEFT JOINs mean assets with no associated request (orphaned uploads) are treated as non-test. Requires migration 054 for `cr.is_test`.
+`PostgresAssetVisualAnalysisRepository.claim()` and `expireClaims()` join `uploaded_assets → clip_requests` and filters by `cr.is_test`, including expired IDs returned for follow-up. Asset IDs join as UUID (`ua.id = ava.asset_id`). Non-test worker skips assets from test requests; test worker claims only test-request assets. LEFT JOINs mean assets with no associated request (orphaned uploads) are treated as non-test. Requires migration 054 for `cr.is_test`.
 
 **review_outbox ? exact owner scope**
 
@@ -240,7 +240,7 @@ Claims resolve persisted request ownership (including storyboard version/job ref
 | `src/repositories/postgres/PostgresUploadedAssetRepository.ts:83,153` | `uploaded_assets` | INSERT intake/AI/render outputs; UPDATE metadata. Scoped by request or asset ID. |
 | `src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:266,387,541,573,575,608,623,632` | `video_generation_jobs / step_history / heartbeat` | INSERT job/history/heartbeat; UPDATE pipeline state and claims. `claimNextQueuedRenderStep` is now guarded by `cr.is_test` JOIN filter. Other `update()` calls are scoped by job ID (owned by the test request). |
 | `src/repositories/postgres/PostgresRenderTaskRepository.ts` | `render_tasks` | **GUARDED.** Test jobs enqueued as `test_queued`; claimed as `test_claimed`. Old Mac Mini worker cannot see or reclaim test tasks. `enqueue()` is now DO NOTHING (never resets active tasks). |
-| `src/repositories/postgres/PostgresAssetVisualAnalysisRepository.ts` | `asset_visual_analyses` | **GUARDED.** `claim()` and `expireClaims()` filter `clip_requests.is_test`; expired IDs are mode-scoped. TEXT asset joins. Requires migration 054. |
+| `src/repositories/postgres/PostgresAssetVisualAnalysisRepository.ts` | `asset_visual_analyses` | **GUARDED.** `claim()` and `expireClaims()` filter `clip_requests.is_test`; expired IDs are mode-scoped. UUID asset joins. Requires migration 054. |
 | `src/repositories/postgres/PostgresReviewItemRepository.ts:72,204,251` | `review_items` | INSERT gate/escalation; UPDATE decision and reminder bookkeeping. Reminder job and admin list are not globally test-filtered. |
 | `src/repositories/postgres/PostgresReviewActionRepository.ts:35` | `review_actions` | INSERT immutable decision/action audit. |
 | `src/repositories/postgres/PostgresReviewOutboxRepository.ts:41,45,60,83,90,101` | `review_outbox` | **GUARDED.** Persisted owner scope must equal worker mode; unknown owners are skipped. |
@@ -262,6 +262,8 @@ The old deployed Mac Mini worker's claim paths:
 Do not permit the social-publishing phase for test requests in the shared production database until test-only queue routing or comprehensive creation/claim guards exist. management_jobs lacks is_test, and both repository enqueue and the provider webhook create jobs. No code guard is claimed here: a repository-only change would leave the webhook path open. Existing test publications/jobs can be processed by a production management worker with social credentials, including external publishing calls. Missing credentials on Mar-PC provides no protection against that worker. STRIPE_ALLOW_LIVE=false constrains Stripe, not social publishing. Do not create test publications or management jobs during Phase 2; this is an operational restriction, not enforced isolation.
 
 #### Migration apply order (updated)
+
+055/056 now use production UUID foreign keys (`asset_visual_analyses.asset_id` and `storyboard_versions.request_id`). Both failed attempts rolled back fully. Re-run corrected **055, then 056**, followed by 057 and 058 if pending. Each file is transactional and idempotent; only empty legacy TEXT tables owned by these migrations can be converted. The read-only schema preflight also checks their UUID columns and foreign keys.
 
 Apply migrations **in this exact order** before the Phase 2 test run:
 

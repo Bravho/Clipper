@@ -41,6 +41,6 @@ export class PostgresStoryboardVersionRepository implements IStoryboardVersionRe
  }
  async linkDelivery(requestId: string, versionId: string, assetIds: string[]) {
   await this.db.query('UPDATE clip_requests SET delivered_storyboard_version_id=$2 WHERE id=$1 AND storyboard_version_id=$2', [requestId,versionId]);
-  await this.db.query('UPDATE uploaded_assets SET storyboard_version_id=$2 WHERE request_id=$1 AND id=ANY($3::text[]) AND storyboard_version_id IS NULL', [requestId,versionId,assetIds]);
+  await this.db.query('UPDATE uploaded_assets SET storyboard_version_id=$2 WHERE request_id=$1 AND id=ANY($3::uuid[]) AND storyboard_version_id IS NULL', [requestId,versionId,assetIds]);
  }
 }

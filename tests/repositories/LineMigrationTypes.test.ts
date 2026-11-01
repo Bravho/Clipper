@@ -1,21 +1,24 @@
 import { readFileSync } from 'fs';
-import { join } from 'path';
 
-test('053–056 foreign keys match the earlier TEXT request/asset IDs and UUID version IDs', () => {
- const read = (name: string) => readFileSync(join(process.cwd(), name), 'utf8');
- const earlier = read('migrations/002_phase2b_pipeline_tables.sql');
- for (const table of ['clip_requests', 'uploaded_assets']) {
-  expect(earlier).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(\\s*id\\s+TEXT\\s+PRIMARY KEY`));
- }
- // Enumerate exact names from the directory without reading configuration files.
- const { readdirSync } = require('fs') as typeof import('fs');
- const migrations = readdirSync(join(process.cwd(), 'src/db/migrations')).filter(n => /^05[3-6]_/.test(n));
- expect(migrations).toHaveLength(4);
- const sql = migrations.map(n => read('src/db/migrations/' + n)).join('\n');
- const targets: Record<string, string> = { uploaded_assets: 'TEXT', clip_requests: 'TEXT', storyboard_versions: 'UUID' };
- const fks = [...sql.matchAll(/(\w+)\s+(TEXT|UUID)(?:\s+NOT NULL)?\s+REFERENCES\s+(\w+)\(id\)/g)];
- expect(fks).toHaveLength(7);
- for (const fk of fks) expect(fk[2]).toBe(targets[fk[3]]);
- expect(sql).toMatch(/id UUID PRIMARY KEY/);
- expect(sql).toContain('dispatched_at TIMESTAMPTZ');
+test.each([
+ ['055_asset_visual_analyses.sql', 'asset_visual_analyses', 'asset_id', 'uploaded_assets'],
+ ['056_storyboard_versions.sql', 'storyboard_versions', 'request_id', 'clip_requests'],
+])('production UUID migration %s is transactional and rerunnable', (file, table, column, target) => {
+ const sql = readFileSync('src/db/migrations/' + file, 'utf8');
+ expect(sql.trim()).toMatch(/^BEGIN;[\s\S]*COMMIT;$/);
+ expect(sql).toContain('CREATE TABLE IF NOT EXISTS ' + table);
+ expect(sql).toContain(column + ' UUID NOT NULL REFERENCES ' + target + '(id)');
+ expect(sql).not.toMatch(/TEXT\s+(?:NOT NULL\s+)?REFERENCES\s+(?:uploaded_assets|clip_requests)/i);
+ expect(sql).toContain('CREATE INDEX IF NOT EXISTS');
+ expect(sql).toContain('DO $$');
+ expect(sql).toContain('END $$;');
+ expect(sql).toContain('IF NOT EXISTS (SELECT 1 FROM pg_constraint');
+ expect(sql).toContain("conrelid = '" + table + "'::regclass");
+ expect(sql).toContain('LOCK TABLE ' + table + ' IN ACCESS EXCLUSIVE MODE');
+ expect(sql).toContain('IF EXISTS (SELECT 1 FROM ' + table + ')');
+ expect(sql).toContain('RAISE EXCEPTION');
+ expect(sql).toContain('TYPE UUID USING ' + column + '::uuid');
+ expect(sql).not.toMatch(/DROP\s/i);
+ if (column === 'asset_id') expect(sql).toContain('ON DELETE CASCADE');
+ if (column === 'request_id') expect(sql.match(/ADD COLUMN IF NOT EXISTS \w+ UUID REFERENCES storyboard_versions\(id\)/g)).toHaveLength(4);
 });

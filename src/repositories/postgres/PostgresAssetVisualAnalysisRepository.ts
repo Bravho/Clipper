@@ -8,7 +8,7 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
 
   async enqueue(id: string, version: string) {
     await this.db.query(
-      `INSERT INTO asset_visual_analyses(asset_id,analysis_version) VALUES($1::text,$2) ON CONFLICT DO NOTHING`,
+      `INSERT INTO asset_visual_analyses(asset_id,analysis_version) VALUES($1::uuid,$2) ON CONFLICT DO NOTHING`,
       [id, version]
     );
   }
@@ -28,7 +28,7 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
           SELECT ava.asset_id, ava.analysis_version
             FROM asset_visual_analyses ava
             LEFT JOIN uploaded_assets ua ON ua.id = ava.asset_id
-            LEFT JOIN clip_requests cr ON cr.id::text = ua.request_id
+            LEFT JOIN clip_requests cr ON cr.id = ua.request_id
            WHERE ava.state = 'queued' AND ava.analysis_version = $1
              AND ($2::boolean = FALSE OR COALESCE(cr.is_test, FALSE) = TRUE)
              AND ($2::boolean = TRUE  OR COALESCE(cr.is_test, FALSE) = FALSE)
@@ -44,7 +44,7 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
 
   async get(id: string, version: string): Promise<AssetVisualAnalysis | null> {
     const { rows } = await this.db.query(
-      `SELECT result FROM asset_visual_analyses WHERE asset_id=$1 AND analysis_version=$2 AND state='done'`,
+      `SELECT result FROM asset_visual_analyses WHERE asset_id=$1::uuid AND analysis_version=$2 AND state='done'`,
       [id, version]
     );
     return rows[0]?.result ?? null;
@@ -52,7 +52,7 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
 
   async pending(id: string, version: string): Promise<boolean> {
     const { rows } = await this.db.query(
-      `SELECT state FROM asset_visual_analyses WHERE asset_id=$1 AND analysis_version=$2`,
+      `SELECT state FROM asset_visual_analyses WHERE asset_id=$1::uuid AND analysis_version=$2`,
       [id, version]
     );
     return ['queued', 'claimed'].includes(rows[0]?.state);
@@ -64,7 +64,7 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
         WHERE analysis_version=$1 AND state='claimed'
           AND claimed_at < NOW()-($2 * INTERVAL '1 second')
           AND COALESCE((SELECT cr.is_test FROM uploaded_assets ua
-            LEFT JOIN clip_requests cr ON cr.id::text = ua.request_id
+            LEFT JOIN clip_requests cr ON cr.id = ua.request_id
             WHERE ua.id = ava.asset_id), FALSE) = $3::boolean
         RETURNING ava.asset_id`,
       [version, timeoutSeconds, isLineTestMode()]
@@ -74,14 +74,14 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
 
   async save(value: AssetVisualAnalysis) {
     await this.db.query(
-      `UPDATE asset_visual_analyses SET result=$3::jsonb,state='done' WHERE asset_id=$1 AND analysis_version=$2 AND state='claimed'`,
+      `UPDATE asset_visual_analyses SET result=$3::jsonb,state='done' WHERE asset_id=$1::uuid AND analysis_version=$2 AND state='claimed'`,
       [value.assetId, value.version, JSON.stringify(value)]
     );
   }
 
   async fail(id: string, version: string) {
     await this.db.query(
-      `UPDATE asset_visual_analyses SET state='failed' WHERE asset_id=$1 AND analysis_version=$2`,
+      `UPDATE asset_visual_analyses SET state='failed' WHERE asset_id=$1::uuid AND analysis_version=$2`,
       [id, version]
     );
   }
