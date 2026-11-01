@@ -4,9 +4,16 @@
  * Grok Bot review webhook through the real notifier code path
  * (src/services/review/GrokBotNotifier.ts → notifyGrokBot).
  *
- * Reads GROKBOT_REVIEW_WEBHOOK_URL / GROKBOT_REVIEW_WEBHOOK_KEY from .env.local
- * (falls back to .env). Prints ONLY the HTTP status (or "skipped"/"error").
- * Never prints the URL, key, headers or body. No DB access, no customer data.
+ * Reads GROKBOT_REVIEW_WEBHOOK_URL / GROKBOT_REVIEW_WEBHOOK_KEY /
+ * GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER from .env.local (falls back to .env).
+ * Prints ONLY the HTTP status (or "skipped"/"error").
+ * Never prints the URL, key, auth header or body. No DB access, no customer data.
+ *
+ * Authorization precedence:
+ *   GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER (trimmed, verbatim) if non-empty,
+ *   else Bearer <GROKBOT_REVIEW_WEBHOOK_KEY>.
+ * HMAC headers sent when GROKBOT_REVIEW_WEBHOOK_KEY is set.
+ * Configured = URL set AND (AUTH_HEADER non-empty OR KEY set).
  *
  * Usage (from the repo root):  node scripts/send-test-notifier-event.cjs
  */
@@ -19,11 +26,12 @@ for (const f of ['.env.local', '.env']) {
   if (fs.existsSync(p)) dotenv.config({ path: p, override: false });
 }
 const tsx = require('tsx/cjs/api');
-const { notifyGrokBot, defaultPost } = tsx.require(path.join(root, 'src/services/review/GrokBotNotifier.ts'), __filename);
+const { notifyGrokBot, defaultPost, resolveGrokBotWebhookAuth } = tsx.require(path.join(root, 'src/services/review/GrokBotNotifier.ts'), __filename);
 
 (async () => {
-  if (!process.env.GROKBOT_REVIEW_WEBHOOK_URL || !process.env.GROKBOT_REVIEW_WEBHOOK_KEY) {
-    console.log('skipped: GROKBOT_REVIEW_WEBHOOK_URL or GROKBOT_REVIEW_WEBHOOK_KEY is not set');
+  const { configured } = resolveGrokBotWebhookAuth();
+  if (!configured) {
+    console.log('skipped: GROKBOT_REVIEW_WEBHOOK_URL is not set, or neither GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER nor GROKBOT_REVIEW_WEBHOOK_KEY is set');
     process.exitCode = 2;
     return;
   }

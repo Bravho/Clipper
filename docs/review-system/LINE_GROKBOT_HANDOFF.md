@@ -59,9 +59,10 @@ Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` 
 **There is no endpoint to push free text to a shop without an existing review item.** Proposed in §3.3.
 
 ### 1.3 Grok Bot notifier (`src/services/review/GrokBotNotifier.ts`)
-- Enabled only when both `GROKBOT_REVIEW_WEBHOOK_URL` and `GROKBOT_REVIEW_WEBHOOK_KEY` are set. `POST` with 5 s timeout; non-2xx → error (outbox retries).
-- Headers: `Content-Type: application/json`, **`Authorization: Bearer <GROKBOT_REVIEW_WEBHOOK_KEY>`** (added 2026-11-01 — this is what the RCaveBot Grok Bot routine trigger verifies), plus `X-Grokbot-Timestamp: <unix seconds>` and `X-Grokbot-Signature: sha256=<hex>` (kept; harmless for receivers that ignore them).
-- The key, the `Authorization` header and the webhook URL are never logged; delivery errors are redacted (`[REDACTED]`) before they are logged or rethrown to the outbox.
+- **Configured** = `GROKBOT_REVIEW_WEBHOOK_URL` set **and** (`GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER` non-empty **or** `GROKBOT_REVIEW_WEBHOOK_KEY` set). When not configured, the notifier is a no-op. `POST` with 5 s timeout; non-2xx → error (outbox retries).
+- **Authorization header precedence:** if `GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER` is non-empty after trimming, its value is sent **verbatim** as the `Authorization` header (no `Bearer ` prefix added). Otherwise falls back to `Bearer <GROKBOT_REVIEW_WEBHOOK_KEY>`.
+- **HMAC headers** (`X-Grokbot-Signature: sha256=<hex>`, `X-Grokbot-Timestamp: <unix seconds>`) are included whenever `GROKBOT_REVIEW_WEBHOOK_KEY` is set, regardless of `GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER`.
+- The key, `GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER` (and its token portion), the `Authorization` header value and the webhook URL are never logged; delivery errors are redacted (`[REDACTED]`) before they are logged or rethrown to the outbox.
 - Synthetic test: `node scripts/send-test-notifier-event.cjs` sends one `review_pending` event (`requestId`/`itemId` = `test-…`, `summaryTh` = "ทดสอบการแจ้งเตือนจากระบบ RClipper (test)", no customer data) through `notifyGrokBot` and prints only the HTTP status.
 - Signature: `HMAC-SHA256(key = GROKBOT_REVIEW_WEBHOOK_KEY, message = "<timestamp>.<raw JSON body>")`, hex-encoded. Receiver should recompute over the exact raw body bytes and reject timestamps older than ~5 minutes.
 - Payload (same schema for every event):

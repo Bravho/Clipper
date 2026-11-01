@@ -8,14 +8,14 @@
  */
 
 import { IReviewItemRepository } from '@/repositories/interfaces/IReviewItemRepository';
-import { notifyGrokBot, GrokBotNotifierOptions } from './GrokBotNotifier';
+import { notifyGrokBot, resolveGrokBotWebhookAuth, GrokBotNotifierOptions } from './GrokBotNotifier';
 
 
 export async function runReviewReminders(
   reviewItemRepo: IReviewItemRepository,
   grokBotOpts: GrokBotNotifierOptions,
 ): Promise<{ reminded: number; errors: number }> {
-  if (!process.env.GROKBOT_REVIEW_WEBHOOK_URL || !process.env.GROKBOT_REVIEW_WEBHOOK_KEY) return { reminded: 0, errors: 0 };
+  if (!resolveGrokBotWebhookAuth().configured) return { reminded: 0, errors: 0 };
   const now = new Date();
   const due = await reviewItemRepo.listDueForReminder(now);
   let reminded = 0;

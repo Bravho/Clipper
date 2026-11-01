@@ -1,4 +1,4 @@
-import { notifyGrokBot } from '@/services/review/GrokBotNotifier';
+import { notifyGrokBot, resolveGrokBotWebhookAuth } from '@/services/review/GrokBotNotifier';
 import { IReviewOutboxRepository } from '@/repositories/interfaces/IReviewOutboxRepository';
 import { IReviewItemRepository } from '@/repositories/interfaces/IReviewItemRepository';
 import { ILineAccountRepository } from '@/repositories/interfaces/ILineAccountRepository';
@@ -61,7 +61,7 @@ export async function processLineReviewOutbox(deps: {
       const item = event.reviewItemId ? await deps.items.findById(event.reviewItemId) : null;
       if (!item) throw new Error('review_item_missing');
       const escalation = event.eventType === 'handoff.escalate' || ['customer_reply', 'complaint', 'out_of_package'].includes(item.typeKey);
-      if (item.typeKey === 'customer_reply' && (!process.env.GROKBOT_REVIEW_WEBHOOK_URL || !process.env.GROKBOT_REVIEW_WEBHOOK_KEY)) {
+      if (item.typeKey === 'customer_reply' && !resolveGrokBotWebhookAuth().configured) {
         await deps.outbox.defer(event.id, new Date(Date.now()+60000));
         return;
       }

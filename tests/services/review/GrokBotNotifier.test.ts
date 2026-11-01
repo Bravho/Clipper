@@ -4,7 +4,7 @@
  * Covers notifyGrokBot with mocked fetch and signedUrl injection.
  * No real network calls; GROKBOT_REVIEW_WEBHOOK_URL/KEY set in env for each test.
  */
-import { notifyGrokBot, GrokBotPayload } from '@/services/review/GrokBotNotifier';
+import { notifyGrokBot, resolveGrokBotWebhookAuth, GrokBotPayload } from '@/services/review/GrokBotNotifier';
 import type { ReviewItem } from '@/domain/models/ReviewItem';
 
 const BASE_ITEM = {
@@ -58,6 +58,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.GROKBOT_REVIEW_WEBHOOK_URL;
   delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER;
 });
 
 test('sends POST with correct payload fields', async () => {
@@ -190,4 +191,90 @@ test('skips when the key is unset', async () => {
   const opts = makeOpts();
   await notifyGrokBot(BASE_ITEM, opts);
   expect(opts.postFn).not.toHaveBeenCalled();
+});
+
+// ---- GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER tests ----
+
+test('auth header sent verbatim (no Bearer prefix) when GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER is set', async () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Token my-custom-token';
+  const captured: { headers?: Record<string, string> } = {};
+  const opts = makeOpts(captured);
+  await notifyGrokBot(BASE_ITEM, opts);
+  expect(opts.postFn).toHaveBeenCalledTimes(1);
+  expect(captured.headers?.Authorization).toBe('Token my-custom-token');
+  // KEY is still set so HMAC headers must be present
+  expect(captured.headers?.['X-Grokbot-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+  expect(captured.headers?.['X-Grokbot-Timestamp']).toMatch(/^\d+$/);
+});
+
+test('auth header value with leading/trailing whitespace is trimmed', async () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = '  Token trimmed  ';
+  const captured: { headers?: Record<string, string> } = {};
+  await notifyGrokBot(BASE_ITEM, makeOpts(captured));
+  expect(captured.headers?.Authorization).toBe('Token trimmed');
+});
+
+test('whitespace-only auth header falls back to Bearer KEY', async () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = '   ';
+  const captured: { headers?: Record<string, string> } = {};
+  await notifyGrokBot(BASE_ITEM, makeOpts(captured));
+  expect(captured.headers?.Authorization).toBe('Bearer test-secret-key');
+});
+
+test('auth header only (no KEY) is configured and sends without HMAC headers', async () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Bearer standalone-auth-token';
+  const captured: { headers?: Record<string, string> } = {};
+  const opts = makeOpts(captured);
+  await notifyGrokBot(BASE_ITEM, opts);
+  expect(opts.postFn).toHaveBeenCalledTimes(1);
+  expect(captured.headers?.Authorization).toBe('Bearer standalone-auth-token');
+  expect(captured.headers?.['X-Grokbot-Signature']).toBeUndefined();
+});
+
+test('neither auth header nor key set -> no-op even when URL is set', async () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  // AUTH_HEADER already deleted in afterEach; ensure it's absent
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER;
+  const opts = makeOpts();
+  await notifyGrokBot(BASE_ITEM, opts);
+  expect(opts.postFn).not.toHaveBeenCalled();
+});
+
+test('resolveGrokBotWebhookAuth reports configured=true with auth header only', () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Token abc';
+  const result = resolveGrokBotWebhookAuth();
+  expect(result.configured).toBe(true);
+  expect(result.authHeaderValue).toBe('Token abc');
+  expect(result.key).toBeUndefined();
+});
+
+test('resolveGrokBotWebhookAuth reports configured=false when neither auth header nor key', () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER;
+  expect(resolveGrokBotWebhookAuth().configured).toBe(false);
+});
+
+test('auth header value is redacted from error logs', async () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Token secret-auth-value';
+  const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const postFn = jest.fn(async (_url: string, _b: string, headers: Record<string, string>) => {
+    throw new Error(`failed with ${headers.Authorization} and token secret-auth-value`);
+  });
+  await notifyGrokBot(BASE_ITEM, { signedUrl: async () => '', postFn });
+  const logged = spy.mock.calls.flat().map(String).join(' ');
+  expect(logged).not.toContain('secret-auth-value');
+  expect(logged).toContain('[REDACTED]');
+  spy.mockRestore();
+});
+
+test('auth header token part (after scheme) is also redacted', async () => {
+  process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = 'Token only-the-token-part';
+  const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const postFn = jest.fn(async () => { throw new Error('error: only-the-token-part'); });
+  await notifyGrokBot(BASE_ITEM, { signedUrl: async () => '', postFn });
+  const logged = spy.mock.calls.flat().map(String).join(' ');
+  expect(logged).not.toContain('only-the-token-part');
+  spy.mockRestore();
 });

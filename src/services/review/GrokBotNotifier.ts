@@ -3,19 +3,21 @@
  * whenever a review item needs attention.
  *
  * Config env vars (from .env.example):
- *   GROKBOT_REVIEW_WEBHOOK_URL  — POST target (omit to disable)
- *   GROKBOT_REVIEW_WEBHOOK_KEY  — bearer token for the receiver (also the HMAC-SHA256 key)
+ *   GROKBOT_REVIEW_WEBHOOK_URL         — POST target (omit to disable)
+ *   GROKBOT_REVIEW_WEBHOOK_KEY         — HMAC-SHA256 signing key; also the fallback bearer token
+ *   GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER — if non-empty (trimmed), sent VERBATIM as Authorization
+ *                                        header value (do not add a Bearer prefix); otherwise
+ *                                        falls back to `Bearer <KEY>`.
  *
- * Request headers:
- *   Authorization: Bearer <GROKBOT_REVIEW_WEBHOOK_KEY>   (what Grok Bot routine triggers verify)
- *   X-Grokbot-Signature: sha256=<hex>                    (optional extra check for receivers that can)
- *   X-Grokbot-Timestamp: <unix epoch seconds>
- *   Content-Type: application/json
+ * Configured = URL set AND (AUTH_HEADER non-empty OR KEY set).
+ * HMAC headers (X-Grokbot-Signature / X-Grokbot-Timestamp) are included whenever KEY is set,
+ * regardless of whether AUTH_HEADER is used.
  *
  * Payload intentionally contains no PII — only IDs, typeKey, and expiring
  * signed preview links. Callers should always await and catch; failures are
  * logged but must never block the review pipeline. The key, the Authorization
- * header and the webhook URL (which may itself embed a secret) are never logged.
+ * header value, GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER and the webhook URL (which
+ * may itself embed a secret) are never logged.
  */
 
 import { createHmac } from 'crypto';
@@ -48,6 +50,29 @@ export interface GrokBotNotifierOptions {
   postFn?: (url: string, body: string, headers: Record<string, string>) => Promise<{ ok: boolean; status: number }>;
   /** Override the generated Thai summary (used by the synthetic test event script). */
   summaryTh?: string;
+}
+
+/**
+ * Reads the three GrokBot webhook env vars at call time and derives the
+ * Authorization header value to send plus whether the notifier is configured.
+ *
+ * configured = URL set AND (auth header non-empty OR KEY set)
+ * authHeaderValue = GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER (trimmed) if non-empty,
+ *                   else "Bearer <KEY>" when KEY is set, else "".
+ */
+export function resolveGrokBotWebhookAuth(): {
+  url: string;
+  authHeaderValue: string;
+  key: string | undefined;
+  rawAuthHeader: string;
+  configured: boolean;
+} {
+  const url = (process.env.GROKBOT_REVIEW_WEBHOOK_URL ?? '').trim();
+  const rawAuthHeader = (process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER ?? '').trim();
+  const key = process.env.GROKBOT_REVIEW_WEBHOOK_KEY || undefined;
+  const configured = !!url && (!!rawAuthHeader || !!key);
+  const authHeaderValue = rawAuthHeader || (key ? `Bearer ${key}` : '');
+  return { url, authHeaderValue, key, rawAuthHeader, configured };
 }
 
 /** Remove secrets from an error before it is logged or rethrown. */
@@ -96,9 +121,8 @@ export async function notifyGrokBot(
   item: NotifiableItem,
   opts: GrokBotNotifierOptions,
 ): Promise<void> {
-  const webhookUrl = process.env.GROKBOT_REVIEW_WEBHOOK_URL;
-  const webhookKey = process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
-  if (!webhookUrl || !webhookKey) return;
+  const { url: webhookUrl, authHeaderValue, key: webhookKey, rawAuthHeader, configured } = resolveGrokBotWebhookAuth();
+  if (!configured) return;
 
   const escalation = opts.event === 'escalation' || item.typeKey === 'customer_reply';
   const previewLinks = escalation ? [] : await Promise.all(
@@ -144,13 +168,25 @@ export async function notifyGrokBot(
     notifiedAt: payload.notifiedAt,
   } : payload);
   const timestamp = Math.floor(Date.now() / 1000);
-  const sig = sign(body, webhookKey, timestamp);
-  const headers = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${webhookKey}`,
-    'X-Grokbot-Signature': `sha256=${sig}`,
+    'Authorization': authHeaderValue,
     'X-Grokbot-Timestamp': String(timestamp),
   };
+  if (webhookKey) {
+    headers['X-Grokbot-Signature'] = `sha256=${sign(body, webhookKey, timestamp)}`;
+  }
+
+  // Build redaction list: key, URL, auth header value, and the token portion after any scheme.
+  const secretsToRedact: (string | undefined)[] = [webhookKey, webhookUrl];
+  if (rawAuthHeader) {
+    secretsToRedact.push(rawAuthHeader);
+    const spaceIdx = rawAuthHeader.indexOf(' ');
+    if (spaceIdx !== -1) {
+      const tokenPart = rawAuthHeader.slice(spaceIdx + 1).trim();
+      if (tokenPart) secretsToRedact.push(tokenPart);
+    }
+  }
 
   const post = opts.postFn ?? defaultPost;
   try {
@@ -159,7 +195,7 @@ export async function notifyGrokBot(
       throw new Error(`GrokBot webhook returned ${res.status}`);
     }
   } catch (err) {
-    const safe = redactSecrets(err, [webhookKey, webhookUrl]);
+    const safe = redactSecrets(err, secretsToRedact);
     if (opts.throwOnFailure) throw safe;
     console.error('[GrokBotNotifier] failed to deliver webhook:', safe.message);
   }
