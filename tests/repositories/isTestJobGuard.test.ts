@@ -186,13 +186,13 @@ describe("PostgresRenderTaskRepository SQL content (via mock db)", () => {
     const { PostgresRenderTaskRepository } = await import(
       "@/repositories/postgres/PostgresRenderTaskRepository"
     );
-    const query = jest.fn().mockResolvedValue({ rows: [{ id: "x" }] });
+    const query = jest.fn().mockResolvedValueOnce({ rows: [{ is_test: process.env.LINE_TEST_MODE === "true" }] }).mockResolvedValue({ rows: [{ id: "x" }] });
     const repo = new PostgresRenderTaskRepository({ query } as never);
     await repo.enqueue({ jobId: "j", requestId: "r", step: RenderStep.MontageMerge });
-    const sql = query.mock.calls[0][0] as string;
+    const sql = query.mock.calls[1][0] as string;
     expect(sql).toContain("DO NOTHING");
     expect(sql).not.toContain("DO UPDATE");
-    expect(sql).toContain("state IN ('queued', 'claimed')");
+    expect(sql).toContain("state IN ('queued', 'claimed', 'test_queued', 'test_claimed')");
   });
 
   it("enqueue SQL uses test_queued state in LINE_TEST_MODE", async () => {
@@ -201,12 +201,12 @@ describe("PostgresRenderTaskRepository SQL content (via mock db)", () => {
     const { PostgresRenderTaskRepository } = await import(
       "@/repositories/postgres/PostgresRenderTaskRepository"
     );
-    const query = jest.fn().mockResolvedValue({ rows: [{ id: "x" }] });
+    const query = jest.fn().mockResolvedValueOnce({ rows: [{ is_test: process.env.LINE_TEST_MODE === "true" }] }).mockResolvedValue({ rows: [{ id: "x" }] });
     const repo = new PostgresRenderTaskRepository({ query } as never);
     await repo.enqueue({ jobId: "j", requestId: "r", step: RenderStep.MontageMerge });
-    const sql = query.mock.calls[0][0] as string;
-    expect(sql).toContain("'test_queued'");
-    expect(sql).toContain("state IN ('test_queued', 'test_claimed')");
+    const sql = query.mock.calls[1][0] as string;
+    expect(query.mock.calls[1][1][7]).toBe("test_queued");
+    expect(sql).toContain("state IN ('queued', 'claimed', 'test_queued', 'test_claimed')");
     expect(sql).toContain("DO NOTHING");
     expect(sql).not.toContain("DO UPDATE");
   });

@@ -218,11 +218,18 @@ function decodeDetections(
       const bw = Math.exp(Math.min(data[base + 2], 50)) * stride / scale;
       const bh = Math.exp(Math.min(data[base + 3], 50)) * stride / scale;
 
+      const clamp = (value: number) => Math.max(0, Math.min(1, value));
+      const left = clamp((cx - bw / 2) / srcW);
+      const top = clamp((cy - bh / 2) / srcH);
+      const right = clamp((cx + bw / 2) / srcW);
+      const bottom = clamp((cy + bh / 2) / srcH);
+      if (![left, top, right, bottom, conf].every(Number.isFinite)
+          || right <= left || bottom <= top) continue;
       dets.push({
-        x: (cx - bw / 2) / srcW,
-        y: (cy - bh / 2) / srcH,
-        w: bw / srcW,
-        h: bh / srcH,
+        x: left,
+        y: top,
+        w: right - left,
+        h: bottom - top,
         confidence: conf,
       });
     }

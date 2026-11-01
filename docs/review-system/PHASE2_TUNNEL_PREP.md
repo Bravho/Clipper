@@ -15,7 +15,7 @@
 winget install --id Cloudflare.cloudflared
 ```
 
-Tho must apply migrations 048–057 in order first, including **054–057**; none were applied during this preparation. Populate the environment described in section 2, including LINE credentials, DB/storage credentials, review secrets, `REVIEW_SYSTEM_ENABLED=true`, `LINE_INTAKE_ENABLED=true`, `RENDER_LANE_ENABLED=true`, `RENDER_LANE=backup`, `STRIPE_ALLOW_LIVE=false` and **`LINE_TEST_MODE=true`**. Existing real accounts are refused in global test mode. Keep `PAYMENT_DISABLED=false`; test shops already bypass payment.
+Tho must apply migrations 048–058 in order first, including **054–058**; none were applied during this preparation. Populate the environment described in section 2, including LINE credentials, DB/storage credentials, review secrets, `REVIEW_SYSTEM_ENABLED=true`, `LINE_INTAKE_ENABLED=true`, `RENDER_LANE_ENABLED=true`, `RENDER_LANE=backup`, `STRIPE_ALLOW_LIVE=false` and **`LINE_TEST_MODE=true`**. Existing real accounts are refused in global test mode. Keep `PAYMENT_DISABLED=false`; test shops already bypass payment.
 
 ### Exact start commands (only after Tho approves)
 
@@ -209,21 +209,23 @@ WHERE device_only = FALSE AND (state = 'queued' OR (state = 'claimed' AND ...sta
 ```
 It never sees `state = 'test_queued'` or `state = 'test_claimed'`.
 
-When `LINE_TEST_MODE=true`, `PostgresRenderTaskRepository.enqueue()` inserts with `state = 'test_queued'` (not `'queued'`). The `claimNext()` in test mode only claims `test_queued`/`test_claimed` tasks; in non-test mode it only claims `queued`/`claimed` tasks. The `release()` / `releaseClaim()` operations use a SQL `CASE` to restore to the correct namespace (`test_claimed → test_queued`; `claimed → queued`). The stale-reclaim path is protected by the same state filter: the old Mac Mini's stale-reclaim only promotes `state = 'claimed'` rows — `test_claimed` is invisible.
+Enqueue derives its namespace from persisted `clip_requests.is_test`: a test request always uses `test_queued`, even in a normal process. A test process refuses non-test requests. New worker claims additionally require matching request ownership; production device claims exclude test requests.
 
-**Requires migration 057** (`src/db/migrations/057_test_job_isolation.sql`) to be applied before any test render jobs are enqueued. Migration 057 adds `uq_render_tasks_active_test_job` (prevents double-queueing the same test job) and `idx_render_tasks_test_active` (index for the test-worker claim scan). Apply after 054 and 049.
+Touch, complete and release only update the current mode's claimed state and matching request ownership, with claimed_by matching for the claim APIs. Repeated release is a no-op; done/failed tasks cannot be reopened. Releases preserve the namespace.
 
-**enqueue DO NOTHING — no more reset of active tasks**
+**Prerequisites: migrations 054, 049, 057 and 058 must be applied before Phase 2.** 057 adds the test-state indices. Without its original explicit test-state conflict index PostgreSQL rejects enqueue; it does not silently insert duplicates. New enqueue requires 058's unique index across all four active states, preventing simultaneous production/test active rows for one job. The additive migration fails on existing duplicates; investigate before proceeding.
 
-`PostgresRenderTaskRepository.enqueue()` (all paths, all modes) uses `ON CONFLICT ... DO NOTHING` (replacing the previous `DO UPDATE SET state='queued', attempts=0 ...`). If a task is already `queued` or `claimed`, `enqueue()` returns the existing row unchanged rather than resetting it. Callers that relied on the reset for retries are safe: a re-enqueue only happens after a step fails (state `failed`), which is not in the conflict predicate, so a new row is inserted correctly. This change eliminates the risk of resetting a live render-task claim.
+`scripts/phase2-start.ps1` runs the read-only `check-phase2-schema.cjs` catalog check before starting a server or tunnel, and fails closed if either unique index is missing or invalid. This check has not been run during offline verification.
+
+**enqueue DO NOTHING preserves active tasks.** After an empty insert, a fresh SELECT reads the existing active row unchanged. If it completed meanwhile, enqueue retries up to three times and throws on exhaustion; it never updates an existing task to recover a conflict.
 
 **video_generation_jobs — claimNextQueuedRenderStep JOIN guard**
 
-`PostgresVideoGenerationJobRepository.claimNextQueuedRenderStep()` now joins `clip_requests` and filters by `cr.is_test` based on `LINE_TEST_MODE`. Note: the old Mac Mini worker does NOT call this method (it uses the `render_tasks` queue). The JOIN guard protects any NEW code calling this path; `is_test` state-value isolation is not needed here.
+`PostgresVideoGenerationJobRepository.claimNextQueuedRenderStep()` now joins `clip_requests` and filter by `cr.is_test` based on `LINE_TEST_MODE`. Note: the old Mac Mini worker does NOT call this method (it uses the `render_tasks` queue). The JOIN guard protects any NEW code calling this path; `is_test` state-value isolation is not needed here.
 
-**asset_visual_analyses — claim JOIN guard**
+**asset_visual_analyses — claim and expiry guards**
 
-`PostgresAssetVisualAnalysisRepository.claim()` now joins `uploaded_assets → clip_requests` and filters by `cr.is_test`. Non-test worker skips assets from test requests; test worker claims only test-request assets. LEFT JOINs mean assets with no associated request (orphaned uploads) are treated as non-test. Requires migration 054 for `cr.is_test`.
+`PostgresAssetVisualAnalysisRepository.claim()` and `expireClaims()` join `uploaded_assets → clip_requests` and filters by `cr.is_test`, including expired IDs returned for follow-up. Asset IDs join as TEXT (`ua.id = ava.asset_id`). Non-test worker skips assets from test requests; test worker claims only test-request assets. LEFT JOINs mean assets with no associated request (orphaned uploads) are treated as non-test. Requires migration 054 for `cr.is_test`.
 
 **review_outbox — already guarded**
 
@@ -238,12 +240,14 @@ When `LINE_TEST_MODE=true`, `PostgresRenderTaskRepository.enqueue()` inserts wit
 | `src/repositories/postgres/PostgresUploadedAssetRepository.ts:83,153` | `uploaded_assets` | INSERT intake/AI/render outputs; UPDATE metadata. Scoped by request or asset ID. |
 | `src/repositories/postgres/PostgresVideoGenerationJobRepository.ts:266,387,541,573,575,608,623,632` | `video_generation_jobs / step_history / heartbeat` | INSERT job/history/heartbeat; UPDATE pipeline state and claims. `claimNextQueuedRenderStep` is now guarded by `cr.is_test` JOIN filter. Other `update()` calls are scoped by job ID (owned by the test request). |
 | `src/repositories/postgres/PostgresRenderTaskRepository.ts` | `render_tasks` | **GUARDED.** Test jobs enqueued as `test_queued`; claimed as `test_claimed`. Old Mac Mini worker cannot see or reclaim test tasks. `enqueue()` is now DO NOTHING (never resets active tasks). |
-| `src/repositories/postgres/PostgresAssetVisualAnalysisRepository.ts` | `asset_visual_analyses` | **GUARDED.** `claim()` joins to `clip_requests.is_test`; non-test worker skips test assets. Requires migration 054. |
+| `src/repositories/postgres/PostgresAssetVisualAnalysisRepository.ts` | `asset_visual_analyses` | **GUARDED.** `claim()` and `expireClaims()` filter `clip_requests.is_test`; expired IDs are mode-scoped. TEXT asset joins. Requires migration 054. |
 | `src/repositories/postgres/PostgresReviewItemRepository.ts:72,204,251` | `review_items` | INSERT gate/escalation; UPDATE decision and reminder bookkeeping. Reminder job and admin list are not globally test-filtered. |
 | `src/repositories/postgres/PostgresReviewActionRepository.ts:35` | `review_actions` | INSERT immutable decision/action audit. |
 | `src/repositories/postgres/PostgresReviewOutboxRepository.ts:41,45,60,83,90,101` | `review_outbox` | **ALREADY GUARDED.** `claimNext()` only processes test events in `LINE_TEST_MODE=true`. |
 | `src/app/api/line/webhook/route.ts:43,169,172` | `line_webhook_events` | INSERT or conflict UPDATE lease; UPDATE completed/failure. No `is_test` column; use a distinct test channel. |
 | `scripts/render-worker.ts:159` | `render_worker_samples` | INSERT telemetry. Worker uses the guarded `renderTaskRepository.claimNext()` and `reviewOutboxRepository.claimNext()`. |
+
+Frame retention (`purgeOldFrameData`) remains a global maintenance operation, not a worker claim operation: it only clears frame data on old completed analyses. Run it separately with explicit maintenance scope; LINE_TEST_MODE does not scope retention. Automatic test payment bypass uses the test-account/test-shop checks; PAYMENT_DISABLED remains an explicit global bypass. Neither payment path changes render namespace ownership.
 
 #### Old Mac Mini worker — residual risk assessment
 
@@ -273,12 +277,13 @@ Apply migrations **in this exact order** before the Phase 2 test run:
 | 055 | `055_asset_visual_analyses.sql` | asset_visual_analyses table |
 | 056 | `056_storyboard_versions.sql` | Storyboard versioning |
 | **057** | **`057_test_job_isolation.sql`** | **Unique index + scan index for test_queued/test_claimed states — REQUIRED before first test render job** |
+| **058** | **`058_render_task_active_namespace.sql`** | **Unique active job across production and test namespaces** |
 
 **DELETE audit:** No SQL DELETE is invoked by the normal LINE intake/review/render progression. Shared adapters expose DELETE methods that are not called by that progression. The optional cleanup helper `src/services/line/cleanupLineAssets.ts:19` deletes storage objects (not DB rows) only with `execute=true`. Do not run cleanup for this audit.
 
 **Remaining limits:** Conversation states (`line_conversation_states`) and webhook leases (`line_webhook_events`) lack `is_test` — use a distinct test LINE channel and test shop identity. Reminder selection and admin review APIs can see earlier/production reviews; do not run the reminder script or use an unfiltered admin list against the live DB as a test. `clip_requests` and `video_generation_jobs` adapter methods (update/status) are scoped by ID, not by `is_test` predicate — they will only touch rows the test flow created. Management jobs are unguarded (see above).
 
-Only Mar-PC may enable these test flags; never enable them on production `/root/rc2`. Keep `STRIPE_ALLOW_LIVE=false`. Apply migrations 048–057 before starting the test server.
+Only Mar-PC may enable these test flags; never enable them on production `/root/rc2`. Keep `STRIPE_ALLOW_LIVE=false`. Apply migrations 048–058 before starting the test server.
 
 ### 3f. Payment Bypass — `PAYMENT_DISABLED` flag
 

@@ -76,117 +76,48 @@ function activeStateLiterals(): [string, string] {
 export class PostgresRenderTaskRepository implements IRenderTaskRepository {
   constructor(private db = pool) {}
 
+  private claimOwnershipPredicate(): string {
+    return `EXISTS (SELECT 1 FROM clip_requests cr WHERE cr.id::text = render_tasks.request_id
+      AND COALESCE(cr.is_test, FALSE) = ${isLineTestMode() ? 'TRUE' : 'FALSE'})`;
+  }
+
   async enqueue(input: EnqueueRenderTaskInput): Promise<RenderTask> {
-    const testMode = isLineTestMode();
-
-    if (testMode) {
-      // LINE test mode: use 'test_queued' state so the old Mac Mini worker
-      // (whose claim SQL only matches state='queued') cannot see these tasks.
-      // Requires migration 057 (uq_render_tasks_active_test_job unique index).
-      const { rows } = await this.db.query(
-        `WITH ins AS (
-           INSERT INTO render_tasks
-             (job_id, request_id, requester_id, step, payload, priority, device_only, render_lane, state)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'test_queued')
-           ON CONFLICT (job_id) WHERE state IN ('test_queued', 'test_claimed')
-           DO NOTHING
-           RETURNING *
-         ),
-         existing AS (
-           SELECT * FROM render_tasks
-            WHERE job_id = $1 AND state IN ('test_queued', 'test_claimed')
-              AND NOT EXISTS (SELECT 1 FROM ins)
-            ORDER BY enqueued_at ASC
-            LIMIT 1
-         )
-         SELECT * FROM ins
-         UNION ALL
-         SELECT * FROM existing
-         LIMIT 1`,
-        [
-          input.jobId,
-          input.requestId,
-          input.requesterId ?? null,
-          input.step,
-          input.payload == null ? null : JSON.stringify(input.payload),
-          input.priority ?? 0,
-          input.deviceOnly ?? false,
-          input.renderLane ?? null,
-        ]
-      );
-      return rowToTask(rows[0]);
-    }
-
-    if (!isRenderLaneEnabled()) {
-      // Pre-migration-049: no render_lane column.
-      // DO NOTHING instead of DO UPDATE: never reset an active task's progress.
-      // If a task is already queued/claimed, return it unchanged.
-      const { rows } = await this.db.query(
-        `WITH ins AS (
-           INSERT INTO render_tasks
-             (job_id, request_id, requester_id, step, payload, priority, device_only)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (job_id) WHERE state IN ('queued', 'claimed')
-           DO NOTHING
-           RETURNING *
-         ),
-         existing AS (
-           SELECT * FROM render_tasks
-            WHERE job_id = $1 AND state IN ('queued', 'claimed')
-              AND NOT EXISTS (SELECT 1 FROM ins)
-            ORDER BY enqueued_at ASC
-            LIMIT 1
-         )
-         SELECT * FROM ins
-         UNION ALL
-         SELECT * FROM existing
-         LIMIT 1`,
-        [
-          input.jobId,
-          input.requestId,
-          input.requesterId ?? null,
-          input.step,
-          input.payload == null ? null : JSON.stringify(input.payload),
-          input.priority ?? 0,
-          input.deviceOnly ?? false,
-        ]
-      );
-      return rowToTask(rows[0]);
-    }
-
-    // Lane-enabled path (migration 049 applied):
-    const { rows } = await this.db.query(
-      `WITH ins AS (
-         INSERT INTO render_tasks
-           (job_id, request_id, requester_id, step, payload, priority, device_only, render_lane)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (job_id) WHERE state IN ('queued', 'claimed')
-         DO NOTHING
-         RETURNING *
-       ),
-       existing AS (
-         SELECT * FROM render_tasks
-          WHERE job_id = $1 AND state IN ('queued', 'claimed')
-            AND NOT EXISTS (SELECT 1 FROM ins)
-          ORDER BY enqueued_at ASC
-          LIMIT 1
-       )
-       SELECT * FROM ins
-       UNION ALL
-       SELECT * FROM existing
-       LIMIT 1`,
-      [
-        input.jobId,
-        input.requestId,
-        input.requesterId ?? null,
-        input.step,
-        input.payload == null ? null : JSON.stringify(input.payload),
-        input.priority ?? 0,
-        input.deviceOnly ?? false,
-        input.renderLane ?? null,
-      ]
+    const request = await this.db.query(
+      `SELECT is_test FROM clip_requests WHERE id::text = $1`, [input.requestId]
     );
-    return rowToTask(rows[0]);
+    if (!request.rows[0]) throw new Error("Render request not found");
+    const isTest = request.rows[0].is_test === true;
+    if (isLineTestMode() && !isTest) throw new Error("Test process cannot enqueue a non-test request");
+    const laneEnabled = isRenderLaneEnabled() || isTest;
+    const params: unknown[] = [input.jobId, input.requestId, input.requesterId ?? null,
+      input.step, input.payload == null ? null : JSON.stringify(input.payload),
+      input.priority ?? 0, input.deviceOnly ?? false, isTest ? 'test_queued' : 'queued'];
+    if (laneEnabled) params.push(input.renderLane ?? null);
+    // 058 enforces uniqueness across both namespaces, including concurrent inserts.
+    // DO NOTHING can see conflicts invisible to its snapshot. Read in a fresh
+    // statement, retrying boundedly if the competing task completes meanwhile.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const inserted = await this.db.query(
+        `INSERT INTO render_tasks
+           (job_id, request_id, requester_id, step, payload, priority, device_only, state${laneEnabled ? ', render_lane' : ''})
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8${laneEnabled ? ', $9' : ''}
+          WHERE NOT EXISTS (SELECT 1 FROM render_tasks WHERE job_id = $1
+            AND state IN ('queued', 'claimed', 'test_queued', 'test_claimed'))
+         ON CONFLICT (job_id) WHERE state IN ('queued', 'claimed', 'test_queued', 'test_claimed')
+         DO NOTHING RETURNING *`, params
+      );
+      if (inserted.rows[0]) return rowToTask(inserted.rows[0]);
+      const existing = await this.db.query(
+        `SELECT * FROM render_tasks WHERE job_id = $1
+          AND state IN ('queued', 'claimed', 'test_queued', 'test_claimed')
+          ORDER BY enqueued_at LIMIT 1`, [input.jobId]
+      );
+      if (existing.rows[0]) {
+        if (existing.rows[0].request_id !== input.requestId) throw new Error("Active render task belongs to another request");
+        return rowToTask(existing.rows[0]);
+      }
+    }
+    throw new Error("Render enqueue contention: retry limit exceeded");
   }
 
   async claimNext(
@@ -202,6 +133,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
         `WITH next AS (
            SELECT id FROM render_tasks
             WHERE device_only = FALSE
+              AND EXISTS (SELECT 1 FROM clip_requests cr WHERE cr.id::text = render_tasks.request_id
+                AND COALESCE(cr.is_test, FALSE) = ${isLineTestMode() ? 'TRUE' : 'FALSE'})
               AND (state = 'test_queued'
                OR (state = 'test_claimed'
                    AND COALESCE(heartbeat_at, claimed_at)
@@ -235,6 +168,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
         `WITH next AS (
          SELECT id FROM render_tasks
           WHERE device_only = FALSE
+              AND EXISTS (SELECT 1 FROM clip_requests cr WHERE cr.id::text = render_tasks.request_id
+                AND COALESCE(cr.is_test, FALSE) = ${isLineTestMode() ? 'TRUE' : 'FALSE'})
             AND (state = 'queued'
              OR (state = 'claimed'
                  AND COALESCE(heartbeat_at, claimed_at)
@@ -276,6 +211,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
       `WITH next AS (
          SELECT id FROM render_tasks
           WHERE device_only = FALSE
+              AND EXISTS (SELECT 1 FROM clip_requests cr WHERE cr.id::text = render_tasks.request_id
+                AND COALESCE(cr.is_test, FALSE) = ${isLineTestMode() ? 'TRUE' : 'FALSE'})
             ${laneClause}
             AND (state = 'queued'
              OR (state = 'claimed'
@@ -320,6 +257,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
               heartbeat_at = NOW(), started_at = COALESCE(started_at, NOW()),
               attempts = attempts + 1, updated_at = NOW()
         WHERE id = $1 AND requester_id = $2 AND state = 'queued'
+          AND ${isLineTestMode() ? 'FALSE' : this.claimOwnershipPredicate()}
           -- A device-only task exists BECAUSE its footage is on this
           -- requester's phone and nowhere else, so the eligible-step list
           -- (which exists to limit what a phone may opportunistically take
@@ -334,7 +272,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
   async touchClaim(taskId: string, deviceClaimId: string): Promise<boolean> {
     const result = await this.db.query(
       `UPDATE render_tasks SET heartbeat_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND claimed_by = $2 AND state IN ('claimed', 'test_claimed')`,
+        WHERE id = $1 AND claimed_by = $2 AND state = '${isLineTestMode() ? 'test_claimed' : 'claimed'}' AND ${this.claimOwnershipPredicate()}`,
       [taskId, deviceClaimId]
     );
     return (result.rowCount ?? 0) === 1;
@@ -346,7 +284,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
           SET state = 'done', finished_at = NOW(),
               duration_ms = (EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000)::bigint,
               updated_at = NOW()
-        WHERE id = $1 AND claimed_by = $2 AND state IN ('claimed', 'test_claimed')`,
+        WHERE id = $1 AND claimed_by = $2 AND state = '${isLineTestMode() ? 'test_claimed' : 'claimed'}' AND ${this.claimOwnershipPredicate()}`,
       [taskId, deviceClaimId]
     );
     return (result.rowCount ?? 0) === 1;
@@ -358,7 +296,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
           SET state = CASE WHEN state = 'test_claimed' THEN 'test_queued' ELSE 'queued' END,
               claimed_by = NULL, claimed_at = NULL,
               heartbeat_at = NULL, updated_at = NOW()
-        WHERE id = $1 AND claimed_by = $2 AND state IN ('claimed', 'test_claimed')`,
+        WHERE id = $1 AND claimed_by = $2 AND state = '${isLineTestMode() ? 'test_claimed' : 'claimed'}' AND ${this.claimOwnershipPredicate()}`,
       [taskId, deviceClaimId]
     );
     return (result.rowCount ?? 0) === 1;
@@ -368,7 +306,7 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
     await this.db.query(
       `UPDATE render_tasks
           SET heartbeat_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND state IN ('claimed', 'test_claimed')`,
+        WHERE id = $1 AND state = '${isLineTestMode() ? 'test_claimed' : 'claimed'}' AND ${this.claimOwnershipPredicate()}`,
       [taskId]
     );
   }
@@ -388,7 +326,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
               ),
               error       = $3,
               updated_at  = NOW()
-        WHERE id = $1`,
+        WHERE id = $1 AND state = '${isLineTestMode() ? 'test_claimed' : 'claimed'}'
+          AND ${this.claimOwnershipPredicate()}`,
       [taskId, state, error ?? null]
     );
   }
@@ -404,7 +343,8 @@ export class PostgresRenderTaskRepository implements IRenderTaskRepository {
               claimed_at   = NULL,
               heartbeat_at = NULL,
               updated_at   = NOW()
-        WHERE id = $1`,
+        WHERE id = $1 AND state = '${isLineTestMode() ? 'test_claimed' : 'claimed'}'
+          AND ${this.claimOwnershipPredicate()}`,
       [taskId]
     );
   }

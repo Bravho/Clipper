@@ -13,7 +13,7 @@ test('Postgres queue uses conflict-safe key, atomic skip-locked claim and immuta
   expect(calls[1][1]).toEqual(['1', false]);
   expect(calls[2][0]).toContain("state='done'");
   expect(calls[3][0]).toContain("AND state='claimed'");
-  expect(calls[5][0]).toContain("state='failed'"); expect(calls[5][1]).toEqual(['1',900]);
+  expect(calls[5][0]).toContain("state='failed'"); expect(calls[5][1]).toEqual(['1',900,false]);
 });
 
 test('opaque non-UUID asset IDs round-trip as TEXT in the Postgres cache', async () => {

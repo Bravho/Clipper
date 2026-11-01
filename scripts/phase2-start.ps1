@@ -1,5 +1,5 @@
 # Run ONLY when Tho explicitly says so. This starts a networked server and tunnel.
-# Tho must first apply migrations 048-057 (including 054-057) and approve the test env.
+# Tho must first apply migrations 048-058 (including 054-058) and approve the test env.
 param([switch]$IConfirmThoApproved)
 
 $ErrorActionPreference = 'Stop'
@@ -14,6 +14,9 @@ try {
     # Export required variables in the parent shell; the checker does not load .env.local.
     & node scripts/check-line-test-env.cjs
     if ($LASTEXITCODE -ne 0) { throw 'Environment preflight failed; nothing started.' }
+    # Read-only catalog check; fail before launching any server or tunnel.
+    & node scripts/check-phase2-schema.cjs
+    if ($LASTEXITCODE -ne 0) { throw 'Schema prerequisites failed; nothing started.' }
     # Avoid Next silently selecting a different port when 3000 is occupied.
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 3000)
     try { $listener.Start() } finally { $listener.Stop() }

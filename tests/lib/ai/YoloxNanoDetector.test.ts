@@ -280,3 +280,29 @@ describe('local inference smoke test', () => {
     60_000, // 60 s timeout for first native load + warm-up inference
   );
 });
+
+// Review finding 6: edge clipping must preserve the visible intersection.
+test.each([
+  [0.9, 0.9, 0.2, 0.2, 0.9, 0.9, 0.1, 0.1],
+  [-0.1, -0.1, 0.3, 0.3, 0, 0, 0.2, 0.2],
+  [-0.5, -0.5, 2, 2, 0, 0, 1, 1],
+])('clips decoded edges for box (%s,%s,%s,%s)', async (x,y,w,h,ex,ey,ew,eh) => {
+  const data = syntheticOutput(0.9, 0.9);
+  const base = 530 * 85;
+  data[base] = (x + w/2) * 416/8 - 10;
+  data[base+1] = (y + h/2) * 416/8 - 10;
+  data[base+2] = Math.log(w * 416/8);
+  data[base+3] = Math.log(h * 416/8);
+  const [result] = await new YoloxNanoDetector(makeSession(data), false).detect([await solidJpeg()]);
+  expect(result).not.toBeNull();
+  expect(result!.box.x).toBeCloseTo(ex); expect(result!.box.y).toBeCloseTo(ey);
+  expect(result!.box.w).toBeCloseTo(ew); expect(result!.box.h).toBeCloseTo(eh);
+  expect(result!.box.x + result!.box.w).toBeLessThanOrEqual(1);
+  expect(result!.box.y + result!.box.h).toBeLessThanOrEqual(1);
+});
+test.each([[-0.3,0.5], [1.3,0.5], [0.5,-0.3], [0.5,1.3]])('rejects fully outside box centered at %s,%s', async (cx,cy) => {
+  const data = syntheticOutput(0.9,0.9), base=530*85;
+  data[base]=cx*416/8-10; data[base+1]=cy*416/8-10;
+  data[base+2]=Math.log(0.1*416/8); data[base+3]=Math.log(0.1*416/8);
+  expect(await new YoloxNanoDetector(makeSession(data),false).detect([await solidJpeg()])).toEqual([null]);
+});

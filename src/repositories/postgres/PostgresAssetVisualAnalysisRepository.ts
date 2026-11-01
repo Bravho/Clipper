@@ -27,7 +27,7 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
         WHERE (asset_id, analysis_version) = (
           SELECT ava.asset_id, ava.analysis_version
             FROM asset_visual_analyses ava
-            LEFT JOIN uploaded_assets ua ON ua.id = ava.asset_id::uuid
+            LEFT JOIN uploaded_assets ua ON ua.id = ava.asset_id
             LEFT JOIN clip_requests cr ON cr.id::text = ua.request_id
            WHERE ava.state = 'queued' AND ava.analysis_version = $1
              AND ($2::boolean = FALSE OR COALESCE(cr.is_test, FALSE) = TRUE)
@@ -60,8 +60,14 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
 
   async expireClaims(version: string, timeoutSeconds: number): Promise<string[]> {
     const { rows } = await this.db.query(
-      `UPDATE asset_visual_analyses SET state='failed' WHERE analysis_version=$1 AND state='claimed' AND claimed_at < NOW()-($2 * INTERVAL '1 second') RETURNING asset_id`,
-      [version, timeoutSeconds]
+      `UPDATE asset_visual_analyses ava SET state='failed'
+        WHERE analysis_version=$1 AND state='claimed'
+          AND claimed_at < NOW()-($2 * INTERVAL '1 second')
+          AND COALESCE((SELECT cr.is_test FROM uploaded_assets ua
+            LEFT JOIN clip_requests cr ON cr.id::text = ua.request_id
+            WHERE ua.id = ava.asset_id), FALSE) = $3::boolean
+        RETURNING ava.asset_id`,
+      [version, timeoutSeconds, isLineTestMode()]
     );
     return rows.map(r => r.asset_id as string);
   }
