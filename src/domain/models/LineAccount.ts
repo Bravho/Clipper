@@ -9,6 +9,10 @@ export interface LineAccount {
   displayName: string | null;
   linkedVia: LineLinkedVia;
   status: LineAccountStatus;
+  /** When true the LINE webhook silently skips incoming messages for this shop. */
+  takeoverActive: boolean;
+  /** Auto-clears takeover when this timestamp passes (null = no expiry). */
+  takeoverExpiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

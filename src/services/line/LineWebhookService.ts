@@ -182,6 +182,17 @@ export async function processLineEvent(
   const lineUserId = event.source?.userId;
   if (!lineUserId) return { escalated: false, intent: 'no_user' };
 
+  // ── Takeover guard — human operator handling this shop ────────────────────
+  const existingAccount = await opts.lineAccountRepo.findByLineUser(opts.lineChannelId, lineUserId);
+  if (existingAccount?.takeoverActive) {
+    const expired = existingAccount.takeoverExpiresAt && existingAccount.takeoverExpiresAt <= new Date();
+    if (!expired) {
+      return { escalated: false, intent: 'takeover' };
+    }
+    // Expired — clear it lazily (best-effort; no throw on failure)
+    opts.lineAccountRepo.setTakeover(existingAccount.id, false, null).catch(() => {});
+  }
+
   const replyToken = event.replyToken;
 
   // ── Non-text messages: check current state for file collection ────────────

@@ -32,9 +32,11 @@ export class MockLineAccountRepository implements ILineAccountRepository {
       .map((a) => ({ ...a }));
   }
 
-  async create(input: Omit<LineAccount, 'id' | 'createdAt' | 'updatedAt'>): Promise<LineAccount> {
+  async create(input: Omit<LineAccount, 'id' | 'createdAt' | 'updatedAt' | 'takeoverActive' | 'takeoverExpiresAt'>): Promise<LineAccount> {
     const now = new Date();
     const account: LineAccount = {
+      takeoverActive: false,
+      takeoverExpiresAt: null,
       ...input,
       id: crypto.randomUUID(),
       createdAt: now,
@@ -47,6 +49,13 @@ export class MockLineAccountRepository implements ILineAccountRepository {
   async updateStatus(id: string, status: LineAccount['status']): Promise<void> {
     const account = this.accounts.get(id);
     if (account) this.accounts.set(id, { ...account, status, updatedAt: new Date() });
+  }
+
+  async setTakeover(id: string, active: boolean, expiresAt: Date | null): Promise<void> {
+    const account = this.accounts.get(id);
+    if (account) {
+      this.accounts.set(id, { ...account, takeoverActive: active, takeoverExpiresAt: expiresAt, updatedAt: new Date() });
+    }
   }
 
   async getConversationState(

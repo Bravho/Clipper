@@ -17,6 +17,8 @@ function rowToAccount(row: Record<string, unknown>): LineAccount {
     displayName: (row.display_name as string) ?? null,
     linkedVia: row.linked_via as LineAccount['linkedVia'],
     status: row.status as LineAccount['status'],
+    takeoverActive: Boolean(row.takeover_active),
+    takeoverExpiresAt: row.takeover_expires_at ? new Date(row.takeover_expires_at as string) : null,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -41,7 +43,7 @@ export class PostgresLineAccountRepository implements ILineAccountRepository {
     return rows.map(rowToAccount);
   }
 
-  async create(input: Omit<LineAccount, 'id' | 'createdAt' | 'updatedAt'>): Promise<LineAccount> {
+  async create(input: Omit<LineAccount, 'id' | 'createdAt' | 'updatedAt' | 'takeoverActive' | 'takeoverExpiresAt'>): Promise<LineAccount> {
     const { rows } = await this.db.query(
       `INSERT INTO line_accounts (user_id, line_channel_id, line_user_id, display_name, linked_via, status)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
@@ -61,6 +63,13 @@ export class PostgresLineAccountRepository implements ILineAccountRepository {
     await this.db.query(
       'UPDATE line_accounts SET status=$2, updated_at=NOW() WHERE id=$1',
       [id, status]
+    );
+  }
+
+  async setTakeover(id: string, active: boolean, expiresAt: Date | null): Promise<void> {
+    await this.db.query(
+      'UPDATE line_accounts SET takeover_active=$2, takeover_expires_at=$3, updated_at=NOW() WHERE id=$1',
+      [id, active, expiresAt ?? null]
     );
   }
 
