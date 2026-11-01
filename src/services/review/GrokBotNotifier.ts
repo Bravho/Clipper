@@ -19,8 +19,11 @@
 import { createHmac } from 'crypto';
 import type { ReviewItem } from '@/domain/models/ReviewItem';
 
+type NotifiableItem = Pick<ReviewItem, 'id' | 'shortCode' | 'typeKey' | 'requestId' | 'packageOrderId' | 'payload' | 'assetRefs' | 'signals'>;
+
 export interface GrokBotPayload {
-  event: 'review_pending';
+  event: 'review_pending' | 'review_needed' | 'escalation' | 'reminder' | 'takeover_on';
+  requestId: string | null;
   itemId: string;
   shortCode: string;
   typeKey: string;
@@ -34,6 +37,8 @@ export interface GrokBotPayload {
 }
 
 export interface GrokBotNotifierOptions {
+  event?: GrokBotPayload['event'];
+  throwOnFailure?: boolean;
   /** Generate a signed expiring URL for a storage key. Injected so tests can mock it. */
   signedUrl: (storageKey: string, ttlSeconds: number) => Promise<string>;
   /** Perform the HTTP POST. Injected so tests can mock it. */
@@ -42,7 +47,7 @@ export interface GrokBotNotifierOptions {
 
 const DEFAULT_TTL = 3600; // 1-hour preview links
 
-function buildSummaryTh(item: ReviewItem): string {
+function buildSummaryTh(item: NotifiableItem): string {
   const labels: Record<string, string> = {
     script: 'สคริปต์รอตรวจ',
     tts: 'เสียงพากย์รอตรวจ',
@@ -73,7 +78,7 @@ async function defaultPost(
 }
 
 export async function notifyGrokBot(
-  item: ReviewItem,
+  item: NotifiableItem,
   opts: GrokBotNotifierOptions,
 ): Promise<void> {
   const webhookUrl = process.env.GROKBOT_REVIEW_WEBHOOK_URL;
@@ -94,7 +99,8 @@ export async function notifyGrokBot(
     : undefined;
 
   const payload: GrokBotPayload = {
-    event: 'review_pending',
+    event: opts.event ?? 'review_needed',
+    requestId: item.requestId ?? null,
     itemId: item.id,
     shortCode: item.shortCode,
     typeKey: item.typeKey,
@@ -119,9 +125,10 @@ export async function notifyGrokBot(
   try {
     const res = await post(webhookUrl, body, headers);
     if (!res.ok) {
-      console.warn(`[GrokBotNotifier] webhook returned ${res.status} for item ${item.id}`);
+      throw new Error(`GrokBot webhook returned ${res.status}`);
     }
   } catch (err) {
+    if (opts.throwOnFailure) throw err;
     console.error('[GrokBotNotifier] failed to deliver webhook:', err);
   }
 }

@@ -25,10 +25,11 @@ export class LineIntakeService {
   async ensureAccount(lineUserId: string) {
     const existing = await this.accounts.findByLineUser(this.channel, lineUserId);
     if (existing) {
+      if (process.env.LINE_TEST_MODE === 'true' && !existing.isTest) throw new Error('test_account_scope_mismatch');
       if (existing.status !== 'active') throw new Error('account_blocked');
       return existing;
     }
-    const email = createHash('sha256').update(this.channel + ':' + lineUserId).digest('hex') + '@line.invalid';
+    const email = createHash('sha256').update(this.channel + ':' + lineUserId + (isTestRun(lineUserId) ? ':test' : '')).digest('hex') + '@line.invalid';
     const user = await this.users.findByEmail(email) ?? await this.users.create({
       email, name: 'LINE shop', role: Role.Requester, emailVerified: false, priorTrialRequestsUsed: 0 });
     return this.accounts.create({ userId: user.id, lineUserId, lineChannelId: this.channel,
@@ -61,21 +62,19 @@ export class LineIntakeService {
   async isPaid(orderId: string, lineUserId: string) {
     const account = await this.ensureAccount(lineUserId);
     const order = await this.packages.findOrderById(orderId);
-    return !!order && order.userId === account.userId && order.status === 'active' && order.expiresAt > new Date();
+    return !!order && (process.env.LINE_TEST_MODE !== 'true' || order.isTest) && order.userId === account.userId && order.status === 'active' && order.expiresAt > new Date();
   }
 
   async submit(lineUserId: string, context: Record<string, unknown>) {
     const account = await this.ensureAccount(lineUserId);
-    const orderId = String(context.orderId ?? '');
+    const existing = (await this.requests.findByUserId(account.userId)).find(r => r.externalRef === context.intakeId);
+    if (existing && existing.status !== RequestStatus.Draft) return { requestId: existing.id };
+    const orderId = existing?.packageOrderId ?? String(context.orderId ?? '');
     if (!await this.isPaid(orderId, lineUserId)) throw new Error('payment_required');
-    const balance = await this.packages.getBalance(orderId);
-    if (balance.clipsLeft <= 0) throw new Error('package_exhausted');
     const duration = Number(context.durationSeconds ?? 30);
     assertDurationAllowed(duration);
     const files = context.files as string[];
     if (!files?.length) throw new Error('files_required');
-    const existing = (await this.requests.findByUserId(account.userId)).find(r => r.externalRef === context.intakeId);
-    if (existing && existing.status !== RequestStatus.Draft) return { requestId: existing.id };
     const request = existing ?? await this.requests.create({ userId: account.userId, title: 'LINE shop video',
       description: String(context.brief ?? ''), targetAudience: '', targetPlatforms: [Platform.TikTok],
       preferredStyle: '', preferredLanguage: 'th', durationSeconds: duration, intakeChannel: 'line',

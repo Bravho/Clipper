@@ -222,3 +222,38 @@ f93f09a  feat(line-phase1): storyboard AI pre-review behind STORYBOARD_AI_PRECHE
 - `npx jest --no-coverage`: 165 suites, 1729 tests, 0 failures (exit 0)
 - `npm run build`: passed (exit 0)
 - New migration: `054_is_test_flag.sql` — apply after 053
+
+
+## Round 4b ? Codex r3 fixes (Nov 1 2026)
+
+Requested findings #1?10 and #13 are implemented in the working tree. Findings #11?12 (visual precheck and scene-edit/versioning) were not included in this repair request and remain outside this round.
+
+| Finding | Production change and regression coverage |
+|---|---|
+| #1 | Corrected unapplied migration 054 to alter package_orders, matching migration 050 and the real SQL adapter. Schema regression reads both migrations. |
+| #2 | Token-authenticated automation supplies no users-row UUID. ReviewService explicitly writes NULL to decided_by and the action adapter writes NULL to actor_user_id. Existing decided_via / actor_via = grokbot_app preserve the automation source; no fictitious user or new actor configuration is introduced. Regression invokes the real admin route, transaction service and PostgreSQL adapters with a mocked SQL client and checks UUID parameters. |
+| #3 | LINE delivery selects captionedExport 9:16, 16:9, 1:1, 4:5 before master fallback. Studio delivery is unchanged. Tests invoke the real VideoGenerationService update hook with stored requests/jobs/assets and inspect the delivery outbox. |
+| #4 | Real outbox worker handles review.created as review_needed or escalation; takeover API enqueues takeover_on, dispatched by that worker. HTTP failures remain failed/retryable, rather than marking the event sent. Unsupported events fail visibly. Worker/route tests mock only external HTTP/storage and data adapters. |
+| #5 | Order creation serializes on a per-user/environment advisory transaction lock and reuses a non-expired pending order for the same package. Existing paid orders remain intact; active lookup skips exhausted/expired balances and picks oldest first. Clip consumption locks the user, rechecks idempotent usage, chooses oldest available paid order, updates the request's order reference and records usage in one transaction. Multiple paid purchases remain separate ledger orders and are drained oldest-first; no purchased balance is discarded. SQL adapter tests assert locking, selection, request linkage and transaction boundaries. |
+| #6 | Replaced false append-only/isolation claims with SQL mutation sites and file:line references, including render tasks, worker samples/heartbeats, request/assets, account/order reuse, outbox leases and optional deletion surfaces. LINE_TEST_MODE blocks non-test account reuse/takeover and filters active orders and outbox claims to test associations. Test users use a separate deterministic email namespace. Remaining shared-worker/conversation/reminder/admin scope is explicitly documented. Owner conditions, migration order, Mar-PC-only flags, production /root/rc2 defaults and STRIPE_ALLOW_LIVE=false are retained. |
+| #7 | Gate regeneration persists and reviews the new script/storyboard, clearing stale approved-field precedence in the review snapshot. Real gate test rejects the original, regenerates, passes and verifies the queued payload. |
+| #8 | Normal reviews with null next_reminder_at become eligible by created_at age (default 12 hours). reminder_sent_at is mapped and used by an atomic conditional reminder claim; overlapping runs send once. Event is reminder, sent only to Grok Bot. Failed sends release the claim for retry; disabled notifier does not consume a reminder. |
+| #9 | Submission looks up an existing intake before balance checks. Draft redelivery reaches idempotent recordUsage after a final clip was consumed; already submitted requests return immediately and webhook pipeline initialization can resume. Test interrupts status update after usage, then retries without a second debit. |
+| #10 | Deterministic precheck compares original text with corrected text as well as the corrections list. Regressions cover invented menu, wrong price and unsupported promo. |
+| #13 | ReviewOrder drives real decisions through executeReviewDecision with stored job lookup, pipeline transition callbacks, renderer completion callback and renewed approval. External pipeline/render boundaries are mocked; actual review service and gate/dispatcher execute. |
+
+### Configuration and migrations
+
+No new environment variables. Existing REVIEW_REMINDER_HOURS controls age before the single reminder. Grok Bot continues to sign timestamp + '.' + raw JSON using HMAC-SHA256 and existing GROKBOT_REVIEW_WEBHOOK_URL / GROKBOT_REVIEW_WEBHOOK_KEY; header X-Grokbot-Signature is sha256=<hex>. Payloads include event, request/order/review IDs and generic Thai summaries, never raw LINE identity/customer message content.
+
+Only migration 054_is_test_flag.sql was corrected (unapplied); 053_review_reminder_takeover.sql already supplies reminder_sent_at and is unchanged. No new tables/columns or migration 055 are needed. No migrations were applied and no DB/API calls were made. Apply order remains 048, 049, 050, 051, 052, 053, 054 manually, under the owner's deployment conditions.
+
+### Verification and commit limitation
+
+Verification uses NODE_OPTIONS=--require ./scripts/offline-verification.cjs to block secret-file reads and network/database connections. This pre-existing untracked guard and all offline logs remain uncommitted. Next logs blocked attempts to load local environment files, then completes the build using safe available configuration; no secret file was read. Standalone TypeScript validation is required because Next config skips its internal type/lint checks.
+
+Final validation: npx tsc --noEmit passed (exit 0); npx jest --runInBand passed, 167 suites / 1,748 tests (exit 0). npm run build passed (exit 0), including static generation and build traces. git diff --check passed.
+
+Local milestone and report commits are blocked by the session filesystem policy: .git is read-only, and git add failed creating .git/index.lock with Permission denied. No policy bypass or destructive Git action was attempted. Consequently git log --oneline 2e44f77..HEAD is empty and HEAD remains 2e44f77. All fixes remain reviewable as working-tree changes; no commit or push is claimed. Before any later commit, stage only specific intended source/test/doc paths and secret-scan git diff --cached; never stage offline logs or the owner's helper scripts.
+
+Operational limit: reminder_sent_at is reserved before HTTP to prevent overlapping sends. A process crash after reserving and before HTTP can leave an unsent reminder marked reserved; an operator must inspect/reset that item. As with any HTTP retry, a lost acknowledgement can cause a repeat after delivery; no exactly-once external delivery guarantee is claimed. The live-DB audit lists the remaining shared-table scope and does not promise complete isolation.

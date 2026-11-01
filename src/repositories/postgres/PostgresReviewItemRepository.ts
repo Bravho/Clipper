@@ -50,6 +50,7 @@ function rowToReviewItem(row: Record<string, unknown>): ReviewItem {
     finalPayload: parseJson(row.final_payload, null),
     customerNoticedAt: toDate(row.customer_noticed_at),
     nextReminderAt: toDate(row.next_reminder_at),
+    reminderSentAt: toDate(row.reminder_sent_at),
     reminderCount: Number(row.reminder_count ?? 0),
     dueAt: new Date(row.due_at as string),
     expiresAt: new Date(row.expires_at as string),
@@ -161,6 +162,7 @@ export class PostgresReviewItemRepository implements IReviewItemRepository {
       decidedAt: 'decided_at',
       nextReminderAt: 'next_reminder_at',
       reminderCount: 'reminder_count',
+      reminderSentAt: 'reminder_sent_at',
       customerNoticedAt: 'customer_noticed_at',
       supersedesId: 'supersedes_id',
       priority: 'priority',
@@ -244,14 +246,24 @@ export class PostgresReviewItemRepository implements IReviewItemRepository {
     return rows.map(rowToReviewItem);
   }
 
+  async claimReminder(id: string, now: Date): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE review_items SET reminder_sent_at=$2, next_reminder_at=NULL,
+         reminder_count=reminder_count+1, updated_at=NOW()
+       WHERE id=$1 AND status='pending' AND reminder_sent_at IS NULL AND expires_at > $2 RETURNING id`,
+      [id, now.toISOString()]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async listDueForReminder(now: Date): Promise<ReviewItem[]> {
     const { rows } = await this.db.query(
       `SELECT * FROM review_items
         WHERE status = 'pending'
-          AND next_reminder_at IS NOT NULL
-          AND next_reminder_at <= $1
+          AND reminder_sent_at IS NULL
+          AND expires_at > $1
+          AND COALESCE(next_reminder_at, created_at + ($2 * interval '1 hour')) <= $1
         ORDER BY next_reminder_at ASC LIMIT 100`,
-      [now.toISOString()]
+      [now.toISOString(), Number(process.env.REVIEW_REMINDER_HOURS) > 0 ? Number(process.env.REVIEW_REMINDER_HOURS) : 12]
     );
     return rows.map(rowToReviewItem);
   }

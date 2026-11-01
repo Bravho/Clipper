@@ -30,6 +30,7 @@ export interface IReviewItemRepository {
         | 'decidedAt'
         | 'nextReminderAt'
         | 'reminderCount'
+        | 'reminderSentAt'
         | 'customerNoticedAt'
         | 'supersedesId'
         | 'priority'
@@ -45,6 +46,7 @@ export interface IReviewItemRepository {
     afterId?: string;
   }): Promise<ReviewItem[]>;
   /** Items whose SLA timer has passed (for the sweep job). */
+  claimReminder(id: string, now: Date): Promise<boolean>;
   listDueForReminder(now: Date): Promise<ReviewItem[]>;
   listExpired(now: Date): Promise<ReviewItem[]>;
 }

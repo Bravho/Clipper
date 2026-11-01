@@ -134,13 +134,21 @@ export class MockReviewItemRepository implements IReviewItemRepository {
     return results.slice(0, filters?.limit ?? 50).map((i) => ({ ...i }));
   }
 
+  async claimReminder(id: string, now: Date): Promise<boolean> {
+    const item = this.store.get(id);
+    if (!item || item.status !== 'pending' || item.reminderSentAt || item.expiresAt <= now) return false;
+    this.store.set(id, { ...item, reminderSentAt: now, nextReminderAt: null, reminderCount: item.reminderCount + 1 });
+    return true;
+  }
+
   async listDueForReminder(now: Date): Promise<ReviewItem[]> {
     return [...this.store.values()]
       .filter(
         (i) =>
           i.status === 'pending' &&
-          i.nextReminderAt !== null &&
-          i.nextReminderAt <= now
+          !i.reminderSentAt && i.expiresAt > now &&
+          (i.nextReminderAt ?? new Date(i.createdAt.getTime() +
+            (Number(process.env.REVIEW_REMINDER_HOURS) > 0 ? Number(process.env.REVIEW_REMINDER_HOURS) : 12) * 3600000)) <= now
       )
       .map((i) => ({ ...i }));
   }

@@ -81,6 +81,7 @@ export interface ReviewItem {
   customerNoticedAt: Date | null;
   nextReminderAt: Date | null;
   reminderCount: number;
+  reminderSentAt?: Date | null;
   dueAt: Date;
   expiresAt: Date;
   etaToldShop: Date | null;

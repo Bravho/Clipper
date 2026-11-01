@@ -15,7 +15,7 @@ import { runReviewReminders } from '@/services/review/ReviewReminderService';
 const WEBHOOK_URL = 'https://grokbot.example.com/webhook';
 const WEBHOOK_KEY = 'test-key';
 
-function makeOpts(postFn = jest.fn(async () => ({ ok: true, status: 200 }))) {
+function makeOpts(postFn = jest.fn(async (..._args: unknown[]) => ({ ok: true, status: 200 }))) {
   return {
     signedUrl: jest.fn(async () => ''),
     postFn,
@@ -88,17 +88,16 @@ test('does not notify items with null nextReminderAt', async () => {
   expect(reminded).toBe(0);
 });
 
-test('bumps nextReminderAt by default 12 hours after notification', async () => {
+test('records a reminder once and never reschedules', async () => {
   const repo = makeRepo();
   const past = new Date(Date.now() - 1000);
   const item = await seedItem(repo, past, 0);
   const before = Date.now();
   await runReviewReminders(repo, makeOpts());
   const after = await repo.findById(item.id);
-  const diffMs = after!.nextReminderAt!.getTime() - before;
-  const twelveHoursMs = 12 * 3600 * 1000;
-  expect(diffMs).toBeGreaterThanOrEqual(twelveHoursMs - 1000);
-  expect(diffMs).toBeLessThanOrEqual(twelveHoursMs + 2000);
+  expect(after!.nextReminderAt).toBeNull();
+  expect(after!.reminderSentAt!.getTime()).toBeGreaterThanOrEqual(before);
+  expect((await runReviewReminders(repo, makeOpts())).reminded).toBe(0);
 });
 
 test('increments reminderCount after each notification', async () => {
@@ -115,22 +114,35 @@ test('counts errors without throwing when repo.update fails', async () => {
   const past = new Date(Date.now() - 1000);
   await seedItem(repo, past);
   // Simulate repo.update throwing (e.g. DB down)
-  jest.spyOn(repo, 'update').mockRejectedValueOnce(new Error('db_error'));
+  jest.spyOn(repo, 'claimReminder').mockRejectedValueOnce(new Error('db_error'));
   const { reminded, errors } = await runReviewReminders(repo, makeOpts());
   expect(errors).toBe(1);
   expect(reminded).toBe(0);
 });
 
-test('respects custom REVIEW_REMINDER_HOURS env var', async () => {
+test('normal created item with no next reminder becomes due at configured age', async () => {
+  jest.useFakeTimers();
   process.env.REVIEW_REMINDER_HOURS = '6';
   const repo = makeRepo();
-  const past = new Date(Date.now() - 1000);
-  const item = await seedItem(repo, past, 0);
-  const before = Date.now();
-  await runReviewReminders(repo, makeOpts());
-  const after = await repo.findById(item.id);
-  const diffMs = after!.nextReminderAt!.getTime() - before;
-  const sixHoursMs = 6 * 3600 * 1000;
-  expect(diffMs).toBeGreaterThanOrEqual(sixHoursMs - 1000);
-  expect(diffMs).toBeLessThanOrEqual(sixHoursMs + 2000);
+  await seedItem(repo, null);
+  const post = jest.fn(async (..._args: unknown[]) => ({ ok: true, status: 200 }));
+  const opts = makeOpts(post);
+  jest.setSystemTime(Date.now() + 6 * 3600000 + 1);
+  expect((await runReviewReminders(repo, opts)).reminded).toBe(1);
+  expect(JSON.parse(post.mock.calls[0][1] as string).event).toBe('reminder');
+  expect((await runReviewReminders(repo, opts)).reminded).toBe(0);
+  jest.useRealTimers();
+});
+
+
+test('overlapping reminder jobs send once for a normal created item', async () => {
+  jest.useFakeTimers();
+  try {
+    const repo = makeRepo(); await seedItem(repo, null);
+    jest.setSystemTime(Date.now() + 12 * 3600000 + 1);
+    const opts = makeOpts();
+    const runs = await Promise.all([runReviewReminders(repo, opts), runReviewReminders(repo, opts)]);
+    expect(runs.reduce((sum, r) => sum + r.reminded, 0)).toBe(1);
+    expect(opts.postFn).toHaveBeenCalledTimes(1);
+  } finally { jest.useRealTimers(); }
 });

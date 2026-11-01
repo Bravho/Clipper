@@ -70,7 +70,8 @@ export async function POST(
     const item = await createReviewService().decide({
       itemId: params.id,
       expectedVersion: version as number,
-      actorUserId: 'grokbot',
+      // Token automation has no users-row identity; leave the nullable UUID FK null.
+      actorUserId: undefined,
       actorVia: 'grokbot_app',
       decision: decision as 'approve' | 'reject' | 'manual_reply',
       replyText: typeof replyText === 'string' ? replyText : undefined,

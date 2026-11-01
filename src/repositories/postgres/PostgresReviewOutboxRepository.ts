@@ -61,11 +61,19 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
         WHERE id = (
           SELECT id FROM review_outbox
            WHERE state IN ('queued','failed','sending') AND next_attempt_at <= NOW()
+             AND ($1::boolean = false OR EXISTS (
+               SELECT 1 FROM review_items ri JOIN clip_requests cr ON cr.id=ri.request_id
+               WHERE ri.id=review_outbox.review_item_id AND cr.is_test=true
+             ) OR EXISTS (SELECT 1 FROM review_items ri JOIN line_accounts la ON la.user_id=ri.shop_user_id
+               WHERE ri.id=review_outbox.review_item_id AND la.is_test=true)
+             OR (review_outbox.payload->>'is_test')='true'
+             OR EXISTS (SELECT 1 FROM line_accounts la WHERE la.is_test=true
+               AND la.user_id::text=review_outbox.payload->>'user_id'))
            ORDER BY next_attempt_at ASC
            FOR UPDATE SKIP LOCKED
            LIMIT 1
         )
-        RETURNING *`
+        RETURNING *`, [process.env.LINE_TEST_MODE === 'true']
     );
     return rows[0] ? rowToEvent(rows[0]) : null;
   }

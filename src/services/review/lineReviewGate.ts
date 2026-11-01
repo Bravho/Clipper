@@ -45,6 +45,7 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
 
   // --- Storyboard AI pre-review (script gate only, LINE jobs, behind flag) ---
   let precheckSignals: Record<string, unknown> = {};
+  let reviewJob = job;
   if (typeKey === 'script') {
     try {
       const assets = await uploadedAssetRepository.findByRequestId(request.id);
@@ -55,25 +56,30 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
 
       const precheckOpts: StoryboardPrecheckOptions = {
         callGeminiFn: opts.callGeminiFn,
-        regenerateFn: opts.regenerateFn ?? (async () => {
-          // Default regeneration: re-run content analysis via chatGptVisionService
-          const { generateSpeakingScript } = await import('@/lib/ai/chatGptVisionService');
-          const imageUrls = imageAssets.map((a) => a.storageUrl).filter(Boolean);
-          const output = await generateSpeakingScript({
-            imageUrls,
-            description: request.description ?? '',
-            targetAudience: request.targetAudience ?? '',
-            targetPlatforms: request.targetPlatforms ?? [],
-            preferredStyle: request.preferredStyle ?? '',
-            videoDurationSeconds: 90,
+        regenerateFn: async () => {
+          const regenerate = opts.regenerateFn ?? (async () => {
+            // Default regeneration: re-run content analysis via chatGptVisionService
+            const { generateSpeakingScript } = await import('@/lib/ai/chatGptVisionService');
+            const imageUrls = imageAssets.map((a) => a.storageUrl).filter(Boolean);
+            const output = await generateSpeakingScript({
+              imageUrls,
+              description: request.description ?? '',
+              targetAudience: request.targetAudience ?? '',
+              targetPlatforms: request.targetPlatforms ?? [],
+              preferredStyle: request.preferredStyle ?? '',
+              videoDurationSeconds: 90,
+            });
+            const newStoryboard = output.storyboard ? JSON.stringify(output.storyboard) : null;
+            return { storyboard: newStoryboard, scriptThai: output.scriptThai };
           });
-          const newStoryboard = output.storyboard ? JSON.stringify(output.storyboard) : null;
-          // Persist regenerated storyboard directly (bypass _updateJob to avoid loop)
-          if (newStoryboard) {
-            await videoGenerationJobRepository.update(job.id, { storyboard: newStoryboard, scriptThai: output.scriptThai });
+          const content = await regenerate();
+          if (content) {
+            reviewJob = { ...job, storyboard: content.storyboard ?? job.storyboard,
+              scriptThai: content.scriptThai ?? job.scriptThai, approvedStoryboard: null, approvedScriptThai: null };
+            await videoGenerationJobRepository.update(job.id, { storyboard: reviewJob.storyboard, scriptThai: reviewJob.scriptThai });
           }
-          return { storyboard: newStoryboard, scriptThai: output.scriptThai };
-        }),
+          return content;
+        },
       };
 
       const precheck = await runStoryboardPrecheck(job, request.shopRules ?? {}, imageAssets, precheckOpts);
@@ -89,8 +95,8 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
 
   await createReviewService().createItem({ typeKey, shopUserId: request.userId, requestId: request.id,
     jobId: job.id, gateStep: job.currentStep, packageOrderId: request.packageOrderId ?? undefined,
-    title: typeKey + ' review', payload: { script: job.approvedScriptThai ?? job.scriptThai ?? '',
-      storyboard: job.approvedStoryboard ?? job.storyboard, audience: gateAudience(request, job.currentStep) },
+    title: typeKey + ' review', payload: { script: reviewJob.approvedScriptThai ?? reviewJob.scriptThai ?? '',
+      storyboard: reviewJob.approvedStoryboard ?? reviewJob.storyboard, audience: gateAudience(request, job.currentStep) },
     assetRefs: asset ? [{ asset_id: asset.id, storage_key: asset.storageKey, mime: asset.mimeType, role: index === 1 ? 'voice' : 'preview' }] : [],
     signals: precheckSignals, typeCfg: { ...getDefaultTypeCfg(typeKey), alwaysReview: true },
     idempotencyKey: 'gate:' + job.id + ':' + job.currentStep + ':' + (asset?.id ?? request.revisionCount ?? 0) });

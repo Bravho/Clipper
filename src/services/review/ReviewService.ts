@@ -273,7 +273,7 @@ export class ReviewService {
       const updated = await this.reviewItemRepo.update(item.id, {
         status: 'approved',
         resolution: input.actorVia === 'auto' ? 'auto_approved' : item.renderState !== 'none' ? 'approved_with_edits' : 'approved',
-        decidedBy: input.actorUserId,
+        decidedBy: input.actorUserId ?? null,
         decidedVia: input.actorVia,
         decidedAt: now,
         firstOpenedAt: item.firstOpenedAt ?? now,
@@ -300,7 +300,7 @@ export class ReviewService {
       const updated = await this.reviewItemRepo.update(item.id, {
         status: 'rejected',
         resolution: 'rejected',
-        decidedBy: input.actorUserId,
+        decidedBy: input.actorUserId ?? null,
         decidedVia: input.actorVia,
         decidedAt: now,
         decisionNote: input.reasonText,
@@ -355,7 +355,7 @@ export class ReviewService {
         status: 'edited',
         resolution: 'manual_reply',
         finalPayload: { reply_text: input.replyText },
-        decidedBy: input.actorUserId,
+        decidedBy: input.actorUserId ?? null,
         decidedVia: input.actorVia,
         decidedAt: now,
       }, { expectedVersion: input.expectedVersion, expectedStatus: item.status });

@@ -171,3 +171,45 @@ test('start_job without active balance proceeds to awaiting_package_choice', asy
   const replies = lineClient.sent.filter(s => s.kind === 'reply');
   expect(replies).toHaveLength(1);
 });
+
+
+test('repeated package selection reuses pending unpaid order', async () => {
+  const repos = makeRepos(); const intake = makeIntake(repos);
+  const first = await intake.choosePackage(LINE_USER, 'starter');
+  const second = await intake.choosePackage(LINE_USER, 'starter');
+  expect(second).toEqual(first);
+});
+
+test('oldest paid balance is consumed before newer paid orders, with no stranded balance', async () => {
+  const repos = makeRepos(); const intake = makeIntake(repos);
+  const { account, order } = await seedActiveOrder(repos, 7);
+  const newer = await repos.pkgRepo.createOrder({ userId: account.userId, packageCode: 'trial',
+    clipsIncluded: 2, revisionsPerClip: 2, priceBaht: 299, expiresAt: new Date(Date.now()+86400000) });
+  await repos.pkgRepo.updateOrderStatus(newer.id, 'active');
+  expect((await intake.findActiveOrderWithBalance(LINE_USER))?.orderId).toBe(order.id);
+  await repos.pkgRepo.recordUsage({ packageOrderId: order.id, requestId: 'last-old', kind: 'clip' });
+  expect((await intake.findActiveOrderWithBalance(LINE_USER))?.orderId).toBe(newer.id);
+});
+
+test('retry after final usage commits resumes same draft and does not consume again', async () => {
+  const repos = makeRepos(); const intake = makeIntake(repos);
+  const { order } = await seedActiveOrder(repos, 7);
+  const context = { orderId: order.id, intakeId: 'redelivery', files: ['private/image.jpg'] };
+  jest.spyOn(repos.requestRepo, 'updateStatus').mockRejectedValueOnce(new Error('status interrupted'));
+  await expect(intake.submit(LINE_USER, context)).rejects.toThrow('status interrupted');
+  expect((await repos.pkgRepo.getBalance(order.id)).clipsLeft).toBe(0);
+  const resumed = await intake.submit(LINE_USER, context);
+  expect((await intake.submit(LINE_USER, context)).requestId).toBe(resumed.requestId);
+  expect((await repos.pkgRepo.getBalance(order.id)).clipsUsed).toBe(8);
+});
+
+
+test('test mode refuses production account reuse and ignores production order balances', async () => {
+  const repos = makeRepos(); const intake = makeIntake(repos);
+  const { account } = await seedActiveOrder(repos);
+  process.env.LINE_TEST_MODE = 'true';
+  try {
+    await expect(intake.ensureAccount(LINE_USER)).rejects.toThrow('test_account_scope_mismatch');
+    expect(await repos.pkgRepo.findActiveOrderByUser(account.userId)).toBeNull();
+  } finally { delete process.env.LINE_TEST_MODE; }
+});

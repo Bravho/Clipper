@@ -20,7 +20,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { timingSafeEqual } from 'crypto';
-import { lineAccountRepository } from '@/repositories';
+import { lineAccountRepository, reviewOutboxRepository } from '@/repositories';
 
 function checkAdminToken(request: NextRequest): boolean {
   const expected = process.env.REVIEW_ADMIN_TOKEN;
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const account = await lineAccountRepository.findByLineUser(lineChannelId, lineUserId);
-  if (!account) {
+  if (!account || (process.env.LINE_TEST_MODE === 'true' && !account.isTest)) {
     return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
   }
 
@@ -75,5 +75,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const expiresAt = active ? new Date(Date.now() + timeoutHours * 3600 * 1000) : null;
 
   await lineAccountRepository.setTakeover(account.id, active, expiresAt);
+  if (active) await reviewOutboxRepository.enqueue({ eventType: 'takeover_on',
+    payload: { user_id: account.userId, is_test: account.isTest === true },
+    dedupeKey: 'takeover:' + account.id + ':' + expiresAt!.toISOString() });
   return NextResponse.json({ ok: true });
 }

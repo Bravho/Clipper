@@ -356,3 +356,14 @@ describe('GrokBotNotifier — precheckIssues forwarded from signals', () => {
     delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY;
   });
 });
+
+
+test.each([
+  ['Invented menu', { menuNames: ['Pad Thai'] }],
+  ['Pad Thai 999 THB', { menuPrices: { 'Pad Thai': 80 } }],
+  ['Free drinks discount 90%', { promotions: [] }],
+])('deterministic check rejects altered fixed facts: %s', (text, rules) => {
+  const result = deterministicCheck({ scriptThai: text, storyboard: '[]' } as never, [], rules);
+  expect(result.pass).toBe(false);
+  expect(result.issues.join(' ')).toContain('menu_mismatch');
+});

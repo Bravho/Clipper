@@ -58,6 +58,10 @@ export class MockServicePackageRepository implements IServicePackageRepository {
     expiresAt: Date;
     isTest?: boolean;
   }): Promise<PackageOrder> {
+    const pending = [...this.orders.values()].find(o => o.userId === input.userId &&
+      o.packageCode === input.packageCode && o.isTest === (input.isTest ?? false) &&
+      o.status === 'pending_payment' && o.expiresAt > new Date());
+    if (pending) return { ...pending };
     const now = new Date();
     const order: PackageOrder = {
       id: crypto.randomUUID(),
@@ -85,8 +89,9 @@ export class MockServicePackageRepository implements IServicePackageRepository {
   }
 
   async findActiveOrderByUser(userId: string): Promise<PackageOrder | null> {
-    for (const o of this.orders.values()) {
-      if (o.userId === userId && o.status === 'active') return { ...o };
+    for (const o of [...this.orders.values()].sort((a,b) => a.createdAt.getTime() - b.createdAt.getTime())) {
+      if (o.userId === userId && o.status === 'active' && o.expiresAt > new Date() &&
+        (process.env.LINE_TEST_MODE !== 'true' || o.isTest) && (await this.getBalance(o.id)).clipsLeft > 0) return { ...o };
     }
     return null;
   }
@@ -132,6 +137,7 @@ export class MockServicePackageRepository implements IServicePackageRepository {
       const existing = [...this.usages.values()].find(u => u.requestId === input.requestId && u.kind === 'clip');
       if (existing) return { ...existing };
     }
+    if (input.kind === 'clip' && (await this.getBalance(input.packageOrderId)).clipsLeft < (input.units ?? 1)) throw new Error('package_exhausted');
     const usage: PackageUsage = {
       id: String(++this.seq),
       packageOrderId: input.packageOrderId,

@@ -66,7 +66,7 @@ export function deterministicCheck(
   }
   for (const text of textsToCheck) {
     const result = applyShopRules(text, shopRules);
-    if (result.corrections.length > 0) {
+    if (result.text !== text.trim() || result.corrections.length > 0) {
       const fields = [...new Set(result.corrections.map((c) => c.field))].join(', ');
       issues.push(`menu_mismatch: ${fields}`);
       break; // one issue entry per text block is enough

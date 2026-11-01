@@ -184,6 +184,9 @@ export async function processLineEvent(
 
   // ── Takeover guard — human operator handling this shop ────────────────────
   const existingAccount = await opts.lineAccountRepo.findByLineUser(opts.lineChannelId, lineUserId);
+  if (process.env.LINE_TEST_MODE === 'true' && existingAccount && !existingAccount.isTest) {
+    return { escalated: false, intent: 'test_scope_blocked' };
+  }
   if (existingAccount?.takeoverActive) {
     const expired = existingAccount.takeoverExpiresAt && existingAccount.takeoverExpiresAt <= new Date();
     if (!expired) {

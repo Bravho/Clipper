@@ -1,3 +1,4 @@
+import { notifyGrokBot } from '@/services/review/GrokBotNotifier';
 import { IReviewOutboxRepository } from '@/repositories/interfaces/IReviewOutboxRepository';
 import { IReviewItemRepository } from '@/repositories/interfaces/IReviewItemRepository';
 import { ILineAccountRepository } from '@/repositories/interfaces/ILineAccountRepository';
@@ -13,6 +14,19 @@ export async function processLineReviewOutbox(deps: {
   const event = await deps.outbox.claimNext();
   if (!event) return;
   try {
+    if (event.eventType === 'review.created') {
+      const item = event.reviewItemId ? await deps.items.findById(event.reviewItemId) : null;
+      if (!item) throw new Error('review_item_missing');
+      await notifyGrokBot(item, { signedUrl: spacesSignedUrl, throwOnFailure: true,
+        event: ['customer_reply', 'complaint', 'out_of_package'].includes(item.typeKey) ? 'escalation' : 'review_needed' });
+    } else if (event.eventType === 'takeover_on') {
+      // Generic event contains no LINE identity or raw customer text.
+      await notifyGrokBot({ id: event.eventId, shortCode: '', typeKey: 'customer_reply',
+        requestId: null, packageOrderId: null, payload: {}, assetRefs: [], signals: {} },
+        { signedUrl: spacesSignedUrl, event: 'takeover_on', throwOnFailure: true });
+    } else if (!['review.decided', 'review.edited', 'line.delivery'].includes(event.eventType)) {
+      throw new Error('unsupported_outbox_event:' + event.eventType);
+    }
     if (event.reviewItemId && ['review.decided','review.edited'].includes(event.eventType)) {
       await deps.execute(event.reviewItemId);
       const item = await deps.items.findById(event.reviewItemId);

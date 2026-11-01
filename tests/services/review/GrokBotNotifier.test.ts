@@ -67,7 +67,7 @@ test('sends POST with correct payload fields', async () => {
   await notifyGrokBot(BASE_ITEM, opts);
 
   expect(opts.postFn).toHaveBeenCalledTimes(1);
-  expect(captured.body?.event).toBe('review_pending');
+  expect(captured.body?.event).toBe('review_needed');
   expect(captured.body?.itemId).toBe('item-1');
   expect(captured.body?.shortCode).toBe('ABC123');
   expect(captured.body?.typeKey).toBe('video');

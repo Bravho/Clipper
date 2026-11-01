@@ -5568,7 +5568,9 @@ Return ONLY a valid JSON object: { "english": "...", "chinese": "..." }`,
         await onLineReviewGate(request, updated);
         if (updated.currentStep === VideoGenerationStep.AwaitingDistributionReview || updated.currentStep === VideoGenerationStep.Complete) {
           const { reviewOutboxRepository } = await import('@/repositories');
-          const finalId = updated.finalExport_9_16_assetId ?? updated.finalExport_16_9_assetId;
+          const finalId = updated.captionedExport_9_16_assetId ?? updated.captionedExport_16_9_assetId
+            ?? updated.captionedExport_1_1_assetId ?? updated.captionedExport_4_5_assetId
+            ?? updated.finalExport_9_16_assetId ?? updated.finalExport_16_9_assetId;
           const asset = finalId ? await uploadedAssetRepository.findById(finalId) : null;
           if (asset) await reviewOutboxRepository.enqueue({ eventType: 'line.delivery', channel: 'line_notify',
             dedupeKey: 'delivery:' + updated.id, payload: { user_id: request.userId, storage_key: asset.storageKey } });

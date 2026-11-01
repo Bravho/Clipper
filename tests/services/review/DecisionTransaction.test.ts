@@ -1,4 +1,6 @@
 jest.mock('@/lib/db', () => ({ pool: { connect: jest.fn() } }));
+import { NextRequest } from 'next/server';
+import { POST } from '@/app/api/admin/review/[id]/decision/route';
 import { pool } from '@/lib/db';
 import { createReviewService } from '@/repositories';
 const row = { id: 'i', type_key: 'script', status: 'pending', version: 1, render_state: 'none',
@@ -24,4 +26,30 @@ test.each([false, true])('production decision transaction commits or rolls back 
   expect(statements.at(-1)).toBe(fail ? 'ROLLBACK' : 'COMMIT');
   expect(statements.filter(sql => sql.startsWith('INSERT'))).toHaveLength(2);
   expect(release).toHaveBeenCalledTimes(1);
+});
+
+// Exercise real SQL adapters: automation must never send a label to UUID FKs.
+test('automation decision uses nullable UUID foreign keys', async () => {
+  const query = jest.fn(async (sql: string, params?: unknown[]) => {
+    if (sql.startsWith('UPDATE review_items')) {
+      const actorParam = sql.match(/decided_by = \$(\d+)/);
+      expect(actorParam).not.toBeNull();
+      expect(params?.[Number(actorParam![1]) - 1]).toBeNull();
+      return { rows: [{ ...row, status: 'approved', version: 2 }], rowCount: 1 };
+    }
+    if (sql.startsWith('INSERT INTO review_actions')) {
+      expect(params?.[3]).toBeNull();
+      expect(params?.[4]).toBe('grokbot_app');
+    }
+    return { rows: [row], rowCount: 1 };
+  });
+  (pool.connect as jest.Mock).mockResolvedValue({ query, release: jest.fn() });
+  process.env.REVIEW_ADMIN_TOKEN = 'fixture-token';
+  try {
+    const response = await POST(new NextRequest('http://localhost/api/admin/review/i/decision', {
+      method: 'POST', headers: { authorization: 'Bearer fixture-token' }, body: JSON.stringify({ version: 1, decision: 'approve' }),
+    }), { params: { id: 'i' } });
+    expect(response.status).toBe(200);
+  } finally { delete process.env.REVIEW_ADMIN_TOKEN; }
+  expect(query.mock.calls.some(([sql]) => sql.startsWith('INSERT INTO review_actions'))).toBe(true);
 });

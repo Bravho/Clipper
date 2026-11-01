@@ -26,18 +26,23 @@ let outboxRepo: MockReviewOutboxRepository;
 let reviewSvc: ReviewService;
 
 // Simple asset store for findById lookups in onLineReviewGate
+const jobStore = new Map<string, import('@/domain/models/VideoGenerationJob').VideoGenerationJob>();
 const assetStore = new Map<string, { id: string; storageKey: string; mimeType: string; [k: string]: unknown }>();
 
 jest.mock('@/repositories', () => ({
   createReviewService: () => reviewSvc,
   get uploadedAssetRepository() {
     return {
+      findByRequestId: jest.fn(async () => []),
       findById: (id: string) => Promise.resolve(assetStore.get(id) ?? null),
     };
   },
   get reviewItemRepository() { return itemRepo; },
   get videoGenerationJobRepository() {
-    return { findById: jest.fn(async () => null) };
+    return { findById: async (id: string) => jobStore.get(id) ?? null,
+      update: jest.fn(async (id: string, data: object) => {
+        const job = { ...(jobStore.get(id) ?? {}), ...data }; jobStore.set(id, job as never); return job;
+      }) };
   },
 }));
 
@@ -62,6 +67,7 @@ jest.mock('@/lib/line/revisionContext', () => ({
 
 import {
   onLineReviewGate,
+  executeReviewDecision,
   gateAudience,
   LINE_REVIEW_GATES,
 } from '@/services/review/lineReviewGate';
@@ -78,6 +84,7 @@ const makeRequest = (opts: { storyboard?: boolean; voice?: boolean } = {}) => ({
 
 const makeJob = (step: string, overrides: Record<string, unknown> = {}) => ({
   id: 'job-1',
+  requestId: 'req-1',
   currentStep: step,
   processedVoiceAssetId: step === 'awaiting_voice_approval' ? 'voice-asset-1' : null,
   animatedVideoAssetId: null,
@@ -103,6 +110,7 @@ beforeEach(() => {
   outboxRepo = new MockReviewOutboxRepository(new Map());
   reviewSvc = new ReviewService(itemRepo, actionRepo, ruleRepo, outboxRepo);
   assetStore.clear();
+  jobStore.clear();
   jest.clearAllMocks();
 });
 
@@ -113,12 +121,22 @@ test('production gate hook visits storyboard → voice → video and creates ite
   seedAsset('voice-asset-1');
   seedAsset('captioned-asset-1');
   const request = makeRequest();
-  for (const step of LINE_REVIEW_GATES) {
-    await onLineReviewGate(request, makeJob(step));
+  const advance = async (step: string) => {
+    const job = makeJob(step); jobStore.set('job-1', job);
+    await onLineReviewGate(request, job);
+  };
+  mockPipeline.approveContent.mockImplementationOnce(async () => { await advance('awaiting_voice_approval'); return {}; });
+  mockPipeline.approveVoiceConversionByRequester.mockImplementationOnce(async () => { await advance('awaiting_overlay_approval'); return {}; });
+  await advance('awaiting_content_approval');
+  for (let i = 0; i < 3; i++) {
+    const item = [...itemRepo['store'].values()].find(item => item.status === 'pending')!;
+    await reviewSvc.decide({ itemId: item.id, expectedVersion: item.version, actorVia: 'web', decision: 'approve' });
+    await executeReviewDecision(item.id);
   }
+  expect(mockPipeline.approveOverlayByRequester).toHaveBeenCalled();
   const allItems = Array.from(itemRepo['store'].values());
   expect(allItems.map(i => i.typeKey)).toEqual(['script', 'tts', 'video']);
-  expect(allItems.every(i => i.status === 'pending')).toBe(true);
+  expect(allItems.every(i => i.status === 'approved')).toBe(true);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,9 +205,16 @@ test('edit+rerender then re-gate with new captioned asset replaces edited item a
   })).rejects.toMatchObject({ code: 'render_not_ready' });
 
   // Step 4: Rerender completes — pipeline calls onLineReviewGate with NEW captioned asset
-  await onLineReviewGate(request, makeJob('awaiting_overlay_approval', {
-    captionedExport_9_16_assetId: NEW_ASSET,
-  }));
+  jobStore.set('job-1', makeJob('awaiting_overlay_approval'));
+  // Mock only the renderer boundary; execute the real production decision dispatcher.
+  mockPipeline.regenerateOverlayByRequester.mockImplementationOnce(async () => {
+    const rendered = makeJob('awaiting_overlay_approval', { captionedExport_9_16_assetId: NEW_ASSET });
+    jobStore.set('job-1', rendered);
+    await onLineReviewGate(request, rendered);
+    return {};
+  });
+  await executeReviewDecision(editedItem.id);
+  expect(mockPipeline.regenerateOverlayByRequester).toHaveBeenCalledWith('job-1', 'shop-user');
 
   const finalItems = Array.from(itemRepo['store'].values());
   const expiredItem = finalItems.find(i => i.id === originalItem.id);
@@ -210,6 +235,8 @@ test('edit+rerender then re-gate with new captioned asset replaces edited item a
     decision: 'approve',
   });
   expect(approved.status).toBe('approved');
+  await executeReviewDecision(approved.id);
+  expect(mockPipeline.approveOverlayByRequester).toHaveBeenCalledWith('job-1', 'shop-user');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,4 +261,22 @@ test('assertDurationAllowed accepts boundary 90s and rejects invalid durations',
   for (const duration of [91, 0, -1, NaN, Infinity]) {
     expect(() => assertDurationAllowed(duration)).toThrow();
   }
+});
+
+
+test('successful regeneration reviews the regenerated script and storyboard', async () => {
+  process.env.STORYBOARD_AI_PRECHECK_ENABLED = 'true';
+  try {
+    const job = makeJob('awaiting_content_approval', { id: 'regen-job', scriptThai: 'original', storyboard: '[]' });
+    jobStore.set('regen-job', job);
+    let calls = 0;
+    await onLineReviewGate(makeRequest(), job, {
+      callGeminiFn: async () => (++calls === 1 ? { pass: false, score: 0, issues: ['rewrite'] } : { pass: true, score: 100, issues: [] }),
+      regenerateFn: async () => ({ scriptThai: 'regenerated', storyboard: '[]' }),
+    });
+    const item = [...itemRepo['store'].values()][0];
+    expect(item.payload.script).toBe('regenerated');
+    expect(item.payload.storyboard).toBe('[]');
+    expect(item.signals.precheckIssues).toBeUndefined();
+  } finally { delete process.env.STORYBOARD_AI_PRECHECK_ENABLED; }
 });

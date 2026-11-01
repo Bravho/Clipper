@@ -12,7 +12,7 @@
  *   Database connection vars (PGHOST, PGDATABASE, etc.)
  *
  * Optional:
- *   REVIEW_REMINDER_HOURS — hours between reminders (default 12)
+ *   REVIEW_REMINDER_HOURS — age in hours before the one-time reminder (default 12)
  */
 
 import { runReviewReminders } from '../src/services/review/ReviewReminderService';

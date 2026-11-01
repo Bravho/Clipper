@@ -36,6 +36,7 @@ import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/config/elevenLabsVoices";
 
 // ── Mock repositories module (used via `@/repositories/index` singletons) ──
 jest.mock("@/repositories/index", () => ({
+  reviewOutboxRepository: new (require("@/repositories/mock/MockReviewOutboxRepository").MockReviewOutboxRepository)(new Map()),
   clipRequestRepository: new (require("@/repositories/mock/MockClipRequestRepository").MockClipRequestRepository)(new Map()),
   uploadedAssetRepository: new (require("@/repositories/mock/MockUploadedAssetRepository").MockUploadedAssetRepository)(new Map()),
   videoGenerationJobRepository: new (require("@/repositories/mock/MockVideoGenerationJobRepository").MockVideoGenerationJobRepository)(new Map()),
@@ -1761,4 +1762,26 @@ describe("VideoGenerationService — storyboard script call: business profile an
     await service.writeScriptForStoryboard(job.id, "user-001", input);
     expect(businessProfileSaveMock).not.toHaveBeenCalled();
   });
+});
+
+
+test.each([true, false])('LINE delivery selects approved captioned exports, fallback only if absent (%s)', async captioned => {
+  const previous = process.env.REVIEW_SYSTEM_ENABLED;
+  process.env.REVIEW_SYSTEM_ENABLED = 'true';
+  try {
+    const request = await createRequest();
+    const line = await mockClipRepo.create({ ...request, intakeChannel: 'line' });
+    const job = await createJobAwaitingVoiceApproval(line.id, 20);
+    const asset = await mockAssetRepo.create({ requestId: line.id, userId: line.userId, fileName: 'video.mp4',
+      assetType: AssetType.Video, mimeType: 'video/mp4', fileSizeBytes: 10, storageKey: 'approved-captioned',
+      storageUrl: '', thumbnailKey: '', thumbnailUrl: '', uploadStatus: AssetUploadStatus.Uploaded, scheduledDeletionAt: new Date() });
+    const master = await mockAssetRepo.create({ ...asset, storageKey: 'uncaptioned-master' });
+    await (new VideoGenerationService() as any)._updateJob(job.id, {
+      currentStep: VideoGenerationStep.AwaitingDistributionReview,
+      captionedExport_9_16_assetId: captioned ? asset.id : null, finalExport_9_16_assetId: master.id });
+    const { reviewOutboxRepository } = require('@/repositories/index');
+    const events = [...reviewOutboxRepository.store.values()] as any[];
+    expect(events.find(e => e.dedupeKey === 'delivery:' + job.id)?.payload.storage_key)
+      .toBe(captioned ? 'approved-captioned' : 'uncaptioned-master');
+  } finally { if (previous === undefined) delete process.env.REVIEW_SYSTEM_ENABLED; else process.env.REVIEW_SYSTEM_ENABLED = previous; }
 });

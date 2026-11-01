@@ -83,7 +83,7 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     return rows.map(rowToPackage);
   }
 
-  async createOrder(input: {
+  private async insertOrder(input: {
     userId: string;
     packageCode: string;
     clipsIncluded: number;
@@ -112,6 +112,23 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     return rowToOrder(rows[0]);
   }
 
+  async createOrder(input: Parameters<IServicePackageRepository['createOrder']>[0]): Promise<PackageOrder> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      // Serialize pending-order creation per user and environment, including concurrent webhooks.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [input.userId + ':' + !!input.isTest]);
+      const pending = await client.query(
+        "SELECT * FROM package_orders WHERE user_id=$1 AND package_code=$2 AND is_test=$3 AND status='pending_payment' AND expires_at > NOW() ORDER BY created_at ASC LIMIT 1 FOR UPDATE",
+        [input.userId, input.packageCode, input.isTest ?? false]);
+      const order = pending.rows[0] ? rowToOrder(pending.rows[0]) :
+        await new PostgresServicePackageRepository(client as unknown as typeof pool).insertOrder(input);
+      await client.query('COMMIT');
+      return order;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  }
+
   async findOrderById(id: string): Promise<PackageOrder | null> {
     const { rows } = await this.db.query(
       'SELECT * FROM package_orders WHERE id=$1', [id]
@@ -123,8 +140,11 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     const { rows } = await this.db.query(
       `SELECT * FROM package_orders
         WHERE user_id=$1 AND status='active' AND expires_at > NOW()
-        ORDER BY created_at DESC LIMIT 1`,
-      [userId]
+          AND ($2::boolean = false OR is_test=true)
+          AND clips_included > (SELECT COALESCE(SUM(CASE WHEN kind='clip' THEN units WHEN kind='refund_clip' THEN -units ELSE 0 END),0)
+            FROM package_usage WHERE package_order_id=package_orders.id)
+        ORDER BY created_at ASC, id ASC LIMIT 1`,
+      [userId, process.env.LINE_TEST_MODE === 'true']
     );
     return rows[0] ? rowToOrder(rows[0]) : null;
   }
@@ -149,6 +169,25 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
+      if (input.kind === 'clip') {
+        const owner = await client.query('SELECT user_id, is_test FROM package_orders WHERE id=$1', [input.packageOrderId]);
+        if (!owner.rows[0]) throw new Error('inactive_package');
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [owner.rows[0].user_id + ':' + owner.rows[0].is_test]);
+        const existing = await client.query("SELECT * FROM package_usage WHERE request_id=$1 AND kind='clip'", [input.requestId]);
+        if (existing.rows[0]) { await client.query('COMMIT'); return rowToUsage(existing.rows[0]); }
+        // Preserve all paid orders and consume the oldest available balance atomically.
+        const oldest = await client.query(
+          `SELECT * FROM package_orders po WHERE user_id=$1 AND is_test=$2
+             AND status='active' AND expires_at > NOW()
+             AND clips_included >= $3 + (SELECT COALESCE(SUM(CASE WHEN kind='clip' THEN units WHEN kind='refund_clip' THEN -units ELSE 0 END),0)
+               FROM package_usage WHERE package_order_id=po.id)
+           ORDER BY created_at ASC, id ASC LIMIT 1 FOR UPDATE`,
+          [owner.rows[0].user_id, owner.rows[0].is_test, input.units ?? 1]);
+        if (!oldest.rows[0]) throw new Error('package_exhausted');
+        input = { ...input, packageOrderId: oldest.rows[0].id };
+        await client.query('UPDATE clip_requests SET package_order_id=$2 WHERE id=$1 AND user_id=$3',
+          [input.requestId, input.packageOrderId, owner.rows[0].user_id]);
+      }
       const locked = await client.query('SELECT * FROM package_orders WHERE id=$1 FOR UPDATE', [input.packageOrderId]);
       const order = locked.rows[0];
       if (!order || order.status !== 'active' || new Date(order.expires_at) <= new Date()) throw new Error('inactive_package');
