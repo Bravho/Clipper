@@ -19,6 +19,7 @@ function rowToAccount(row: Record<string, unknown>): LineAccount {
     status: row.status as LineAccount['status'],
     takeoverActive: Boolean(row.takeover_active),
     takeoverExpiresAt: row.takeover_expires_at ? new Date(row.takeover_expires_at as string) : null,
+    isTest: Boolean(row.is_test),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -45,8 +46,8 @@ export class PostgresLineAccountRepository implements ILineAccountRepository {
 
   async create(input: Omit<LineAccount, 'id' | 'createdAt' | 'updatedAt' | 'takeoverActive' | 'takeoverExpiresAt'>): Promise<LineAccount> {
     const { rows } = await this.db.query(
-      `INSERT INTO line_accounts (user_id, line_channel_id, line_user_id, display_name, linked_via, status)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      `INSERT INTO line_accounts (user_id, line_channel_id, line_user_id, display_name, linked_via, status, is_test)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [
         input.userId,
         input.lineChannelId,
@@ -54,6 +55,7 @@ export class PostgresLineAccountRepository implements ILineAccountRepository {
         input.displayName ?? null,
         input.linkedVia,
         input.status,
+        input.isTest ?? false,
       ]
     );
     return rowToAccount(rows[0]);

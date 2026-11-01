@@ -12,6 +12,7 @@ export interface IServicePackageRepository {
     priceBaht: number;
     stripeSessionId?: string;
     expiresAt: Date;
+    isTest?: boolean;
   }): Promise<PackageOrder>;
   findOrderById(id: string): Promise<PackageOrder | null>;
   findActiveOrderByUser(userId: string): Promise<PackageOrder | null>;

@@ -56,6 +56,7 @@ export class MockServicePackageRepository implements IServicePackageRepository {
     priceBaht: number;
     stripeSessionId?: string;
     expiresAt: Date;
+    isTest?: boolean;
   }): Promise<PackageOrder> {
     const now = new Date();
     const order: PackageOrder = {
@@ -70,6 +71,7 @@ export class MockServicePackageRepository implements IServicePackageRepository {
       stripeSessionId: input.stripeSessionId ?? null,
       startsAt: now,
       expiresAt: input.expiresAt,
+      isTest: input.isTest ?? false,
       createdAt: now,
       updatedAt: now,
     };

@@ -41,6 +41,8 @@ export interface PackageOrder {
   stripeSessionId: string | null;
   startsAt: Date;
   expiresAt: Date;
+  /** True when this order was created during a LINE test run (migration 054). */
+  isTest: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

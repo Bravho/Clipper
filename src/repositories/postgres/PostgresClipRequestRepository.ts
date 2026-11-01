@@ -86,6 +86,7 @@ function rowToClipRequest(row: Record<string, unknown>): ClipRequest {
     externalRef: (row.external_ref as string) ?? null,
     shopReviewPreferences: (row.shop_review_preferences as ClipRequest['shopReviewPreferences']) ?? {},
     shopRules: (row.shop_rules as ClipRequest['shopRules']) ?? {},
+    isTest: Boolean(row.is_test),
   };
 }
 
@@ -282,8 +283,8 @@ export class PostgresClipRequestRepository
       `INSERT INTO clip_requests (
          user_id, title, place_name, latitude, longitude, description, target_audience,
          target_platforms, preferred_style, preferred_language,
-         duration_seconds, credits_cost, intake_channel, render_lane, package_order_id, external_ref, shop_review_preferences, shop_rules
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         duration_seconds, credits_cost, intake_channel, render_lane, package_order_id, external_ref, shop_review_preferences, shop_rules, is_test
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING *`,
       [
         input.userId,
@@ -303,6 +304,7 @@ export class PostgresClipRequestRepository
         intakeChannel,
         renderLane,
         input.packageOrderId ?? null, input.externalRef ?? null, JSON.stringify(input.shopReviewPreferences ?? {}), JSON.stringify(input.shopRules ?? {}),
+        input.isTest ?? false,
       ]
     );
     return rowToClipRequest(rows[0]);

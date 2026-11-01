@@ -45,6 +45,7 @@ function rowToOrder(row: Record<string, unknown>): PackageOrder {
     stripeSessionId: (row.stripe_session_id as string) ?? null,
     startsAt: new Date(row.starts_at as string),
     expiresAt: new Date(row.expires_at as string),
+    isTest: Boolean(row.is_test),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
@@ -90,12 +91,13 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
     priceBaht: number;
     stripeSessionId?: string;
     expiresAt: Date;
+    isTest?: boolean;
   }): Promise<PackageOrder> {
     const { rows } = await this.db.query(
       `INSERT INTO package_orders
          (user_id, package_code, clips_included, revisions_per_clip, price_baht,
-          stripe_session_id, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+          stripe_session_id, expires_at, is_test)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [
         input.userId,
         input.packageCode,
@@ -104,6 +106,7 @@ export class PostgresServicePackageRepository implements IServicePackageReposito
         input.priceBaht,
         input.stripeSessionId ?? null,
         input.expiresAt.toISOString(),
+        input.isTest ?? false,
       ]
     );
     return rowToOrder(rows[0]);

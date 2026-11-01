@@ -225,10 +225,17 @@ export interface ClipRequest {
    * Added by migration 049.
    */
   renderLane?: string | null;
+
+  /**
+   * True when this request was created during a LINE Phase 2 test run.
+   * Set via LINE_TEST_MODE=true env var on the Mar-PC test server.
+   * Added by migration 054.
+   */
+  isTest?: boolean;
 }
 
 /** Input for creating a new draft request. */
-export type CreateClipRequestInput = Pick<ClipRequest, 'intakeChannel' | 'renderLane' | 'packageOrderId' | 'externalRef' | 'shopReviewPreferences' | 'shopRules'> & {
+export type CreateClipRequestInput = Pick<ClipRequest, 'intakeChannel' | 'renderLane' | 'packageOrderId' | 'externalRef' | 'shopReviewPreferences' | 'shopRules' | 'isTest'> & {
   userId: string;
   title: string;
   placeName?: string;

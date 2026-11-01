@@ -13,6 +13,8 @@ export interface LineAccount {
   takeoverActive: boolean;
   /** Auto-clears takeover when this timestamp passes (null = no expiry). */
   takeoverExpiresAt: Date | null;
+  /** True when this account was created during a LINE test run (migration 054). */
+  isTest?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
