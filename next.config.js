@@ -60,6 +60,8 @@ const nextConfig = {
       "@rspack/core",
       "@rspack/binding",
       "esbuild",
+      // YOLOX-nano detector: native Node addon, server-only, never bundled.
+      "onnxruntime-node",
     ],
   },
 
