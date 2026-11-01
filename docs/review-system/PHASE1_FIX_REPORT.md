@@ -74,6 +74,50 @@ Cleanup remains dry-run by default, via `scripts/cleanup-line-uploads.ts`; it wa
 - LINE raw-file retention is seven days; existing studio retention remains unchanged.
 - Pipeline hooks are implemented now, overriding the docs' later-phase deferral. LINE permits up to 90 seconds while retaining the existing studio/server policies.
 
+## Round 3 — Nov 1 2026
+
+Branch `feat/ai-editing-line` (HEAD `f4ab1b6`). All changes build and pass the full Jest suite (1714 tests, 164 suites).
+
+### Codex review findings fixed
+
+| Finding | Severity | Fix |
+|---|---|---|
+| 1 | High | `elevenLabsTtsService.ts` and `veoService.ts` — `PutObjectCommand` now uses `ACL: "private"` when `isPrivateLineStorage()` is true. `CacheControl` header is also omitted for private objects. |
+| 2 | High | `LineIntakeService.findActiveOrderWithBalance` checks for an active paid order with remaining clips; `LineWebhookService` `start_job` handler carries the existing `orderId` forward and skips package selection + payment when balance > 0. |
+| 3 | High | `lineReviewGate.ts` now reads `captionedExport_9_16_assetId` (and 16:9/1:1/4:5 fallbacks) instead of the cleared `animatedVideoAssetId`. Admin review page generates 30-minute signed preview URLs server-side via `spacesSignedUrl` and renders video/audio/image players. |
+| 4 | High | Same root fix as Finding 3 — correct asset ID reference means the re-gate after rerender produces a new `pending` item with `renderState='none'`, unblocking `ReviewService.decide()`. |
+| 5 | Medium | Admin review page includes a `<textarea>` + Send reply button for `customer_reply` items; the existing `manual_reply` decision path is wired through `ReviewService.decide()`. |
+| 6 | Medium | `ReviewOrder.test.ts` completely rewritten — drives real `ReviewService` + `onLineReviewGate` with fresh Map-based mock repos; tests gate ordering, shop audience, the full edit→rerender→approve cycle, studio no-op, and duration/revision limits. |
+
+### New features implemented
+
+| Item | Description |
+|---|---|
+| 5 (env) | `.env.example` — added `RENDER_LANE_ENABLED`, `REVIEW_PUBLIC_ORIGIN`, `STRIPE_ALLOW_LIVE`, `GROKBOT_REVIEW_WEBHOOK_URL/KEY`, `REVIEW_ADMIN_TOKEN`, `REVIEW_REMINDER_HOURS`, `RENDER_MAIN/BACKUP_STALE_SECONDS`, `LINE_TAKEOVER_TIMEOUT_HOURS` |
+| 8 | Render-lane staleness thresholds configurable via `RENDER_MAIN_STALE_SECONDS` / `RENDER_BACKUP_QUEUE_SECONDS` env vars with safe defaults (90s/600s) |
+| 9 | `GrokBotNotifier` — HMAC-SHA256 signed webhook to `GROKBOT_REVIEW_WEBHOOK_URL`, expiring preview links, Thai summary per typeKey, no PII, 5s timeout, never throws |
+| 10 | `GET /api/admin/review` + `POST /api/admin/review/[id]/decision` — Bearer token auth (timing-safe), reuse `ReviewService.decide()`, 409 on version_conflict/render_not_ready |
+| 11 | `ReviewReminderService.runReviewReminders` — finds overdue items via `listDueForReminder`, notifies Grok Bot, bumps `nextReminderAt` + `reminderCount`; runnable via `scripts/review-reminder.ts` |
+| 12 | Per-shop takeover flag — `LineAccount.takeoverActive/takeoverExpiresAt`, `setTakeover` in interface + mock + Postgres repo; `processLineEvent` returns `intent='takeover'` when active; `POST /api/admin/line/takeover` toggle API; migration 053 |
+
+### Commits
+
+```text
+a10bb5c  feat(line-intake): webhook durability, atomic decisions, private LINE storage paths, preview token checks (checkpoint 2)
+1d94662  fix(line-phase1): package carry-over — reuse active paid balance per LINE user (C)
+6e81367  feat(line-phase1): Grok Bot notifier, admin review API, reply editor (D)
+f4ab1b6  feat(line-phase1): 12h reminder job, per-shop takeover flag, migration 053 (E)
+```
+
+(Milestones A and B were committed in the prior checkpoint session.)
+
+### Verification
+
+- `npx tsc --noEmit`: passed (exit 0)
+- `npx jest --no-coverage`: 164 suites, 1714 tests, 0 failures (exit 0)
+- `npm run build`: passed (exit 0)
+- New migration: `053_review_reminder_takeover.sql` — apply after 052 in the same coordinated rollout window
+
 ## Open handoff questions
 
 1. Supply real TEST Payment Links, the public review origin, and the shop's authoritative menu/price/promotion data. Placeholders are not usable purchases.
