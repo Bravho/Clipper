@@ -112,6 +112,7 @@ const TICKS_PER_SAMPLE = Math.max(
   Math.round(60_000 / RENDER_QUEUE.heartbeatIntervalMs)
 );
 let heartbeatTicks = 0;
+let visualAnalysisBusy = false;
 
 /**
  * `process.cpuUsage()` is a monotonic total since process start, so a single
@@ -186,6 +187,24 @@ async function heartbeatTick(): Promise<void> {
     await videoGenerationJobRepository.recordWorkerHeartbeat(WORKER_ID);
     const { recordRenderLaneHeartbeat } = await import('../src/repositories/index');
     await recordRenderLaneHeartbeat(process.env.RENDER_LANE ?? 'main');
+    // Analysis is queued as LINE uploads become asset records. Never run FFmpeg
+    // inside the webhook; only this worker drains the immutable version cache.
+    if (!visualAnalysisBusy) {
+      visualAnalysisBusy = true;
+      void (async () => {
+        const { assetVisualAnalysisRepository, uploadedAssetRepository } = await import('../src/repositories');
+        const { processAssetVisualAnalysis } = await import('../src/services/review/AssetVisualAnalysisWorker');
+        await processAssetVisualAnalysis(assetVisualAnalysisRepository, uploadedAssetRepository, undefined, undefined, async requestId => {
+          const { clipRequestRepository, videoGenerationJobRepository } = await import('../src/repositories');
+          const request = await clipRequestRepository.findById(requestId);
+          const job = await videoGenerationJobRepository.findByRequestId(requestId);
+          if (request && job && job.currentStep === 'awaiting_content_approval') {
+            const { onLineReviewGate } = await import('../src/services/review/lineReviewGate');
+            await onLineReviewGate(request, job);
+          }
+        });
+      })().catch(() => log('visual analysis failed')).finally(() => { visualAnalysisBusy = false; });
+    }
     if (process.env.REVIEW_SYSTEM_ENABLED === 'true' && process.env.LINE_INTAKE_ENABLED === 'true') {
       try {
         const { reviewOutboxRepository, reviewItemRepository, lineAccountRepository } = await import('../src/repositories/index');

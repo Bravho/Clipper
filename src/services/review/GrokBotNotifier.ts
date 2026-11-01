@@ -33,6 +33,7 @@ export interface GrokBotPayload {
   previewLinks: { role: string; url: string; mime: string }[];
   /** Short Thai issue strings from the storyboard AI pre-review. Absent when all checks passed. No PII. */
   precheckIssues?: string[];
+  visualShotFlags?: { sceneIndex: number; assetId: string; rule: string; measuredValue: number }[];
   notifiedAt: string;
 }
 
@@ -109,6 +110,13 @@ export async function notifyGrokBot(
     summaryTh: buildSummaryTh(item),
     previewLinks,
     ...(precheckIssues ? { precheckIssues } : {}),
+    ...(Array.isArray(item.signals?.visualShotFlags) ? { visualShotFlags: item.signals.visualShotFlags.flatMap((raw: unknown) => {
+      if (!raw || typeof raw !== 'object') return [];
+      const f = raw as Record<string, unknown>;
+      const rules = ['min_shot','hero_hold','first_hold','last_hold','cut_gap','ambiguous_assets','analysis_missing','usable_duration','source_cut','low_confidence','product_center','product_area','product_clipped','total_duration','analysis_error','empty_plan'];
+      if (!Number.isInteger(f.sceneIndex) || typeof f.assetId !== 'string' || (f.assetId !== '' && !/^[a-f0-9-]{36}$/i.test(f.assetId)) || !rules.includes(String(f.rule)) || typeof f.measuredValue !== 'number' || !Number.isFinite(f.measuredValue)) return [];
+      return [{ sceneIndex: f.sceneIndex as number, assetId: f.assetId, rule: String(f.rule), measuredValue: f.measuredValue }];
+    }) } : {}),
     notifiedAt: new Date().toISOString(),
   };
 

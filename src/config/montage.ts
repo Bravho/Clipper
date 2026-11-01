@@ -65,6 +65,7 @@ export const TRANSITION_DURATION_SECONDS = 0.2;
  * Ken Burns / crop focus toward the subject (e.g. the dish or signage).
  */
 export interface MontageAssetSpec {
+  visualCrop?: { x: number; y: number; w: number; h: number; zoom: number; pad: boolean };
   url: string;
   kind: "image" | "clip";
   motion: MotionPreset;

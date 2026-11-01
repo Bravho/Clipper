@@ -23,6 +23,7 @@ export type MotionPreset =
 export type MontageTransition = "cut" | "fade" | "slide" | "zoom";
 
 export interface MontageAsset {
+  visualCrop?: { x: number; y: number; w: number; h: number; zoom: number; pad: boolean };
   url: string;
   kind: "image" | "clip";
   motion: MotionPreset;

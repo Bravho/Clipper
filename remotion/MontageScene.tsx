@@ -105,6 +105,13 @@ function AssetLayer({
     transform: asset.kind === "image" ? buildKenBurnsTransform(asset.motion, progress) : undefined,
     transformOrigin: `${focusX}% ${focusY}%`,
   };
+  // Normalized source viewport, including negative bounds for black padding.
+  // The server supplies this only for prechecked LINE 9:16 shots.
+  if (asset.visualCrop) {
+    const c = asset.visualCrop;
+    Object.assign(mediaStyle, { position: 'absolute', left: `${-c.x/c.w*100}%`, top: `${-c.y/c.h*100}%`,
+      width: `${100/c.w}%`, height: `${100/c.h}%`, objectFit: 'fill', transform: undefined });
+  }
 
   // When a clip's scene slot is longer than its selected footage, slow the clip
   // down (playbackRate < 1) so it fills the slot instead of playing out and then

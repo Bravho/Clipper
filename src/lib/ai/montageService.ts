@@ -39,6 +39,7 @@ const RENDER_TIMEOUT_MS = 5 * 60 * 1000; // 5 min — generous for headless Chro
 
 /** Normalized asset shape passed to the Remotion MontageScene composition. */
 interface MontageInputAsset {
+  visualCrop?: MontageAssetSpec['visualCrop'];
   url: string;
   kind: "image" | "clip";
   motion: MontageAssetSpec["motion"];
@@ -132,6 +133,10 @@ export function buildSceneInputProps(params: RenderSceneSpec): MontageSceneProps
     const fy = clamp01(a.focusY);
     if (fx != null) asset.focusX = fx;
     if (fy != null) asset.focusY = fy;
+    if (params.ratio === '9:16' && isPrivateLineStorage() && process.env.STORYBOARD_AI_PRECHECK_ENABLED === 'true' && process.env.STORYBOARD_VISUAL_PRECHECK_ENABLED === 'true' && a.visualCrop) {
+      const c = a.visualCrop;
+      if ([c.x,c.y,c.w,c.h].every(Number.isFinite) && c.w > 0 && c.h > 0) { asset.visualCrop = c; asset.motion = 'static'; }
+    }
 
     return asset;
   });

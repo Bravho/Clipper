@@ -169,6 +169,8 @@ export const escalationRuleRepository = new PostgresEscalationRuleRepository();
 export const reviewOutboxRepository = new PostgresReviewOutboxRepository();
 export const lineAccountRepository = new PostgresLineAccountRepository();
 export const servicePackageRepository = new PostgresServicePackageRepository();
+import { PostgresAssetVisualAnalysisRepository } from './postgres/PostgresAssetVisualAnalysisRepository';
+export const assetVisualAnalysisRepository = new PostgresAssetVisualAnalysisRepository();
 
 import { pool } from '@/lib/db';
 import { ReviewService } from '@/services/review/ReviewService';

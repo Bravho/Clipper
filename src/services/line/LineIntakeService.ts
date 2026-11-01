@@ -85,11 +85,16 @@ export class LineIntakeService {
     for (const file of files) {
       if (existingAssets.some(asset => asset.storageKey === file)) continue;
       const video = file.endsWith('.mp4');
-      await this.assets.create({ requestId: request.id, userId: account.userId, fileName: file.split('/').pop()!,
+      const asset = await this.assets.create({ requestId: request.id, userId: account.userId, fileName: file.split('/').pop()!,
         assetType: video ? AssetType.Video : AssetType.Image, fileSizeBytes: 0,
         mimeType: video ? 'video/mp4' : 'image/jpeg', storageKey: file, storageUrl: '',
         thumbnailKey: '', thumbnailUrl: '', uploadStatus: AssetUploadStatus.Uploaded,
         scheduledDeletionAt: new Date(Date.now() + 7 * 86400000) });
+      const { visualEnabled, visualConfig } = await import('@/config/storyboardVisual');
+      if (visualEnabled()) {
+        const { assetVisualAnalysisRepository } = await import('@/repositories');
+        await assetVisualAnalysisRepository.enqueue(asset.id, visualConfig().version);
+      }
     }
     await this.packages.recordUsage({ packageOrderId: orderId, requestId: request.id, kind: 'clip' });
     await this.requests.updateStatus(request.id, RequestStatus.Submitted, {

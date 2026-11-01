@@ -142,7 +142,13 @@ export function applyApprovedStoryboardSelections(
         modelScene?.visualDescription ||
         approved.summary,
       imageIndexes: [...approved.assetIndexes],
-      assets: undefined,
+      assets: approved.visualCrop || approved.visualStartSeconds != null ? approved.assetIndexes.map(assetIndex => ({
+        assetIndex, kind: 'image' as const, motion: 'static' as const,
+        durationSeconds: approved.roughDurationHint ?? 1,
+        visualCrop: approved.visualCrop,
+        trimStartSeconds: approved.visualStartSeconds,
+        trimEndSeconds: approved.visualStartSeconds != null ? approved.visualStartSeconds + (approved.roughDurationHint ?? 1) : undefined,
+      })) : undefined,
     };
   });
 }
@@ -255,6 +261,7 @@ export function buildSceneMontageAssets(
     if (existing?.framings) asset.framings = existing.framings;
     if (existing?.aiFraming) asset.aiFraming = existing.aiFraming;
     if (existing?.shapeFraming) asset.shapeFraming = existing.shapeFraming;
+    if (existing?.visualCrop) { asset.visualCrop = existing.visualCrop; asset.motion = 'static'; }
 
     return asset;
   });
@@ -381,6 +388,7 @@ export function toRenderAssetSpecs(
     }
     if (Number.isFinite(a.focusX)) spec.focusX = a.focusX;
     if (Number.isFinite(a.focusY)) spec.focusY = a.focusY;
+      if (a.visualCrop) { spec.visualCrop = a.visualCrop; spec.motion = 'static'; }
     specs.push(spec);
   }
 

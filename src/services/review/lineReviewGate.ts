@@ -7,6 +7,10 @@ import { createVoiceReviewMp4 } from '@/lib/line/voiceReviewPreview';
 import { isReviewSystemEnabled } from '@/config/reviewSystem';
 import { runStoryboardPrecheck, type GeminiPrecheckResponse, type StoryboardPrecheckOptions } from '@/services/review/StoryboardPrecheckService';
 import { AssetType, AssetUploadStatus } from '@/domain/enums/AssetType';
+import { visualEnabled, visualConfig } from '@/config/storyboardVisual';
+import { deterministicCheck } from './StoryboardPrecheckService';
+import { runVisualPrecheck } from './StoryboardVisualPrecheck';
+import type { StoryboardScene } from '@/domain/models/VideoGenerationJob';
 
 export const LINE_REVIEW_GATES = ['awaiting_content_approval', 'awaiting_voice_approval', 'awaiting_overlay_approval'] as const;
 export function gateAudience(request: ClipRequest, step: string): 'shop' | 'admin' {
@@ -82,13 +86,29 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
         },
       };
 
-      const precheck = await runStoryboardPrecheck(job, request.shopRules ?? {}, imageAssets, precheckOpts);
+      const visual = visualEnabled();
+      const precheck = visual
+        ? deterministicCheck(job, imageAssets, request.shopRules ?? {})
+        : await runStoryboardPrecheck(job, request.shopRules ?? {}, imageAssets, precheckOpts);
       if (!precheck.pass && precheck.issues.length > 0) {
         precheckSignals = { precheckIssues: precheck.issues };
       }
+      if (visual) {
+        const { assetVisualAnalysisRepository } = await import('@/repositories');
+        // Upload analyses run on the worker. The last completion re-enters this
+        // gate; do not present a premature missing-analysis review to the shop.
+        const pending = await Promise.all(imageAssets.map(a => assetVisualAnalysisRepository.pending(a.id, visualConfig().version)));
+        if (pending.some(Boolean)) return;
+        const cached = await Promise.all(imageAssets.map(a => assetVisualAnalysisRepository.get(a.id, visualConfig().version)));
+        const analyses = new Map(cached.flatMap(a => a ? [[a.assetId, a] as const] : []));
+        const result = await runVisualPrecheck(JSON.parse(reviewJob.storyboard ?? '[]') as StoryboardScene[], imageAssets.map(a => a.id), analyses);
+        reviewJob = { ...reviewJob, storyboard: JSON.stringify(result.scenes), approvedStoryboard: null };
+        await videoGenerationJobRepository.update(job.id, { storyboard: reviewJob.storyboard, approvedStoryboard: null });
+        if (result.flags.length) precheckSignals = { ...precheckSignals, visualShotFlags: result.flags };
+      }
     } catch (err) {
       console.error('[onLineReviewGate] precheck error (non-fatal):', err);
-      precheckSignals = { precheckIssues: ['precheck_error'] };
+      precheckSignals = { precheckIssues: ['precheck_error'], ...(visualEnabled() ? { visualShotFlags: [{ sceneIndex: -1, assetId: '', rule: 'analysis_error', measuredValue: 0 }] } : {}) };
     }
   }
   // ---------------------------------------------------------------------------
@@ -96,7 +116,7 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
   await createReviewService().createItem({ typeKey, shopUserId: request.userId, requestId: request.id,
     jobId: job.id, gateStep: job.currentStep, packageOrderId: request.packageOrderId ?? undefined,
     title: typeKey + ' review', payload: { script: reviewJob.approvedScriptThai ?? reviewJob.scriptThai ?? '',
-      storyboard: reviewJob.approvedStoryboard ?? reviewJob.storyboard, audience: gateAudience(request, job.currentStep) },
+      storyboard: reviewJob.approvedStoryboard ?? reviewJob.storyboard, audience: precheckSignals.visualShotFlags ? 'admin' : gateAudience(request, job.currentStep) },
     assetRefs: asset ? [{ asset_id: asset.id, storage_key: asset.storageKey, mime: asset.mimeType, role: index === 1 ? 'voice' : 'preview' }] : [],
     signals: precheckSignals, typeCfg: { ...getDefaultTypeCfg(typeKey), alwaysReview: true },
     idempotencyKey: 'gate:' + job.id + ':' + job.currentStep + ':' + (asset?.id ?? request.revisionCount ?? 0) });

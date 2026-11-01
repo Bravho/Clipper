@@ -128,6 +128,7 @@ export function buildPrecheckPrompt(job: VideoGenerationJob): string {
 export async function callGeminiScoring(
   prompt: string,
   config: { model: string; maxOutputTokens: number },
+  contactSheet?: string,
 ): Promise<GeminiPrecheckResponse> {
   const inputTokenEstimate = Math.ceil(prompt.length / 2.5);
   console.log(
@@ -139,7 +140,7 @@ export async function callGeminiScoring(
   const ai = new GoogleGenAI({ apiKey });
   const result = await ai.models.generateContent({
     model: config.model,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: prompt }, ...(contactSheet ? [{ inlineData: { mimeType: 'image/jpeg', data: contactSheet } }] : [])] }],
     config: {
       responseMimeType: 'application/json',
       maxOutputTokens: config.maxOutputTokens,

@@ -403,6 +403,7 @@ export interface ScenePlan {
  * (0..1) steer Ken Burns / crop focus toward the subject.
  */
 export interface MontageSceneAsset {
+  visualCrop?: StoryboardScene['visualCrop'];
   assetIndex: number;
   kind: "image" | "clip";
   motion: MotionPreset;
@@ -437,6 +438,11 @@ export interface MontageSceneAsset {
  * timing yet — those are decided at Stage 3 against the measured voice length.
  */
 export interface StoryboardScene {
+  /** LINE visual-precheck plan parameters, in normalized source coordinates.
+   * Viewports outside [0,1] require padding. */
+  visualCrop?: { x: number; y: number; w: number; h: number; zoom: number; pad: boolean };
+  visualStartSeconds?: number;
+  heroShot?: boolean;
   sceneNumber: number;
   summary: string;
   assetIndexes: number[];

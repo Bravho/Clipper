@@ -257,3 +257,53 @@ Final validation: npx tsc --noEmit passed (exit 0); npx jest --runInBand passed,
 Local milestone and report commits are blocked by the session filesystem policy: .git is read-only, and git add failed creating .git/index.lock with Permission denied. No policy bypass or destructive Git action was attempted. Consequently git log --oneline 2e44f77..HEAD is empty and HEAD remains 2e44f77. All fixes remain reviewable as working-tree changes; no commit or push is claimed. Before any later commit, stage only specific intended source/test/doc paths and secret-scan git diff --cached; never stage offline logs or the owner's helper scripts.
 
 Operational limit: reminder_sent_at is reserved before HTTP to prevent overlapping sends. A process crash after reserving and before HTTP can leave an unsent reminder marked reserved; an operator must inspect/reset that item. As with any HTTP retry, a lost acknowledgement can cause a repeat after delivery; no exactly-once external delivery guarantee is claimed. The live-DB audit lists the remaining shared-table scope and does not promise complete isolation.
+
+## Round 5 (Nov 1 2026) - Visual storyboard pre-check
+
+Item (C) is implemented behind both STORYBOARD_AI_PRECHECK_ENABLED=true and STORYBOARD_VISUAL_PRECHECK_ENABLED=true (sub-flag defaults off). No dependencies, package manifests, model files or existing migrations changed. Studio paths and the existing text precheck path when the visual flag is off retain their behavior.
+
+- LINE submission registers uploaded assets and queues analysis by (asset UUID, analysis version). Only the render worker drains this queue. This is the earliest durable asset-ID boundary; no FFmpeg runs in the LINE webhook. Three low-resolution JPEGs per video, one per photo, use the existing AI_CONFIG.ffmpeg.path resolution and probeMediaSummary. Scene cuts use FFmpeg select='gt(scene,threshold)',showinfo parsing. Persisted results include usable duration, dimensions/rotation-corrected geometry, cut points, normalized source detections, confidence, post-center-9:16-crop center offsets/area ratios, sampled JPEGs and version.
+- ProductDetector is a local interface; shipped NoopProductDetector and MockProductDetector abstain by default. STORYBOARD_PRODUCT_DETECTOR defaults to noop; mock fixtures are injected only in tests. Nothing installs/downloads a detector. The Postgres repository is registered only in src/repositories/index.ts; a fresh Map-backed mock supports tests.
+- An atomic SKIP LOCKED claim and unique asset/version key prevent repeat work, including concurrent workers and duplicate enqueue. Failed work never replays. Abandoned claims expire to missing-analysis review after 900 seconds by default; late results cannot overwrite an expired claim. Version changes require explicit re-enqueue, rather than silently recomputing old evidence.
+- Rules check minimum product/hero/first/last holds, cut spacing, source-cut-free usable segments, product center, product area, clipping, missing analysis, ambiguous multi-asset shots and total duration. The longest storyboard scene becomes the hero if no explicit heroShot is set. Auto-fixes extend holds, select a cut-free source segment, swap to another usable confidently detected source, center/zoom the viewport, and zoom out/pad clipped products. The corrected plan is re-checked. Scene durations, crop/zoom/padding and source start are persisted and survive approval into montage assets; the LINE 9:16 Remotion path renders normalized viewports. Other export ratios retain their existing framing behavior.
+- With the visual sub-flag on, deterministic copy/music/duration validation is retained; unconditional text scoring/regeneration is replaced by the visual rules. High-confidence visual results make zero Gemini calls. Low-confidence/ambiguous results build one FFmpeg tile JPEG containing all used samples, <=384px, and make at most one Flash call through the existing Gemini scorer/client. No video is sent. Errors preserve review flags; ambiguous multi-asset plans require human review even if Flash passes.
+- Queued analyses defer the storyboard review. Worker completion (including failures/expired claims) re-enters the gate. Unfixable shots force audience=admin (Tho), with visualShotFlags containing sceneIndex, assetId, rule and measuredValue. The Grok Bot notifier allowlists rules, UUID identifiers and finite measurements and drops additional fields; it sends no sampled images, source keys, customer messages or detector-generated text in these fields.
+
+### Token estimate (offline)
+
+The estimate is printed by tests/services/review/StoryboardVisual.test.ts (test name contains 'estimate'); no tsx, ts-node or provider call is needed. Method: one <=384px contact sheet at an estimated 258 image tokens, prompt characters / 2.5 rounded up = 86 prompt tokens, configured max output = 512. Default estimated budget: **856 tokens per conditional visual call**. This is a planning estimate, not measured provider billing. It does not include the separate content-generation pipeline. The larger the plan, the smaller each tile; uncertain sheets remain reviewable.
+
+### Environment and migration
+
+New empty placeholders in .env.example (defaults below):
+
+| Name | Default |
+|---|---|
+| STORYBOARD_VISUAL_PRECHECK_ENABLED | off |
+| STORYBOARD_PRODUCT_DETECTOR | noop |
+| STORYBOARD_VISUAL_ANALYSIS_VERSION | 1 |
+| STORYBOARD_MIN_SHOT_SECONDS | 2.5 |
+| STORYBOARD_HERO_SHOT_SECONDS | 4 |
+| STORYBOARD_MIN_CUT_GAP_SECONDS | 2.5 |
+| STORYBOARD_FIRST_HOLD_SECONDS | 2.5 |
+| STORYBOARD_LAST_HOLD_SECONDS | 2.5 |
+| STORYBOARD_MAX_CENTER_OFFSET | 0.2 |
+| STORYBOARD_MIN_PRODUCT_AREA | 0.08 |
+| STORYBOARD_MAX_PRODUCT_AREA | 0.75 |
+| STORYBOARD_DETECTOR_MIN_CONFIDENCE | 0.7 |
+| STORYBOARD_SCENE_CUT_THRESHOLD | 0.3 |
+| STORYBOARD_VISUAL_MAX_SECONDS | 90 |
+| STORYBOARD_VISUAL_MAX_OUTPUT_TOKENS | 512 |
+| STORYBOARD_VISUAL_CLAIM_TIMEOUT_SECONDS | 900 |
+
+New migration: src/db/migrations/055_asset_visual_analyses.sql (054 is already occupied). Additive/idempotent, never applied here. Coordinate migration + worker rollout before enabling both flags. Stored JPEGs are private DB data. Existing Spaces-only seven-day cleanup does not purge these DB rows: include them in the owner's retention operation or remove the parent uploaded_assets rows (FK cascades). No cleanup was run. Sparse sampling cannot prove visibility in every intervening frame; the precheck is assistance before human approval.
+
+Detector proposal: VISUAL_PRECHECK_DETECTOR_PROPOSAL.md compares YOLOv8n/YOLO11n, YOLOX-nano, NanoDet, MediaPipe EfficientDet-Lite0/2 and RT-DETR, with package/artifact names, approximate sizes, license implications, estimated Windows x64/Apple Silicon CPU latency and exact adapter mapping. Recommend YOLOX-nano ONNX + onnxruntime-node for a separately authorized trial. No network research/download/benchmark was performed under the hard rules; individual weight provenance/licensing and measured performance remain rollout checks.
+
+### Verification and handoff
+
+All verification uses the existing, untouched scripts/offline-verification.cjs preload to block secret-file reads and network/database I/O. No dev server, real provider call, database connection, migration application, dependency installation or model download was run. Standalone npx tsc --noEmit passed (exit 0). Full npx jest --runInBand --no-coverage passed: **171 suites / 1,785 tests** (exit 0), including 37 new tests across four suites. Build result is recorded below after the final build completes. git diff --check passed.
+
+Final npm run build passed (exit 0), including compilation, 86 static pages and build traces. Next config skips internal type/lint checks; the standalone TypeScript check above passed. Logs: round5-tsc.log, round5-final-jest.log, round5-build.log (untracked verification artifacts).
+
+HEAD remains adc2af6. Per this round's explicit instruction, no git add/commit was attempted because .git is read-only. All changes are left in the working tree for MarBot. Suggested commit: feat(line-phase1): visual storyboard pre-check (detector interface, rules, auto-fix) behind STORYBOARD_VISUAL_PRECHECK_ENABLED. Do not stage offline/round5 logs or the owner's untracked scripts. No approval or permission bypass was attempted.
