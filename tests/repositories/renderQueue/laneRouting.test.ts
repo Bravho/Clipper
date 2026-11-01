@@ -3,7 +3,11 @@ import { PostgresRenderTaskRepository } from '@/repositories/postgres/PostgresRe
 import { RenderStep } from '@/domain/enums/RenderStep';
 import baseline from './fixtures/pre049.json';
 const task = { jobId: 'j', requestId: 'r', step: RenderStep.FfmpegComposition, renderLane: 'mac_mini' };
-afterEach(() => { delete process.env.RENDER_LANE_ENABLED; });
+afterEach(() => {
+  delete process.env.RENDER_LANE_ENABLED;
+  delete process.env.RENDER_MAIN_STALE_SECONDS;
+  delete process.env.RENDER_BACKUP_QUEUE_SECONDS;
+});
 test('disabled flag uses byte-for-byte original INSERT and claim SQL without migration 049', async () => {
   const query = jest.fn().mockResolvedValue({ rows: [{ id: 't' }] });
   const repo = new PostgresRenderTaskRepository({ query } as never);
@@ -13,7 +17,7 @@ test('disabled flag uses byte-for-byte original INSERT and claim SQL without mig
   expect(query.mock.calls[0][1]).toHaveLength(7);
   expect(query.mock.calls[1][1]).toHaveLength(4);
 });
-test('enabled LINE enqueue carries main lane and backup claims only on stale heartbeat or excessive wait', async () => {
+test('enabled LINE enqueue carries main lane and backup uses default 90s stale / 600s wait thresholds', async () => {
   process.env.RENDER_LANE_ENABLED = 'true';
   const query = jest.fn().mockResolvedValue({ rows: [{ id: 't' }] });
   const repo = new PostgresRenderTaskRepository({ query } as never);
@@ -26,6 +30,15 @@ test('enabled LINE enqueue carries main lane and backup claims only on stale hea
   expect(sql).toContain("lane = 'main'");
   expect(sql).toContain("OR enqueued_at < NOW()");
   expect(params.slice(4)).toEqual(['90','600']);
+});
+test('backup worker uses custom RENDER_MAIN_STALE_SECONDS and RENDER_BACKUP_QUEUE_SECONDS when set', async () => {
+  process.env.RENDER_LANE_ENABLED = 'true';
+  process.env.RENDER_MAIN_STALE_SECONDS = '120';
+  process.env.RENDER_BACKUP_QUEUE_SECONDS = '300';
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  await new PostgresRenderTaskRepository({ query } as never).claimNext('mar', 60, 'backup');
+  const params = query.mock.calls[0][1];
+  expect(params.slice(4)).toEqual(['120', '300']);
 });
 test('enabled main worker still claims studio and LINE jobs', async () => {
   process.env.RENDER_LANE_ENABLED = 'true';

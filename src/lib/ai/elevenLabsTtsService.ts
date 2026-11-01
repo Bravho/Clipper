@@ -102,15 +102,16 @@ export async function synthesizeAndStore(
   const storageKey = `voice_recordings/${params.userId}/${params.requestId}/elevenlabs_generated_${Date.now()}.mp3`;
   const bucket = process.env.DO_SPACES_BUCKET!;
 
+  const isPrivate = isPrivateLineStorage();
   await spacesClient.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: storageKey,
       Body: buffer,
       ContentType: "audio/mpeg",
-      // Unique timestamped key per generation — immutable, cache aggressively.
-      CacheControl: "public, max-age=31536000, immutable",
-      ACL: "public-read",
+      // Only cache-control public objects; private objects are served via signed URLs.
+      ...(isPrivate ? {} : { CacheControl: "public, max-age=31536000, immutable" }),
+      ACL: isPrivate ? "private" : "public-read",
     })
   );
 

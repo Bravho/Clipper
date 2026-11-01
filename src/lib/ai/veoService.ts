@@ -278,13 +278,14 @@ export async function downloadAndStore(
   const storageKey = buildAiVideoKey(userId, requestId);
   const bucket = process.env.DO_SPACES_BUCKET!;
 
+  const isPrivate = isPrivateLineStorage();
   await spacesClient.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: storageKey,
       Body: buffer,
       ContentType: "video/mp4",
-      ACL: "public-read",
+      ACL: isPrivate ? "private" : "public-read",
     })
   );
 
