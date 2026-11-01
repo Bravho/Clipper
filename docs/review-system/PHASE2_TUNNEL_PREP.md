@@ -215,7 +215,7 @@ Touch, complete and release only update the current mode's claimed state and mat
 
 **Prerequisites: migrations 054, 049, 057 and 058 must be applied before Phase 2.** 057 adds the test-state indices. Without its original explicit test-state conflict index PostgreSQL rejects enqueue; it does not silently insert duplicates. New enqueue requires 058's unique index across all four active states, preventing simultaneous production/test active rows for one job. The additive migration fails on existing duplicates; investigate before proceeding.
 
-`scripts/phase2-start.ps1` runs the read-only `check-phase2-schema.cjs` catalog check before starting a server or tunnel, and fails closed if either unique index is missing or invalid. This check has not been run during offline verification.
+`scripts/phase2-start.ps1` runs the read-only `check-phase2-schema.cjs` catalog check before starting a server or tunnel, and fails closed if either unique index is missing or invalid, its sole indexed key is not job_id, or its normalized predicate differs from the exact required active states (extra restrictions are rejected). This check has not been run during offline verification.
 
 **enqueue DO NOTHING preserves active tasks.** After an empty insert, a fresh SELECT reads the existing active row unchanged. If it completed meanwhile, enqueue retries up to three times and throws on exhaustion; it never updates an existing task to recover a conflict.
 
@@ -229,7 +229,7 @@ Touch, complete and release only update the current mode's claimed state and mat
 
 **review_outbox ? exact owner scope**
 
-Claims resolve persisted request ownership first, then package-order ownership, then the owning LINE account for account-only events. The resolved is_test must equal worker mode in both directions. Unknown ownership fails closed; payload is_test is not trusted. Delivery events now carry request_id.
+Claims resolve persisted request ownership (including storyboard version/job references) first, then package-order ownership, then the owning LINE account for account-only events. The resolved is_test must equal worker mode in both directions. Unknown ownership fails closed; payload is_test is not trusted. Delivery events now carry request_id.
 
 | SQL source | Tables | Mutation / isolation |
 |---|---|---|
@@ -254,7 +254,7 @@ Frame retention (`purgeOldFrameData`) remains a global maintenance operation, no
 The old deployed Mac Mini worker's claim paths:
 - `render_tasks`: `WHERE device_only = FALSE AND (state = 'queued' OR (state = 'claimed' AND ...stale...))` — **SAFE.** Test jobs use `test_queued`/`test_claimed`; invisible by construction.
 - `video_generation_jobs.claimNextQueuedRenderStep`: **NOT CALLED** by the old worker (it uses the `render_tasks` queue). No risk.
-- `asset_visual_analyses.claim()`: the visual analysis worker code was introduced in the same branch as this guard. If the old deployed Mac Mini doesn't have the visual analysis worker code at all, no claim is made. If it does, the guard was not present in the old code — but the old Mac Mini claiming test visual analyses only writes to `asset_visual_analyses` (no production data mutation) and is harmless; the test worker would then find the analysis already done.
+- `asset_visual_analyses.claim()`: the visual analysis worker code was introduced in the same branch as this guard. If the old deployed Mac Mini doesn't have the visual analysis worker code at all, no claim is made. If it does, the guard was not present in the old code — that deployment has no guaranteed isolation: it may claim test analyses, call providers, and perform follow-up work. Verify deployed code before permitting this phase; no harmlessness guarantee is made.
 - `render_worker_heartbeat`, `render_worker_samples`: shared telemetry tables, no production data risk.
 
 #### Management jobs ? unguarded; test publishing blocked operationally
@@ -281,7 +281,7 @@ Apply migrations **in this exact order** before the Phase 2 test run:
 
 **DELETE audit:** No SQL DELETE is invoked by the normal LINE intake/review/render progression. Shared adapters expose DELETE methods that are not called by that progression. The optional cleanup helper `src/services/line/cleanupLineAssets.ts:19` deletes storage objects (not DB rows) only with `execute=true`. Do not run cleanup for this audit.
 
-**Remaining limits:** Conversation states (`line_conversation_states`) and webhook leases (`line_webhook_events`) lack `is_test` — use a distinct test LINE channel and test shop identity. Reminder selection and admin review APIs can see earlier/production reviews; do not run the reminder script or use an unfiltered admin list against the live DB as a test. `clip_requests` and `video_generation_jobs` adapter methods (update/status) are scoped by ID, not by `is_test` predicate — they will only touch rows the test flow created. Management jobs are unguarded (see above).
+**Remaining limits:** Conversation states (`line_conversation_states`) and webhook leases (`line_webhook_events`) lack `is_test` — use a distinct test LINE channel and test shop identity. Reminder selection and admin review APIs can see earlier/production reviews; do not run the reminder script or use an unfiltered admin list against the live DB as a test. `clip_requests` and `video_generation_jobs` adapter methods (update/status) are scoped by ID, not by `is_test` predicate — the caller must supply test-owned IDs; these methods do not themselves guarantee test-only writes. Management jobs are unguarded (see above).
 
 Only Mar-PC may enable these test flags; never enable them on production `/root/rc2`. Keep `STRIPE_ALLOW_LIVE=false`. Apply migrations 048–058 before starting the test server.
 

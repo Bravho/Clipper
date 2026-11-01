@@ -60,3 +60,28 @@ test('schema preflight rejects extra restrictions and wrong keys using fake db o
     await expect(checkPhase2Schema({query:async()=>({rows:[rows[0],{...rows[1],...change}]})})).rejects.toThrow('prerequisite');
   }
 });
+test.each(['false', 'TRUE', '', 'true'])('real shops bypass payment only when PAYMENT_DISABLED is exactly true: %s', async disabled => {
+  process.env.LINE_TEST_MODE='false'; delete process.env.LINE_TEST_SHOP_ID;
+  process.env.PAYMENT_DISABLED=disabled;
+  const {service,packages}=intake(false,false);
+  const result=await service.choosePackage('shop','starter');
+  const input=packages.createOrder.mock.calls[0][0];
+  expect(input.isTest).toBe(false);
+  expect(input.activationReference).toBe(disabled==='true'?'payment_disabled':undefined);
+  expect(result.paymentUrl===null).toBe(disabled==='true');
+});
+test.each(['LINE_TEST_MODE','LINE_TEST_SHOP_ID'])('matching test account can receive free test order with %s',async key=>{
+  delete process.env.LINE_TEST_MODE; delete process.env.LINE_TEST_SHOP_ID;
+  process.env[key]=key==='LINE_TEST_MODE'?'true':'shop'; process.env.PAYMENT_DISABLED='false';
+  const {service,packages}=intake(true,true);
+  expect((await service.choosePackage('shop','starter')).paymentUrl).toBeNull();
+  expect(packages.createOrder.mock.calls[0][0]).toMatchObject({isTest:true,activationReference:'payment_disabled'});
+  expect(await service.isPaid('o','shop')).toBe(true);
+});
+test('storyboard render/voice owner is resolved through persisted version request, not payload scope',async()=>{
+  const query=jest.fn().mockResolvedValue({rows:[]});
+  await new PostgresReviewOutboxRepository({query} as never).claimNext();
+  const sql=query.mock.calls[0][0];
+  expect(sql).toContain("LEFT JOIN storyboard_versions sv ON sv.id::text=review_outbox.payload->>'version_id'");
+  expect(sql).toContain('sv.request_id::text, vj.request_id::text');
+});
