@@ -57,11 +57,12 @@ export async function analyseVisualMedia(assetId: string, input: string, photo: 
         ...(d ? cropMetrics(d.box, width, height) : { centerOffset: null, areaRatio: null }) };
     }) };
 }
-/** One <=384px JPEG total, not one image per shot; fixed cost estimate 258 tokens. */
-export async function visualContactSheet(frames: string[], run: VisualRunner = runVisualFfmpeg): Promise<string> {
-  if (!frames.length) throw new Error('visual_frames_missing');
-  const count = frames.length, columns = Math.ceil(Math.sqrt(count));
+/** One <=384px JPEG total, not one image per shot; fixed cost estimate 258 tokens. Null-data frames are skipped. */
+export async function visualContactSheet(frames: Array<string | null>, run: VisualRunner = runVisualFfmpeg): Promise<string> {
+  const valid = frames.filter((f): f is string => f !== null);
+  if (!valid.length) throw new Error('visual_frames_missing');
+  const count = valid.length, columns = Math.ceil(Math.sqrt(count));
   const rows = Math.ceil(count / columns), cell = Math.floor(384 / columns / 2) * 2;
-  const { stdout } = await run(['-f','image2pipe','-vcodec','mjpeg','-i','pipe:0','-vf',`scale=${cell}:${cell}:force_original_aspect_ratio=decrease,pad=${cell}:${cell}:(ow-iw)/2:(oh-ih)/2,tile=${columns}x${rows}:nb_frames=${count}`,'-frames:v','1','-f','image2pipe','-vcodec','mjpeg','pipe:1'], Buffer.concat(frames.map(f => Buffer.from(f,'base64'))));
+  const { stdout } = await run(['-f','image2pipe','-vcodec','mjpeg','-i','pipe:0','-vf',`scale=${cell}:${cell}:force_original_aspect_ratio=decrease,pad=${cell}:${cell}:(ow-iw)/2:(oh-ih)/2,tile=${columns}x${rows}:nb_frames=${count}`,'-frames:v','1','-f','image2pipe','-vcodec','mjpeg','pipe:1'], Buffer.concat(valid.map(f => Buffer.from(f,'base64'))));
   return stdout.toString('base64');
 }

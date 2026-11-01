@@ -1,7 +1,8 @@
 import { ListObjectsV2Command, DeleteObjectsCommand, S3Client } from '@aws-sdk/client-s3';
+import type { IAssetVisualAnalysisRepository } from '@/repositories/interfaces/IAssetVisualAnalysisRepository';
 export const LINE_UPLOAD_PREFIXES = ['request_mat/line/', 'line_uploads/'] as const;
 export async function cleanupLineAssets(client: Pick<S3Client, 'send'>, bucket: string,
-  options: { execute?: boolean; now?: Date } = {}) {
+  options: { execute?: boolean; now?: Date; analysisRepo?: IAssetVisualAnalysisRepository } = {}) {
   const cutoff = new Date((options.now ?? new Date()).getTime() - 7 * 86400000);
   const keys: string[] = [];
   for (const prefix of LINE_UPLOAD_PREFIXES) {
@@ -19,5 +20,8 @@ export async function cleanupLineAssets(client: Pick<S3Client, 'send'>, bucket: 
       await client.send(new DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: keys.slice(i, i + 1000).map(Key => ({ Key })) } }));
     }
   }
-  return { keys, dryRun: options.execute !== true, cutoff };
+  const { count: framesPurged } = options.analysisRepo
+    ? await options.analysisRepo.purgeOldFrameData(cutoff, options.execute === true)
+    : { count: 0 };
+  return { keys, dryRun: options.execute !== true, cutoff, framesPurged };
 }

@@ -79,4 +79,26 @@ export class PostgresAssetVisualAnalysisRepository implements IAssetVisualAnalys
       [id, version]
     );
   }
+
+  async purgeOldFrameData(cutoffDate: Date, execute: boolean): Promise<{ count: number }> {
+    // Only touches asset_visual_analyses rows (state='done', older than cutoff) that still have frame data.
+    // Detection and metrics inside each frame are preserved; only the base64 'data' key is stripped.
+    const hasData = `EXISTS (SELECT 1 FROM jsonb_array_elements(result->'frames') f WHERE f->>'data' IS NOT NULL)`;
+    const where = `state = 'done' AND created_at < $1 AND result IS NOT NULL AND ${hasData}`;
+    if (!execute) {
+      const { rows } = await this.db.query(
+        `SELECT COUNT(*)::int AS count FROM asset_visual_analyses WHERE ${where}`,
+        [cutoffDate]
+      );
+      return { count: rows[0]?.count ?? 0 };
+    }
+    const { rowCount } = await this.db.query(
+      `UPDATE asset_visual_analyses
+          SET result = jsonb_set(result, '{frames}',
+            (SELECT jsonb_agg(f - 'data') FROM jsonb_array_elements(result->'frames') AS f))
+        WHERE ${where}`,
+      [cutoffDate]
+    );
+    return { count: rowCount ?? 0 };
+  }
 }

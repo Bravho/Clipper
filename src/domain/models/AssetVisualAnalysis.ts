@@ -1,6 +1,6 @@
 export interface ProductDetection { box: { x: number; y: number; w: number; h: number }; confidence: number }
 export interface VisualFrame {
-  data: string;
+  data: string | null;
   time: number;
   detection: ProductDetection | null;
   centerOffset: number | null;

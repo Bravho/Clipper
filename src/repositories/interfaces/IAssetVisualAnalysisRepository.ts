@@ -7,4 +7,7 @@ export interface IAssetVisualAnalysisRepository {
   get(assetId: string, version: string): Promise<AssetVisualAnalysis | null>;
   save(value: AssetVisualAnalysis): Promise<void>;
   fail(assetId: string, version: string): Promise<void>;
+  /** Strip base64 frame image data from done rows older than cutoffDate. Detection/metrics are preserved.
+   *  Dry-run (execute=false) returns the count of rows that would be modified without changing anything. */
+  purgeOldFrameData(cutoffDate: Date, execute: boolean): Promise<{ count: number }>;
 }

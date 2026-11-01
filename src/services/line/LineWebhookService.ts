@@ -99,6 +99,10 @@ function packageChoiceMsg(particle: string, pkgName: string, paymentUrl: string)
   return `ยอดเยี่ยม${particle} คุณเลือก ${pkgName} 🎉\nกรุณาชำระเงินผ่านลิงก์นี้:\n${paymentUrl}\nหลังชำระเงินแล้วระบบจะอัปเดตอัตโนมัติ${particle}`;
 }
 
+function packageActivatedMsg(particle: string, pkgName: string): string {
+  return `แพ็กเกจ ${pkgName} เปิดใช้งานแล้ว${particle} 🎉\nกรุณาบอกรายละเอียดงานของคุณ${particle}`;
+}
+
 function briefPromptMsg(particle: string): string {
   return `การชำระเงินสำเร็จแล้ว${particle} 🎊\nกรุณาบอกรายละเอียดร้านค้าของคุณ:\n• ชื่อร้าน\n• สินค้า/บริการหลัก\n• กลุ่มลูกค้าเป้าหมาย\n• สไตล์วิดีโอที่ต้องการ`;
 }
@@ -150,7 +154,7 @@ export interface ProcessWebhookOptions {
   lineClient: ILineClient;
   lineAccountRepo: ILineAccountRepository;
   reviewMessages?: (lineUserId: string) => Promise<LineMessage[]>;
-  choosePackage?: (lineUserId: string, code: string) => Promise<{ orderId: string; paymentUrl: string }>;
+  choosePackage?: (lineUserId: string, code: string) => Promise<{ orderId: string; paymentUrl: string | null }>;
   isPaid?: (orderId: string, lineUserId: string) => Promise<boolean>;
   /** Optional: needed for media download. Only inject in the real route, not tests. */
   fetchMediaContent?: (messageId: string) => Promise<{ buffer: Buffer; contentType: string }>;
@@ -324,7 +328,7 @@ export async function processLineEvent(
     return { escalated: false, intent };
   }
 
-  // Package choice: reply with Stripe payment link
+  // Package choice: activate order immediately (bypass) or send Stripe payment link
   if (intent.startsWith('choose_package:') && state === 'awaiting_package_choice') {
     const pkgCode = intent.split(':')[1];
     const pkg = findPackageByCode(pkgCode);
@@ -333,12 +337,20 @@ export async function processLineEvent(
       context.orderId = checkout?.orderId;
       context['package_code'] = pkgCode;
       context['package_name'] = pkg.nameTh;
+      if (checkout?.paymentUrl == null) {
+        // bypass path: order already active — skip payment state, go straight to brief
+        await opts.lineAccountRepo.upsertConversationState(opts.lineChannelId, lineUserId, 'awaiting_brief', context);
+        if (replyToken) {
+          await opts.lineClient.reply(replyToken, [{ type: 'text', text: packageActivatedMsg(particle, pkg.nameTh) }]);
+        }
+        return { escalated: false, intent };
+      }
       await opts.lineAccountRepo.upsertConversationState(
         opts.lineChannelId, lineUserId, 'awaiting_payment', context
       );
       if (replyToken) {
         await opts.lineClient.reply(replyToken, [
-          { type: 'text', text: packageChoiceMsg(particle, pkg.nameTh, checkout?.paymentUrl ?? pkg.paymentLinkUrl) },
+          { type: 'text', text: packageChoiceMsg(particle, pkg.nameTh, checkout.paymentUrl) },
         ]);
       }
       return { escalated: false, intent };

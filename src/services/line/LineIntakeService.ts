@@ -46,14 +46,29 @@ export class LineIntakeService {
     return { orderId: order.id, clipsLeft: balance.clipsLeft };
   }
 
-  async choosePackage(lineUserId: string, code: string) {
+  async choosePackage(lineUserId: string, code: string): Promise<{ orderId: string; paymentUrl: string | null }> {
     const account = await this.ensureAccount(lineUserId);
     const pkg = findPackageByCode(code);
     if (!pkg) throw new Error('unknown_package');
+    const test = isTestRun(lineUserId);
+    const bypass = process.env.PAYMENT_DISABLED === 'true' || test;
+    if (bypass) {
+      // Idempotency: reuse an existing active order for the same package to prevent double-grant on retry.
+      const active = await this.packages.findActiveOrderByUser(account.userId);
+      if (active && active.packageCode === code) return { orderId: active.id, paymentUrl: null };
+      const order = await this.packages.createOrder({ userId: account.userId, packageCode: code,
+        clipsIncluded: pkg.clipsIncluded, revisionsPerClip: pkg.revisionsPerClip,
+        priceBaht: pkg.priceBaht, expiresAt: new Date(Date.now() + 30 * 86400000), isTest: test });
+      // Activate immediately; paidReference records bypass source.
+      // For non-test shops with PAYMENT_DISABLED=true the order has is_test=false;
+      // paidReference='payment_disabled' serves as the audit marker (no extra schema needed).
+      await this.packages.updateOrderStatus(order.id, 'active', 'payment_disabled');
+      return { orderId: order.id, paymentUrl: null };
+    }
     const order = await this.packages.createOrder({ userId: account.userId, packageCode: code,
       clipsIncluded: pkg.clipsIncluded, revisionsPerClip: pkg.revisionsPerClip,
       priceBaht: pkg.priceBaht, expiresAt: new Date(Date.now() + 30 * 86400000),
-      isTest: isTestRun(lineUserId) });
+      isTest: test });
     const url = new URL(pkg.paymentLinkUrl);
     url.searchParams.set('client_reference_id', order.id);
     return { orderId: order.id, paymentUrl: url.toString() };

@@ -250,6 +250,27 @@ Apply migrations **in this exact order** before the Phase 2 test run:
 
 Only Mar-PC may enable these test flags; never enable them on production `/root/rc2`. Keep `STRIPE_ALLOW_LIVE=false`. Apply migrations 048–057 before starting the test server.
 
+### 3f. Payment Bypass — `PAYMENT_DISABLED` flag
+
+To skip Stripe during Phase 2 testing, set `PAYMENT_DISABLED=true` in `.env.local`.
+
+**Behaviour per path:**
+
+| Path | `PAYMENT_DISABLED` | `LINE_TEST_MODE` / `LINE_TEST_SHOP_ID` | Result |
+|---|---|---|---|
+| Test shop (user matches test scope) | any | true | `choosePackage` creates a `package_orders` row with `status='active'`, `is_test=true`, `paidReference='payment_disabled'`. No Stripe link sent. Conversation moves straight to `awaiting_brief`. |
+| Real shop | `false` | false | Normal Stripe flow: `package_orders` row with `status='pending_payment'`; Stripe payment link sent. |
+| Real shop | `true` | false | Same INSERT as test path but `is_test=false`, `paidReference='payment_disabled'`. No Stripe link. Conversation goes straight to `awaiting_brief`. **Use only in controlled test environments — real shops get a free package.** |
+
+**Guarantees:**
+
+- **INSERT-only:** only the newly created `package_orders` row is updated (`pending_payment → active`). No existing rows are touched.
+- **Idempotency:** if `choosePackage` is retried (webhook re-delivery after a crash), `findActiveOrderByUser` finds the already-activated order and returns it without creating a second one.
+- **Stripe code is untouched:** the bypass is a conditional in `LineIntakeService.choosePackage`. All Stripe routes continue to function normally when `PAYMENT_DISABLED` is unset or `false`.
+- **Audit marker:** `package_orders.paidReference = 'payment_disabled'` (existing column, no schema change required) identifies bypass-activated orders.
+
+**Never set `PAYMENT_DISABLED=true` on production (`/root/rc2`).** Keep it in `.env.local` on Mar-PC only.
+
 ---
 
 ## 4. Storyboard Precheck Migrations (if used in Phase 2)
