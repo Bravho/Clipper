@@ -124,3 +124,101 @@ f4ab1b6  feat(line-phase1): 12h reminder job, per-shop takeover flag, migration 
 2. Confirm the default 90-second heartbeat-stale and 600-second queue-wait backup thresholds for the actual workers.
 3. Enable the flags only after the migration and worker rollout is coordinated. The render worker also drains review execution/notification outbox events.
 4. Provide `.git` write access in a follow-up session to finish the requested local milestone commits. No application deployment or live verification was attempted.
+
+---
+
+## Round 4 (Nov 1 2026)
+
+### Task A — Storyboard AI Pre-review (LINE jobs only, behind flag)
+
+New service `src/services/review/StoryboardPrecheckService.ts` with two stages:
+
+**Deterministic checks** (no network):
+- Menu names/prices — delegates to `ShopRulesEngine.applyShopRules()` over `scriptThai` and scene summaries; raises `menu_mismatch: <fields>` on any correction
+- Total duration — sums `roughDurationHint` across scenes; raises `duration_exceeded: Xs > 90s` when over 90 s
+- Asset index bounds — each `scene.assetIndexes[i]` must be < `assets.length`; raises `asset_not_found: scene N idx I`
+- Licensed music — `isLicensedMusic(selectedMusicTrack)`; raises `unlicensed_music: <track>`
+
+**Gemini Flash text-only scoring** (injectable for tests via `callGeminiFn` option):
+- Model: `STORYBOARD_AI_PRECHECK_MODEL` (default `gemini-2.5-flash`)
+- Max output tokens: `STORYBOARD_AI_PRECHECK_MAX_OUTPUT_TOKENS` (default 1024)
+- Response schema: `{ score: number, issues: string[], pass: boolean }` with `responseMimeType: 'application/json'`
+- Prompt: covers product coverage, hook strength, scene order, Thai typo check; pass threshold score ≥ 70
+
+**Retry / propagation logic:**
+- On first fail: calls injected `regenerateFn` once (in `lineReviewGate.ts` this calls `generateSpeakingScript` then `videoGenerationJobRepository.update()` directly to avoid a review-gate re-entry loop)
+- Module-level `precheckRetriedJobs = new Set<string>()` prevents infinite regeneration for the same job ID
+- If retry still fails (or no `regenerateFn`): issues collected in `PrecheckResult.issues`, forwarded to `review_items.signals.precheckIssues` and included in GrokBot webhook payload via new `GrokBotPayload.precheckIssues?: string[]` field
+- All errors caught — `precheck_error` issue appended; pipeline never blocked
+
+**Feature flag:**
+- `STORYBOARD_AI_PRECHECK_ENABLED=false` (default off); read at call-time via `process.env` (not cached at import) to allow test toggling
+
+**Token estimate** (`scripts/storyboard-precheck-estimate.ts`, no Gemini call):
+- Sample: 8-scene Thai storyboard, ~150-char script
+- Prompt chars: 2 128
+- Estimated input tokens: ~852 (chars ÷ 2.5 Thai-heavy heuristic)
+- Max output tokens: 1 024
+
+**New env vars (`.env.example`):**
+```
+STORYBOARD_AI_PRECHECK_ENABLED=false
+STORYBOARD_AI_PRECHECK_MODEL=gemini-2.5-flash
+STORYBOARD_AI_PRECHECK_MAX_OUTPUT_TOKENS=1024
+```
+
+**Tests** (`tests/services/review/StoryboardPrecheck.test.ts`, all mocked):
+- `deterministicCheck` — 5 cases: pass, asset_not_found, duration_exceeded, unlicensed_music, menu_mismatch
+- `parseGeminiResponse` — well-formed JSON, invalid JSON, missing fields
+- `runStoryboardPrecheck` flag off — returns pass without calling Gemini
+- `runStoryboardPrecheck` pass path — deterministic + AI both pass
+- `runStoryboardPrecheck` det-fail → regen → pass — regenerateFn called once, `retriedWithNewStoryboard=true`
+- `runStoryboardPrecheck` fail twice — issues propagated including AI issues from FAIL_RESPONSE
+- `runStoryboardPrecheck` Gemini error — catches throw, returns `precheck_error`
+- `buildPrecheckPrompt` — prompt contains script and storyboard JSON
+- `GrokBotNotifier` — `precheckIssues` forwarded from `item.signals` to webhook payload
+
+### Task B — Phase 2 cloudflared tunnel prep + safe DB env
+
+**Migration 054** (`src/db/migrations/054_is_test_flag.sql`):
+```sql
+ALTER TABLE line_accounts          ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE service_package_orders ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE clip_requests          ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE;
+```
+Apply after 053 in the same coordinated rollout window.
+
+**is_test wiring:**
+- `LineAccount.isTest?: boolean` (optional to preserve existing test fixtures)
+- `PackageOrder.isTest: boolean` (required — only created via LINE intake flow)
+- `ClipRequest.isTest?: boolean`
+- `IServicePackageRepository.createOrder` input: `isTest?: boolean`
+- Postgres repos: `rowToAccount / rowToOrder / rowToClipRequest` map `Boolean(row.is_test)` + INSERT params
+- Mock repos: `MockServicePackageRepository.createOrder` stores `isTest: input.isTest ?? false`
+- `LineIntakeService.isTestRun(lineUserId)` helper: returns true when `LINE_TEST_MODE=true` OR `LINE_TEST_SHOP_ID` matches; propagates to all three `create` calls
+
+**New env vars (`.env.example`):**
+```
+LINE_TEST_MODE=false
+LINE_TEST_SHOP_ID=
+```
+
+**New files:**
+- `docs/review-system/PHASE2_TUNNEL_PREP.md` — cloudflared quick-tunnel setup, LINE OA Manager webhook URL, Verify button expectations, migration apply order (048 → 054), feature flag table, Stripe test-mode requirements, DB audit table (every INSERT/UPDATE with file:line), optional separate-DB proposal
+- `scripts/check-line-test-env.cjs` — Node CJS preflight script; reads `process.env` only (never prints values); exits 0 on pass, 1 on fail; checks STRIPE_ALLOW_LIVE, sk_test_ prefix, LINE_TEST_MODE/SHOP_ID, all feature flags, LINE/REVIEW env vars, DB/Gemini keys
+
+**LINE webhook route:** `POST /api/line/webhook` → `src/app/api/line/webhook/route.ts`
+
+### Commits
+
+```text
+f93f09a  feat(line-phase1): storyboard AI pre-review behind STORYBOARD_AI_PRECHECK_ENABLED
+4102c8a  docs(line-phase2): cloudflared quick-tunnel prep and safe DB env proposal
+```
+
+### Verification
+
+- `npx tsc --noEmit`: passed (exit 0)
+- `npx jest --no-coverage`: 165 suites, 1729 tests, 0 failures (exit 0)
+- `npm run build`: passed (exit 0)
+- New migration: `054_is_test_flag.sql` — apply after 053
