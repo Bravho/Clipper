@@ -28,6 +28,8 @@ export interface GrokBotPayload {
   orderId: string | null;
   summaryTh: string;
   previewLinks: { role: string; url: string; mime: string }[];
+  /** Short Thai issue strings from the storyboard AI pre-review. Absent when all checks passed. No PII. */
+  precheckIssues?: string[];
   notifiedAt: string;
 }
 
@@ -86,6 +88,11 @@ export async function notifyGrokBot(
     })),
   );
 
+  const rawIssues = item.signals?.precheckIssues;
+  const precheckIssues = Array.isArray(rawIssues) && rawIssues.length > 0
+    ? (rawIssues as unknown[]).map(String)
+    : undefined;
+
   const payload: GrokBotPayload = {
     event: 'review_pending',
     itemId: item.id,
@@ -95,6 +102,7 @@ export async function notifyGrokBot(
     orderId: item.packageOrderId ?? null,
     summaryTh: buildSummaryTh(item),
     previewLinks,
+    ...(precheckIssues ? { precheckIssues } : {}),
     notifiedAt: new Date().toISOString(),
   };
 

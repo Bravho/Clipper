@@ -72,6 +72,14 @@ export const AI_CONFIG = {
      */
     fontFile: process.env.FFMPEG_FONT_FILE ?? "C:\\Windows\\Fonts\\tahoma.ttf",
   },
+  storyboardPrecheck: {
+    /** Master switch — LINE storyboard AI pre-review before the shop/Tho gate. */
+    enabled: process.env.STORYBOARD_AI_PRECHECK_ENABLED === 'true',
+    /** Gemini model for the text-only scoring call. */
+    model: (process.env.STORYBOARD_AI_PRECHECK_MODEL ?? 'gemini-2.5-flash').trim(),
+    /** Max output tokens for the scoring response (JSON ~100-300 tokens typical). */
+    maxOutputTokens: Number(process.env.STORYBOARD_AI_PRECHECK_MAX_OUTPUT_TOKENS ?? '1024'),
+  },
   social: {
     youtube: {
       clientId: process.env.YOUTUBE_CLIENT_ID ?? "",

@@ -1,17 +1,26 @@
 import { ClipRequest } from '@/domain/models/ClipRequest';
 import { VideoGenerationJob } from '@/domain/models/VideoGenerationJob';
-import { createReviewService, uploadedAssetRepository, reviewItemRepository } from '@/repositories';
+import { createReviewService, uploadedAssetRepository, reviewItemRepository, videoGenerationJobRepository } from '@/repositories';
 import { withReservedLineRevision } from '@/lib/line/revisionContext';
 import { getDefaultTypeCfg } from './ReviewService';
 import { createVoiceReviewMp4 } from '@/lib/line/voiceReviewPreview';
 import { isReviewSystemEnabled } from '@/config/reviewSystem';
+import { runStoryboardPrecheck, type GeminiPrecheckResponse, type StoryboardPrecheckOptions } from '@/services/review/StoryboardPrecheckService';
+import { AssetType, AssetUploadStatus } from '@/domain/enums/AssetType';
 
 export const LINE_REVIEW_GATES = ['awaiting_content_approval', 'awaiting_voice_approval', 'awaiting_overlay_approval'] as const;
 export function gateAudience(request: ClipRequest, step: string): 'shop' | 'admin' {
   return (step === LINE_REVIEW_GATES[0] && request.shopReviewPreferences?.storyboard) ||
     (step === LINE_REVIEW_GATES[1] && request.shopReviewPreferences?.voice) ? 'shop' : 'admin';
 }
-export async function onLineReviewGate(request: ClipRequest, job: VideoGenerationJob) {
+export interface LineReviewGateOpts {
+  /** Override Gemini scoring for tests (precheck only). */
+  callGeminiFn?: (prompt: string, cfg: { model: string; maxOutputTokens: number }) => Promise<GeminiPrecheckResponse>;
+  /** Override storyboard regeneration for tests (precheck only). */
+  regenerateFn?: () => Promise<{ storyboard: string | null; scriptThai: string | null } | null>;
+}
+
+export async function onLineReviewGate(request: ClipRequest, job: VideoGenerationJob, opts: LineReviewGateOpts = {}) {
   if (request.intakeChannel !== 'line' || !isReviewSystemEnabled() || !LINE_REVIEW_GATES.includes(job.currentStep as never)) return;
   const index = LINE_REVIEW_GATES.indexOf(job.currentStep as never);
   const typeKey = index === 0 ? 'script' : index === 1 ? 'tts' : 'video';
@@ -33,12 +42,57 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
     await createVoiceReviewMp4(asset.storageKey, destination);
     asset = { ...asset, storageKey: destination, mimeType: 'video/mp4' };
   }
+
+  // --- Storyboard AI pre-review (script gate only, LINE jobs, behind flag) ---
+  let precheckSignals: Record<string, unknown> = {};
+  if (typeKey === 'script') {
+    try {
+      const assets = await uploadedAssetRepository.findByRequestId(request.id);
+      const imageAssets = assets.filter(
+        (a) => (a.assetType === AssetType.Image || a.assetType === AssetType.Video) &&
+          a.uploadStatus === AssetUploadStatus.Uploaded,
+      );
+
+      const precheckOpts: StoryboardPrecheckOptions = {
+        callGeminiFn: opts.callGeminiFn,
+        regenerateFn: opts.regenerateFn ?? (async () => {
+          // Default regeneration: re-run content analysis via chatGptVisionService
+          const { generateSpeakingScript } = await import('@/lib/ai/chatGptVisionService');
+          const imageUrls = imageAssets.map((a) => a.storageUrl).filter(Boolean);
+          const output = await generateSpeakingScript({
+            imageUrls,
+            description: request.description ?? '',
+            targetAudience: request.targetAudience ?? '',
+            targetPlatforms: request.targetPlatforms ?? [],
+            preferredStyle: request.preferredStyle ?? '',
+            videoDurationSeconds: 90,
+          });
+          const newStoryboard = output.storyboard ? JSON.stringify(output.storyboard) : null;
+          // Persist regenerated storyboard directly (bypass _updateJob to avoid loop)
+          if (newStoryboard) {
+            await videoGenerationJobRepository.update(job.id, { storyboard: newStoryboard, scriptThai: output.scriptThai });
+          }
+          return { storyboard: newStoryboard, scriptThai: output.scriptThai };
+        }),
+      };
+
+      const precheck = await runStoryboardPrecheck(job, request.shopRules ?? {}, imageAssets, precheckOpts);
+      if (!precheck.pass && precheck.issues.length > 0) {
+        precheckSignals = { precheckIssues: precheck.issues };
+      }
+    } catch (err) {
+      console.error('[onLineReviewGate] precheck error (non-fatal):', err);
+      precheckSignals = { precheckIssues: ['precheck_error'] };
+    }
+  }
+  // ---------------------------------------------------------------------------
+
   await createReviewService().createItem({ typeKey, shopUserId: request.userId, requestId: request.id,
     jobId: job.id, gateStep: job.currentStep, packageOrderId: request.packageOrderId ?? undefined,
     title: typeKey + ' review', payload: { script: job.approvedScriptThai ?? job.scriptThai ?? '',
       storyboard: job.approvedStoryboard ?? job.storyboard, audience: gateAudience(request, job.currentStep) },
     assetRefs: asset ? [{ asset_id: asset.id, storage_key: asset.storageKey, mime: asset.mimeType, role: index === 1 ? 'voice' : 'preview' }] : [],
-    signals: {}, typeCfg: { ...getDefaultTypeCfg(typeKey), alwaysReview: true },
+    signals: precheckSignals, typeCfg: { ...getDefaultTypeCfg(typeKey), alwaysReview: true },
     idempotencyKey: 'gate:' + job.id + ':' + job.currentStep + ':' + (asset?.id ?? request.revisionCount ?? 0) });
 }
 
