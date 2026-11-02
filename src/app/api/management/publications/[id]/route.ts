@@ -38,6 +38,8 @@ function actionStatus(code: PublicationActionError["code"]): number {
       return 404;
     case "not_editable":
       return 409;
+    case "test_isolation":
+      return 403;
     case "provider_error":
     default:
       return 502;

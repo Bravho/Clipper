@@ -51,6 +51,11 @@ import {
 } from "@/domain/models/ManagementPublication";
 import { hasUsableMedia } from "@/domain/models/ManagementContent";
 import {
+  managementTestModeProcess,
+  managementTestScope,
+  type ManagementTestScope,
+} from "./managementTestIsolation";
+import {
   ManagementContentStatus,
   ManagementEntitlementType,
   ManagementJobKind,
@@ -91,6 +96,7 @@ export class PublicationValidationError extends Error {
       | "connection_not_connected"
       | "aspect_ratio_mismatch"
       | "invalid_schedule"
+      | "test_isolation"
   ) {
     super(message);
     this.name = "PublicationValidationError";
@@ -105,7 +111,7 @@ export class PublicationValidationError extends Error {
  */
 export class PublicationActionError extends Error {
   constructor(
-    readonly code: "not_found" | "not_editable" | "provider_error",
+    readonly code: "not_found" | "not_editable" | "provider_error" | "test_isolation",
     message: string
   ) {
     super(message);
@@ -145,8 +151,15 @@ export class ManagementPublicationService {
     private audit = managementAuditService,
     private signUrl = spacesSignedUrl,
     private publicUrl = spacesPublicUrl,
-    private bundles = managementUploadBundleRepository
+    private bundles = managementUploadBundleRepository,
+    private testScope: ManagementTestScope = managementTestScope
   ) {}
+
+  /** LINE test process, or a test-owned user/request: never reach the provider. */
+  private async refuseTestPublishing(userId: string, sourceGenerationId: string | null): Promise<boolean> {
+    if (managementTestModeProcess()) return true;
+    return this.testScope.isTestOwned(userId, sourceGenerationId);
+  }
 
   async create(
     user: { id: string; email?: string | null; role?: string | null },
@@ -179,6 +192,12 @@ export class ManagementPublicationService {
     }
     if (!hasUsableMedia(item)) {
       throw new PublishNotEntitledError("media_expired");
+    }
+    if (await this.refuseTestPublishing(user.id, item.sourceGenerationId)) {
+      throw new PublicationValidationError(
+        "Publishing is disabled for test data.",
+        "test_isolation"
+      );
     }
 
     const assets = await this.content.findAssets(item.id);
@@ -463,6 +482,9 @@ export class ManagementPublicationService {
       // Missing and foreign look identical — no probing for other users' ids.
       throw new PublicationActionError("not_found", "Post not found.");
     }
+    if (await this.refuseTestPublishing(user.id, null)) {
+      throw new PublicationActionError("test_isolation", "Publishing is disabled for test data.");
+    }
     const targets = await this.publications.findTargets(publicationId);
     const target = targets.find((t) => t.id === targetId);
     if (!target) throw new PublicationActionError("not_found", "Post not found.");
@@ -556,6 +578,9 @@ export class ManagementPublicationService {
     const pub = await this.publications.findById(publicationId);
     if (!pub || pub.userId !== user.id) {
       throw new PublicationActionError("not_found", "Post not found.");
+    }
+    if (await this.refuseTestPublishing(user.id, null)) {
+      throw new PublicationActionError("test_isolation", "Publishing is disabled for test data.");
     }
     const targets = await this.publications.findTargets(publicationId);
     const target = targets.find((t) => t.id === targetId);

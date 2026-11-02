@@ -6,6 +6,7 @@ import {
 } from "@/services/social-publishing";
 import { managementJobRepository } from "@/repositories";
 import { ManagementJobKind } from "@/domain/enums/ManagementStatus";
+import { ManagementTestIsolationError } from "@/services/management/managementTestIsolation";
 
 export const dynamic = "force-dynamic";
 
@@ -83,12 +84,16 @@ export async function POST(request: Request) {
         runAfter: new Date(),
       });
     } catch (err) {
-      console.error("[post-for-me webhook] failed to enqueue reconcile", err);
-      // Undo the dedupe row so a retry re-processes rather than being skipped.
-      await pool
-        .query("DELETE FROM management_webhook_events WHERE id = $1", [recordedId])
-        .catch(() => undefined);
-      return NextResponse.json({ error: "Temporary error." }, { status: 500 });
+      // Test isolation refusal is final, not temporary: acknowledge the event
+      // (keep the dedupe row) so the provider stops retrying.
+      if (!(err instanceof ManagementTestIsolationError)) {
+        console.error("[post-for-me webhook] failed to enqueue reconcile", err);
+        // Undo the dedupe row so a retry re-processes rather than being skipped.
+        await pool
+          .query("DELETE FROM management_webhook_events WHERE id = $1", [recordedId])
+          .catch(() => undefined);
+        return NextResponse.json({ error: "Temporary error." }, { status: 500 });
+      }
     }
   }
 

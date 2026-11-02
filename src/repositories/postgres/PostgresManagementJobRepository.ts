@@ -20,6 +20,12 @@ import {
   ManagementJobState,
 } from "@/domain/enums/ManagementStatus";
 import type { IManagementJobRepository } from "@/repositories/interfaces/IManagementPublicationRepositories";
+import {
+  ManagementTestIsolationError,
+  isTestOwnedJobPayload,
+  managementJobTestOwnerSql,
+  managementTestModeProcess,
+} from "@/services/management/managementTestIsolation";
 
 type Row = Record<string, unknown>;
 
@@ -47,6 +53,15 @@ export class PostgresManagementJobRepository implements IManagementJobRepository
   async enqueue(
     input: EnqueueManagementJobInput
   ): Promise<{ job: ManagementJob; created: boolean }> {
+    // Test isolation: the LINE test server never queues management work, and
+    // no process queues work owned by test data (LINE test shops / is_test
+    // requests). Throws instead of inserting so no worker can ever see it.
+    if (managementTestModeProcess()) {
+      throw new ManagementTestIsolationError("Management jobs are disabled while LINE_TEST_MODE is on.");
+    }
+    if (await isTestOwnedJobPayload(input.payload ?? {}, this.db)) {
+      throw new ManagementTestIsolationError("Management jobs are refused for test data.");
+    }
     const inserted = await this.db.query(
       `INSERT INTO management_jobs (kind, dedupe_key, payload, run_after, max_attempts)
        VALUES ($1,$2,$3::jsonb,$4,$5)
@@ -90,6 +105,8 @@ export class PostgresManagementJobRepository implements IManagementJobRepository
     now: Date,
     staleClaimMs: number
   ): Promise<ManagementJob | null> {
+    // The LINE test process never runs management work (it would publish).
+    if (managementTestModeProcess()) return null;
     const staleBefore = new Date(now.getTime() - staleClaimMs);
     // One statement: find a runnable row (queued-and-due, or claimed-but-stale),
     // lock it against other workers, and flip it to claimed. SKIP LOCKED means a
@@ -103,8 +120,9 @@ export class PostgresManagementJobRepository implements IManagementJobRepository
               updated_at = NOW()
         WHERE id = (
           SELECT id FROM management_jobs
-           WHERE (state = $4 AND run_after <= $3)
-              OR (state = $1 AND claimed_at < $5)
+           WHERE ((state = $4 AND run_after <= $3)
+              OR (state = $1 AND claimed_at < $5))
+             AND NOT ${managementJobTestOwnerSql("management_jobs")}
            ORDER BY run_after ASC
            FOR UPDATE SKIP LOCKED
            LIMIT 1

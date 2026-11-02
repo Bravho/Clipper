@@ -167,6 +167,7 @@ interface Overrides {
   createPost?: jest.Mock;
   /** Override the bundle repo's consume result (default: succeeds). */
   consume?: jest.Mock;
+  testScope?: { isTestOwned: jest.Mock };
 }
 
 function build(o: Overrides = {}) {
@@ -219,7 +220,8 @@ function build(o: Overrides = {}) {
     audit as never,
     signUrl as never,
     publicUrl as never,
-    bundles as never
+    bundles as never,
+    (o.testScope ?? { isTestOwned: jest.fn(async () => false) }) as never
   );
 
   return { service, content, connections, publications, jobs, entitlement, provider, audit, signUrl, publicUrl, bundles };
@@ -582,5 +584,47 @@ describe("scheduling", () => {
       CONTENT_ID,
       ManagementContentStatus.Scheduled
     );
+  });
+});
+
+describe("test isolation (LINE Phase 2 runs on the live DB)", () => {
+  afterEach(() => { delete process.env.LINE_TEST_MODE; });
+
+  it("refuses to publish test-owned content before any write or provider call", async () => {
+    const testScope = { isTestOwned: jest.fn(async () => true) };
+    const h = build({ testScope });
+    await expect(h.service.create(USER, req())).rejects.toMatchObject({
+      name: "PublicationValidationError",
+      code: "test_isolation",
+    });
+    expect(testScope.isTestOwned).toHaveBeenCalledWith(USER.id, expect.anything());
+    expect(h.publications.createWithTargets).not.toHaveBeenCalled();
+    expect(h.provider.createPost).not.toHaveBeenCalled();
+    expect(h.jobs.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses every publish while LINE_TEST_MODE is on, even for a real user", async () => {
+    process.env.LINE_TEST_MODE = "true";
+    const testScope = { isTestOwned: jest.fn(async () => false) };
+    const h = build({ testScope });
+    await expect(h.service.create(USER, req())).rejects.toMatchObject({ code: "test_isolation" });
+    expect(h.provider.createPost).not.toHaveBeenCalled();
+    expect(h.jobs.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("still publishes a real user's content outside test mode", async () => {
+    const h = build();
+    await h.service.create(USER, req());
+    expect(h.provider.createPost).toHaveBeenCalled();
+  });
+
+  it("refuses edit and cancel of a scheduled post in LINE_TEST_MODE", async () => {
+    process.env.LINE_TEST_MODE = "true";
+    const h = build();
+    (h.publications as unknown as { findById: jest.Mock }).findById = jest.fn(async () => ({ id: "p1", userId: USER.id }));
+    await expect(h.service.editScheduledTarget(USER, "p1", "t1", { caption: "x" } as never))
+      .rejects.toMatchObject({ code: "test_isolation" });
+    await expect(h.service.cancelScheduledTarget(USER, "p1", "t1"))
+      .rejects.toMatchObject({ code: "test_isolation" });
   });
 });
