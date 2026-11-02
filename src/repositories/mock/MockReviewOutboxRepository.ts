@@ -32,6 +32,19 @@ export class MockReviewOutboxRepository implements IReviewOutboxRepository {
     return [...this.store.values()].filter(e => e.state === 'sent' && e.sentAt && e.sentAt > since
       && e.payload.shopUserId === shopUserId && ['review.created','handoff.escalate'].includes(e.eventType)).length;
   }
+  private reservedShop = new Map<string, string>();
+  async reserveEscalationSlot(eventRowId: string, shopUserId: string, since: Date, limit: number): Promise<boolean> {
+    const own = this.store.get(eventRowId);
+    if (!own || own.state !== 'sending') return false;
+    const used = [...this.store.values()].filter(e => e.id !== eventRowId
+      && (e.state === 'sent' || e.state === 'sending') && e.sentAt && e.sentAt > since
+      && (e.payload.shopUserId === shopUserId || this.reservedShop.get(e.id) === shopUserId)
+      && ['review.created','handoff.escalate'].includes(e.eventType)).length;
+    if (used >= limit) return false;
+    this.reservedShop.set(eventRowId, shopUserId);
+    this.store.set(eventRowId, { ...own, sentAt: new Date() });
+    return true;
+  }
   async enqueue(input: {
     eventType: string;
     channel?: string;

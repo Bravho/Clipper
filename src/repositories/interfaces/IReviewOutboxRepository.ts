@@ -22,6 +22,14 @@ export interface IReviewOutboxRepository {
   findByDedupeKey(key: string): Promise<OutboxEvent | null>;
   listRecentReplies(accountId?: string, since?: Date): Promise<OutboxEvent[]>;
   countEscalations(shopUserId: string, since: Date): Promise<number>;
+  /**
+   * Atomically take one per-shop escalation slot for the claimed (sending) row
+   * `eventRowId`: TRUE when fewer than `limit` other escalations for the shop
+   * were sent or reserved since `since`, and stamps the row as reserved
+   * (sent_at). Serialised per shop with a transaction advisory lock, so several
+   * workers can never overshoot the cap.
+   */
+  reserveEscalationSlot(eventRowId: string, shopUserId: string, since: Date, limit: number): Promise<boolean>;
   enqueue(input: {
     eventType: string;
     channel?: string;

@@ -26,6 +26,9 @@ function rowToEvent(row: Record<string, unknown>): OutboxEvent {
   };
 }
 
+/** An escalation outbox row aliased `x` joined to its review item `i`. */
+const ESCALATION_ROW_SQL = `(x.event_type='handoff.escalate' OR (x.event_type='review.created' AND i.type_key IN ('customer_reply','complaint','out_of_package')))`;
+
 export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
   constructor(private db = pool, private notificationBudget?: (shopUserId: string) => Promise<boolean>) {}
 
@@ -49,8 +52,41 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
     return rows.map(row => ({ ...rowToEvent(row), payload: { ...parseJson<Record<string, unknown>>(row.payload, {}),
       ...(row.owner_shop_id ? { shopUserId: row.owner_shop_id } : {}) } }));
   }
+  async reserveEscalationSlot(eventRowId: string, shopUserId: string, since: Date, limit: number): Promise<boolean> {
+    // Lock and check must be separate statements: under READ COMMITTED each
+    // statement takes a fresh snapshot, so the UPDATE below sees every
+    // reservation committed by a worker that held the lock before us. (A
+    // single statement would read a snapshot taken before the lock was granted.)
+    const run = async (db: { query: (sql: string, values?: unknown[]) => Promise<{ rows: unknown[] }> }) => {
+      await db.query("SELECT pg_advisory_xact_lock(hashtext('line.escalation.cap'), hashtext($1::text))", [shopUserId]);
+      const { rows } = await db.query(`UPDATE review_outbox o SET sent_at = NOW()
+        WHERE o.id = $1 AND o.state = 'sending'
+          AND (SELECT count(*) FROM review_outbox x JOIN review_items i ON i.id = x.review_item_id
+                WHERE i.shop_user_id::text = $2 AND x.id <> o.id
+                  AND x.state IN ('sent','sending') AND x.sent_at > $3
+                  AND ${ESCALATION_ROW_SQL}) < $4
+        RETURNING o.id`, [eventRowId, shopUserId, since.toISOString(), limit]);
+      return rows.length > 0;
+    };
+    type Q = { query: (sql: string, values?: unknown[]) => Promise<{ rows: unknown[] }> };
+    const db = this.db as unknown as { connect?: () => Promise<Q & { release: () => void }>; release?: unknown };
+    if (typeof db.release === 'function' || typeof db.connect !== 'function') {
+      // Already a checked-out client (caller owns the transaction).
+      return run(this.db as never);
+    }
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const ok = await run(client as never);
+      await client.query('COMMIT');
+      return ok;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
   async countEscalations(shopUserId: string, since: Date): Promise<number> {
-    const { rows } = await this.db.query("SELECT count(*) AS count FROM review_outbox o JOIN review_items i ON i.id=o.review_item_id WHERE i.shop_user_id::text=$1 AND o.state='sent' AND o.sent_at>$2 AND (o.event_type='handoff.escalate' OR (o.event_type='review.created' AND i.type_key IN ('customer_reply','complaint','out_of_package')))", [shopUserId, since]);
+    const { rows } = await this.db.query(`SELECT count(*) AS count FROM review_outbox o JOIN review_items i ON i.id=o.review_item_id WHERE i.shop_user_id::text=$1 AND o.state='sent' AND o.sent_at>$2 AND ${ESCALATION_ROW_SQL.replace(/\bx\./g, 'o.')}`, [shopUserId, since]);
     return Number(rows[0].count);
   }
   async enqueue(input: {

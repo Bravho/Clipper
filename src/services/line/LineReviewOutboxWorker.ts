@@ -65,8 +65,10 @@ export async function processLineReviewOutbox(deps: {
         await deps.outbox.defer(event.id, new Date(Date.now()+60000));
         return;
       }
-      const limited = escalation && await deps.outbox.countEscalations(item.shopUserId, new Date(Date.now()-60000))
-        >= positiveLimit('LINE_HANDOFF_FORWARD_PER_SHOP_PER_MIN', 6);
+      // Atomic per-shop cap: reserve the slot before calling the webhook, so
+      // concurrent workers cannot both pass a count check.
+      const limited = escalation && !(await deps.outbox.reserveEscalationSlot(event.id, item.shopUserId,
+        new Date(Date.now()-60000), positiveLimit('LINE_HANDOFF_FORWARD_PER_SHOP_PER_MIN', 6)));
       if (limited) {
         await deps.outbox.defer(event.id, new Date(Date.now()+60000));
         return;
