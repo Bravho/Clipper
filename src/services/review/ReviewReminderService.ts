@@ -26,7 +26,9 @@ export async function runReviewReminders(
     try {
       claimed = await reviewItemRepo.claimReminder(item.id, now);
       if (!claimed) continue;
-      await notifyGrokBot(item, { ...grokBotOpts, event: 'reminder', throwOnFailure: true });
+      if (!await notifyGrokBot(item, { ...grokBotOpts, event: 'reminder', throwOnFailure: true })) {
+        throw new Error('notifier_not_delivered'); // release the claim; never count it as reminded
+      }
       reminded++;
     } catch (err) {
       if (claimed) await reviewItemRepo.update(item.id, { reminderSentAt: null, nextReminderAt: item.nextReminderAt, reminderCount: item.reminderCount }).catch(() => {});

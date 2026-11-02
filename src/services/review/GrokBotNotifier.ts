@@ -121,12 +121,17 @@ export async function defaultPost(
   return { ok: res.ok, status: res.status };
 }
 
+/**
+ * Returns TRUE only when the webhook answered 2xx. FALSE when the notifier is
+ * not configured (nothing was sent) or, without throwOnFailure, when delivery
+ * failed. Callers that record delivery (the outbox) must check it.
+ */
 export async function notifyGrokBot(
   item: NotifiableItem,
   opts: GrokBotNotifierOptions,
-): Promise<void> {
+): Promise<boolean> {
   const { url: webhookUrl, authHeaderValue, key: webhookKey, rawAuthHeader, envAuthHeader, configured } = resolveGrokBotWebhookAuth();
-  if (!configured) return;
+  if (!configured) return false;
 
   const escalation = opts.event === 'escalation' || item.typeKey === 'customer_reply';
   const previewLinks = escalation ? [] : await Promise.all(
@@ -199,9 +204,11 @@ export async function notifyGrokBot(
     if (!res.ok) {
       throw new Error(`GrokBot webhook returned ${res.status}`);
     }
+    return true;
   } catch (err) {
     const safe = redactSecrets(err, secretsToRedact);
     if (opts.throwOnFailure) throw safe;
     console.error('[GrokBotNotifier] failed to deliver webhook:', safe.message);
+    return false;
   }
 }

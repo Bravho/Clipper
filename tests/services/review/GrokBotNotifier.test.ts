@@ -129,7 +129,8 @@ test('does not throw when postFn returns non-ok status', async () => {
     signedUrl: jest.fn(async () => ''),
     postFn: jest.fn(async () => ({ ok: false, status: 503 })),
   };
-  await expect(notifyGrokBot(BASE_ITEM, opts)).resolves.toBeUndefined();
+  // Never throws without throwOnFailure, and reports that nothing was delivered.
+  await expect(notifyGrokBot(BASE_ITEM, opts)).resolves.toBe(false);
 });
 
 test('does not throw when postFn throws a network error', async () => {
@@ -137,7 +138,8 @@ test('does not throw when postFn throws a network error', async () => {
     signedUrl: jest.fn(async () => ''),
     postFn: jest.fn(async () => { throw new Error('ECONNREFUSED'); }),
   };
-  await expect(notifyGrokBot(BASE_ITEM, opts)).resolves.toBeUndefined();
+  // Never throws without throwOnFailure, and reports that nothing was delivered.
+  await expect(notifyGrokBot(BASE_ITEM, opts)).resolves.toBe(false);
 });
 
 test('uses correct Thai summary for different typeKeys', async () => {
@@ -341,4 +343,13 @@ test('original full env value (with label) is also redacted from errors', async 
   const logged = spy.mock.calls.flat().map(String).join(' ');
   expect(logged).not.toContain('secret-label-token');
   spy.mockRestore();
+});
+test('reports false (not delivered) when unconfigured, true only on a 2xx', async () => {
+  delete process.env.GROKBOT_REVIEW_WEBHOOK_URL;
+  const postFn = jest.fn(async () => ({ ok: true, status: 200 }));
+  await expect(notifyGrokBot(BASE_ITEM, { signedUrl: jest.fn(), postFn, throwOnFailure: true })).resolves.toBe(false);
+  expect(postFn).not.toHaveBeenCalled();
+  process.env.GROKBOT_REVIEW_WEBHOOK_URL = 'https://example.invalid/hook';
+  process.env.GROKBOT_REVIEW_WEBHOOK_KEY = 'k';
+  await expect(notifyGrokBot(BASE_ITEM, { signedUrl: jest.fn(async () => 'u'), postFn })).resolves.toBe(true);
 });
