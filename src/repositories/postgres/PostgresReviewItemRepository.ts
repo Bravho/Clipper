@@ -64,6 +64,24 @@ function rowToReviewItem(row: Record<string, unknown>): ReviewItem {
   };
 }
 
+/**
+ * review_items has no is_test column. An item is test data when its request,
+ * package order, or (for request-less items such as customer_reply) one of the
+ * shop's LINE accounts is is_test — the same owner order as the outbox claim.
+ * Items with no resolvable owner count as production.
+ */
+export const REVIEW_ITEM_IS_TEST_SQL = `COALESCE(
+  (SELECT cr.is_test FROM clip_requests cr WHERE cr.id = CASE
+     WHEN review_items.request_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     THEN review_items.request_id::uuid END),
+  (SELECT po.is_test FROM package_orders po WHERE po.id = review_items.package_order_id),
+  (SELECT bool_or(la.is_test) FROM line_accounts la WHERE la.user_id = review_items.shop_user_id),
+  FALSE)`;
+
+/** Production processes see only production items; LINE_TEST_MODE sees only test items. */
+const itemModeScope = (param: string) => `${REVIEW_ITEM_IS_TEST_SQL} = ${param}::boolean`;
+const testMode = () => process.env.LINE_TEST_MODE === 'true';
+
 export class PostgresReviewItemRepository implements IReviewItemRepository {
   constructor(private db = pool) {}
 
@@ -240,6 +258,9 @@ export class PostgresReviewItemRepository implements IReviewItemRepository {
       conditions.push(`type_key = $${idx++}`);
       values.push(filters.typeKey);
     }
+    // Test isolation: the admin list never mixes test and production rows.
+    conditions.push(itemModeScope(`$${idx++}`));
+    values.push(testMode());
 
     const limit = filters?.limit ?? 50;
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -255,8 +276,9 @@ export class PostgresReviewItemRepository implements IReviewItemRepository {
     const result = await this.db.query(
       `UPDATE review_items SET reminder_sent_at=$2, next_reminder_at=NULL,
          reminder_count=reminder_count+1, updated_at=NOW()
-       WHERE id=$1 AND status='pending' AND reminder_sent_at IS NULL AND expires_at > $2 RETURNING id`,
-      [id, now.toISOString()]);
+       WHERE id=$1 AND status='pending' AND reminder_sent_at IS NULL AND expires_at > $2
+         AND ${itemModeScope('$3')} RETURNING id`,
+      [id, now.toISOString(), testMode()]);
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -267,8 +289,9 @@ export class PostgresReviewItemRepository implements IReviewItemRepository {
           AND reminder_sent_at IS NULL
           AND expires_at > $1
           AND COALESCE(next_reminder_at, created_at + ($2 * interval '1 hour')) <= $1
+          AND ${itemModeScope('$3')}
         ORDER BY next_reminder_at ASC LIMIT 100`,
-      [now.toISOString(), Number(process.env.REVIEW_REMINDER_HOURS) > 0 ? Number(process.env.REVIEW_REMINDER_HOURS) : 12]
+      [now.toISOString(), Number(process.env.REVIEW_REMINDER_HOURS) > 0 ? Number(process.env.REVIEW_REMINDER_HOURS) : 12, testMode()]
     );
     return rows.map(rowToReviewItem);
   }
