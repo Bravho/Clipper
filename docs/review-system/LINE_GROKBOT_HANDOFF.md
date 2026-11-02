@@ -31,7 +31,7 @@ For `unknown` text that is not consumed by the current conversation state (brief
 
 `wants_human` does the same but replies `escalateMsg` first and sets `signals.wants_human = true`.
 
-The review item enqueues a `review.created` outbox row; the worker (`LineReviewOutboxWorker`) calls `notifyGrokBot(item, { event: 'escalation' })`. In the 2026-11-01 test both "unknown" texts produced `review_items` rows (`customer_reply`, pending) and `review.created` outbox rows marked **sent** — but because `GROKBOT_REVIEW_WEBHOOK_URL` is unset, `notifyGrokBot` returns without sending anything and the outbox still marks the event sent. **Those escalations are not re-sent later when the URL is configured.**
+The review item enqueues a `review.created` outbox row; the worker (`LineReviewOutboxWorker`) calls `notifyGrokBot(item, { event: 'escalation' })`. In the 2026-11-01 test both "unknown" texts produced `review_items` rows (`customer_reply`, pending) and `review.created` outbox rows marked **sent** — but because `GROKBOT_REVIEW_WEBHOOK_URL` is unset, `notifyGrokBot` returns without sending anything and the outbox still marks the event sent. **Those escalations are not re-sent later when the URL is configured.** FIXED 2026-11-02 (033fda4): `notifyGrokBot` now returns whether it delivered; every notifier event (`review.created`, `handoff.escalate`, `takeover_on`) stays `queued` while the notifier is unconfigured; LINE pushes with no in-scope active recipient (or a missing item) end `dead` with `last_error='no_recipient'` instead of `sent`; each push recipient gets its own `X-Line-Retry-Key`. Rows already wrongly marked sent before the fix are NOT re-queued automatically (Tho's decision).
 
 ### 1.2 Admin API (all exist today)
 Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` (exact prefix `Bearer `, timing-safe compare). `503 {"error":"Not configured."}` when `REVIEW_ADMIN_TOKEN` is unset; `401 {"error":"Unauthorized."}` on a wrong/missing token. Base URL during the test = `REVIEW_PUBLIC_ORIGIN` (the trycloudflare origin).
@@ -82,7 +82,7 @@ Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` 
   "notifiedAt": "ISO timestamp"
 }
 ```
-- **Escalation notice IMPLEMENTED:** customer-reply notices use only the allowlisted fields shown in section 3.3. Per-shop delivery cap is counted from sent escalation outbox rows over the preceding 60 seconds (default 6, `LINE_HANDOFF_FORWARD_PER_SHOP_PER_MIN`). At the cap, the worker defers the row for 60 seconds without calling the webhook. The review item remains stored. No customer text, reason, LINE identity, audience, signals, or asset links are forwarded.
+- **Escalation notice IMPLEMENTED:** customer-reply notices use only the allowlisted fields shown in section 3.3. Per-shop delivery cap counts sent **or reserved** escalation outbox rows over the preceding 60 seconds (default 6, `LINE_HANDOFF_FORWARD_PER_SHOP_PER_MIN`). Since 2026-11-02 (a933825) the slot is reserved atomically before the webhook call: `reserveEscalationSlot` takes a per-shop `pg_advisory_xact_lock` and then one guarded `UPDATE` stamps `sent_at` on the claimed row only while under the cap, so several workers cannot overshoot. At the cap, the worker defers the row for 60 seconds without calling the webhook. The review item remains stored. No customer text, reason, LINE identity, audience, signals, or asset links are forwarded.
 - Which event when: `review.created` → `escalation` for `customer_reply`/`complaint`/`out_of_package`, else `review_needed`; reminder sweep → `reminder`; takeover on → `takeover_on` (generic, no identity).
 - **No PII by design: the customer's text and LINE user id are NOT in the payload.** A bot must call `GET /api/admin/review` to read `payload.text`.
 
@@ -92,7 +92,7 @@ Auth for every admin route: header `Authorization: Bearer <REVIEW_ADMIN_TOKEN>` 
 
 ## 2. Gaps found
 1. The notifier never carries customer text (intentional), so RCaveBot needs a fetch endpoint scoped to one item (listing all pending items with full PII is too broad for a customer bot).
-2. With the URL unset, `review.created` events are marked sent without delivery (no backfill).
+2. ~~With the URL unset, `review.created` events are marked sent without delivery (no backfill).~~ Fixed 2026-11-02; rows marked before the fix stay `sent`.
 3. There is no free-text push endpoint without a review item, and no rate limit on outbound pushes.
 4. "ติดต่อ" is not recognised; `confirm` matches the substring `ok` anywhere.
 5. Takeover currently silences the bot entirely, and nothing tells RCaveBot that a human took over.
@@ -241,5 +241,5 @@ No migration is required by this implementation. Escalation limits count sent re
 1. Add `ติดต่อ` to `wants_human`; tighten `confirm` to whole-word `ok`.
 2. Add a `customer.message` outbox event, the notifier variant for `GROKBOT_CUSTOMER_WEBHOOK_URL`, and coalescing.
 3. Add `GET /api/admin/line/handoff/{itemId}`, `POST /api/admin/line/reply` and `POST …/escalate`, with rate limiting (a counter table or outbox counts), plus tests.
-4. Fix the "marked sent while the URL is unset" behaviour: skip and leave pending, or mark `skipped` so that a backfill is possible.
+4. DONE 2026-11-02: unconfigured notifier leaves rows queued (see §1.1).
 5. Optional: a dedicated `RCAVEBOT_ADMIN_TOKEN` with reply/escalate scope only.
