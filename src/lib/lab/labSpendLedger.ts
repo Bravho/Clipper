@@ -18,6 +18,7 @@
  */
 
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 export const LAB_LEDGER_PER_RUN_CAP = 350;
@@ -96,43 +97,77 @@ export interface LabLock {
 export const noLabLock: LabLock = { acquire: async () => async () => undefined };
 
 export interface FileLockOptions {
-  /** A lock older than this is treated as left by a crashed runner. */
-  staleMs?: number;
   /** Give up waiting after this long (fail closed). */
   timeoutMs?: number;
   retryMs?: number;
 }
 
-/** Lock file created with O_EXCL ('wx'): the create either wins or fails. */
+/**
+ * Lock file created with O_EXCL ('wx'), holding a random owner token.
+ *
+ * Safety rules:
+ *  - Nothing is evicted because time passed. A slow live owner is never
+ *    removed. If a lock is left by a crash, acquire fails closed and the lock
+ *    is reported by inspectFileLock for a person to clear.
+ *  - Release removes the file only when its token is still ours, so an old
+ *    owner can never remove a replacement lock.
+ *  - If the lock file cannot be written after it was created, it is removed
+ *    (we created it, so we own it) and the acquire fails.
+ */
 export function createFileLock(lockPath: string, options: FileLockOptions = {}): LabLock {
-  const staleMs = options.staleMs ?? 5 * 60_000;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const retryMs = options.retryMs ?? 25;
   return {
     async acquire() {
       const deadline = Date.now() + timeoutMs;
+      const token = randomUUID();
       for (;;) {
+        let created = false;
         try {
           const handle = await fs.open(lockPath, "wx");
-          await handle.writeFile(JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
-          await handle.close();
+          created = true;
+          try {
+            await handle.writeFile(JSON.stringify({ token, pid: process.pid, at: new Date().toISOString() }));
+          } finally {
+            await handle.close();
+          }
           return async () => {
+            const current = await fs.readFile(lockPath, "utf8").catch(() => null);
+            if (current === null) return;
+            try {
+              if (JSON.parse(current).token !== token) return; // not ours: leave it alone
+            } catch {
+              return; // unreadable: not provably ours, leave it
+            }
             await fs.unlink(lockPath).catch(() => undefined);
           };
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-          const stat = await fs.stat(lockPath).catch(() => null);
-          if (stat && Date.now() - stat.mtimeMs > staleMs) {
-            // Left behind by a crash: remove it and try again.
+          if (created) {
+            // The file is ours but could not be written: remove our own partial lock.
             await fs.unlink(lockPath).catch(() => undefined);
-            continue;
+            throw error;
           }
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
           if (Date.now() >= deadline) throw new Error("lab_ledger_lock_timeout");
           await new Promise((r) => setTimeout(r, retryMs));
         }
       }
     },
   };
+}
+
+/** Read-only: is a lock file present, and who wrote it? For a person to check before clearing it. */
+export async function inspectFileLock(lockPath: string): Promise<
+  { held: false } | { held: true; pid: number | null; at: string | null; readable: boolean }
+> {
+  const raw = await fs.readFile(lockPath, "utf8").catch(() => null);
+  if (raw === null) return { held: false };
+  try {
+    const parsed = JSON.parse(raw) as { pid?: number; at?: string };
+    return { held: true, pid: parsed.pid ?? null, at: parsed.at ?? null, readable: true };
+  } catch {
+    return { held: true, pid: null, at: null, readable: false };
+  }
 }
 
 export class LabSpendLedger {
@@ -277,5 +312,29 @@ export function createFileLedgerStorage(filePath: string): LabLedgerStorage {
       await fs.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
       await fs.rename(tmp, filePath);
     },
+  };
+}
+
+/**
+ * Read-only report of reservations that were never settled or released. These
+ * are money that may or may not have been spent. Nothing is changed here.
+ */
+export async function unresolvedReservations(storage: LabLedgerStorage): Promise<{
+  count: number;
+  totalCredits: number;
+  runs: LabReservation[];
+} | null> {
+  let raw: unknown;
+  try {
+    raw = await storage.read();
+  } catch {
+    return null;
+  }
+  if (raw === null || raw === undefined) return { count: 0, totalCredits: 0, runs: [] };
+  if (!isState(raw)) return null;
+  return {
+    count: raw.reservations.length,
+    totalCredits: raw.reservations.reduce((sum, r) => sum + r.credits, 0),
+    runs: raw.reservations,
   };
 }

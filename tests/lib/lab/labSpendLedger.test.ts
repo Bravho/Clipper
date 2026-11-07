@@ -296,7 +296,7 @@ describe("restart persistence (file storage)", () => {
 });
 
 // ── interprocess lock, fail-closed contention, rollover keeps reservations ───
-import { createFileLock, noLabLock, LAB_LEDGER_TIME_ZONE } from "@/lib/lab/labSpendLedger";
+import { createFileLock, inspectFileLock, noLabLock, LAB_LEDGER_TIME_ZONE } from "@/lib/lab/labSpendLedger";
 
 describe("interprocess lock: separate ledger objects cannot overspend", () => {
   let dir: string;
@@ -332,16 +332,35 @@ describe("interprocess lock: separate ledger objects cannot overspend", () => {
     await expect(fsp.access(path.join(dir, "ledger.json"))).rejects.toThrow();
   });
 
-  it("removes a stale lock left by a crashed runner and proceeds", async () => {
+  it("never evicts an old lock: an aged lock file makes the run fail closed and is left in place", async () => {
     const lockPath = path.join(dir, "ledger.lock");
-    await fsp.writeFile(lockPath, "{}", "utf8");
+    await fsp.writeFile(lockPath, JSON.stringify({ token: "crashed", pid: 1, at: "x" }), "utf8");
     const old = new Date(Date.now() - 10 * 60_000);
     await fsp.utimes(lockPath, old, old);
-    const lock = createFileLock(lockPath, { staleMs: 5 * 60_000, timeoutMs: 1000, retryMs: 5 });
+    const lock = createFileLock(lockPath, { timeoutMs: 60, retryMs: 5 });
     const ledger = new LabSpendLedger(createFileLedgerStorage(path.join(dir, "ledger.json")), () => MORNING, LAB_LEDGER_TIME_ZONE, lock);
-    expect(await ledger.reserve("a", 100)).toEqual({ ok: true });
-    // The lock is released afterwards.
-    await expect(fsp.access(lockPath)).rejects.toThrow();
+    expect(await ledger.reserve("a", 100)).toEqual({ ok: false, reason: "ledger_unreadable" });
+    // The old lock is still there for a person to inspect.
+    expect(await inspectFileLock(lockPath)).toMatchObject({ held: true, readable: true });
+  });
+
+  it("an old owner's release never removes a replacement lock with a different token", async () => {
+    const lockPath = path.join(dir, "ledger.lock");
+    const lock = createFileLock(lockPath, { timeoutMs: 500, retryMs: 5 });
+    const unlock = await lock.acquire();
+    // Someone else's lock appears while ours is held (simulated replacement).
+    await fsp.writeFile(lockPath, JSON.stringify({ token: "someone-else", pid: 2, at: "y" }), "utf8");
+    await unlock();
+    expect(JSON.parse(await fsp.readFile(lockPath, "utf8")).token).toBe("someone-else");
+  });
+
+  it("a lock file it cannot read is not removed on release", async () => {
+    const lockPath = path.join(dir, "ledger.lock");
+    const lock = createFileLock(lockPath, { timeoutMs: 500, retryMs: 5 });
+    const unlock = await lock.acquire();
+    await fsp.writeFile(lockPath, "not json", "utf8");
+    await unlock();
+    expect(await fsp.readFile(lockPath, "utf8")).toBe("not json");
   });
 
   it("releases the lock even when a write fails", async () => {
