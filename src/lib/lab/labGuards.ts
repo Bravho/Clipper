@@ -6,3 +6,15 @@
  * changing this one.
  */
 export const LAB_PROVIDER_EXECUTION_ENABLED = false;
+
+/**
+ * Live kill switch. `isStopped()` is read before every new action and inside
+ * every wait. Production answers from a poller that asks the server gate; the
+ * server gates stay authoritative for each request.
+ */
+export interface LabLiveGuard {
+  isStopped(): boolean;
+}
+
+/** A guard that never stops. Used only where the caller supplies the real one. */
+export const neverStopped: LabLiveGuard = { isStopped: () => false };

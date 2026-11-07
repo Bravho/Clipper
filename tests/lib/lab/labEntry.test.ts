@@ -1,6 +1,7 @@
 import { LabSpendLedger, type LabLedgerState } from "@/lib/lab/labSpendLedger";
 import { runLabEntry, type LabEntryInput } from "@/lib/lab/labEntry";
-import type { LabIo, LabClientOptions } from "@/lib/lab/labClient";
+import type { LabIo } from "@/lib/lab/labClient";
+import { neverStopped, type LabLiveGuard } from "@/lib/lab/labGuards";
 import type { DeviceFileOps } from "@/lib/lab/labRuntime";
 import { LAB_PROVIDER_EXECUTION_ENABLED } from "@/lib/lab/labGuards";
 
@@ -72,7 +73,8 @@ function input(over: Partial<LabEntryInput> & { st?: ReturnType<typeof store> } 
     },
     ledger: new LabSpendLedger(st, () => MORNING),
     io: base.io,
-    clientOptions: { testPlace: PLACE, waitMaxAttempts: 3, waitIntervalMs: 1, sleep: async () => undefined } as LabClientOptions,
+    guard: neverStopped,
+    clientOptions: { testPlace: PLACE, waitMaxAttempts: 3, waitIntervalMs: 1, sleep: async () => undefined },
     fileNames: ["a.mp4"],
     newRunId: () => "run-1",
     ...over,
@@ -143,13 +145,35 @@ describe("runLabEntry: marker before the first server write", () => {
 });
 
 describe("runLabEntry: outcomes", () => {
-  it("no test place: the draft is refused before any io call; the marker stays, so the reservation is kept", async () => {
+  it("no test place: refused before any reservation or marker (ledger untouched)", async () => {
+    const st = store();
     const m = makeIo();
-    const r = await runLabEntry(
-      input({ io: m.io, clientOptions: { testPlace: null, waitMaxAttempts: 3, waitIntervalMs: 1 } as LabClientOptions })
-    );
-    expect(r).toMatchObject({ ledger: "kept_reserved", spendAttempted: true });
-    expect(m.calls).not.toContain("createDraft");
+    const r = await runLabEntry(input({ io: m.io, st, clientOptions: { testPlace: null, waitMaxAttempts: 3, waitIntervalMs: 1 } }));
+    expect(r).toEqual({ status: "refused", reason: "no_test_place" });
+    expect(st.writes).toBe(0);
+    expect(m.calls).toEqual([]);
+  });
+
+  it.each([
+    ["empty name", { placeName: "  ", latitude: 13, longitude: 100 }, "test_place_name_invalid"],
+    ["latitude out of range", { placeName: "x", latitude: 91, longitude: 100 }, "test_place_latitude_invalid"],
+    ["longitude NaN", { placeName: "x", latitude: 13, longitude: Number.NaN }, "test_place_longitude_invalid"],
+  ])("invalid test place (%s): refused before any reservation", async (_n, place, reason) => {
+    const st = store();
+    const m = makeIo();
+    const r = await runLabEntry(input({ io: m.io, st, clientOptions: { testPlace: place, waitMaxAttempts: 3, waitIntervalMs: 1 } }));
+    expect(r).toEqual({ status: "refused", reason });
+    expect(st.writes).toBe(0);
+    expect(m.calls).toEqual([]);
+  });
+
+  it("kill switch already on before the run: refused, nothing written, nothing called", async () => {
+    const st = store();
+    const m = makeIo();
+    const stopped: LabLiveGuard = { isStopped: () => true };
+    expect(await runLabEntry(input({ io: m.io, st, guard: stopped }))).toEqual({ status: "refused", reason: "stopped" });
+    expect(st.writes).toBe(0);
+    expect(m.calls).toEqual([]);
   });
 
   it("content never ready: the wait is bounded (three tries) and the reservation is kept", async () => {
@@ -183,5 +207,53 @@ describe("runLabEntry: outcomes", () => {
     expect(r).toMatchObject({ status: "ended", ledger: "settled", spendAttempted: true });
     expect(deleted).toEqual(["m:mat-1", "o:out-1"]);
     expect(m.calls.indexOf("submit")).toBeGreaterThan(m.calls.indexOf("createDraft"));
+  });
+});
+
+describe("runLabEntry: the live kill switch stops new work", () => {
+  it("switched on during the content wait: no approval is sent, the marker stays, the reservation is kept", async () => {
+    let stopped = false;
+    const guard: LabLiveGuard = { isStopped: () => stopped };
+    const m = makeIo({
+      content: jest.fn(async () => {
+        stopped = true; // the kill switch flips while we wait
+        return null;
+      }),
+    });
+    const r = await runLabEntry(input({ io: m.io, guard }));
+    expect(r).toMatchObject({ ledger: "kept_reserved", spendAttempted: true });
+    expect(m.calls).toContain("createDraft");
+    expect(m.calls).not.toContain("approveContent");
+    expect(m.calls).not.toContain("approveVoice");
+  });
+
+  it("switched on during the voice wait: no voice approval is sent", async () => {
+    let stopped = false;
+    const guard: LabLiveGuard = { isStopped: () => stopped };
+    const m = makeIo({
+      content: jest.fn(async () => {
+        stopped = true;
+        return { jobId: "job-1", scenes: [{ summary: "s", sourceIndexes: [0], durationSeconds: 5 }], script: { text: "t", english: "t", caption: "c", captionEnglish: "c", captionChinese: "c" }, voiceId: "v", voiceReady: false, platforms: ["tiktok"], sourceKinds: ["clip"] };
+      }),
+    });
+    const r = await runLabEntry(input({ io: m.io, guard }));
+    expect(r).toMatchObject({ ledger: "kept_reserved" });
+    expect(m.calls).toContain("approveContent");
+    expect(m.calls).not.toContain("approveVoice");
+    expect(m.calls).not.toContain("approveProduction");
+  });
+
+  it("switched on between steps: the next step is not started", async () => {
+    let stopped = false;
+    const guard: LabLiveGuard = { isStopped: () => stopped };
+    const m = makeIo({
+      submit: jest.fn(async () => {
+        stopped = true; // stop right after the submit was sent
+      }),
+    });
+    const r = await runLabEntry(input({ io: m.io, guard }));
+    expect(r).toMatchObject({ ledger: "kept_reserved", spendAttempted: true });
+    expect((m.mock.submit as jest.Mock).mock.calls.length).toBe(1);
+    expect(m.calls).not.toContain("approveContent");
   });
 });

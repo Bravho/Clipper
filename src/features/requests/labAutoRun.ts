@@ -104,6 +104,12 @@ export function labCapRefusal(state: LabCapState): string | null {
 }
 
 export interface LabRunDeps {
+  /**
+   * Live kill switch, checked before EVERY new action (and by the waits). Returns
+   * true when the run must stop now. Production reads the server gate's answer
+   * via a poller; the server gates stay authoritative.
+   */
+  isStopped?(): boolean;
   /** The test clips' names in the order to use them. */
   fetchTestMedia(name: string): Promise<File>;
   quoteCapState(): Promise<LabCapState>;
@@ -132,7 +138,16 @@ export type LabRunResult =
   | { status: "disabled" }
   | { status: "refused"; reason: string }
   | { status: "failed"; step: string; error: string; requestId: string | null }
+  | { status: "stopped"; step: string; requestId: string | null }
   | { status: "done"; requestId: string; outputIds: string[]; keptOutputIds: string[] };
+
+/** Thrown when the live kill switch is on before a new action. */
+export class LabStopped extends Error {
+  constructor(readonly atStep: string) {
+    super(`stopped before ${atStep}`);
+    this.name = "LabStopped";
+  }
+}
 
 export interface LabRunOptions {
   flag: string | undefined;
@@ -149,6 +164,7 @@ export async function runLabAutoRun(deps: LabRunDeps, options: LabRunOptions): P
 
   let requestId: string | null = null;
   let step = "fetch";
+  if (deps.isStopped?.()) return { status: "stopped", step, requestId: null };
   try {
     const files: File[] = [];
     for (const name of options.fileNames) files.push(await deps.fetchTestMedia(name));
@@ -157,37 +173,55 @@ export async function runLabAutoRun(deps: LabRunDeps, options: LabRunOptions): P
     // (the draft), so no request of this run can go out without a recorded
     // attempt. If it cannot be persisted, nothing is dispatched.
     step = "before_spend";
+    if (deps.isStopped?.()) throw new LabStopped(step);
     await deps.beforeSpend();
 
     step = "create_draft";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     requestId = await deps.createDraft();
 
     step = "submit";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     await deps.submit(requestId, files);
 
     step = "content";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     const content = await deps.waitForContent(requestId);
 
     step = "approve_content";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     await deps.approveContent(requestId, content);
 
     step = "voice";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     await deps.waitForVoice(requestId, content.jobId);
     await deps.approveVoice(requestId, content.jobId, content.platforms);
 
     step = "scene_design";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     const plan = defaultLabScenePlan(content.scenes, content.sourceKinds);
     await deps.approveProduction(requestId, content.jobId, plan);
 
     step = "render";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     const rendered = await deps.waitForRender(requestId, content.jobId);
 
     // Source files go as soon as the phone render is finished. Nothing else
     // needs them after that.
     step = "delete_sources";
+    if (deps.isStopped?.()) throw new LabStopped(step);
     await deps.deleteLabMaterials(rendered.materialIds);
 
     step = "upload";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     const confirmed: string[] = [];
     const kept: string[] = [];
     for (const outputId of rendered.outputIds) {
@@ -196,14 +230,18 @@ export async function runLabAutoRun(deps: LabRunDeps, options: LabRunOptions): P
     }
 
     step = "approve_video";
+
+    if (deps.isStopped?.()) throw new LabStopped(step);
     await deps.approveVideo(requestId, content.jobId);
 
     // Generated videos go only once the server has them. Unconfirmed ones stay.
     step = "delete_outputs";
+    if (deps.isStopped?.()) throw new LabStopped(step);
     await deps.deleteLabOutputs(confirmed);
 
     return { status: "done", requestId, outputIds: confirmed, keptOutputIds: kept };
   } catch (error) {
+    if (error instanceof LabStopped) return { status: "stopped", step, requestId };
     return {
       status: "failed",
       step,

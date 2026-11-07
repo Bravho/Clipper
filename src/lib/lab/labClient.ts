@@ -11,6 +11,8 @@
  */
 
 import { waitBounded } from "@/lib/lab/labSteps";
+import { LabStopped } from "@/features/requests/labAutoRun";
+import type { LabLiveGuard } from "@/lib/lab/labGuards";
 import { labMaxRunCredits, LAB_FIXED_CHANNELS, LAB_FIXED_DURATION_SECONDS } from "@/lib/lab/labCostBasis";
 import type { LabRunDepsWithoutHook } from "@/lib/lab/labRuntime";
 import type { DeviceFileOps } from "@/lib/lab/labRuntime";
@@ -54,6 +56,8 @@ export interface LabContentView {
 export interface LabClientOptions {
   /** A test place. Required: no draft is created without it. */
   testPlace: { placeName: string; latitude: number; longitude: number } | null;
+  /** Live kill switch: every wait stops at once when it reports stopped. */
+  live: LabLiveGuard;
   waitMaxAttempts: number;
   waitIntervalMs: number;
   sleep?: (ms: number) => Promise<void>;
@@ -66,6 +70,7 @@ export function createLabClient(io: LabIo, options: LabClientOptions): LabRunDep
     maxAttempts: options.waitMaxAttempts,
     intervalMs: options.waitIntervalMs,
     sleep: options.sleep,
+    isCancelled: () => options.live.isStopped(),
   };
 
   return {
@@ -90,6 +95,7 @@ export function createLabClient(io: LabIo, options: LabClientOptions): LabRunDep
         const c = await io.content(requestId);
         return c && c.jobId && c.script && c.scenes ? c : null;
       }, waitOpts);
+      if (ready.status === "cancelled") throw new LabStopped("content");
       if (ready.status !== "ready") throw new Error(`lab content not ready (${ready.status})`);
       const c = ready.value;
       return {
@@ -115,6 +121,7 @@ export function createLabClient(io: LabIo, options: LabClientOptions): LabRunDep
         const c = await io.content(requestId);
         return c && c.voiceReady ? true : null;
       }, waitOpts);
+      if (ready.status === "cancelled") throw new LabStopped("voice");
       if (ready.status !== "ready") throw new Error(`lab voice not ready (${ready.status})`);
     },
 

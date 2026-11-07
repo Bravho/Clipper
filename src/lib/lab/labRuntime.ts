@@ -137,8 +137,12 @@ export interface LabStepsOptions {
  */
 export function createLabRunSteps(client: LabRunDepsWithoutHook, options: LabStepsOptions) {
   return async (_runId: string, beforeSpend: () => Promise<void>): Promise<LabRunOutcome> => {
-    const result = await runLabAutoRun({ ...client, beforeSpend }, { flag: options.flagOn() ? "true" : undefined, fileNames: options.fileNames });
+    const result = await runLabAutoRun(
+      { ...client, beforeSpend },
+      { flag: options.flagOn() ? "true" : undefined, fileNames: options.fileNames }
+    );
     if (result.status === "done") return { status: "done" };
+    if (result.status === "stopped") return { status: "cancelled", step: result.step };
     if (result.status === "failed") return { status: "failed", step: result.step };
     return { status: "failed", step: result.status };
   };
