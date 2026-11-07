@@ -170,12 +170,57 @@ async function posterDataUrl(posterUrl: string | null): Promise<string | undefin
  * follows `sources` exactly and nothing may be skipped silently: an item with
  * no analysis frame would shift every index after it.
  */
+/** Body of POST /api/requests/{id}/submit, built in one place. Same fields and values as before. */
+export interface StudioSubmitBody {
+  creditConfirmed: true;
+  rightsConfirmed: true;
+  aiProcessingConfirmed: true;
+  localMedia: {
+    mode: "local-first";
+    materials: LocalMediaDescriptor[];
+    analysisFrames: LocalAnalysisFrame[];
+    deviceRender: Awaited<ReturnType<typeof describeDeviceRenderCapability>>;
+    renderOnDevice: true;
+  };
+}
+
+export function buildStudioSubmitBody(input: {
+  materials: LocalMediaDescriptor[];
+  analysisFrames: LocalAnalysisFrame[];
+  deviceRender: Awaited<ReturnType<typeof describeDeviceRenderCapability>>;
+}): StudioSubmitBody {
+  return {
+    creditConfirmed: true,
+    rightsConfirmed: true,
+    aiProcessingConfirmed: true,
+    localMedia: {
+      mode: "local-first",
+      materials: input.materials,
+      analysisFrames: input.analysisFrames,
+      deviceRender: input.deviceRender,
+      renderOnDevice: true,
+    },
+  };
+}
+
+/** Sends a JSON body and returns the raw response. The default is the studio's own fetch. */
+export type StudioTransport = (url: string, body: unknown) => Promise<Response>;
+
+export const defaultStudioTransport: StudioTransport = (url, body) =>
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
 export async function submitStudioRequest(input: {
   requestId: string;
   sources: EditorSource[];
   onProgress?: (done: number, total: number) => void;
   /** The studio's language for the sentences this can fail with. */
   t?: StudioT;
+  /** Lab only: routes the submit through a server-guarded route. Default: the studio's fetch. */
+  transport?: StudioTransport;
 }): Promise<void> {
   const { requestId, sources } = input;
   const t = input.t ?? studioEnglish;
@@ -216,24 +261,13 @@ export async function submitStudioRequest(input: {
     input.onProgress?.(index + 1, sources.length);
   }
 
-  const response = await fetch(`/api/requests/${requestId}/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      creditConfirmed: true,
-      rightsConfirmed: true,
-      aiProcessingConfirmed: true,
-      localMedia: {
-        mode: "local-first",
-        materials,
-        analysisFrames,
-        deviceRender: await describeDeviceRenderCapability(),
-        // Every render of a studio request happens on this phone — photos
-        // included — so the server queues its steps for the phone alone.
-        renderOnDevice: true,
-      },
-    }),
+  // Every render of a studio request happens on this phone (renderOnDevice: true).
+  const body = buildStudioSubmitBody({
+    materials,
+    analysisFrames,
+    deviceRender: await describeDeviceRenderCapability(),
   });
+  const response = await (input.transport ?? defaultStudioTransport)(`/api/requests/${requestId}/submit`, body);
   if (!response.ok) {
     if (response.status === 402) {
       const body = (await response.json().catch(() => null)) as

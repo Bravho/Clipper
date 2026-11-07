@@ -90,6 +90,8 @@ export interface DeviceRenderOutcome {
   status: "completed" | "refused" | "released" | "failed";
   reason?: string;
   assetId?: string | null;
+  /** The attempt that produced `assetId` (set only on a completed result). */
+  attemptId?: string | null;
   /** What the phone actually produced, for the on-device preview. */
   preview?: { path: string; durationSeconds: number; crossDissolved: boolean };
   /**
@@ -156,7 +158,12 @@ export async function checkDeviceRenderAvailability(
   return (await response.json()) as DeviceRenderAvailability;
 }
 
+/** A JSON POST used by the render lifecycle. The default is postJson. */
+export type DeviceRenderPost = <T>(url: string, body: unknown) => Promise<T>;
+
 export interface RunDeviceRenderInput {
+  /** Lab only: routes the lifecycle posts through a server-guarded route. Default: postJson. */
+  post?: DeviceRenderPost;
   requestId: string;
   /** Device-private originals, so a local-first manifest can be staged. */
   localMedia?: Map<string, LocalMediaDescriptor>;
@@ -176,6 +183,8 @@ export interface RunDeviceRenderInput {
 export async function runDeviceRender(
   input: RunDeviceRenderInput
 ): Promise<DeviceRenderOutcome> {
+  const post: DeviceRenderPost = input.post ?? postJson;
+
   // Set once the claim says which part of the video this is, so every report
   // after that can name it.
   let stage: DeviceRenderStage | undefined;
@@ -198,7 +207,7 @@ export async function runDeviceRender(
     return { status: "refused", reason: "unsupported_app_build" };
   }
 
-  const claim = await postJson<
+  const claim = await post<
     | { claimed: false; reason: string }
     | { claimed: true; attemptId: string; manifest: unknown; heartbeatSeconds: number }
   >("/api/device-render/claim", {
@@ -253,7 +262,7 @@ export async function runDeviceRender(
       error instanceof Error ? error.message : String(error)
     }`;
     note(reason);
-    await release(attemptId, "invalid_manifest", trail);
+    await release(attemptId, "invalid_manifest", trail, post);
     return { status: "failed", reason, log: trail };
   }
 
@@ -270,7 +279,7 @@ export async function runDeviceRender(
 
   try {
     heartbeat = setInterval(() => {
-      void postJson<{ ok: boolean; cancelled: boolean }>(
+      void post<{ ok: boolean; cancelled: boolean }>(
         `/api/device-render/${attemptId}/progress`,
         { percent: lastReportedPercent }
       )
@@ -345,7 +354,7 @@ export async function runDeviceRender(
     });
     report("uploading", 0, t("studio.progress.asking"), uploadNote.detail);
     doing = "sending the video to your request";
-    const upload = await postJson<{
+    const upload = await post<{
       storageKey: string;
       uploadId: string;
       partSizeBytes: number;
@@ -374,7 +383,7 @@ export async function runDeviceRender(
     note(`Uploaded ${parts.length} part(s)`);
     report("finishing", 0, t("studio.progress.assembling"), t("studio.progress.joining"));
     doing = "joining the uploaded pieces on the server";
-    await postJson(`/api/device-render/${attemptId}/upload`, { action: "finish", parts });
+    await post(`/api/device-render/${attemptId}/upload`, { action: "finish", parts });
 
     report(
       "finishing",
@@ -383,7 +392,7 @@ export async function runDeviceRender(
       t("studio.progress.serverChecking")
     );
     doing = "having the server check the finished video";
-    const result = await postJson<{ ok: true; assetId: string | null }>(
+    const result = await post<{ ok: true; assetId: string | null }>(
       `/api/device-render/${attemptId}/complete`,
       {
         jobId: manifest.jobId,
@@ -419,6 +428,7 @@ export async function runDeviceRender(
     return {
       status: "completed",
       assetId: result.assetId,
+      attemptId,
       preview: {
         path: rendered.path,
         durationSeconds: rendered.durationSeconds,
@@ -449,7 +459,7 @@ export async function runDeviceRender(
           ? "The server gave this part to another render"
           : `FAILED while ${doing}: ${message}`
     );
-    await release(attemptId, reason, trail);
+    await release(attemptId, reason, trail, post);
     report(
       error instanceof CancelledError ? "released" : "failed",
       0,
@@ -485,9 +495,10 @@ export async function release(
   attemptId: string,
   reason: string,
   /** The attempt's step-by-step log, kept with it on the server. */
-  log?: string[]
+  log?: string[],
+  post: DeviceRenderPost = postJson
 ): Promise<void> {
-  await postJson(`/api/device-render/${attemptId}/release`, {
+  await post(`/api/device-render/${attemptId}/release`, {
     reason: reason.slice(0, 200),
     ...(log && log.length > 0 ? { log: log.map((line) => line.slice(0, 600)).slice(0, 120) } : {}),
   }).catch(() => {
