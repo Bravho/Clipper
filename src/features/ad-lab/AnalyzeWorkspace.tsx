@@ -11,6 +11,7 @@ import { calculateAdLabMetrics, diagnoseAdLabMetrics } from "@/services/ad-lab/A
 import { PublishedResults } from "./PublishedResults";
 import { ChineseTttOutcomesPanel } from "./ChineseTttOutcomesPanel";
 import { AdsImportPanel } from "./AdsImportPanel";
+import { AdsReportingPanel } from "./AdsReportingPanel";
 import { listAdLabPublications } from "./adLabPublishingClient";
 import type { AdLabPublication } from "@/domain/models/AdLabPublication";
 
@@ -50,6 +51,8 @@ export function AnalyzeWorkspace() {
         <h2 className="text-2xl font-bold text-slate-950">Ad Analysis</h2>
         <p className="mt-1 text-sm text-slate-500">รวมผลจากหลายช่องทางให้อยู่ใน funnel เดียว และแปลงตัวเลขเป็นสิ่งที่ควรแก้ในคลิปถัดไป</p>
       </div>
+
+      <AdsReportingPanel />
 
       <PublishedResults brandId={brandId} />
 
