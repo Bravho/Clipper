@@ -108,6 +108,41 @@ export function labScenesFromStoryboard(storyboard: StoryboardPlanScene[]): LabS
   }));
 }
 
+/** Request bodies, the same fields the studio's own approval calls send. */
+export function contentStepBody(input: { script: LabScriptView; storyboard: LabStoryboardScene[]; voiceId: string }) {
+  return {
+    scriptThai: input.script.text,
+    scriptEnglish: input.script.english,
+    hookEnglish: null,
+    captionThai: input.script.caption,
+    captionEnglish: input.script.captionEnglish,
+    captionChinese: input.script.captionChinese,
+    storyboard: toStoryboardPlan(input.storyboard),
+    voiceId: input.voiceId,
+  };
+}
+
+export function voiceStepBody(jobId: string, platforms: string[]) {
+  return { jobId, targetPlatforms: platforms, musicSelected: LAB_EDITOR_DEFAULTS.musicTrackId !== NO_MUSIC_TRACK_ID };
+}
+
+export function productionStepBody(input: { jobId: string; scenePlan: StudioScenePlan[]; durationSeconds: number }) {
+  return {
+    jobId: input.jobId,
+    scenePlan: input.scenePlan,
+    durationSeconds: input.durationSeconds,
+    selectedMusicTrack: LAB_EDITOR_DEFAULTS.musicTrackId ?? NO_MUSIC_TRACK_ID,
+    subtitleLanguages: [...LAB_EDITOR_DEFAULTS.subtitleLanguages].slice(0, 2),
+    selectedMotionTemplate: LAB_EDITOR_DEFAULTS.templateId,
+    selectedTextStyle: LAB_EDITOR_DEFAULTS.textStyle,
+    autoApproveRemaining: true,
+  };
+}
+
+export function videoStepBody(jobId: string) {
+  return { jobId };
+}
+
 export interface StudioBindingDeps {
   ledger: Pick<LabSpendLedger, "usedToday">;
   guard: LabLiveGuard;
@@ -142,13 +177,25 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
         localMedia: await loadLocalMediaIndex(),
         shouldCancel,
       });
-      return { status: outcome.status, reason: outcome.reason, assetId: outcome.assetId ?? null };
+      // The attempt id is null today (runDeviceRender does not return it): outputs are then kept.
+      const attemptId = (outcome as { attemptId?: string | null }).attemptId ?? null;
+      return { status: outcome.status, reason: outcome.reason, assetId: outcome.assetId ?? null, attemptId };
     },
   });
 
   /** Checked before every direct call to a normal studio route, and before each step. */
   const live = (at: string) => {
     if (deps.guard.isStopped()) throw new LabStopped(at);
+  };
+
+  /** Every chargeable approval goes through the server-guarded step route, with the run id. */
+  const postLabStep = async (action: string, requestId: string, payload: unknown): Promise<void> => {
+    const res = await deps.fetchJson("/api/lab/autorun/step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, action, runId: deps.runId, payload }),
+    });
+    if (!res.ok) throw new Error(`lab step ${action} refused (${res.status})`);
   };
 
   const io = {
@@ -229,43 +276,28 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
 
     async approveContent(requestId: string, input: { script: LabScriptView; storyboard: LabStoryboardScene[]; voiceId: string }): Promise<void> {
       live("approve_content");
-      await approveStudioContent({
-        requestId,
-        script: input.script,
-        storyboard: toStoryboardPlan(input.storyboard),
-        voiceId: input.voiceId as typeof DEFAULT_ELEVENLABS_VOICE_ID,
-      });
+      await postLabStep("start-production", requestId, contentStepBody(input));
     },
 
     async approveVoice(requestId: string, jobId: string, platforms: string[]): Promise<void> {
       live("voice");
-      await approveStudioVoice({
-        requestId,
-        jobId,
-        platforms: platforms as Platform[],
-        musicSelected: LAB_EDITOR_DEFAULTS.musicTrackId !== NO_MUSIC_TRACK_ID,
-      });
+      await postLabStep("approve-voice", requestId, voiceStepBody(jobId, platforms));
     },
 
     async approveProduction(requestId: string, jobId: string, plan: unknown[]): Promise<void> {
       live("scene_design");
       const scenes = plan as Parameters<typeof toStudioScenePlan>[0];
       const durationSeconds = scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
-      await approveStudioProduction({
-        requestId,
+      await postLabStep("scene-design-approve", requestId, productionStepBody({
         jobId,
         scenePlan: toStudioScenePlan(scenes),
         durationSeconds: Math.round(durationSeconds * 100) / 100,
-        musicTrackId: LAB_EDITOR_DEFAULTS.musicTrackId,
-        subtitleLanguages: [...LAB_EDITOR_DEFAULTS.subtitleLanguages],
-        templateId: LAB_EDITOR_DEFAULTS.templateId,
-        textStyle: LAB_EDITOR_DEFAULTS.textStyle,
-      });
+      }));
     },
 
     async approveVideo(requestId: string, jobId: string): Promise<void> {
       live("approve_video");
-      await approveStudioVideo({ requestId, jobId });
+      await postLabStep("approve-overlay", requestId, videoStepBody(jobId));
     },
 
     waitForRender: (requestId: string, jobId: string) => adapter.waitForRender(requestId, jobId),

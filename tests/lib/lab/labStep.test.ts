@@ -12,12 +12,13 @@ function deps(over: Partial<LabStepDeps> = {}): LabStepDeps & { forward: jest.Mo
     requesterRole: "requester",
     getSession: async () => ({ user: { id: LAB_USER, role: "requester", email: LAB } }),
     findRequestOwner: async () => LAB_USER,
+    markerExists: async () => true,
     forward,
     ...over,
   } as LabStepDeps & { forward: jest.Mock };
 }
 
-const STEP = { requestId: "req-1", action: "approve-voice", payload: { jobId: "j" } };
+const STEP = { requestId: "req-1", action: "approve-voice", payload: { jobId: "j" }, runId: "run-1" };
 
 describe("handleLabStep", () => {
   it("forwards a valid lab step on the lab account's own request", async () => {
@@ -96,5 +97,24 @@ describe("handleLabStep", () => {
   it("passes the normal studio route's own refusal back unchanged", async () => {
     const d = deps({ forward: jest.fn(async () => ({ status: 409, body: { error: "locked" } })) });
     expect(await handleLabStep(STEP, d)).toEqual({ status: 409, body: { error: "locked" } });
+  });
+
+  it("a chargeable step with no run id is refused, nothing forwarded", async () => {
+    const d = deps();
+    expect(await handleLabStep({ ...STEP, runId: undefined }, d)).toMatchObject({ status: 409 });
+    expect(d.forward).not.toHaveBeenCalled();
+  });
+
+  it("a step whose run has no recorded marker is refused, nothing forwarded", async () => {
+    const d = deps({ markerExists: async () => false });
+    expect(await handleLabStep(STEP, d)).toMatchObject({ status: 409 });
+    expect(d.forward).not.toHaveBeenCalled();
+  });
+
+  it("the marker is looked up under the signed-in owner, never a supplied owner", async () => {
+    const markerExists = jest.fn(async () => true);
+    const d = deps({ markerExists });
+    await handleLabStep(STEP, d);
+    expect(markerExists).toHaveBeenCalledWith(LAB_USER, "run-1");
   });
 });

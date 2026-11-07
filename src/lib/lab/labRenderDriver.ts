@@ -14,6 +14,8 @@ export type RenderOutcomeLike = {
   status: "completed" | "refused" | "released" | "failed";
   reason?: string;
   assetId?: string | null;
+  /** The attempt that produced the asset. Absent today: see the proposal for runDeviceRender. */
+  attemptId?: string | null;
 };
 
 export interface LabRenderDriverDeps {

@@ -69,12 +69,23 @@ export interface RenderAdapterDeps {
  */
 export function createRenderAdapter(deps: RenderAdapterDeps) {
   const confirmed = new Map<string, Set<string>>(); // requestId -> durable asset ids
+  /** assetId -> attempt that produced it. An output without a matched attempt is never confirmed. */
+  const attemptByAsset = new Map<string, string>();
 
   return {
     async waitForRender(requestId: string, _jobId: string) {
       const result = await driveLabRender(
         { requestId, maxSteps: deps.maxSteps, cancelled: deps.cancelled },
-        { flagOn: deps.flagOn, runOnce: deps.runOnce }
+        {
+          flagOn: deps.flagOn,
+          runOnce: async (input) => {
+            const outcome = await deps.runOnce(input);
+            if (outcome.status === "completed" && typeof outcome.assetId === "string" && typeof outcome.attemptId === "string") {
+              attemptByAsset.set(outcome.assetId, outcome.attemptId);
+            }
+            return outcome;
+          },
+        }
       );
       confirmed.set(requestId, new Set(result.durableAssetIds));
       // Register what this run made, so cleanup can only touch these.
@@ -89,7 +100,9 @@ export function createRenderAdapter(deps: RenderAdapterDeps) {
       return { outputIds: result.durableAssetIds, materialIds };
     },
     async uploadAndConfirm(requestId: string, outputId: string): Promise<boolean> {
-      return confirmed.get(requestId)?.has(outputId) ?? false;
+      // Confirmed for this request AND matched to an attempt. Without the attempt,
+      // the output is kept (ambiguous cleanup is refused).
+      return (confirmed.get(requestId)?.has(outputId) ?? false) && attemptByAsset.has(outputId);
     },
   };
 }

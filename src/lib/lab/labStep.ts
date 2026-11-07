@@ -21,6 +21,8 @@ export interface LabStepInput {
   requestId: string;
   action: string;
   payload: unknown;
+  /** The lab run this step belongs to. Required for every chargeable action. */
+  runId?: string;
 }
 
 export interface LabStepDeps {
@@ -31,6 +33,12 @@ export interface LabStepDeps {
   requesterRole: string;
   getSession(): Promise<{ user?: { id?: string | null; role?: string | null; email?: string | null } | null } | null>;
   findRequestOwner(requestId: string): Promise<string | null>;
+  /**
+   * True only when the owner's spend-attempt marker exists for this run (the
+   * marker is written before the run's first server write). Chargeable actions
+   * are refused without it, so a step cannot run outside a recorded run.
+   */
+  markerExists(ownerId: string, runId: string): Promise<boolean>;
   /** Calls the normal studio route for one action, with the caller's own session. */
   forward(action: LabStepAction, requestId: string, payload: unknown): Promise<{ status: number; body: unknown }>;
 }
@@ -69,6 +77,11 @@ export async function handleLabStep(input: LabStepInput, deps: LabStepDeps): Pro
   if (!input.requestId) return { status: 404, body: { error: "Not found." } };
   const owner = await deps.findRequestOwner(input.requestId);
   if (owner === null || owner !== user!.id) return { status: 404, body: { error: "Not found." } };
+
+  // 5. Ledger state: every allow-listed action is chargeable, so it needs a run
+  //    whose spend-attempt marker exists under this owner.
+  if (!input.runId) return { status: 409, body: { error: "No lab run." } };
+  if (!(await deps.markerExists(user!.id, input.runId))) return { status: 409, body: { error: "No recorded lab run." } };
 
   return deps.forward(input.action as LabStepAction, input.requestId, input.payload);
 }

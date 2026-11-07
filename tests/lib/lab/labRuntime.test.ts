@@ -49,7 +49,7 @@ function world(opts: {
   const registry = new RunArtifactRegistry();
   const deviceDeleted: string[] = [];
 
-  const renderSteps = opts.renderSteps ?? [{ status: "completed", assetId: "asset-1" }, { status: "refused", reason: "no_render_queued" }];
+  const renderSteps = opts.renderSteps ?? [{ status: "completed", assetId: "asset-1", attemptId: "att-1" }, { status: "refused", reason: "no_render_queued" }];
   let renderIdx = 0;
   const renderAdapter = createRenderAdapter({
     runId: "run-1",
@@ -194,7 +194,7 @@ describe("end to end (mocked)", () => {
   });
 
   it("render incomplete: nothing is deleted and the reservation is KEPT", async () => {
-    const w = world({ renderSteps: [{ status: "completed", assetId: "asset-1" }, { status: "failed", reason: "put_failed" }] });
+    const w = world({ renderSteps: [{ status: "completed", assetId: "asset-1", attemptId: "att-1" }, { status: "failed", reason: "put_failed" }] });
     const result = await runLabOnce(w.deps);
     expect(result).toMatchObject({ ledger: "kept_reserved", spendAttempted: true });
     expect(w.deviceDeleted).toEqual([]);
@@ -203,8 +203,8 @@ describe("end to end (mocked)", () => {
   it("an upload not confirmed by the server: its output is kept, the others are deleted", async () => {
     const w = world({
       renderSteps: [
-        { status: "completed", assetId: "asset-1" },
-        { status: "completed", assetId: "asset-2" },
+        { status: "completed", assetId: "asset-1", attemptId: "att-1" },
+        { status: "completed", assetId: "asset-2", attemptId: "att-2" },
         { status: "refused", reason: "no_render_queued" },
       ],
     });
@@ -217,7 +217,7 @@ describe("end to end (mocked)", () => {
   it("the flag turns off between render steps: the driver stops, nothing is deleted, the reservation is KEPT", async () => {
     let calls = 0;
     const w = world({
-      renderSteps: [{ status: "completed", assetId: "asset-1" }, { status: "completed", assetId: "asset-2" }],
+      renderSteps: [{ status: "completed", assetId: "asset-1", attemptId: "att-1" }, { status: "completed", assetId: "asset-2", attemptId: "att-2" }],
       flagOnRender: () => {
         calls++;
         return calls === 1; // on for the first step only
@@ -342,5 +342,42 @@ describe("run-owned cleanup with a fake device store", () => {
     };
     const cleanup = createRunOwnedCleanup("run-1", registry, device.ops);
     await expect(cleanup.deleteLabOutputs(["a", "b"])).rejects.toThrow("permission denied");
+  });
+});
+
+describe("attempt matching for durable uploads", () => {
+  it("a completed output with NO attempt id is never confirmed (kept, not deleted)", async () => {
+    const registry = new RunArtifactRegistry();
+    // The first call completes (no attemptId), the second reports nothing left to render.
+    let n = 0;
+    const adapter2 = createRenderAdapter({
+      runId: "run-1",
+      registry,
+      flagOn: () => true,
+      cancelled: () => false,
+      maxSteps: 5,
+      materialsForRequest: async () => [],
+      runOnce: async () => (n++ === 0 ? { status: "completed", assetId: "asset-x" } : { status: "refused", reason: "no_render_queued" }),
+    });
+    await adapter2.waitForRender("req-1", "job-1");
+    expect(await adapter2.uploadAndConfirm("req-1", "asset-x")).toBe(false);
+  });
+
+  it("a completed output WITH its attempt id is confirmed for that request", async () => {
+    const registry = new RunArtifactRegistry();
+    let n = 0;
+    const adapter = createRenderAdapter({
+      runId: "run-1",
+      registry,
+      flagOn: () => true,
+      cancelled: () => false,
+      maxSteps: 5,
+      materialsForRequest: async () => [],
+      runOnce: async () => (n++ === 0 ? { status: "completed", assetId: "asset-y", attemptId: "att-9" } : { status: "refused", reason: "no_render_queued" }),
+    });
+    await adapter.waitForRender("req-1", "job-1");
+    expect(await adapter.uploadAndConfirm("req-1", "asset-y")).toBe(true);
+    // The same asset is not confirmed for another request.
+    expect(await adapter.uploadAndConfirm("req-2", "asset-y")).toBe(false);
   });
 });

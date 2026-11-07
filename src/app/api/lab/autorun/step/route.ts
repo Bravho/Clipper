@@ -5,6 +5,11 @@ import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository } from "@/repositories/index";
 import { handleLabStep, type LabStepAction } from "@/lib/lab/labStep";
 import { LAB_PROVIDER_EXECUTION_ENABLED } from "@/lib/lab/labGuards";
+import path from "node:path";
+import { LabSpendLedger, createFileLedgerStorage, createFileLock } from "@/lib/lab/labSpendLedger";
+import { ownedKey } from "@/lib/lab/labLedgerApi";
+
+const LEDGER_DIR = process.env.LAB_LEDGER_DIR ?? path.join("D:\\coding\\ai_line_work", "lab-ledger");
 import { POST as startProduction } from "@/app/api/requests/[id]/start-production/route";
 import { POST as approveVoice } from "@/app/api/requests/[id]/approve-voice/route";
 import { POST as sceneDesignApprove } from "@/app/api/requests/[id]/scene-design/approve/route";
@@ -35,7 +40,7 @@ const STEP_PATH: Record<LabStepAction, string> = {
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as
-    | { requestId?: unknown; action?: unknown; payload?: unknown }
+    | { requestId?: unknown; action?: unknown; payload?: unknown; runId?: unknown }
     | null;
 
   const result = await handleLabStep(
@@ -43,6 +48,7 @@ export async function POST(request: Request) {
       requestId: typeof body?.requestId === "string" ? body.requestId : "",
       action: typeof body?.action === "string" ? body.action : "",
       payload: body?.payload ?? null,
+      runId: typeof body?.runId === "string" ? body.runId : undefined,
     },
     {
       flagValue: process.env.LAB_AUTORUN_ENABLED,
@@ -60,6 +66,15 @@ export async function POST(request: Request) {
               },
             }
           : null;
+      },
+      markerExists: async (ownerId, runId) => {
+        const ledger = new LabSpendLedger(
+          createFileLedgerStorage(path.join(LEDGER_DIR, "ledger.json")),
+          undefined,
+          undefined,
+          createFileLock(path.join(LEDGER_DIR, "ledger.lock"), { timeoutMs: 10_000, retryMs: 25 })
+        );
+        return (await ledger.hasSpendAttempt(ownedKey(ownerId, runId))) === true;
       },
       findRequestOwner: async (requestId) => {
         const clipRequest = await clipRequestRepository.findById(requestId).catch(() => null);
