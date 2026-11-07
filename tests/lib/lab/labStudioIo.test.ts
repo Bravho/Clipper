@@ -309,3 +309,43 @@ describe("approvals go through the server step route, with the run id and the st
     await expect(createLabStudioIo(d).approveVideo("req-1", "job-1")).rejects.toThrow(/refused \(409\)/);
   });
 });
+
+describe("routing through the step route (mocked)", () => {
+  it("a render lifecycle call is mapped to its lab action and attempt, and sent to the step route", async () => {
+    const d = deps();
+    renderMock.mockImplementationOnce(async (input: { post: (url: string, body: unknown) => Promise<unknown> }) => {
+      await input.post("/api/device-render/claim", { requestId: "req-1" });
+      return { status: "refused", reason: "no_render_queued" };
+    });
+    await createLabStudioIo(d).waitForRender("req-1", "job-1");
+    const steps = (d.fetchJson as jest.Mock).mock.calls.map((c) => JSON.parse(c[1].body as string));
+    expect(steps[0]).toMatchObject({ action: "device-claim", requestId: "req-1", runId: "run-1" });
+  });
+
+  it("a lifecycle URL that is not on the allow-list is refused and nothing is sent", async () => {
+    const d = deps();
+    renderMock.mockImplementationOnce(async (input: { post: (url: string, body: unknown) => Promise<unknown> }) => {
+      await expect(input.post("/api/admin/users", {})).rejects.toThrow(/allow-list/);
+      return { status: "refused", reason: "no_render_queued" };
+    });
+    await createLabStudioIo(d).waitForRender("req-1", "job-1");
+    expect(d.fetchJson).not.toHaveBeenCalled();
+  });
+
+  it("the draft carries the run id, so the server can link the run to the request", async () => {
+    const d = deps();
+    await createLabStudioIo(d).createDraft({ title: "t", placeName: "p", latitude: 1, longitude: 2, description: "" });
+    const body = JSON.parse((d.fetchJson as jest.Mock).mock.calls[0][1].body as string);
+    expect(body).toMatchObject({ runId: "run-1" });
+  });
+
+  it("the submit goes through the step route with the studio's body as payload", async () => {
+    const d = deps();
+    studioMock.submitStudioRequest.mockImplementationOnce(async (arg: { transport: (u: string, b: unknown) => Promise<Response> }) => {
+      await arg.transport("/api/requests/req-1/submit", { creditConfirmed: true, localMedia: { renderOnDevice: true } });
+    });
+    await createLabStudioIo(d).submit("req-1", [new File(["x"], "a.mp4")]);
+    const step = JSON.parse((d.fetchJson as jest.Mock).mock.calls.find((c) => c[0] === "/api/lab/autorun/step")![1].body as string);
+    expect(step).toMatchObject({ action: "submit", requestId: "req-1", runId: "run-1", payload: { creditConfirmed: true, localMedia: { renderOnDevice: true } } });
+  });
+});

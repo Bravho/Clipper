@@ -53,6 +53,8 @@ import type { RenderOutcomeLike } from "@/lib/lab/labRenderDriver";
 import type { LabSpendLedger } from "@/lib/lab/labSpendLedger";
 import { LabStopped } from "@/features/requests/labAutoRun";
 import type { PreparedLabSource } from "@/lib/lab/labMediaPrep";
+import type { DeviceRenderPost } from "@/lib/mobile/deviceRenderClient";
+import { labActionForDeviceCall } from "@/lib/lab/labRouteTable";
 
 /** The platform and captions the editor starts with. */
 export const LAB_EDITOR_DEFAULTS = {
@@ -176,10 +178,15 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
         requestId,
         localMedia: await loadLocalMediaIndex(),
         shouldCancel,
+        // Every lifecycle call goes through the server step route, mapped by the allow-list.
+        post: labDevicePost(requestId),
       });
-      // The attempt id is null today (runDeviceRender does not return it): outputs are then kept.
-      const attemptId = (outcome as { attemptId?: string | null }).attemptId ?? null;
-      return { status: outcome.status, reason: outcome.reason, assetId: outcome.assetId ?? null, attemptId };
+      return {
+        status: outcome.status,
+        reason: outcome.reason,
+        assetId: outcome.assetId ?? null,
+        attemptId: outcome.attemptId ?? null,
+      };
     },
   });
 
@@ -188,15 +195,30 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     if (deps.guard.isStopped()) throw new LabStopped(at);
   };
 
-  /** Every chargeable approval goes through the server-guarded step route, with the run id. */
-  const postLabStep = async (action: string, requestId: string, payload: unknown): Promise<void> => {
-    const res = await deps.fetchJson("/api/lab/autorun/step", {
+  /** One call to the server-guarded step route for this run. */
+  const stepCall = (action: string, requestId: string, payload: unknown, attemptId?: string) =>
+    deps.fetchJson("/api/lab/autorun/step", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId, action, runId: deps.runId, payload }),
+      body: JSON.stringify({ requestId, action, runId: deps.runId, attemptId, payload }),
     });
+
+  /** Every chargeable approval goes through the server-guarded step route, with the run id. */
+  const postLabStep = async (action: string, requestId: string, payload: unknown): Promise<void> => {
+    const res = await stepCall(action, requestId, payload);
     if (!res.ok) throw new Error(`lab step ${action} refused (${res.status})`);
   };
+
+  /** The device-render lifecycle for one request, routed through the step route. Unmapped calls are refused. */
+  const labDevicePost =
+    (requestId: string): DeviceRenderPost =>
+    async <T,>(url: string, body: unknown): Promise<T> => {
+      const mapped = labActionForDeviceCall(url, body);
+      if (!mapped) throw new Error("lab device call is not on the allow-list");
+      const res = await stepCall(mapped.action, requestId, body, mapped.attemptId);
+      if (!res.ok) throw new Error(`lab device call refused (${res.status})`);
+      return (await res.json()) as T;
+    };
 
   const io = {
     adapter,
@@ -218,7 +240,7 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
       const res = await deps.fetchJson("/api/lab/autorun/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, runId: deps.runId }),
       });
       if (!res.ok) throw new Error(`lab draft refused (${res.status})`);
       const body = (await res.json()) as { requestId?: unknown };
@@ -248,7 +270,12 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
         }
         live("submit");
         // POST /api/requests/{id}/submit (normal studio route, the caller's own session)
-        await submitStudioRequest({ requestId, sources });
+        // The submit goes through the step route. The studio's own body is the payload.
+        const transport = async (_url: string, body: unknown): Promise<Response> => {
+          const res = await stepCall("submit", requestId, body);
+          return new Response(JSON.stringify(await res.json().catch(() => null)), { status: res.status });
+        };
+        await submitStudioRequest({ requestId, sources, transport });
         // The materials this run stored are the ones that were not there before.
         const added = [...(await loadLocalMediaIndex()).keys()].filter((id) => !before.has(id));
         materialsByRequest.set(requestId, added);

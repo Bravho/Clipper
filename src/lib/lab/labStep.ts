@@ -1,28 +1,33 @@
 /**
- * Lab auto-run step proxy: the one place a lab account may ask for a studio
- * mutation. Every call re-checks, on the server:
- *  1. the flag is exactly "true" right now (switching it off stops the next step);
- *  2. the signed-in account is exactly the lab test account, Requester role;
+ * Lab step route logic. Every automated lab call goes through here. Checks, in order:
+ *  1. the action is on the explicit allow-list, and the ids are plain identifiers;
+ *  2. the signed-in account is exactly the lab test account (Requester role);
  *  3. the request exists and is owned by that same account;
- *  4. the action is on the allow-list.
- * Only then is the normal studio route called with the same session, so the
- * studio route's own checks still apply. Normal studio users never reach this.
+ *  4. the run exists (marker, owned by the same account);
+ *  5. the run is linked to THIS request, and an attempt is linked to THIS run;
+ *  6. stop rules: new work needs the flag and provider switch on; finish needs an
+ *     upload authorised earlier; progress and release are always allowed for a
+ *     linked attempt, so a stop can still clean up.
+ * Only then is the normal studio or device-render route called, with the same
+ * session, so the normal route's own checks still apply.
  */
 
-export const LAB_STEP_ACTIONS = [
-  "start-production",
-  "approve-voice",
-  "scene-design-approve",
-  "approve-overlay",
-] as const;
-export type LabStepAction = (typeof LAB_STEP_ACTIONS)[number];
+import { isLabRouteAction, isSafeLabId, labStopClass, LAB_ROUTE_TEMPLATES, buildLabRouteUrl, type LabRouteAction } from "@/lib/lab/labRouteTable";
 
 export interface LabStepInput {
   requestId: string;
   action: string;
   payload: unknown;
-  /** The lab run this step belongs to. Required for every chargeable action. */
+  /** The lab run this step belongs to. Required for every action. */
   runId?: string;
+  /** Required for actions on an attempt (see the route table). */
+  attemptId?: string;
+}
+
+export interface LabRunBinding {
+  requestId: string | null;
+  attemptIds: string[];
+  uploadAuthorised: string[];
 }
 
 export interface LabStepDeps {
@@ -33,26 +38,29 @@ export interface LabStepDeps {
   requesterRole: string;
   getSession(): Promise<{ user?: { id?: string | null; role?: string | null; email?: string | null } | null } | null>;
   findRequestOwner(requestId: string): Promise<string | null>;
-  /**
-   * True only when the owner's spend-attempt marker exists for this run (the
-   * marker is written before the run's first server write). Chargeable actions
-   * are refused without it, so a step cannot run outside a recorded run.
-   */
+  /** True only when the owner's spend-attempt marker exists for this run. */
   markerExists(ownerId: string, runId: string): Promise<boolean>;
-  /** Calls the normal studio route for one action, with the caller's own session. */
-  forward(action: LabStepAction, requestId: string, payload: unknown): Promise<{ status: number; body: unknown }>;
+  /** The run's links (request, attempts, authorised uploads), or null when unknown. */
+  getBinding(ownerId: string, runId: string): Promise<LabRunBinding | null>;
+  /** Links an attempt claimed for this run to this request. */
+  bindAttempt(ownerId: string, runId: string, requestId: string, attemptId: string): Promise<boolean>;
+  /** Records that an attempt's upload was authorised. */
+  authoriseUpload(ownerId: string, runId: string, attemptId: string): Promise<boolean>;
+  /** Calls the one normal route for the action, with the caller's own session. */
+  forward(action: LabRouteAction, ids: { requestId: string; attemptId?: string }, payload: unknown): Promise<{ status: number; body: unknown }>;
 }
 
-export type LabStepResult =
-  | { status: number; body: unknown }
-  | { status: 400 | 401 | 404 | 500; body: { error: string } };
+export type LabStepResult = { status: number; body: unknown };
+
+const NOT_FOUND = { status: 404, body: { error: "Not found." } };
 
 export async function handleLabStep(input: LabStepInput, deps: LabStepDeps): Promise<LabStepResult> {
-  // 1. Flag, right now. A step after the flag was switched off is refused.
-  if (deps.flagValue !== "true") return { status: 404, body: { error: "Not found." } };
-  // Every studio action in the allow-list can start paid work. Refuse them all
-  // while provider execution is disabled, even for the right account.
-  if (!deps.providerExecutionEnabled) return { status: 404, body: { error: "Not found." } };
+  // 1. Allow-list and plain ids.
+  if (!isLabRouteAction(input.action)) return { status: 400, body: { error: "Unknown lab action." } };
+  const action = input.action;
+  const template = LAB_ROUTE_TEMPLATES[action];
+  if (!isSafeLabId(input.requestId)) return { status: 400, body: { error: "Bad request id." } };
+  if (template.attempt && !isSafeLabId(input.attemptId)) return { status: 400, body: { error: "Bad attempt id." } };
 
   // 2. Exact lab identity.
   const session = await deps.getSession();
@@ -67,21 +75,57 @@ export async function handleLabStep(input: LabStepInput, deps: LabStepDeps): Pro
     typeof user.id === "string" &&
     user.id.length > 0;
   if (!isLab) return { status: 401, body: { error: "Unauthorised." } };
+  const ownerId = user!.id as string;
 
-  // 3. Action allow-list.
-  if (!(LAB_STEP_ACTIONS as readonly string[]).includes(input.action)) {
-    return { status: 400, body: { error: "Unknown lab action." } };
+  // 3. Stop rules. New work needs the switches on; the others are decided below.
+  const switchesOn = deps.flagValue === "true" && deps.providerExecutionEnabled;
+  const cls = labStopClass(action);
+  if (cls === "new-work" && !switchesOn) return NOT_FOUND;
+
+  // 4. The request must be the signed-in account's own.
+  const owner = await deps.findRequestOwner(input.requestId);
+  if (owner === null || owner !== ownerId) return NOT_FOUND;
+
+  // 5. The run must be recorded for this owner, and linked to this request.
+  if (!input.runId || !isSafeLabId(input.runId)) return { status: 409, body: { error: "No lab run." } };
+  if (!(await deps.markerExists(ownerId, input.runId))) return { status: 409, body: { error: "No recorded lab run." } };
+  const binding = await deps.getBinding(ownerId, input.runId);
+  if (!binding || binding.requestId !== input.requestId) return { status: 409, body: { error: "Run and request do not match." } };
+
+  // 6. Attempts: the attempt must be linked to THIS run. A finish needs an authorised upload.
+  if (template.attempt) {
+    if (!binding.attemptIds.includes(input.attemptId as string)) return { status: 409, body: { error: "Attempt is not part of this run." } };
+    if (cls === "finish" && !binding.uploadAuthorised.includes(input.attemptId as string)) {
+      return { status: 409, body: { error: "Upload was not authorised for this attempt." } };
+    }
   }
 
-  // 4. Ownership, from the database, never from the body.
-  if (!input.requestId) return { status: 404, body: { error: "Not found." } };
-  const owner = await deps.findRequestOwner(input.requestId);
-  if (owner === null || owner !== user!.id) return { status: 404, body: { error: "Not found." } };
+  // 7. A claim may only be made for this request.
+  if (action === "device-claim") {
+    const claimed = (input.payload as { requestId?: unknown } | null)?.requestId;
+    if (claimed !== input.requestId) return { status: 409, body: { error: "Claim is for another request." } };
+  }
 
-  // 5. Ledger state: every allow-listed action is chargeable, so it needs a run
-  //    whose spend-attempt marker exists under this owner.
-  if (!input.runId) return { status: 409, body: { error: "No lab run." } };
-  if (!(await deps.markerExists(user!.id, input.runId))) return { status: 409, body: { error: "No recorded lab run." } };
+  if (!buildLabRouteUrl(action, { requestId: input.requestId, attemptId: input.attemptId })) {
+    return { status: 400, body: { error: "No route for this action." } };
+  }
 
-  return deps.forward(input.action as LabStepAction, input.requestId, input.payload);
+  const result = await deps.forward(action, { requestId: input.requestId, attemptId: input.attemptId }, input.payload);
+
+  // 8. Record the links the server created, before the caller can use them.
+  if (action === "device-claim" && result.status >= 200 && result.status < 300) {
+    const attemptId = (result.body as { attemptId?: unknown } | null)?.attemptId;
+    if (typeof attemptId !== "string" || !isSafeLabId(attemptId)) {
+      return { status: 502, body: { error: "The claim did not return an attempt." } };
+    }
+    if (!(await deps.bindAttempt(ownerId, input.runId, input.requestId, attemptId))) {
+      return { status: 409, body: { error: "The claimed attempt could not be linked to this run." } };
+    }
+  }
+  if (action === "device-upload-authorize" && result.status >= 200 && result.status < 300) {
+    if (!(await deps.authoriseUpload(ownerId, input.runId, input.attemptId as string))) {
+      return { status: 409, body: { error: "The upload could not be recorded for this run." } };
+    }
+  }
+  return result;
 }

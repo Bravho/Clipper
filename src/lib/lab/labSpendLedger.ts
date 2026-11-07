@@ -43,6 +43,12 @@ export interface LabLedgerState {
    * request was dispatched. A run with no marker provably dispatched nothing.
    */
   spendAttempted?: string[];
+  /**
+   * What each run is linked to, server-side: the one request it created, and the
+   * attempts claimed for it (and which of those were authorised to upload).
+   * Keyed like the marker (owner::runId). Optional for older files.
+   */
+  runBindings?: Record<string, { requestId: string | null; attemptIds: string[]; uploadAuthorised: string[] }>;
 }
 
 export interface LabLedgerStorage {
@@ -282,6 +288,60 @@ export class LabSpendLedger {
    * chargeable request is dispatched. Returns false if the marker could not be
    * persisted, in which case the caller must not dispatch.
    */
+  /** Links a run to the one request it created. Refused if it is linked to another request. */
+  bindRequest(runId: string, requestId: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const state = await this.load();
+      if (!state) return false;
+      if (!state.reservations.some((r) => r.runId === runId) && !(state.spendAttempted ?? []).includes(runId)) return false;
+      const bindings = state.runBindings ?? {};
+      const current = bindings[runId] ?? { requestId: null, attemptIds: [], uploadAuthorised: [] };
+      if (current.requestId !== null && current.requestId !== requestId) return false;
+      state.runBindings = { ...bindings, [runId]: { ...current, requestId } };
+      await this.storage.write(state);
+      return true;
+    }).catch(() => false);
+  }
+
+  /** Links an attempt claimed for this run. Refused unless the run is linked to `requestId`. */
+  bindAttempt(runId: string, requestId: string, attemptId: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const state = await this.load();
+      if (!state) return false;
+      const bindings = state.runBindings ?? {};
+      const current = bindings[runId];
+      if (!current || current.requestId !== requestId) return false;
+      if (current.attemptIds.includes(attemptId)) return true;
+      state.runBindings = { ...bindings, [runId]: { ...current, attemptIds: [...current.attemptIds, attemptId] } };
+      await this.storage.write(state);
+      return true;
+    }).catch(() => false);
+  }
+
+  /** Records that an attempt's upload was authorised (before any stop). Refused for an unbound attempt. */
+  authoriseUpload(runId: string, attemptId: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const state = await this.load();
+      if (!state) return false;
+      const bindings = state.runBindings ?? {};
+      const current = bindings[runId];
+      if (!current || !current.attemptIds.includes(attemptId)) return false;
+      if (current.uploadAuthorised.includes(attemptId)) return true;
+      state.runBindings = { ...bindings, [runId]: { ...current, uploadAuthorised: [...current.uploadAuthorised, attemptId] } };
+      await this.storage.write(state);
+      return true;
+    }).catch(() => false);
+  }
+
+  /** The run's links, or null when unknown. Read-only. */
+  getBinding(runId: string): Promise<{ requestId: string | null; attemptIds: string[]; uploadAuthorised: string[] } | null> {
+    return this.exclusive(async () => {
+      const state = await this.load();
+      if (!state) return null;
+      return (state.runBindings ?? {})[runId] ?? { requestId: null, attemptIds: [], uploadAuthorised: [] };
+    }).catch(() => null);
+  }
+
   markSpendAttempt(runId: string): Promise<boolean> {
     return this.exclusive(async () => {
       const state = await this.load();

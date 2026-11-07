@@ -397,3 +397,50 @@ describe("day rollover keeps outstanding reservations", () => {
     expect(await ledger.reserve("b", 350)).toEqual({ ok: true });
   });
 });
+
+describe("run links: request and attempt binding", () => {
+  function ledgerWith(seedRun: string | null) {
+    const ledger = new LabSpendLedger(fakeStorage(), () => MORNING);
+    return { ledger, seed: async () => { if (seedRun) { await ledger.reserve(seedRun, 100); await ledger.markSpendAttempt(seedRun); } } };
+  }
+  it("a run links to one request only; a second, different request is refused", async () => {
+    const { ledger, seed } = ledgerWith("r1");
+    await seed();
+    expect(await ledger.bindRequest("r1", "req-A")).toBe(true);
+    expect(await ledger.bindRequest("r1", "req-A")).toBe(true);
+    expect(await ledger.bindRequest("r1", "req-B")).toBe(false);
+    expect((await ledger.getBinding("r1"))?.requestId).toBe("req-A");
+  });
+  it("an attempt links only to the request its run is linked to", async () => {
+    const { ledger, seed } = ledgerWith("r1");
+    await seed();
+    expect(await ledger.bindAttempt("r1", "req-A", "att-1")).toBe(false); // no request linked yet
+    await ledger.bindRequest("r1", "req-A");
+    expect(await ledger.bindAttempt("r1", "req-B", "att-1")).toBe(false); // wrong request
+    expect(await ledger.bindAttempt("r1", "req-A", "att-1")).toBe(true);
+    expect((await ledger.getBinding("r1"))?.attemptIds).toEqual(["att-1"]);
+  });
+  it("an upload is authorised only for an attempt linked to that run", async () => {
+    const { ledger, seed } = ledgerWith("r1");
+    await seed();
+    await ledger.bindRequest("r1", "req-A");
+    expect(await ledger.authoriseUpload("r1", "att-9")).toBe(false); // not linked
+    await ledger.bindAttempt("r1", "req-A", "att-9");
+    expect(await ledger.authoriseUpload("r1", "att-9")).toBe(true);
+    expect((await ledger.getBinding("r1"))?.uploadAuthorised).toEqual(["att-9"]);
+  });
+  it("a run with no marker cannot be linked at all", async () => {
+    const { ledger } = ledgerWith(null);
+    expect(await ledger.bindRequest("ghost", "req-A")).toBe(false);
+  });
+  it("links survive a restart (file-backed, same lock)", async () => {
+    const st = fakeStorage();
+    const first = new LabSpendLedger(st, () => MORNING);
+    await first.reserve("r1", 100);
+    await first.markSpendAttempt("r1");
+    await first.bindRequest("r1", "req-A");
+    await first.bindAttempt("r1", "req-A", "att-1");
+    const second = new LabSpendLedger(st, () => MORNING);
+    expect(await second.getBinding("r1")).toEqual({ requestId: "req-A", attemptIds: ["att-1"], uploadAuthorised: [] });
+  });
+});
