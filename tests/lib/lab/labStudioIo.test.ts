@@ -43,7 +43,7 @@ function deps(over: Partial<Parameters<typeof createLabStudioIo>[0]> = {}) {
     guard: neverStopped as LabLiveGuard,
     registry: new RunArtifactRegistry(),
     runId: "run-1",
-    prepareSource: async (file: File) => ({ posterUrl: "data:image/jpeg;base64,xx", durationSeconds: 15, previewUrl: `blob:${file.name}` }),
+    prepareSource: async (file: File) => ({ posterUrl: "data:image/jpeg;base64,xx", durationSeconds: 15, previewUrl: `blob:${file.name}`, release: jest.fn() }),
     testPlace: { placeName: "Test place", latitude: 13.75, longitude: 100.5 },
     fetchJson: jest.fn(async () => ({ ok: true, status: 201, json: async () => ({ requestId: "req-1" }) })),
     fetchBlob: jest.fn(async () => new Blob(["x"], { type: "video/mp4" })),
@@ -251,5 +251,45 @@ describe("the binding never deletes anything on its own", () => {
     expect(io.deleteLabMaterials).toBeUndefined();
     expect(io.deleteLabOutputs).toBeUndefined();
     void ({} as LabLedgerState);
+  });
+});
+
+describe("live guard before each direct normal-route call", () => {
+  it("a stop before approveVoice: the studio function is not called", async () => {
+    const guard: LabLiveGuard = { isStopped: () => true };
+    await expect(createLabStudioIo(deps({ guard })).approveVoice("req-1", "job-1", ["tiktok"])).rejects.toThrow(/stopped/);
+    expect(studioMock.approveStudioVoice).not.toHaveBeenCalled();
+  });
+
+  it("a stop before submit: no studio submit, and no preview URL is created", async () => {
+    const guard: LabLiveGuard = { isStopped: () => true };
+    const prepare = jest.fn();
+    await expect(createLabStudioIo(deps({ guard, prepareSource: prepare })).submit("req-1", [new File(["x"], "a.mp4")])).rejects.toThrow(/stopped/);
+    expect(studioMock.submitStudioRequest).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("a stop before draft creation: no draft request is sent", async () => {
+    const guard: LabLiveGuard = { isStopped: () => true };
+    const d = deps({ guard });
+    await expect(createLabStudioIo(d).createDraft({ title: "t", placeName: "p", latitude: 1, longitude: 2, description: "" })).rejects.toThrow(/stopped/);
+    expect(d.fetchJson).not.toHaveBeenCalled();
+  });
+});
+
+describe("preview URLs are released after submit, success or failure, and the files are never touched", () => {
+  it("success: every preview is released once", async () => {
+    const release = jest.fn();
+    const io = createLabStudioIo(deps({ prepareSource: async () => ({ posterUrl: "data:x", durationSeconds: 15, previewUrl: "blob:p", release }) }));
+    await io.submit("req-1", [new File(["x"], "a.mp4")]);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("failure of the studio submit: the preview is still released", async () => {
+    const release = jest.fn();
+    studioMock.submitStudioRequest.mockRejectedValueOnce(new Error("submit failed"));
+    const io = createLabStudioIo(deps({ prepareSource: async () => ({ posterUrl: "data:x", durationSeconds: 15, previewUrl: "blob:p", release }) }));
+    await expect(io.submit("req-1", [new File(["x"], "a.mp4")])).rejects.toThrow("submit failed");
+    expect(release).toHaveBeenCalledTimes(1);
   });
 });

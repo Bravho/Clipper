@@ -48,7 +48,7 @@ describe("handleLedgerApi guards (the ledger is never touched when a guard fails
 
   it("a bad body: 400, nothing touched", async () => {
     const d = base();
-    expect(await handleLedgerApi({ op: "reserve", runId: "r" }, d)).toMatchObject({ status: 400 });
+    expect(await handleLedgerApi({ op: "reserve" }, d)).toMatchObject({ status: 400 });
     expect(await handleLedgerApi({ op: "nope" }, d)).toMatchObject({ status: 400 });
     expect(await handleLedgerApi(null, d)).toMatchObject({ status: 400 });
     expect(d.ledger.reserve).not.toHaveBeenCalled();
@@ -59,7 +59,7 @@ describe("handleLedgerApi maps each operation to the ledger", () => {
   it("reserve, mark, has-marker, settle, release, usedToday", async () => {
     const d = base();
     expect(await handleLedgerApi({ op: "reserve", runId: "r", credits: 341 }, d)).toEqual({ status: 200, body: { ok: true } });
-    expect(d.ledger.reserve).toHaveBeenCalledWith("r", 341);
+    expect(d.ledger.reserve).toHaveBeenCalledWith("lab-1::r", 341);
     expect(await handleLedgerApi({ op: "markSpendAttempt", runId: "r" }, d)).toEqual({ status: 200, body: { ok: true } });
     expect(await handleLedgerApi({ op: "hasSpendAttempt", runId: "r" }, d)).toEqual({ status: 200, body: { value: false } });
     expect(await handleLedgerApi({ op: "settle", runId: "r" }, d)).toEqual({ status: 200, body: { ok: true } });
@@ -73,7 +73,7 @@ describe("createRemoteLedger (phone side) fails closed", () => {
     const remote = createRemoteLedger(async () => {
       throw new Error("offline");
     });
-    expect(await remote.reserve("r", 10)).toEqual({ ok: false, reason: "ledger_unreadable" });
+    expect(await remote.reserve("r")).toEqual({ ok: false, reason: "ledger_unreadable" });
     expect(await remote.markSpendAttempt("r")).toBe(false);
     expect(await remote.hasSpendAttempt("r")).toBeNull();
     expect(await remote.settle("r")).toBe(false);
@@ -83,7 +83,7 @@ describe("createRemoteLedger (phone side) fails closed", () => {
 
   it("a 404 from the server is treated the same way (fail closed)", async () => {
     const remote = createRemoteLedger(async () => ({ status: 404, body: {} }));
-    expect(await remote.reserve("r", 10)).toEqual({ ok: false, reason: "ledger_unreadable" });
+    expect(await remote.reserve("r")).toEqual({ ok: false, reason: "ledger_unreadable" });
     expect(await remote.hasSpendAttempt("r")).toBeNull();
   });
 
@@ -93,7 +93,7 @@ describe("createRemoteLedger (phone side) fails closed", () => {
       if (req.op === "hasSpendAttempt") return { status: 200, body: { value: true } };
       return { status: 200, body: { ok: true, value: 0 } };
     });
-    expect(await remote.reserve("r", 10)).toEqual({ ok: true });
+    expect(await remote.reserve("r")).toEqual({ ok: true });
     expect(await remote.hasSpendAttempt("r")).toBe(true);
   });
 });
@@ -117,7 +117,7 @@ describe("end to end: phone client -> server handler -> file ledger", () => {
       const post = (body: unknown) =>
         handleLedgerApi(body, { flagValue: "true", providerExecutionEnabled: true, identity, ledger });
       const phone = createRemoteLedger(post);
-      expect(await phone.reserve("run-1", 341)).toEqual({ ok: true });
+      expect(await phone.reserve("run-1")).toEqual({ ok: true });
       expect(await phone.markSpendAttempt("run-1")).toBe(true);
       // A second phone (another client on the same server ledger) sees the marker.
       const otherPhone = createRemoteLedger(post);
@@ -128,5 +128,60 @@ describe("end to end: phone client -> server handler -> file ledger", () => {
     } finally {
       await fsp.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── server-side ownership, server-side amount, replay ────────────────────────
+import { LabSpendLedger as RealLedger, type LabLedgerState as RealState } from "@/lib/lab/labSpendLedger";
+
+function memoryLedger() {
+  let state: RealState | null = null;
+  return new RealLedger(
+    {
+      read: async () => (state === null ? null : JSON.parse(JSON.stringify(state))),
+      write: async (s: RealState) => {
+        state = JSON.parse(JSON.stringify(s));
+      },
+    },
+    () => new Date("2026-11-07T03:00:00Z")
+  );
+}
+
+describe("ledger API: server-side owner, amount and replay", () => {
+  const other = { ...identity, session: { user: { id: "lab-2", role: "requester", email: LAB } } };
+
+  it("ignores the amount sent by the phone; the server quote is what is reserved", async () => {
+    const ledger = memoryLedger();
+    const d = { flagValue: "true", providerExecutionEnabled: true, identity, ledger };
+    await handleLedgerApi({ op: "reserve", runId: "r1", credits: 99999 }, d);
+    expect(await ledger.usedToday()).toBe(341);
+  });
+
+  it("a replayed run id is refused", async () => {
+    const ledger = memoryLedger();
+    const d = { flagValue: "true", providerExecutionEnabled: true, identity, ledger };
+    expect(await handleLedgerApi({ op: "reserve", runId: "r1", credits: 1 }, d)).toEqual({ status: 200, body: { ok: true } });
+    expect(await handleLedgerApi({ op: "reserve", runId: "r1", credits: 1 }, d)).toEqual({ status: 200, body: { ok: false, reason: "duplicate_run" } });
+  });
+
+  it("another owner cannot settle, release or read this owner's run", async () => {
+    const ledger = memoryLedger();
+    const mine = { flagValue: "true", providerExecutionEnabled: true, identity, ledger };
+    const theirs = { flagValue: "true", providerExecutionEnabled: true, identity: other, ledger };
+    await handleLedgerApi({ op: "reserve", runId: "r1" }, mine);
+    await handleLedgerApi({ op: "markSpendAttempt", runId: "r1" }, mine);
+    expect(await handleLedgerApi({ op: "settle", runId: "r1" }, theirs)).toEqual({ status: 200, body: { ok: false } });
+    expect(await handleLedgerApi({ op: "release", runId: "r1" }, theirs)).toEqual({ status: 200, body: { ok: false } });
+    // The other owner's view of this id is simply "no such run here": no marker under its own key.
+    expect(await handleLedgerApi({ op: "hasSpendAttempt", runId: "r1" }, theirs)).toEqual({ status: 200, body: { value: false } });
+    expect(await handleLedgerApi({ op: "hasSpendAttempt", runId: "r1" }, mine)).toEqual({ status: 200, body: { value: true } });
+  });
+
+  it("a release of the owner's own run is still refused once its marker exists", async () => {
+    const ledger = memoryLedger();
+    const mine = { flagValue: "true", providerExecutionEnabled: true, identity, ledger };
+    await handleLedgerApi({ op: "reserve", runId: "r1" }, mine);
+    await handleLedgerApi({ op: "markSpendAttempt", runId: "r1" }, mine);
+    expect(await handleLedgerApi({ op: "release", runId: "r1" }, mine)).toEqual({ status: 200, body: { ok: false } });
   });
 });

@@ -4,6 +4,22 @@
  * the editor would choose a value (platform, voice, template, text style,
  * music, subtitle languages, transitions). Nothing here is a new product choice.
  *
+ * ENDPOINTS REACHED (normal routes, with the caller's own session; none of them
+ * checks the lab flag or the provider switch itself):
+ *  - fetchTestMedia        GET  /api/lab/test-media/{name}        (lab-only route)
+ *  - createDraft           POST /api/lab/autorun/draft            (lab-only route; provider switch checked)
+ *  - submit                POST /api/requests/{id}/submit         (normal studio route; quota slot)
+ *  - content               GET  /api/device-render/content        (normal, read-only)
+ *  - approveContent        POST /api/requests/{id}/start-production
+ *  - approveVoice          POST /api/requests/{id}/approve-voice  (voice generation)
+ *  - approveProduction     POST /api/requests/{id}/scene-design/approve
+ *  - approveVideo          POST /api/requests/{id}/approve-overlay
+ *  - render                POST /api/device-render/claim, /progress, /{attempt}/upload, /{attempt}/complete, /{attempt}/release
+ * The live guard is read before each call above. Server-side disabling of the
+ * lab path is enforced ONLY on the lab-only routes; the normal routes above are
+ * not gated by it. Making them refuse for the lab account needs a shared-path
+ * change (see the proposal in the checklist) and is not applied.
+ *
  * Browser-only (phone WebView). Not run in unit tests except through mocked
  * modules. Every external call goes through the live guard first, and the
  * render goes through the bounded driver. Device deletion is NOT wired here:
@@ -35,6 +51,8 @@ import type { LabLiveGuard } from "@/lib/lab/labGuards";
 import { createRenderAdapter, type RunArtifactRegistry } from "@/lib/lab/labRuntime";
 import type { RenderOutcomeLike } from "@/lib/lab/labRenderDriver";
 import type { LabSpendLedger } from "@/lib/lab/labSpendLedger";
+import { LabStopped } from "@/features/requests/labAutoRun";
+import type { PreparedLabSource } from "@/lib/lab/labMediaPrep";
 
 /** The platform and captions the editor starts with. */
 export const LAB_EDITOR_DEFAULTS = {
@@ -96,7 +114,8 @@ export interface StudioBindingDeps {
   registry: RunArtifactRegistry;
   runId: string;
   /** Video helpers that need the browser (poster frame, duration). Injected so tests can stub them. */
-  prepareSource(file: File): Promise<{ posterUrl: string | null; durationSeconds: number | null; previewUrl: string }>;
+  /** Prepares one clip for the studio (see labMediaPrep.ts). The caller releases the preview URL. */
+  prepareSource(file: File): Promise<PreparedLabSource>;
   /** The test place is read here, and validated by the entry before any call. */
   testPlace: { placeName: string; latitude: number; longitude: number };
   fetchJson(url: string, init: RequestInit): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
@@ -127,10 +146,16 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     },
   });
 
+  /** Checked before every direct call to a normal studio route, and before each step. */
+  const live = (at: string) => {
+    if (deps.guard.isStopped()) throw new LabStopped(at);
+  };
+
   const io = {
     adapter,
 
     async fetchTestMedia(name: string): Promise<File> {
+      live("fetch");
       const blob = await deps.fetchBlob(`/api/lab/test-media/${encodeURIComponent(name)}`);
       return new File([blob], name, { type: "video/mp4" });
     },
@@ -142,6 +167,7 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     },
 
     async createDraft(form: { title: string; placeName: string; latitude: number; longitude: number; description: string }): Promise<string> {
+      live("create_draft");
       const res = await deps.fetchJson("/api/lab/autorun/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -154,27 +180,39 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     },
 
     async submit(requestId: string, files: File[]): Promise<void> {
+      live("submit");
       const before = new Set((await loadLocalMediaIndex()).keys());
-      const sources = [];
-      for (const [i, file] of files.entries()) {
-        const prepared = await deps.prepareSource(file);
-        sources.push({
-          id: `lab-${i}`,
-          kind: "clip" as const,
-          file,
-          previewUrl: prepared.previewUrl,
-          posterUrl: prepared.posterUrl,
-          durationSeconds: prepared.durationSeconds,
-          fileName: file.name,
-        });
+      const prepared: PreparedLabSource[] = [];
+      try {
+        const sources = [];
+        for (const [i, file] of files.entries()) {
+          live("submit");
+          const p = await deps.prepareSource(file);
+          prepared.push(p);
+          sources.push({
+            id: `lab-${i}`,
+            kind: "clip" as const,
+            file,
+            previewUrl: p.previewUrl,
+            posterUrl: p.posterUrl,
+            durationSeconds: p.durationSeconds,
+            fileName: file.name,
+          });
+        }
+        live("submit");
+        // POST /api/requests/{id}/submit (normal studio route, the caller's own session)
+        await submitStudioRequest({ requestId, sources });
+        // The materials this run stored are the ones that were not there before.
+        const added = [...(await loadLocalMediaIndex()).keys()].filter((id) => !before.has(id));
+        materialsByRequest.set(requestId, added);
+      } finally {
+        // Only the temporary preview URLs are released. The files are never touched.
+        for (const p of prepared) p.release();
       }
-      await submitStudioRequest({ requestId, sources });
-      // The materials this run stored are the ones that were not there before.
-      const added = [...(await loadLocalMediaIndex()).keys()].filter((id) => !before.has(id));
-      materialsByRequest.set(requestId, added);
     },
 
     async content(requestId: string): Promise<LabContentView | null> {
+      live("content");
       const c: StudioContent = await fetchStudioContent(requestId);
       if (!c.submitted || !c.jobId) return null;
       const storyboard = c.storyboard ?? null;
@@ -190,6 +228,7 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     },
 
     async approveContent(requestId: string, input: { script: LabScriptView; storyboard: LabStoryboardScene[]; voiceId: string }): Promise<void> {
+      live("approve_content");
       await approveStudioContent({
         requestId,
         script: input.script,
@@ -199,6 +238,7 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     },
 
     async approveVoice(requestId: string, jobId: string, platforms: string[]): Promise<void> {
+      live("voice");
       await approveStudioVoice({
         requestId,
         jobId,
@@ -208,6 +248,7 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     },
 
     async approveProduction(requestId: string, jobId: string, plan: unknown[]): Promise<void> {
+      live("scene_design");
       const scenes = plan as Parameters<typeof toStudioScenePlan>[0];
       const durationSeconds = scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
       await approveStudioProduction({
@@ -223,6 +264,7 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
     },
 
     async approveVideo(requestId: string, jobId: string): Promise<void> {
+      live("approve_video");
       await approveStudioVideo({ requestId, jobId });
     },
 

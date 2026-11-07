@@ -94,9 +94,15 @@ export function createRenderAdapter(deps: RenderAdapterDeps) {
   };
 }
 
+/**
+ * Device file operations. Each resolves true when it removed a file, and false
+ * when the file was already absent. An absent file is NOT an error: runDeviceRender
+ * already removes its own local copy of a finished render after the server
+ * confirms it, so the lab cleanup must not fail on that.
+ */
 export interface DeviceFileOps {
-  deleteMaterial(localId: string): Promise<void>;
-  deleteOutput(assetId: string): Promise<void>;
+  deleteMaterial(localId: string): Promise<boolean>;
+  deleteOutput(assetId: string): Promise<boolean>;
 }
 
 /**

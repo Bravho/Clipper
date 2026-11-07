@@ -103,10 +103,12 @@ function world(opts: {
     deleteMaterial: async (id) => {
       calls.push(`deleteMaterial:${id}`);
       deviceDeleted.push(id);
+      return true;
     },
     deleteOutput: async (id) => {
       calls.push(`deleteOutput:${id}`);
       deviceDeleted.push(id);
+      return true;
     },
   });
   client.deleteLabMaterials = cleanup.deleteLabMaterials;
@@ -254,8 +256,8 @@ describe("run-owned cleanup", () => {
     registry.registerMaterial("run-1", "mine");
     const deleted: string[] = [];
     const cleanup = createRunOwnedCleanup("run-1", registry, {
-      deleteMaterial: async (id) => void deleted.push(id),
-      deleteOutput: async (id) => void deleted.push(id),
+      deleteMaterial: async (id) => { deleted.push(id); return true; },
+      deleteOutput: async (id) => { deleted.push(id); return true; },
     });
     await expect(cleanup.deleteLabMaterials(["mine", "someone-elses"])).rejects.toThrow(/not this run's/);
     expect(deleted).toEqual([]);
@@ -269,10 +271,76 @@ describe("run-owned cleanup", () => {
     registry.registerMaterial("run-2", "m2");
     const deleted: string[] = [];
     const cleanup = createRunOwnedCleanup("run-1", registry, {
-      deleteMaterial: async (id) => void deleted.push(id),
-      deleteOutput: async (id) => void deleted.push(id),
+      deleteMaterial: async (id) => { deleted.push(id); return true; },
+      deleteOutput: async (id) => { deleted.push(id); return true; },
     });
     await cleanup.deleteLabMaterials(["m1"]);
     expect(deleted).toEqual(["m1"]);
+  });
+});
+
+// ── run-owned cleanup against a fake device store ───────────────────────────
+describe("run-owned cleanup with a fake device store", () => {
+  function fakeDevice(initial: string[]) {
+    const files = new Set(initial);
+    const log: string[] = [];
+    return {
+      files,
+      log,
+      ops: {
+        deleteMaterial: async (id: string) => {
+          log.push(`material:${id}`);
+          return files.delete(id);
+        },
+        deleteOutput: async (id: string) => {
+          log.push(`output:${id}`);
+          return files.delete(id);
+        },
+      },
+    };
+  }
+
+  it("an output already removed by runDeviceRender is not an error; the run completes its cleanup", async () => {
+    const registry = new RunArtifactRegistry();
+    registry.registerOutput("run-1", "asset-1");
+    const device = fakeDevice([]); // runDeviceRender already removed it
+    const cleanup = createRunOwnedCleanup("run-1", registry, device.ops);
+    await expect(cleanup.deleteLabOutputs(["asset-1"])).resolves.toBeUndefined();
+    expect(device.log).toEqual(["output:asset-1"]);
+  });
+
+  it("deletes only this run's registered files; another run's and unrelated files stay", async () => {
+    const registry = new RunArtifactRegistry();
+    registry.registerMaterial("run-1", "mine-m");
+    registry.registerOutput("run-1", "mine-o");
+    registry.registerOutput("run-2", "theirs-o");
+    const device = fakeDevice(["mine-m", "mine-o", "theirs-o", "unrelated.jpg"]);
+    const cleanup = createRunOwnedCleanup("run-1", registry, device.ops);
+    await cleanup.deleteLabMaterials(["mine-m"]);
+    await cleanup.deleteLabOutputs(["mine-o"]);
+    expect([...device.files].sort()).toEqual(["theirs-o", "unrelated.jpg"]);
+  });
+
+  it("an id that is not this run's is refused before any file is touched", async () => {
+    const registry = new RunArtifactRegistry();
+    registry.registerOutput("run-1", "mine-o");
+    const device = fakeDevice(["mine-o", "theirs-o"]);
+    const cleanup = createRunOwnedCleanup("run-1", registry, device.ops);
+    await expect(cleanup.deleteLabOutputs(["mine-o", "theirs-o"])).rejects.toThrow(/not this run's/);
+    expect(device.log).toEqual([]);
+    expect([...device.files].sort()).toEqual(["mine-o", "theirs-o"]);
+  });
+
+  it("a delete that throws is reported, and the rest of the run's files are not guessed at", async () => {
+    const registry = new RunArtifactRegistry();
+    registry.registerOutput("run-1", "a");
+    registry.registerOutput("run-1", "b");
+    const device = fakeDevice(["a", "b"]);
+    device.ops.deleteOutput = async (id: string) => {
+      if (id === "a") throw new Error("permission denied");
+      return true;
+    };
+    const cleanup = createRunOwnedCleanup("run-1", registry, device.ops);
+    await expect(cleanup.deleteLabOutputs(["a", "b"])).rejects.toThrow("permission denied");
   });
 });

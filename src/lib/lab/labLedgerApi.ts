@@ -6,9 +6,29 @@
  */
 import { decideLabIdentity } from "@/lib/lab/labSteps";
 import type { LabSpendLedger } from "@/lib/lab/labSpendLedger";
+import { labMaxRunCredits, LAB_FIXED_CHANNELS, LAB_FIXED_DURATION_SECONDS } from "@/lib/lab/labCostBasis";
+
+/**
+ * Server-side rules for every ledger call:
+ *  - The owner is the signed-in account, taken from the session. Every run id is
+ *    stored under that owner (`owner::runId`), so one owner can never settle,
+ *    release or read another owner's run, and a replayed id is refused.
+ *  - The credit amount is computed here, never taken from the phone.
+ *  - The phone's spend totals and marker claims are not trusted: the answers come
+ *    from the server ledger, and release is refused by the ledger once a marker exists.
+ */
+export function ownedKey(ownerId: string, runId: string): string {
+  return `${ownerId}::${runId}`;
+}
+
+export function serverRunQuote(): number {
+  const quote = labMaxRunCredits(LAB_FIXED_DURATION_SECONDS, LAB_FIXED_CHANNELS);
+  if (!quote.ok) throw new Error(`lab quote refused: ${quote.reason}`);
+  return quote.maxCredits;
+}
 
 export type LedgerRequest =
-  | { op: "reserve"; runId: string; credits: number }
+  | { op: "reserve"; runId: string }
   | { op: "markSpendAttempt"; runId: string }
   | { op: "hasSpendAttempt"; runId: string }
   | { op: "settle"; runId: string }
@@ -28,7 +48,8 @@ function parse(body: unknown): LedgerRequest | null {
   const runId = typeof b.runId === "string" ? b.runId : "";
   switch (b.op) {
     case "reserve":
-      return typeof b.credits === "number" && runId ? { op: "reserve", runId, credits: b.credits } : null;
+      // Any credits field the phone sends is ignored: the server computes the amount.
+      return runId ? { op: "reserve", runId } : null;
     case "markSpendAttempt":
     case "hasSpendAttempt":
     case "settle":
@@ -49,17 +70,19 @@ export async function handleLedgerApi(body: unknown, deps: LedgerApiDeps): Promi
   const req = parse(body);
   if (!req) return { status: 400, body: { error: "Bad ledger request." } };
 
+  const owner = identity.userId;
   switch (req.op) {
     case "reserve":
-      return { status: 200, body: await deps.ledger.reserve(req.runId, req.credits) };
+      // The amount is the server's own quote; a phone-sent amount is ignored.
+      return { status: 200, body: await deps.ledger.reserve(ownedKey(owner, req.runId), serverRunQuote()) };
     case "markSpendAttempt":
-      return { status: 200, body: { ok: await deps.ledger.markSpendAttempt(req.runId) } };
+      return { status: 200, body: { ok: await deps.ledger.markSpendAttempt(ownedKey(owner, req.runId)) } };
     case "hasSpendAttempt":
-      return { status: 200, body: { value: await deps.ledger.hasSpendAttempt(req.runId) } };
+      return { status: 200, body: { value: await deps.ledger.hasSpendAttempt(ownedKey(owner, req.runId)) } };
     case "settle":
-      return { status: 200, body: { ok: await deps.ledger.settle(req.runId) } };
+      return { status: 200, body: { ok: await deps.ledger.settle(ownedKey(owner, req.runId)) } };
     case "release":
-      return { status: 200, body: { ok: await deps.ledger.release(req.runId) } };
+      return { status: 200, body: { ok: await deps.ledger.release(ownedKey(owner, req.runId)) } };
     case "usedToday":
       return { status: 200, body: { value: await deps.ledger.usedToday() } };
   }
@@ -77,9 +100,9 @@ export function createRemoteLedger(post: (body: LedgerRequest) => Promise<{ stat
     }
   };
   return {
-    reserve: async (runId: string, credits: number) =>
+    reserve: async (runId: string) =>
       unwrap<{ ok: true } | { ok: false; reason: "run_over_cap" | "day_over_cap" | "ledger_unreadable" | "bad_amount" | "duplicate_run" }>(
-        { op: "reserve", runId, credits },
+        { op: "reserve", runId },
         (b) => b as never,
         { ok: false, reason: "ledger_unreadable" }
       ),

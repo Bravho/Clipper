@@ -194,8 +194,8 @@ describe("runLabEntry: outcomes", () => {
   it("a complete run with device deletions injected (tests only) settles the reservation", async () => {
     const deleted: string[] = [];
     const files: DeviceFileOps = {
-      deleteMaterial: async (id) => void deleted.push(`m:${id}`),
-      deleteOutput: async (id) => void deleted.push(`o:${id}`),
+      deleteMaterial: async (id) => { deleted.push(`m:${id}`); return true; },
+      deleteOutput: async (id) => { deleted.push(`o:${id}`); return true; },
     };
     const m = makeIo();
     const r = await runLabEntry(
