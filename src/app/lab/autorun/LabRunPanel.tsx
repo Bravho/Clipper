@@ -26,6 +26,56 @@ async function postLedger(body: LedgerRequest): Promise<{ status: number; body: 
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
+/**
+ * What the button does. Exported so it can be exercised without a browser: it
+ * builds the phone's pieces (ledger client, polled guard, media preparation,
+ * fetch wrappers) and runs the one entry point. Any unexpected failure is
+ * reported as "nothing was sent".
+ */
+export async function startLabPanelRun(props: LabPanelProps): Promise<LabScreenView> {
+  try {
+    const ledger = createRemoteLedger(postLedger);
+    const guard = createPolledGuard(async () => (await postLedger({ op: "usedToday" })).status === 200);
+    await guard.refresh();
+    const testPlaceEnv = props.testPlace
+      ? {
+          LAB_TEST_PLACE_NAME: props.testPlace.placeName,
+          LAB_TEST_PLACE_LAT: String(props.testPlace.latitude),
+          LAB_TEST_PLACE_LNG: String(props.testPlace.longitude),
+        }
+      : {};
+    const input = buildLabScreenInput({
+      env: { NEXT_PUBLIC_LAB_AUTORUN: props.flagOn ? "true" : undefined, ...testPlaceEnv },
+      identity: {
+        flagValue: props.flagOn ? "true" : undefined,
+        labEmail: props.identity.email,
+        requesterRole: props.identity.role,
+        session: { user: { id: props.identity.userId, role: props.identity.role, email: props.identity.email } },
+      },
+      ledger,
+      guard,
+      runId: crypto.randomUUID(),
+      prepareSource: (file) =>
+        prepareLabSource(file, {
+          probe: probeVideo,
+          createObjectURL: (f) => URL.createObjectURL(f),
+          revokeObjectURL: (u) => URL.revokeObjectURL(u),
+          timeoutMs: 20_000,
+          isCancelled: () => guard.isStopped(),
+        }),
+      fetchJson: async (url, init) => {
+        const res = await fetch(url, init);
+        return { ok: res.ok, status: res.status, json: () => res.json() };
+      },
+      fetchBlob: async (url) => (await fetch(url)).blob(),
+      fileNames: props.fileNames,
+    });
+    return await startLabRunFromScreen({ ...input, providerExecutionEnabled: props.providerOn });
+  } catch {
+    return { title: "Not started", detail: "The lab run could not start. Nothing was sent." };
+  }
+}
+
 export function LabRunPanel(props: LabPanelProps) {
   const [view, setView] = useState<LabScreenView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,41 +83,7 @@ export function LabRunPanel(props: LabPanelProps) {
   const start = async () => {
     setBusy(true);
     try {
-      const ledger = createRemoteLedger(postLedger);
-      const guard = createPolledGuard(async () => (await postLedger({ op: "usedToday" })).status === 200);
-      await guard.refresh();
-      const testPlaceEnv = props.testPlace
-        ? { LAB_TEST_PLACE_NAME: props.testPlace.placeName, LAB_TEST_PLACE_LAT: String(props.testPlace.latitude), LAB_TEST_PLACE_LNG: String(props.testPlace.longitude) }
-        : {};
-      const input = buildLabScreenInput({
-        env: { NEXT_PUBLIC_LAB_AUTORUN: props.flagOn ? "true" : undefined, ...testPlaceEnv },
-        identity: {
-          flagValue: props.flagOn ? "true" : undefined,
-          labEmail: props.identity.email,
-          requesterRole: props.identity.role,
-          session: { user: { id: props.identity.userId, role: props.identity.role, email: props.identity.email } },
-        },
-        ledger,
-        guard,
-        runId: crypto.randomUUID(),
-        prepareSource: (file) =>
-          prepareLabSource(file, {
-            probe: probeVideo,
-            createObjectURL: (f) => URL.createObjectURL(f),
-            revokeObjectURL: (u) => URL.revokeObjectURL(u),
-            timeoutMs: 20_000,
-            isCancelled: () => guard.isStopped(),
-          }),
-        fetchJson: async (url, init) => {
-          const res = await fetch(url, init);
-          return { ok: res.ok, status: res.status, json: () => res.json() };
-        },
-        fetchBlob: async (url) => (await fetch(url)).blob(),
-        fileNames: props.fileNames,
-      });
-      setView(await startLabRunFromScreen({ ...input, providerExecutionEnabled: props.providerOn }));
-    } catch {
-      setView({ title: "Not started", detail: "The lab run could not start. Nothing was sent." });
+      setView(await startLabPanelRun(props));
     } finally {
       setBusy(false);
     }
