@@ -162,3 +162,135 @@ describe("the caps are the approved numbers", () => {
     expect(LAB_LEDGER_PER_DAY_CAP).toBe(1000);
   });
 });
+
+// ── atomic reservations, single-use run ids, restart persistence ─────────────
+import { promises as fsp } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createFileLedgerStorage } from "@/lib/lab/labSpendLedger";
+
+/** Fake storage with a real async gap, so an unlocked check-then-write would race. */
+function slowStorage(): LabLedgerStorage & { raw: string | null } {
+  const store = {
+    raw: null as string | null,
+    async read() {
+      await new Promise((r) => setTimeout(r, 2));
+      return store.raw === null ? null : JSON.parse(store.raw);
+    },
+    async write(state: LabLedgerState) {
+      await new Promise((r) => setTimeout(r, 2));
+      store.raw = JSON.stringify(state);
+    },
+  };
+  return store;
+}
+
+describe("concurrency: reservations are atomic", () => {
+  it("ten simultaneous 350 reservations: exactly two fit under the 1000 day cap", async () => {
+    const ledger = new LabSpendLedger(slowStorage(), () => MORNING);
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => ledger.reserve(`run-${i}`, 350))
+    );
+    const ok = results.filter((r) => r.ok).length;
+    const dayRefused = results.filter((r) => !r.ok && r.reason === "day_over_cap").length;
+    expect(ok).toBe(2);
+    expect(dayRefused).toBe(8);
+    expect(await ledger.usedToday()).toBe(700);
+  });
+
+  it("a settle racing a reserve never loses a credit", async () => {
+    const storage = slowStorage();
+    const ledger = new LabSpendLedger(storage, () => MORNING);
+    await ledger.reserve("a", 350);
+    const [settled, rb, rc] = await Promise.all([ledger.settle("a"), ledger.reserve("b", 350), ledger.reserve("c", 350)]);
+    expect(settled).toBe(true);
+    expect(rb).toEqual({ ok: true });
+    // 350 charged + 350 for b = 700; c would make 1050, so it is refused.
+    expect(rc).toEqual({ ok: false, reason: "day_over_cap" });
+    expect(await ledger.usedToday()).toBe(700);
+  });
+});
+
+describe("single-use run ids (duplicate triggers)", () => {
+  it("refuses the same run id twice while it is reserved", async () => {
+    const ledger = new LabSpendLedger(fakeStorage(), () => MORNING);
+    expect(await ledger.reserve("same", 100)).toEqual({ ok: true });
+    expect(await ledger.reserve("same", 100)).toEqual({ ok: false, reason: "duplicate_run" });
+  });
+  it("refuses the same run id again after it was settled", async () => {
+    const ledger = new LabSpendLedger(fakeStorage(), () => MORNING);
+    await ledger.reserve("same", 100);
+    await ledger.settle("same");
+    expect(await ledger.reserve("same", 100)).toEqual({ ok: false, reason: "duplicate_run" });
+  });
+  it("refuses the same run id again after it was released", async () => {
+    const ledger = new LabSpendLedger(fakeStorage(), () => MORNING);
+    await ledger.reserve("same", 100);
+    await ledger.release("same");
+    expect(await ledger.reserve("same", 100)).toEqual({ ok: false, reason: "duplicate_run" });
+  });
+  it("refuses an empty run id", async () => {
+    const ledger = new LabSpendLedger(fakeStorage(), () => MORNING);
+    expect(await ledger.reserve("", 100)).toEqual({ ok: false, reason: "duplicate_run" });
+  });
+});
+
+describe("restart persistence (file storage)", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lab-ledger-"));
+  });
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it("a new process sees the charged spend from the file", async () => {
+    const file = path.join(dir, "ledger.json");
+    const first = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    await first.reserve("a", 350);
+    await first.settle("a");
+    const restarted = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    expect(await restarted.usedToday()).toBe(350);
+  });
+
+  it("an unsettled reservation survives a restart and still counts toward the cap", async () => {
+    const file = path.join(dir, "ledger.json");
+    const first = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    await first.reserve("a", 350);
+    await first.reserve("b", 350);
+    const restarted = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    expect(await restarted.reserve("c", 350)).toEqual({ ok: false, reason: "day_over_cap" });
+  });
+
+  it("a restarted process still refuses a run id used before the restart", async () => {
+    const file = path.join(dir, "ledger.json");
+    await new LabSpendLedger(createFileLedgerStorage(file), () => MORNING).reserve("a", 10);
+    const restarted = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    expect(await restarted.reserve("a", 10)).toEqual({ ok: false, reason: "duplicate_run" });
+  });
+
+  it("a failed write leaves the previous complete file in place", async () => {
+    const file = path.join(dir, "ledger.json");
+    const ledger = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    await ledger.reserve("a", 100);
+    const before = await fsp.readFile(file, "utf8");
+    jest.spyOn(fsp, "rename").mockRejectedValueOnce(new Error("crash during rename"));
+    expect(await ledger.reserve("b", 100)).toEqual({ ok: false, reason: "ledger_unreadable" });
+    expect(await fsp.readFile(file, "utf8")).toBe(before);
+    expect(JSON.parse(before).reservations.map((r: { runId: string }) => r.runId)).toEqual(["a"]);
+  });
+
+  it("a corrupt file fails closed", async () => {
+    const file = path.join(dir, "ledger.json");
+    await fsp.writeFile(file, "{not json", "utf8");
+    const ledger = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    expect(await ledger.reserve("a", 10)).toEqual({ ok: false, reason: "ledger_unreadable" });
+  });
+
+  it("a missing file starts an empty ledger", async () => {
+    const file = path.join(dir, "absent", "ledger.json");
+    const ledger = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    expect(await ledger.reserve("a", 350)).toEqual({ ok: true });
+  });
+});
