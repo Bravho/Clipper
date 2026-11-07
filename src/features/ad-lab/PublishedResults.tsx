@@ -17,6 +17,7 @@ import {
   deleteAdLabPublication,
   updateAdLabTargetEconomics,
   createAdLabAdsDraft,
+  ADS_READ_ONLY_MESSAGE_TH,
   syncAdLabAdsReport,
 } from "./adLabPublishingClient";
 import { CHANNEL_ACCENT, CHANNEL_LABELS } from "./socialAccountChannels";
@@ -418,7 +419,10 @@ export function PublishedResults({ brandId }: { brandId: string }) {
                                   {!target.ads?.adId ? (
                                     <button
                                       type="button"
-                                      className="rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-medium text-violet-800"
+                                      disabled
+                                      aria-disabled="true"
+                                      title={ADS_READ_ONLY_MESSAGE_TH}
+                                      className="cursor-not-allowed rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-400"
                                       onClick={() => void (async () => {
                                         try {
                                           const targeting = defaultAdLabAdTargeting({
@@ -441,8 +445,11 @@ export function PublishedResults({ brandId }: { brandId: string }) {
                                         }
                                       })()}
                                     >
-                                      Create Ads draft (paused)
+                                      Create Ads draft (ปิดใช้งาน)
                                     </button>
+                                  ) : null}
+                                  {!target.ads?.adId ? (
+                                    <p className="w-full text-[11px] text-amber-700">{ADS_READ_ONLY_MESSAGE_TH}</p>
                                   ) : (
                                     <>
                                       <span className="text-[11px] text-slate-500">

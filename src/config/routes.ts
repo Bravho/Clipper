@@ -77,6 +77,7 @@ export const ROUTES = {
   AD_LAB: "/dashboard/ad-lab",
   AD_LAB_BRANDS: "/dashboard/ad-lab/brands",
   AD_LAB_CREATE: "/dashboard/ad-lab/create",
+  AD_LAB_AVATAR: "/dashboard/ad-lab/avatar",
   AD_LAB_PUBLISHING: "/dashboard/ad-lab/publishing",
   AD_LAB_ANALYZE: "/dashboard/ad-lab/analyze",
 } as const;

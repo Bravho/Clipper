@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import type { AdLabBrand } from "@/domain/models/AdLab";
 import { useAdLabStore } from "./useAdLabStore";
 
-const blank = { name: "", product: "", audience: "", promise: "", tone: "" };
+const blank = { name: "", product: "", audience: "", promise: "" };
 
 export function BrandsWorkspace() {
   const { store, ready, update, persistence, syncPending } = useAdLabStore();
@@ -23,7 +23,6 @@ export function BrandsWorkspace() {
       product: form.product.trim(),
       audience: form.audience.trim(),
       promise: form.promise.trim(),
-      tone: form.tone.trim(),
       createdAt: new Date().toISOString(),
     };
     update((current) => ({
@@ -84,8 +83,7 @@ export function BrandsWorkspace() {
                 </div>
                 <dl className="mt-4 space-y-3 text-sm">
                   <div><dt className="text-xs font-medium uppercase text-slate-400">Audience</dt><dd className="mt-0.5 text-slate-700">{brand.audience || "—"}</dd></div>
-                  <div><dt className="text-xs font-medium uppercase text-slate-400">Brand promise</dt><dd className="mt-0.5 text-slate-700">{brand.promise || "—"}</dd></div>
-                  <div><dt className="text-xs font-medium uppercase text-slate-400">Tone</dt><dd className="mt-0.5 text-slate-700">{brand.tone || "—"}</dd></div>
+                  <div><dt className="text-xs font-medium uppercase text-slate-400">Product / service details</dt><dd className="mt-0.5 text-slate-700">{brand.promise || "—"}</dd></div>
                 </dl>
               </Card>
             ))}
@@ -96,14 +94,13 @@ export function BrandsWorkspace() {
       <Card className="h-fit lg:sticky lg:top-4">
         <CardHeader>
           <CardTitle>เพิ่มแบรนด์</CardTitle>
-          <CardDescription>5 ช่องนี้เพียงพอสำหรับเริ่มสร้างสคริปต์</CardDescription>
+          <CardDescription>4 ช่องนี้เพียงพอสำหรับเริ่มสร้างสคริปต์</CardDescription>
         </CardHeader>
         <form onSubmit={save} className="space-y-4">
           <Input label="ชื่อแบรนด์ *" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           <Input label="สินค้าหรือบริการหลัก" value={form.product} onChange={(e) => setForm({ ...form, product: e.target.value })} />
           <Textarea label="ลูกค้าเป้าหมาย" value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })} placeholder="เช่น เจ้าของร้านอาหารที่ไม่มีเวลาทำคอนเทนต์" />
-          <Textarea label="คำสัญญาหลักของแบรนด์" value={form.promise} onChange={(e) => setForm({ ...form, promise: e.target.value })} placeholder="ลูกค้าจะได้ผลลัพธ์อะไร" />
-          <Input label="น้ำเสียง" value={form.tone} onChange={(e) => setForm({ ...form, tone: e.target.value })} placeholder="เช่น จริงใจ กระชับ เป็นผู้เชี่ยวชาญ" />
+          <Textarea label="รายละเอียดสินค้าหรือบริการ" value={form.promise} onChange={(e) => setForm({ ...form, promise: e.target.value })} placeholder="อธิบายสินค้าหรือบริการของคุณ เช่น คืออะไร ทำอะไรได้ จุดเด่น ราคา/แพ็กเกจ" />
           <Button type="submit" fullWidth>บันทึกแบรนด์</Button>
         </form>
       </Card>

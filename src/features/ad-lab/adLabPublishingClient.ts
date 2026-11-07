@@ -4,6 +4,10 @@ import type { AdLabChannel } from "@/domain/models/AdLab";
 import type { AdLabPublication } from "@/domain/models/AdLabPublication";
 import type { AdLabAdTargeting, AdLabAdsLink } from "@/domain/models/AdLabAdTargeting";
 
+export const ADS_READ_ONLY_MESSAGE_TH =
+  "ระบบนี้อ่านข้อมูลโฆษณาได้อย่างเดียว ไม่สามารถสร้าง/แก้ไข/ลบแคมเปญหรือโฆษณาได้";
+const ADS_WRITES_BLOCKED: boolean = true;
+
 /** Browser-side calls for Ad Lab real publishing and results. */
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -110,6 +114,8 @@ export async function createAdLabAdsDraft(input: {
   dailyBudgetBaht?: number;
   campaignName?: string;
 }): Promise<{ publication: AdLabPublication; link: AdLabAdsLink }> {
+  // READ-ONLY POLICY: ads writes are blocked; fail fast in the browser with the Thai message.
+  if (ADS_WRITES_BLOCKED) throw new Error(ADS_READ_ONLY_MESSAGE_TH);
   return readJson(
     await fetch("/api/ad-lab/ads/draft", {
       method: "POST",

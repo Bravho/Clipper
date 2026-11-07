@@ -30,7 +30,7 @@ export const AI_CONFIG = {
   openai: {
     apiKey: (process.env.OPENAI_API_KEY ?? "").trim(),
     /** Cost-effective text model for grounded, structured Ad Lab scripts. */
-    scriptModel: (process.env.OPENAI_SCRIPT_MODEL ?? "gpt-5.6-luna").trim(),
+    scriptModel: (process.env.OPENAI_SCRIPT_MODEL ?? "gpt-5.5").trim(),
   },
   gemini: {
     apiKey: process.env.GEMINI_API_KEY ?? "",

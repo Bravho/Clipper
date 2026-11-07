@@ -8,6 +8,7 @@ import { ROUTES } from "@/config/routes";
 const links = [
   { href: ROUTES.AD_LAB_BRANDS, label: "Brands", detail: "ข้อมูลแบรนด์" },
   { href: ROUTES.AD_LAB_CREATE, label: "Create", detail: "สร้างสคริปต์" },
+  { href: ROUTES.AD_LAB_AVATAR, label: "AI Avatar", detail: "วิดีโออวตาร์ (ไม่บังคับ)" },
   { href: ROUTES.AD_LAB_PUBLISHING, label: "Publishing", detail: "เตรียมเผยแพร่" },
   { href: ROUTES.AD_LAB_ANALYZE, label: "Analyze", detail: "วิเคราะห์ผล" },
 ];

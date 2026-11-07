@@ -17,9 +17,65 @@
  */
 
 import { AI_CONFIG } from "@/config/aiTools";
-import type { ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
+import type { AdLabAvatarVoiceId, ElevenLabsVoiceId } from "@/config/elevenLabsVoices";
 import { spacesClient, spacesPublicUrl } from "@/lib/spaces";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
+
+/**
+ * Synthesize text to MP3 audio and return the raw Buffer.
+ * Unlike synthesizeAndStore, this does NOT upload anything — the caller
+ * decides what to do with the bytes (upload to Spaces, pipe elsewhere, etc.).
+ *
+ * When `voiceSettings` is provided it is forwarded verbatim to the API.
+ * When absent, `{ stability }` from AI_CONFIG is used — preserving the existing
+ * main pipeline behaviour exactly.
+ */
+export async function synthesizeSpeech(params: {
+  text: string;
+  voiceId: ElevenLabsVoiceId | AdLabAvatarVoiceId;
+  fetchImpl?: typeof fetch;
+  voiceSettings?: {
+    stability?: number;
+    similarity_boost?: number;
+    style?: number;
+    use_speaker_boost?: boolean;
+    speed?: number;
+  };
+}): Promise<Buffer> {
+  const { apiKey, model, stability, languageCode } = AI_CONFIG.elevenLabs;
+
+  if (!apiKey) {
+    throw new Error(
+      "ELEVENLABS_API_KEY is not set. Add it to .env.local and restart the dev server."
+    );
+  }
+
+  const fetcher = params.fetchImpl ?? fetch;
+  const resolvedVoiceSettings = params.voiceSettings ?? { stability };
+  const res = await fetcher(
+    `${BASE_URL}/text-to-speech/${params.voiceId}?output_format=mp3_44100_128`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text: params.text,
+        model_id: model,
+        language_code: languageCode,
+        voice_settings: resolvedVoiceSettings,
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ElevenLabs TTS error ${res.status}: ${body.slice(0, 300)}`);
+  }
+
+  return Buffer.from(await res.arrayBuffer());
+}
 
 const BASE_URL = "https://api.elevenlabs.io/v1";
 

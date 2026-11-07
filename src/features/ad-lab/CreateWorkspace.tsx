@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -8,11 +9,18 @@ import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { AD_LAB_CHANNELS, type AdLabChannel, type AdLabScriptDraft } from "@/domain/models/AdLab";
 import { useAdLabStore, type AdLabClientPersistence } from "./useAdLabStore";
-import { PRESENTATION_DIRECTIONS } from "@/services/ad-lab/storytellingKnowledge";
+import {
+  CONTENT_PURPOSE_OPTIONS,
+  DEFAULT_CONTENT_PURPOSE,
+  type AdLabContentPurpose,
+  getPurposeOptions,
+  resolveContentPurpose,
+} from "@/services/ad-lab/contentPurpose";
 import type { AdLabScriptPlan } from "@/services/ad-lab/AdLabPrototypeService";
 import { formatScriptDocument, parseScriptDocument } from "@/services/ad-lab/scriptDocument";
 import { ScriptDocumentEditor } from "./ScriptDocumentEditor";
 import { AdLabScriptList } from "./AdLabScriptList";
+import { ROUTES } from "@/config/routes";
 
 const channelLabels: Record<AdLabChannel, string> = {
   tiktok: "TikTok",
@@ -23,6 +31,7 @@ const channelLabels: Record<AdLabChannel, string> = {
 
 export function CreateWorkspace() {
   const { store, ready, update, persistence } = useAdLabStore();
+  const [contentPurpose, setContentPurpose] = useState<AdLabContentPurpose>(DEFAULT_CONTENT_PURPOSE);
   const [mainMessage, setMainMessage] = useState("");
   const [detailedContent, setDetailedContent] = useState("");
   const [presentationDirection, setPresentationDirection] = useState("problem-solution");
@@ -73,11 +82,14 @@ export function CreateWorkspace() {
   }
 
   const restoreDraft = useCallback((draft: AdLabScriptDraft) => {
-    const knownDirection = PRESENTATION_DIRECTIONS.some(
+    const purpose = resolveContentPurpose(draft.contentPurpose);
+    const purposeOpts = getPurposeOptions(purpose);
+    const knownDirection = purposeOpts.directions.some(
       (item) => item.value !== "custom" && item.value === draft.presentationDirection
     );
     const legacyCombinedDocument = draft.scriptPlan?.includes("【ชื่อคลิป】")
       || draft.scriptPlan?.includes("【1. Main Hook");
+    setContentPurpose(purpose);
     setMainMessage(draft.mainMessage);
     setDetailedContent(draft.detailedContent);
     setPresentationDirection(knownDirection ? draft.presentationDirection : "custom");
@@ -109,12 +121,14 @@ export function CreateWorkspace() {
 
   /** Clear the editor for a brand-new script under the selected brand. */
   const resetToNewScript = useCallback(() => {
+    const adDefaults = getPurposeOptions("advertisement").defaults;
+    setContentPurpose("advertisement");
     setMainMessage("");
     setDetailedContent("");
-    setPresentationDirection("problem-solution");
+    setPresentationDirection(adDefaults.presentationDirection);
     setCustomPresentationDirection("");
-    setObjective("conversion");
-    setDuration("30");
+    setObjective(adDefaults.objective);
+    setDuration(adDefaults.duration);
     setTitle("");
     setMainHook("");
     setScriptPlan("");
@@ -141,6 +155,19 @@ export function CreateWorkspace() {
     else resetToNewScript();
     setHydratedBrandId(selectedBrandId);
   }, [brandDrafts, hydratedBrandId, openDraft, ready, resetToNewScript, selectedBrandId]);
+
+  function selectPurpose(newPurpose: AdLabContentPurpose) {
+    if (newPurpose === contentPurpose) return;
+    if (isDirty && !window.confirm("การเปลี่ยนวัตถุประสงค์จะรีเซ็ตแนวทางการนำเสนอ ความยาว และเป้าหมายหลัก ต้องการดำเนินการต่อไหม?")) return;
+    const opts = getPurposeOptions(newPurpose);
+    setContentPurpose(newPurpose);
+    setPresentationDirection(opts.defaults.presentationDirection);
+    setCustomPresentationDirection("");
+    setDuration(opts.defaults.duration);
+    setObjective(opts.defaults.objective);
+    setSaved(false);
+    setIsDirty(true);
+  }
 
   function selectBrand(id: string) {
     if (id === selectedBrandId || !confirmDiscardChanges()) return;
@@ -185,7 +212,8 @@ export function CreateWorkspace() {
         body: JSON.stringify({
           brand,
           input: {
-            mainMessage, detailedContent, presentationDirection: resolvedDirection, objective, duration,
+            mainMessage, detailedContent, presentationDirection: resolvedDirection,
+            contentPurpose, objective, duration,
             ...(withRevisionComment ? {
               revisionComment: revisionComment.trim(),
               currentDraft: { title, mainHook, scriptPlan },
@@ -221,19 +249,28 @@ export function CreateWorkspace() {
     const parsedScript = parseScriptDocument(scriptPlan, { title, mainHook });
     const draft: AdLabScriptDraft = {
       id, brandId: brand.id, mainMessage, detailedContent,
-      presentationDirection: resolvedDirection, objective, duration, scriptPlan, scriptPlanHtml, revisionComment,
+      presentationDirection: resolvedDirection, objective, duration,
+      contentPurpose, scriptPlan, scriptPlanHtml, revisionComment,
       ...parsedScript,
       channels, status, updatedAt: new Date().toISOString(),
     };
     setIsSaving(true);
     setSaved(false);
     try {
-      const destination = await update((current) => ({
-        ...current,
-        drafts: current.drafts.some((item) => item.id === id)
-          ? current.drafts.map((item) => item.id === id ? draft : item)
-          : [draft, ...current.drafts],
-      }));
+      const destination = await update((current) => {
+        const existing = current.drafts.find((item) => item.id === id);
+        // Preserve avatar so it is not dropped when saving/approving an existing draft.
+        // Staleness is detected in the Avatar tab via scriptHash.
+        const draftWithAvatar = existing?.avatar !== undefined
+          ? { ...draft, avatar: existing.avatar }
+          : draft;
+        return {
+          ...current,
+          drafts: current.drafts.some((item) => item.id === id)
+            ? current.drafts.map((item) => item.id === id ? draftWithAvatar : item)
+            : [draftWithAvatar, ...current.drafts],
+        };
+      });
       setSavedDraftId(id);
       setIsApproved(status === "approved");
       setSaveLocation(destination);
@@ -342,15 +379,16 @@ export function CreateWorkspace() {
         <Card className="h-fit">
           <CardHeader><CardTitle>1. Campaign brief</CardTitle><CardDescription>กำหนดเป้าหมายก่อนเขียน เพื่อให้ทุกฉากทำหน้าที่ชัดเจน</CardDescription></CardHeader>
           <div className="space-y-4">
-            <Textarea autoGrow label="ข้อความหลักที่ต้องการจะนำเสนอ" value={mainMessage} onChange={(e) => edited(setMainMessage)(e.target.value)} placeholder={`เช่น ${brand.promise || `${brand.name} ช่วยให้ลูกค้าได้ผลลัพธ์ที่ดีขึ้น`}`} />
+            <Select label="วัตถุประสงค์" value={contentPurpose} onChange={(e) => selectPurpose(e.target.value as AdLabContentPurpose)} options={CONTENT_PURPOSE_OPTIONS} />
+            <Textarea autoGrow label="ข้อความหลักที่ต้องการจะนำเสนอ" value={mainMessage} onChange={(e) => edited(setMainMessage)(e.target.value)} placeholder={`เช่น ${brand.name} ช่วยให้ลูกค้าได้ผลลัพธ์ที่ดีขึ้น`} />
             <Textarea autoGrow label="เนื้อหาและข้อมูลอ้างอิง" value={detailedContent} onChange={(e) => edited(setDetailedContent)(e.target.value)} placeholder="ใส่ข้อเท็จจริงจากเอกสารสินค้า จุดเด่น ตัวอย่าง เหตุผล หรือข้อมูลที่ AI ต้องใช้เขียนบท (AI จะไม่แต่งข้ออ้างที่ไม่มีในข้อมูลนี้)" />
-            <Select label="แนวทางการนำเสนอ" value={presentationDirection} onChange={(e) => edited(setPresentationDirection)(e.target.value)} options={[...PRESENTATION_DIRECTIONS]} />
+            <Select label="แนวทางการนำเสนอ" value={presentationDirection} onChange={(e) => edited(setPresentationDirection)(e.target.value)} options={getPurposeOptions(contentPurpose).directions.map((d) => ({ value: d.value, label: d.label }))} />
             {presentationDirection === "custom" && (
               <Input label="กำหนดแนวทางการนำเสนอเอง" value={customPresentationDirection} onChange={(e) => edited(setCustomPresentationDirection)(e.target.value)} placeholder="เช่น เล่าผ่านหนึ่งวันของเจ้าของร้าน แบบอบอุ่นและเป็นกันเอง" />
             )}
             <div className="grid gap-4 sm:grid-cols-2">
-              <Select label="ความยาว" value={duration} onChange={(e) => edited(setDuration)(e.target.value)} options={[{ value: "15", label: "15 วินาที" }, { value: "30", label: "30 วินาที" }, { value: "45", label: "45 วินาที" }, { value: "60", label: "1 นาที" }, { value: "90", label: "1 นาที 30 วินาที" }, { value: "120", label: "2 นาที" }, { value: "180", label: "3 นาที" }, { value: "300", label: "5 นาที" }, { value: "600", label: "10 นาที" }]} />
-              <Select label="เป้าหมายหลัก" value={objective} onChange={(e) => edited(setObjective)(e.target.value)} options={[{ value: "awareness", label: "ให้คนรู้จักและจดจำแบรนด์" }, { value: "consideration", label: "ให้คนสนใจและพิจารณาสินค้า" }, { value: "conversion", label: "ให้คนตัดสินใจซื้อ สมัคร หรือติดต่อ" }]} />
+              <Select label="ความยาว" value={duration} onChange={(e) => edited(setDuration)(e.target.value)} options={getPurposeOptions(contentPurpose).durations.map((d) => ({ value: d.value, label: d.label }))} />
+              <Select label="เป้าหมายหลัก" value={objective} onChange={(e) => edited(setObjective)(e.target.value)} options={getPurposeOptions(contentPurpose).objectives.map((o) => ({ value: o.value, label: o.label }))} />
             </div>
             <div>
               <p className="mb-2 text-sm font-medium text-slate-700">ช่องทางเผยแพร่</p>
@@ -420,6 +458,14 @@ export function CreateWorkspace() {
             <>
               <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-sm font-semibold text-emerald-800">อนุมัติแล้ว</span>
               <Button type="button" variant="outline" onClick={editApprovedPlan}>แก้ไขแผนอีกครั้ง</Button>
+              {savedDraftId && (
+                <Link
+                  href={`${ROUTES.AD_LAB_AVATAR}?draftId=${savedDraftId}`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-800 hover:bg-violet-100 transition-colors"
+                >
+                  ถัดไป: AI Avatar (ไม่บังคับ) →
+                </Link>
+              )}
             </>
           ) : (
             <>
