@@ -323,7 +323,7 @@ describe("interprocess lock: separate ledger objects cannot overspend", () => {
   it("fails closed when the lock is held and cannot be taken in time", async () => {
     const lockPath = path.join(dir, "ledger.lock");
     await fsp.writeFile(lockPath, "{}", "utf8"); // held by someone, fresh
-    const lock = createFileLock(lockPath, { timeoutMs: 60, retryMs: 5, staleMs: 60_000 });
+    const lock = createFileLock(lockPath, { timeoutMs: 60, retryMs: 5 });
     const ledger = new LabSpendLedger(createFileLedgerStorage(path.join(dir, "ledger.json")), () => MORNING, LAB_LEDGER_TIME_ZONE, lock);
     expect(await ledger.reserve("a", 100)).toEqual({ ok: false, reason: "ledger_unreadable" });
     expect(await ledger.settle("a")).toBe(false);
