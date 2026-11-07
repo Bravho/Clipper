@@ -20,13 +20,14 @@
  */
 
 import type { LabSpendLedger, ReserveResult } from "@/lib/lab/labSpendLedger";
+import { LAB_PROVIDER_EXECUTION_ENABLED as PRODUCTION_PROVIDER_FLAG } from "@/lib/lab/labGuards";
 
 /**
  * Paid providers (voice, script, scene, overlay, render) are NOT authorised.
  * This is a code constant, not an environment variable, so it cannot be turned
  * on by accident. Changing it needs a code change and Tho's approval.
  */
-export const LAB_PROVIDER_EXECUTION_ENABLED = false;
+export { LAB_PROVIDER_EXECUTION_ENABLED } from "@/lib/lab/labGuards";
 
 export class SpendMarkerError extends Error {
   constructor() {
@@ -66,7 +67,7 @@ export type LabRunnerResult =
 
 export async function runLabOnce(deps: LabRunnerDeps): Promise<LabRunnerResult> {
   if (!deps.flagOn()) return { status: "disabled" };
-  const providersOn = deps.providerExecutionEnabled ?? LAB_PROVIDER_EXECUTION_ENABLED;
+  const providersOn = deps.providerExecutionEnabled ?? PRODUCTION_PROVIDER_FLAG;
   if (!providersOn) return { status: "refused", reason: "provider_execution_disabled" };
 
   const runId = deps.newRunId();

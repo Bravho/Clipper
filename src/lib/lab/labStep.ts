@@ -25,6 +25,8 @@ export interface LabStepInput {
 
 export interface LabStepDeps {
   flagValue: string | undefined;
+  /** Paid provider work is refused unless this is true. Production passes the code constant (false). */
+  providerExecutionEnabled: boolean;
   labEmail: string | undefined;
   requesterRole: string;
   getSession(): Promise<{ user?: { id?: string | null; role?: string | null; email?: string | null } | null } | null>;
@@ -40,6 +42,9 @@ export type LabStepResult =
 export async function handleLabStep(input: LabStepInput, deps: LabStepDeps): Promise<LabStepResult> {
   // 1. Flag, right now. A step after the flag was switched off is refused.
   if (deps.flagValue !== "true") return { status: 404, body: { error: "Not found." } };
+  // Every studio action in the allow-list can start paid work. Refuse them all
+  // while provider execution is disabled, even for the right account.
+  if (!deps.providerExecutionEnabled) return { status: 404, body: { error: "Not found." } };
 
   // 2. Exact lab identity.
   const session = await deps.getSession();

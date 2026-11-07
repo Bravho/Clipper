@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository } from "@/repositories/index";
 import { handleLabStep, type LabStepAction } from "@/lib/lab/labStep";
+import { LAB_PROVIDER_EXECUTION_ENABLED } from "@/lib/lab/labGuards";
 import { POST as startProduction } from "@/app/api/requests/[id]/start-production/route";
 import { POST as approveVoice } from "@/app/api/requests/[id]/approve-voice/route";
 import { POST as sceneDesignApprove } from "@/app/api/requests/[id]/scene-design/approve/route";
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
     },
     {
       flagValue: process.env.LAB_AUTORUN_ENABLED,
+      providerExecutionEnabled: LAB_PROVIDER_EXECUTION_ENABLED,
       labEmail: process.env.DEVICE_RENDER_LAB_TEST_EMAIL,
       requesterRole: Role.Requester,
       getSession: async () => {

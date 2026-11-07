@@ -108,8 +108,8 @@ export interface LabRunDeps {
   fetchTestMedia(name: string): Promise<File>;
   quoteCapState(): Promise<LabCapState>;
   createDraft(): Promise<string>;
-  /** Persists the spend-attempt marker. Must resolve only after it is durable. */
-  beforeSpend(requestId: string): Promise<void>;
+  /** Persists the spend-attempt marker. Must resolve only after it is durable. Called before the draft. */
+  beforeSpend(): Promise<void>;
   submit(requestId: string, files: File[]): Promise<void>;
   /** Waits until the script and storyboard are ready. Returns the job id and scenes. */
   waitForContent(requestId: string): Promise<{ jobId: string; scenes: LabStoryboardScene[]; sourceKinds: ("image" | "clip")[]; platforms: string[]; voiceId: string; script: { text: string; english: string; caption: string; captionEnglish: string; captionChinese: string } }>;
@@ -153,13 +153,14 @@ export async function runLabAutoRun(deps: LabRunDeps, options: LabRunOptions): P
     const files: File[] = [];
     for (const name of options.fileNames) files.push(await deps.fetchTestMedia(name));
 
+    // Persist the spend-attempt marker BEFORE the first server write of the run
+    // (the draft), so no request of this run can go out without a recorded
+    // attempt. If it cannot be persisted, nothing is dispatched.
+    step = "before_spend";
+    await deps.beforeSpend();
+
     step = "create_draft";
     requestId = await deps.createDraft();
-
-    // Persist the spend-attempt marker BEFORE the first chargeable request.
-    // If it cannot be persisted, nothing is dispatched.
-    step = "before_spend";
-    await deps.beforeSpend(requestId);
 
     step = "submit";
     await deps.submit(requestId, files);

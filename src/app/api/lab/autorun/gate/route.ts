@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
 import { clipRequestRepository } from "@/repositories/index";
 import { decideLabRunGate } from "@/lib/lab/labRunGate";
+import { LAB_PROVIDER_EXECUTION_ENABLED } from "@/lib/lab/labGuards";
 
 /**
  * POST /api/lab/autorun/gate  { requestId }
@@ -13,7 +14,7 @@ import { decideLabRunGate } from "@/lib/lab/labRunGate";
  * changes nothing. Off (404) unless LAB_AUTORUN_ENABLED is exactly "true".
  */
 export async function POST(request: Request) {
-  if (process.env.LAB_AUTORUN_ENABLED !== "true") {
+  if (!LAB_PROVIDER_EXECUTION_ENABLED || process.env.LAB_AUTORUN_ENABLED !== "true") {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 

@@ -7,6 +7,7 @@ function deps(over: Partial<LabStepDeps> = {}): LabStepDeps & { forward: jest.Mo
   const forward = jest.fn(async () => ({ status: 200, body: { ok: true } }));
   return {
     flagValue: "true",
+    providerExecutionEnabled: true,
     labEmail: LAB,
     requesterRole: "requester",
     getSession: async () => ({ user: { id: LAB_USER, role: "requester", email: LAB } }),
@@ -24,6 +25,14 @@ describe("handleLabStep", () => {
     const result = await handleLabStep(STEP, d);
     expect(result).toEqual({ status: 200, body: { ok: true } });
     expect(d.forward).toHaveBeenCalledWith("approve-voice", "req-1", { jobId: "j" });
+  });
+
+  it("refuses every action while provider execution is disabled, even for the right account", async () => {
+    for (const action of ["start-production", "approve-voice", "scene-design-approve", "approve-overlay"]) {
+      const d = deps({ providerExecutionEnabled: false });
+      expect(await handleLabStep({ ...STEP, action }, d)).toMatchObject({ status: 404 });
+      expect(d.forward).not.toHaveBeenCalled();
+    }
   });
 
   it("does nothing when the flag is off", async () => {

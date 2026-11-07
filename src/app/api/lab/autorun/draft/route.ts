@@ -7,6 +7,7 @@ import { clipRequestService } from "@/services/ClipRequestService";
 import { studioClipRequestFormSchema } from "@/features/requests/validation/clipRequestSchema";
 import { DEFAULT_LOCALE, isAppLocale, LOCALE_COOKIE } from "@/i18n/config";
 import { decideLabIdentity } from "@/lib/lab/labSteps";
+import { LAB_PROVIDER_EXECUTION_ENABLED } from "@/lib/lab/labGuards";
 
 /**
  * POST /api/lab/autorun/draft
@@ -17,6 +18,10 @@ import { decideLabIdentity } from "@/lib/lab/labSteps";
  * studio's own draft route. Off (404) unless LAB_AUTORUN_ENABLED is "true".
  */
 export async function POST(request: Request) {
+  // Creating a draft is not paid, but the lab path stays dark while provider execution is off.
+  if (!LAB_PROVIDER_EXECUTION_ENABLED) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
   const session = await getServerSession(authOptions);
   const identity = decideLabIdentity({
     flagValue: process.env.LAB_AUTORUN_ENABLED,
