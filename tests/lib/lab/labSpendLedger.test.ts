@@ -294,3 +294,87 @@ describe("restart persistence (file storage)", () => {
     expect(await ledger.reserve("a", 350)).toEqual({ ok: true });
   });
 });
+
+// ── interprocess lock, fail-closed contention, rollover keeps reservations ───
+import { createFileLock, noLabLock, LAB_LEDGER_TIME_ZONE } from "@/lib/lab/labSpendLedger";
+
+describe("interprocess lock: separate ledger objects cannot overspend", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lab-lock-"));
+  });
+  afterEach(async () => {
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it("ten simultaneous reserves across three ledger objects on one file: exactly two fit", async () => {
+    const file = path.join(dir, "ledger.json");
+    const lock = createFileLock(path.join(dir, "ledger.lock"), { retryMs: 5, timeoutMs: 20_000 });
+    const ledgers = [0, 1, 2].map(
+      () => new LabSpendLedger(createFileLedgerStorage(file), () => MORNING, LAB_LEDGER_TIME_ZONE, lock)
+    );
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => ledgers[i % 3].reserve(`run-${i}`, 350))
+    );
+    expect(results.filter((r) => r.ok).length).toBe(2);
+    expect(await ledgers[0].usedToday()).toBe(700);
+  });
+
+  it("fails closed when the lock is held and cannot be taken in time", async () => {
+    const lockPath = path.join(dir, "ledger.lock");
+    await fsp.writeFile(lockPath, "{}", "utf8"); // held by someone, fresh
+    const lock = createFileLock(lockPath, { timeoutMs: 60, retryMs: 5, staleMs: 60_000 });
+    const ledger = new LabSpendLedger(createFileLedgerStorage(path.join(dir, "ledger.json")), () => MORNING, LAB_LEDGER_TIME_ZONE, lock);
+    expect(await ledger.reserve("a", 100)).toEqual({ ok: false, reason: "ledger_unreadable" });
+    expect(await ledger.settle("a")).toBe(false);
+    expect(await ledger.usedToday()).toBeNull();
+    // Nothing was written while the lock was held by someone else.
+    await expect(fsp.access(path.join(dir, "ledger.json"))).rejects.toThrow();
+  });
+
+  it("removes a stale lock left by a crashed runner and proceeds", async () => {
+    const lockPath = path.join(dir, "ledger.lock");
+    await fsp.writeFile(lockPath, "{}", "utf8");
+    const old = new Date(Date.now() - 10 * 60_000);
+    await fsp.utimes(lockPath, old, old);
+    const lock = createFileLock(lockPath, { staleMs: 5 * 60_000, timeoutMs: 1000, retryMs: 5 });
+    const ledger = new LabSpendLedger(createFileLedgerStorage(path.join(dir, "ledger.json")), () => MORNING, LAB_LEDGER_TIME_ZONE, lock);
+    expect(await ledger.reserve("a", 100)).toEqual({ ok: true });
+    // The lock is released afterwards.
+    await expect(fsp.access(lockPath)).rejects.toThrow();
+  });
+
+  it("releases the lock even when a write fails", async () => {
+    const lockPath = path.join(dir, "ledger.lock");
+    const lock = createFileLock(lockPath, { timeoutMs: 500, retryMs: 5 });
+    const storage = { read: async () => null, write: async () => { throw new Error("disk"); } };
+    const ledger = new LabSpendLedger(storage, () => MORNING, LAB_LEDGER_TIME_ZONE, lock);
+    expect(await ledger.reserve("a", 100)).toEqual({ ok: false, reason: "ledger_unreadable" });
+    await expect(fsp.access(lockPath)).rejects.toThrow();
+  });
+});
+
+describe("day rollover keeps outstanding reservations", () => {
+  it("a run still reserved after midnight still counts toward the new day", async () => {
+    const storage = fakeStorage();
+    let now = MORNING;
+    const ledger = new LabSpendLedger(storage, () => now);
+    await ledger.reserve("crashed", 350);
+    now = NEXT_DAY;
+    expect(await ledger.usedToday()).toBe(350);
+    // 350 still outstanding + 350 = 700: fits. + another 350 = 1050: refused.
+    expect(await ledger.reserve("new1", 350)).toEqual({ ok: true });
+    expect(await ledger.reserve("new2", 350)).toEqual({ ok: false, reason: "day_over_cap" });
+  });
+
+  it("a run charged yesterday no longer uses today's budget", async () => {
+    const storage = fakeStorage();
+    let now = MORNING;
+    const ledger = new LabSpendLedger(storage, () => now);
+    await ledger.reserve("a", 350);
+    await ledger.settle("a");
+    now = NEXT_DAY;
+    expect(await ledger.usedToday()).toBe(0);
+    expect(await ledger.reserve("b", 350)).toEqual({ ok: true });
+  });
+});
