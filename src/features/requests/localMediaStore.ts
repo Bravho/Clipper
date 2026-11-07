@@ -337,6 +337,30 @@ export async function createLocalAnalysisFrame(
   return { localId: descriptor.localId, assetIndex, ...encoded };
 }
 
+/** Whether device-private storage is available. Unsupported storage is not proof of absence. */
+export function localMaterialsSupported(): boolean {
+  return snapshotsSupported();
+}
+
+/** Probe for one kept original: resolves when it exists, rejects with the raw storage error otherwise. */
+export async function probeLocalMaterial(localId: string): Promise<void> {
+  const dir = await materialDir();
+  await dir.getFileHandle(localId);
+}
+
+/** Removes the file and PROPAGATES any failure. Used only by the lab-safe removal. */
+export async function removeLocalMaterialFile(localId: string): Promise<void> {
+  const dir = await materialDir();
+  await dir.removeEntry(localId);
+}
+
+/** Removes one index entry. Used only by the lab-safe removal, after the file is confirmed gone. */
+export async function removeLocalMaterialIndexEntry(localId: string): Promise<void> {
+  await mutateIndex((entries) => {
+    delete entries[localId];
+  });
+}
+
 export async function deleteLocalMaterial(localId: string): Promise<void> {
   if (!snapshotsSupported()) return;
   const dir = await materialDir();

@@ -74,7 +74,7 @@ function available(): boolean {
   return Capacitor.isNativePlatform();
 }
 
-function nameFor(assetId: string): string {
+export function nameFor(assetId: string): string {
   return `${FOLDER}/${keyFor(assetId)}.mp4`;
 }
 
@@ -222,4 +222,14 @@ export async function sweepFinishedVideos(now: number = Date.now()): Promise<voi
   } catch {
     // No folder yet, or nothing readable: nothing to clean.
   }
+}
+
+/** Probe for one finished-video copy: resolves when it exists, rejects with the raw plugin error otherwise. */
+export async function probeFinishedVideo(assetId: string): Promise<void> {
+  await Filesystem.stat({ path: nameFor(assetId), directory: Directory.Data });
+}
+
+/** Removes one finished-video copy and PROPAGATES any failure. */
+export async function removeFinishedVideo(assetId: string): Promise<void> {
+  await Filesystem.deleteFile({ path: nameFor(assetId), directory: Directory.Data });
 }
