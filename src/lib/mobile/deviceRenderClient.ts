@@ -401,6 +401,13 @@ export async function runDeviceRender(
       }
     );
 
+    // A success without a usable asset id is not a success for the phone. Keep
+    // the local copy: completed stays false, so the finally block will not
+    // delete it. Missing, empty and whitespace-only ids all count as unusable.
+    if (!isUsableAssetId(result?.assetId)) {
+      throw new IncompleteCompletionError();
+    }
+
     completed = true;
     note("The server accepted the video");
     // A finished, captioned video stays on this phone too, so Download can
@@ -426,7 +433,9 @@ export async function runDeviceRender(
         ? "cancelled"
         : error instanceof SupersededError
           ? "taken_over_by_server"
-          : `Failed while ${doing}: ${message}`;
+          : error instanceof IncompleteCompletionError
+            ? "complete_without_asset"
+            : `Failed while ${doing}: ${message}`;
     // The phone renderer's own steps, where the failure happened.
     const nativeLog = error instanceof NativeRenderError ? error.log : [];
     if (nativeLog.length > 0) {
@@ -486,6 +495,22 @@ export async function release(
     // own and the worker reclaims the task. Losing the render for good would be
     // worse than losing a few minutes.
   });
+}
+
+/**
+ * True only for a non-empty id after trimming. A missing, null, empty or
+ * whitespace-only id is not a verified asset, so the phone must keep its copy.
+ */
+export function isUsableAssetId(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/** The server's complete call did not return a usable asset id. */
+export class IncompleteCompletionError extends Error {
+  constructor() {
+    super("The server finished the upload but did not confirm a video id, so this phone keeps its copy.");
+    this.name = "IncompleteCompletionError";
+  }
 }
 
 class CancelledError extends Error {
