@@ -1,4 +1,4 @@
-import { handleLabStep, type LabStepDeps, type LabRunBinding } from "@/lib/lab/labStep";
+import { handleLabStep, releaseStrandedClaim, type LabStepDeps, type LabRunBinding } from "@/lib/lab/labStep";
 
 const LAB = "lab.tester@example.com";
 const LAB_USER = "lab-1";
@@ -8,7 +8,7 @@ function binding(over: Partial<LabRunBinding> = {}): LabRunBinding {
   return { requestId: "req-1", attemptIds: [], uploadAuthorised: [], ...over };
 }
 
-function deps(over: Partial<LabStepDeps> = {}): LabStepDeps & { forward: jest.Mock; bindAttempt: jest.Mock; authoriseUpload: jest.Mock } {
+function deps(over: Partial<LabStepDeps> = {}): LabStepDeps & { forward: jest.Mock; bindAttempt: jest.Mock; authoriseUpload: jest.Mock; recordUnresolvedClaim: jest.Mock } {
   const forward = jest.fn(async () => ({ status: 200, body: { ok: true } }));
   const bindAttempt = jest.fn(async () => true);
   const authoriseUpload = jest.fn(async () => true);
@@ -23,9 +23,10 @@ function deps(over: Partial<LabStepDeps> = {}): LabStepDeps & { forward: jest.Mo
     getBinding: async () => binding(),
     bindAttempt,
     authoriseUpload,
+    recordUnresolvedClaim: jest.fn(async () => true),
     forward,
     ...over,
-  } as LabStepDeps & { forward: jest.Mock; bindAttempt: jest.Mock; authoriseUpload: jest.Mock };
+  } as LabStepDeps & { forward: jest.Mock; bindAttempt: jest.Mock; authoriseUpload: jest.Mock; recordUnresolvedClaim: jest.Mock };
 }
 
 const STEP = { requestId: "req-1", action: "approve-voice", payload: { jobId: "j" }, runId: "run-1" };
@@ -220,5 +221,42 @@ describe("handleLabStep: stop rules", () => {
   it("running: finish needs an authorised upload too", async () => {
     const d = deps({ getBinding: async () => binding({ attemptIds: ["att-1"] }) });
     expect(await handleLabStep({ ...ATTEMPT_STEP, action: "device-upload-finish", payload: { action: "finish" } }, d)).toMatchObject({ status: 409 });
+  });
+});
+
+describe("a claim that cannot be linked is released on the server, never handed out", () => {
+  const claimStep = { requestId: "req-1", action: "device-claim", payload: { requestId: "req-1" }, runId: "run-1" };
+  const claimed = { status: 200, body: { claimed: true, attemptId: "att-new" } };
+
+  it("link fails and the release succeeds: the attempt id is withheld, the release is internal, nothing is recorded as stranded", async () => {
+    const forward = jest.fn(async (action: string) => (action === "device-claim" ? claimed : { status: 200, body: { released: true } }));
+    const d = deps({ forward, bindAttempt: jest.fn(async () => false) });
+    const result = await handleLabStep(claimStep, d);
+    expect(result).toMatchObject({ status: 409 });
+    expect((result.body as { attemptId?: string }).attemptId).toBeUndefined();
+    expect(forward).toHaveBeenCalledWith("device-release", { requestId: "req-1", attemptId: "att-new" }, expect.anything());
+    expect(d.recordUnresolvedClaim).not.toHaveBeenCalled();
+  });
+
+  it("link fails and the release answers an error: the claim is recorded as unresolved for a person", async () => {
+    const forward = jest.fn(async (action: string) => (action === "device-claim" ? claimed : { status: 500, body: {} }));
+    const d = deps({ forward, bindAttempt: jest.fn(async () => false) });
+    await handleLabStep(claimStep, d);
+    expect(d.recordUnresolvedClaim).toHaveBeenCalledWith(LAB_USER, "run-1", "att-new");
+  });
+
+  it("link fails and the release throws: the claim is recorded as unresolved", async () => {
+    const forward = jest.fn(async (action: string) => {
+      if (action === "device-claim") return claimed;
+      throw new Error("network down");
+    });
+    const d = deps({ forward, bindAttempt: jest.fn(async () => false) });
+    expect(await handleLabStep(claimStep, d)).toMatchObject({ status: 409 });
+    expect(d.recordUnresolvedClaim).toHaveBeenCalledWith(LAB_USER, "run-1", "att-new");
+  });
+
+  it("the release never waits longer than its bound: a hung release is treated as failed", async () => {
+    const hung = () => new Promise<never>(() => undefined);
+    expect(await releaseStrandedClaim({ forward: hung as never }, { requestId: "r", attemptId: "a" }, 20)).toBe(false);
   });
 });

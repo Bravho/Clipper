@@ -49,6 +49,8 @@ export interface LabLedgerState {
    * Keyed like the marker (owner::runId). Optional for older files.
    */
   runBindings?: Record<string, { requestId: string | null; attemptIds: string[]; uploadAuthorised: string[] }>;
+  /** Claims the server holds that could not be released or linked. Read-only report; nothing expires them automatically. */
+  unresolvedClaims?: { key: string; attemptId: string; at: string }[];
 }
 
 export interface LabLedgerStorage {
@@ -333,6 +335,17 @@ export class LabSpendLedger {
     }).catch(() => false);
   }
 
+  /** Records a claim that could not be linked and could not be released, for a person to resolve. */
+  recordUnresolvedClaim(key: string, attemptId: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const state = await this.load();
+      if (!state) return false;
+      state.unresolvedClaims = [...(state.unresolvedClaims ?? []), { key, attemptId, at: new Date().toISOString() }];
+      await this.storage.write(state);
+      return true;
+    }).catch(() => false);
+  }
+
   /** The run's links, or null when unknown. Read-only. */
   getBinding(runId: string): Promise<{ requestId: string | null; attemptIds: string[]; uploadAuthorised: string[] } | null> {
     return this.exclusive(async () => {
@@ -414,7 +427,23 @@ export function createFileLedgerStorage(filePath: string): LabLedgerStorage {
       await fs.mkdir(dir, { recursive: true });
       const tmp = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
       await fs.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-      await fs.rename(tmp, filePath);
+      // On Windows a rename can fail briefly while another process has the file open
+      // (for example a virus scanner). Retry a few times; if it still fails, remove our
+      // temporary file and fail: the previous complete state stays in place.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await fs.rename(tmp, filePath);
+          return;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          const transient = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+          if (!transient || attempt >= 5) {
+            await fs.unlink(tmp).catch(() => undefined);
+            throw error;
+          }
+          await new Promise((r) => setTimeout(r, 20 * attempt));
+        }
+      }
     },
   };
 }

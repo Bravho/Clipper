@@ -74,11 +74,16 @@ describe("two-process contention on temporary ledger files", () => {
     const runs = await Promise.all(
       ["p1", "p2", "p3"].map((tag) => runChild([ledgerJs, data, lock, "5", tag], childJs))
     );
-    for (const r of runs) expect(r.code).toBe(0);
+    // On failure, show each child's exit code and errors, and every result's reason.
+    expect(runs.map((r) => ({ code: r.code, stderr: r.stderr.slice(0, 500) }))).toEqual(runs.map(() => ({ code: 0, stderr: "" })));
     const results = runs.flatMap((r) => JSON.parse(r.stdout) as { ok: boolean; reason?: string }[]);
+    const reasons = results.reduce<Record<string, number>>((acc, r) => {
+      const key = r.ok ? "ok" : String(r.reason);
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(reasons).toEqual({ ok: 2, day_over_cap: 13 });
     expect(results).toHaveLength(15);
-    expect(results.filter((r) => r.ok)).toHaveLength(2);
-    expect(results.filter((r) => !r.ok && r.reason === "day_over_cap")).toHaveLength(13);
     // The shared file agrees with what the processes reported.
     const state = JSON.parse(await fsp.readFile(data, "utf8"));
     expect(state.reservations.reduce((s: number, r: { credits: number }) => s + r.credits, 0)).toBe(700);

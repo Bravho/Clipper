@@ -240,7 +240,7 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
       const res = await deps.fetchJson("/api/lab/autorun/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, runId: deps.runId }),
+        body: JSON.stringify({ ...labDraftForm(form), runId: deps.runId }),
       });
       if (!res.ok) throw new Error(`lab draft refused (${res.status})`);
       const body = (await res.json()) as { requestId?: unknown };
@@ -332,6 +332,19 @@ export function createLabStudioIo(deps: StudioBindingDeps): LabIo & { adapter: R
   };
 
   return io as LabIo & { adapter: typeof adapter };
+}
+
+/**
+ * The draft form the studio's own validation accepts: the editor's default platform,
+ * and the fixed lab length. The studio schema requires targetPlatforms (at least one)
+ * and a duration; without them every lab draft is refused.
+ */
+export function labDraftForm(form: { title: string; placeName: string; latitude: number; longitude: number; description: string }) {
+  return {
+    ...form,
+    targetPlatforms: [...LAB_EDITOR_DEFAULTS.platforms],
+    durationSeconds: LAB_FIXED_DURATION_SECONDS,
+  };
 }
 
 /** Test place from configuration. Validation happens in the entry, before any reservation. */

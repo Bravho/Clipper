@@ -79,6 +79,8 @@ export async function POST(request: Request) {
       bindAttempt: (ownerId, runId, requestId, attemptId) =>
         openLedger().bindAttempt(ownedKey(ownerId, runId), requestId, attemptId),
       authoriseUpload: (ownerId, runId, attemptId) => openLedger().authoriseUpload(ownedKey(ownerId, runId), attemptId),
+      recordUnresolvedClaim: (ownerId, runId, attemptId) =>
+        openLedger().recordUnresolvedClaim(ownedKey(ownerId, runId), attemptId),
       findRequestOwner: async (requestId) => {
         const clipRequest = await clipRequestRepository.findById(requestId).catch(() => null);
         return clipRequest?.userId ?? null;

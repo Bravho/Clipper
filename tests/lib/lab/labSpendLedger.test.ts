@@ -444,3 +444,51 @@ describe("run links: request and attempt binding", () => {
     expect(await second.getBinding("r1")).toEqual({ requestId: "req-A", attemptIds: ["att-1"], uploadAuthorised: [] });
   });
 });
+
+describe("file ledger rename: transient Windows lock errors", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), "lab-rename-"));
+  });
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  it("a transient EPERM on rename is retried and the write succeeds", async () => {
+    const file = path.join(dir, "ledger.json");
+    const real = fsp.rename.bind(fsp);
+    let failures = 2;
+    jest.spyOn(fsp, "rename").mockImplementation(async (a, b) => {
+      if (failures-- > 0) throw Object.assign(new Error("busy"), { code: "EPERM" });
+      return real(a, b);
+    });
+    const ledger = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    expect(await ledger.reserve("a", 100)).toEqual({ ok: true });
+    expect(JSON.parse(await fsp.readFile(file, "utf8")).reservations).toHaveLength(1);
+  });
+
+  it("a persistent failure fails the write, keeps the previous state, and removes the temp file", async () => {
+    const file = path.join(dir, "ledger.json");
+    const ledger = new LabSpendLedger(createFileLedgerStorage(file), () => MORNING);
+    expect(await ledger.reserve("first", 100)).toEqual({ ok: true });
+    const before = await fsp.readFile(file, "utf8");
+    jest.spyOn(fsp, "rename").mockRejectedValue(Object.assign(new Error("locked"), { code: "EBUSY" }));
+    expect(await ledger.reserve("second", 100)).toEqual({ ok: false, reason: "ledger_unreadable" });
+    jest.restoreAllMocks();
+    expect(await fsp.readFile(file, "utf8")).toBe(before);
+    const leftovers = (await fsp.readdir(dir)).filter((n) => n.endsWith(".tmp"));
+    expect(leftovers).toEqual([]);
+  });
+});
+
+describe("unresolved claims are recorded, never dropped", () => {
+  it("a claim that could not be linked or released is recorded for a person", async () => {
+    const st = fakeStorage();
+    const ledger = new LabSpendLedger(st, () => MORNING);
+    expect(await ledger.recordUnresolvedClaim("lab-1::run-1", "att-9")).toBe(true);
+    expect(await ledger.recordUnresolvedClaim("lab-1::run-1", "att-10")).toBe(true);
+    const state = JSON.parse(st.raw as string);
+    expect(state.unresolvedClaims.map((c: { attemptId: string }) => c.attemptId)).toEqual(["att-9", "att-10"]);
+  });
+});

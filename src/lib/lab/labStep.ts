@@ -30,6 +30,37 @@ export interface LabRunBinding {
   uploadAuthorised: string[];
 }
 
+/** Upper bound for the server-side release of a stranded claim. */
+export const STRANDED_RELEASE_TIMEOUT_MS = 5_000;
+
+/**
+ * Releases a claim the server made but the lab could not link. Calls the one
+ * device-release route directly (the attempt is not linked yet, so the step checks
+ * do not apply to this internal call). Returns true only for a 2xx answer, and
+ * never waits longer than STRANDED_RELEASE_TIMEOUT_MS.
+ */
+export async function releaseStrandedClaim(
+  deps: Pick<LabStepDeps, "forward">,
+  ids: { requestId: string; attemptId: string },
+  timeoutMs: number = STRANDED_RELEASE_TIMEOUT_MS
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("release timed out")), timeoutMs);
+    });
+    const result = await Promise.race([
+      deps.forward("device-release", ids, { reason: "claim could not be linked to its run" }),
+      timedOut,
+    ]);
+    return result.status >= 200 && result.status < 300;
+  } catch {
+    return false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export interface LabStepDeps {
   flagValue: string | undefined;
   /** Paid provider work is refused unless this is true. Production passes the code constant (false). */
@@ -46,6 +77,8 @@ export interface LabStepDeps {
   bindAttempt(ownerId: string, runId: string, requestId: string, attemptId: string): Promise<boolean>;
   /** Records that an attempt's upload was authorised. */
   authoriseUpload(ownerId: string, runId: string, attemptId: string): Promise<boolean>;
+  /** Records a claim that could be neither linked nor released, for a person to resolve. */
+  recordUnresolvedClaim(ownerId: string, runId: string, attemptId: string): Promise<boolean>;
   /** Calls the one normal route for the action, with the caller's own session. */
   forward(action: LabRouteAction, ids: { requestId: string; attemptId?: string }, payload: unknown): Promise<{ status: number; body: unknown }>;
 }
@@ -119,6 +152,10 @@ export async function handleLabStep(input: LabStepInput, deps: LabStepDeps): Pro
       return { status: 502, body: { error: "The claim did not return an attempt." } };
     }
     if (!(await deps.bindAttempt(ownerId, input.runId, input.requestId, attemptId))) {
+      // The server holds a claim the phone will never use. Release it here, bounded, and
+      // do not hand the attempt id out. If the release fails too, record it for a person.
+      const released = await releaseStrandedClaim(deps, { requestId: input.requestId, attemptId });
+      if (!released) await deps.recordUnresolvedClaim(ownerId, input.runId, attemptId);
       return { status: 409, body: { error: "The claimed attempt could not be linked to this run." } };
     }
   }
