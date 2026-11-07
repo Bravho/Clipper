@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { adLabErrorResponse, requireAdLabUser } from "../../_guard";
 import { AdLabAdsError, adLabAdsService } from "@/services/ad-lab/AdLabAdsService";
+import { ADS_READ_ONLY_MESSAGE_TH, isAdsWriteBlocked } from "@/services/ad-lab/ads-reporting/readOnlyAdsFetch";
 import { defaultAdLabAdTargeting, TIKTOK_AD_OBJECTIVES } from "@/domain/models/AdLabAdTargeting";
 
 export const dynamic = "force-dynamic";
@@ -45,9 +46,16 @@ const bodySchema = z.object({
 });
 
 /** POST /api/ad-lab/ads/draft — create paused/stub Marketing API draft for a TikTok target. Never enables spend. */
-export async function POST(request: Request) {
+export async function POST(_request: Request) {
   const guard = await requireAdLabUser();
   if (!guard.ok) return guard.response;
+  // READ-ONLY POLICY: creating ads/campaigns is blocked; never reaches the service or network.
+  return NextResponse.json({ error: ADS_READ_ONLY_MESSAGE_TH, reason: "ads_write_blocked" }, { status: 403 });
+}
+
+/** Legacy handler body kept for reference; not exported, never called. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function legacyCreateDraft(request: Request, guard: { user: { id: string } }) {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid ads draft request." }, { status: 400 });
   try {
@@ -59,6 +67,9 @@ export async function POST(request: Request) {
     );
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
+    if (isAdsWriteBlocked(err)) {
+      return NextResponse.json({ error: ADS_READ_ONLY_MESSAGE_TH, reason: "ads_write_blocked" }, { status: 403 });
+    }
     if (err instanceof AdLabAdsError) {
       const status = err.code === "not_found" ? 404 : err.code === "not_tiktok" ? 400 : 502;
       return NextResponse.json({ error: err.message, reason: err.code }, { status });

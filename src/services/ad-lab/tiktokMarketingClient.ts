@@ -17,6 +17,7 @@ import {
 } from "@/config/adLabIntegrations";
 import type { AdLabAdTargeting } from "@/domain/models/AdLabAdTargeting";
 import { randomUUID } from "crypto";
+import { assertAdsWriteAllowed, readOnlyAdsFetch } from "@/services/ad-lab/ads-reporting/readOnlyAdsFetch";
 
 export interface TikTokDraftResult {
   stub: boolean;
@@ -98,9 +99,13 @@ export function buildTikTokTargetingPayload(targeting: AdLabAdTargeting): Record
   };
 }
 
+/**
+ * All TikTok Marketing API traffic goes through the read-only guard: create/update/delete
+ * paths (campaign/adgroup/ad create, status, budget...) throw before reaching the network.
+ */
 async function postJson(path: string, body: Record<string, unknown>): Promise<unknown> {
   const url = AD_LAB_TIKTOK_MARKETING.apiBase + path;
-  const response = await fetch(url, {
+  const response = await readOnlyAdsFetch(url, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(body),
@@ -110,6 +115,23 @@ async function postJson(path: string, body: Record<string, unknown>): Promise<un
     throw new Error(
       "TikTok Marketing API " + path + " failed (" + response.status + "): " + JSON.stringify(data)
     );
+  }
+  return data;
+}
+
+async function getJson(path: string, params: Record<string, unknown>): Promise<unknown> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    qs.set(key, typeof value === "string" ? value : JSON.stringify(value));
+  }
+  const url = AD_LAB_TIKTOK_MARKETING.apiBase + path + "?" + qs.toString();
+  const response = await readOnlyAdsFetch(url, {
+    method: "GET",
+    headers: { "Access-Token": AD_LAB_TIKTOK_MARKETING.accessToken },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error("TikTok Marketing API " + path + " failed (" + response.status + "): " + JSON.stringify(data));
   }
   return data;
 }
@@ -128,6 +150,9 @@ export async function createPausedSparkAdDraft(input: {
   dailyBudgetBaht: number;
   platformPostId?: string | null;
 }): Promise<TikTokDraftResult> {
+  // READ-ONLY POLICY (approved by Tho 2026-10-17): ads writes are blocked. Throws a typed
+  // AdsWriteBlockedError before any stub record or network call. Body kept for reference only.
+  assertAdsWriteAllowed("tiktok.createPausedSparkAdDraft");
   const advertiserId = input.targeting.advertiserId || AD_LAB_TIKTOK_MARKETING.advertiserId;
   const targeting = {
     ...input.targeting,
@@ -234,13 +259,14 @@ export async function fetchAdReport(adId: string, advertiserId?: string): Promis
     };
   }
 
-  const data = (await postJson("/report/integrated/get/", {
+  // v1.3 reporting is a GET (report/integrated/get); routed through the read-only guard.
+  const data = (await getJson("/report/integrated/get/", {
     advertiser_id: adv,
     report_type: "BASIC",
     dimensions: ["ad_id"],
     data_level: "AUCTION_AD",
     metrics: ["spend", "impressions", "clicks", "conversion", "video_play_actions"],
-    filters: [{ field_name: "ad_id", filter_type: "IN", filter_value: JSON.stringify([adId]) }],
+    filtering: [{ field_name: "ad_id", filter_type: "IN", filter_value: JSON.stringify([adId]) }],
   })) as {
     data?: { list?: Array<{ metrics?: Record<string, string | number>; dimensions?: { ad_id?: string } }> };
   };
