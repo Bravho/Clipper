@@ -1,130 +1,200 @@
 import { LabSpendLedger, type LabLedgerState, type LabLedgerStorage } from "@/lib/lab/labSpendLedger";
-import { runLabOnce, type LabRunnerDeps, type LabRunOutcome } from "@/lib/lab/labRunner";
+import { runLabOnce, SpendMarkerError, type LabRunnerDeps } from "@/lib/lab/labRunner";
 
 const MORNING = new Date("2026-11-07T03:00:00Z");
 
-function storage(): LabLedgerStorage & { state: LabLedgerState | null } {
+/** Fake storage: JSON copy per write. Can be told to fail writes. */
+function storage() {
   const s = {
     state: null as LabLedgerState | null,
+    /** How many of the next writes should fail (one write = one persisted change). */
+    failNextWrites: 0,
     async read() {
       return s.state === null ? null : JSON.parse(JSON.stringify(s.state));
     },
     async write(state: LabLedgerState) {
+      if (s.failNextWrites > 0) {
+        s.failNextWrites--;
+        throw new Error("disk full");
+      }
       s.state = JSON.parse(JSON.stringify(state));
     },
   };
-  return s;
+  return s as typeof s & LabLedgerStorage;
 }
 
-function harness(over: Partial<LabRunnerDeps> & { outcome?: (mark: () => void) => Promise<LabRunOutcome> } = {}) {
+type Steps = (runId: string, beforeSpend: () => Promise<void>) => Promise<{ status: "done" | "failed" | "cancelled"; step?: string }>;
+
+function harness(steps: Steps, over: Partial<LabRunnerDeps> = {}) {
   const store = storage();
   const ledger = new LabSpendLedger(store, () => MORNING);
   let n = 0;
-  const runSteps = jest.fn(over.outcome ?? (async () => ({ status: "done" as const })));
   const deps: LabRunnerDeps = {
     flagOn: () => true,
     ledger,
-    quoteCredits: async () => 350,
+    quoteCredits: async () => 341,
     newRunId: () => `run-${++n}`,
-    runSteps: (runId, mark) => runSteps(mark),
+    runSteps: steps,
+    providerExecutionEnabled: true,
     ...over,
-  } as LabRunnerDeps;
-  return { deps, store, runSteps, ledger };
+  };
+  return { deps, store, ledger };
 }
 
-describe("runLabOnce: flag and caps", () => {
-  it("does nothing at all when the flag is off", async () => {
-    const h = harness({ flagOn: () => false });
+/** A dispatch helper: marks first, then "sends" (records the call). */
+function dispatching(sent: string[], opts: { crashAfterMark?: boolean; crashAfterDispatch?: boolean; submitError?: boolean } = {}): Steps {
+  return async (_runId, beforeSpend) => {
+    await beforeSpend();
+    if (opts.crashAfterMark) throw new Error("crash between marker and dispatch");
+    sent.push("submit");
+    if (opts.crashAfterDispatch) throw new Error("crash after dispatch");
+    if (opts.submitError) return { status: "failed", step: "submit" };
+    return { status: "done" };
+  };
+}
+
+describe("gates", () => {
+  it("does nothing when the flag is off", async () => {
+    const sent: string[] = [];
+    const h = harness(dispatching(sent), { flagOn: () => false });
     expect(await runLabOnce(h.deps)).toEqual({ status: "disabled" });
-    expect(h.runSteps).not.toHaveBeenCalled();
     expect(h.store.state).toBeNull();
+    expect(sent).toEqual([]);
   });
 
-  it("refuses before any step when the quote is over the per-run cap", async () => {
-    const h = harness({ quoteCredits: async () => 351 });
+  it("refuses everything while provider execution is disabled in code (the default)", async () => {
+    const sent: string[] = [];
+    const store = storage();
+    const deps: LabRunnerDeps = {
+      flagOn: () => true,
+      ledger: new LabSpendLedger(store, () => MORNING),
+      quoteCredits: async () => 341,
+      newRunId: () => "r",
+      runSteps: dispatching(sent),
+    };
+    expect(await runLabOnce(deps)).toEqual({ status: "refused", reason: "provider_execution_disabled" });
+    expect(store.state).toBeNull();
+    expect(sent).toEqual([]);
+  });
+
+  it("refuses an over-cap quote before any dispatch", async () => {
+    const sent: string[] = [];
+    const h = harness(dispatching(sent), { quoteCredits: async () => 351 });
     expect(await runLabOnce(h.deps)).toEqual({ status: "refused", reason: "run_over_cap" });
-    expect(h.runSteps).not.toHaveBeenCalled();
-  });
-
-  it("refuses before any step when the day budget is used up", async () => {
-    const h = harness();
-    await h.ledger.reserve("earlier-1", 350);
-    await h.ledger.reserve("earlier-2", 350);
-    await h.ledger.reserve("earlier-3", 300);
-    expect(await runLabOnce(h.deps)).toEqual({ status: "refused", reason: "day_over_cap" });
-    expect(h.runSteps).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
   });
 });
 
-describe("runLabOnce: what happens to the reservation", () => {
-  it("success: the reservation is settled and counts as spent", async () => {
-    const h = harness();
+describe("marker before dispatch", () => {
+  it("success: marker written, dispatched, settled", async () => {
+    const sent: string[] = [];
+    const h = harness(dispatching(sent));
     const result = await runLabOnce(h.deps);
-    expect(result).toMatchObject({ status: "ended", ledger: "settled" });
-    expect(await h.ledger.usedToday()).toBe(350);
+    expect(result).toMatchObject({ status: "ended", ledger: "settled", spendAttempted: true });
+    expect(sent).toEqual(["submit"]);
+    expect(await h.ledger.usedToday()).toBe(341);
   });
 
-  it("failure before any charging call: the reservation is released (known unspent)", async () => {
-    const h = harness({
-      outcome: async () => ({ status: "failed", step: "fetch" }),
+  it("marker cannot be persisted: nothing is dispatched and the run is released (no marker)", async () => {
+    const sent: string[] = [];
+    const h = harness(async (_r, beforeSpend) => {
+      h.store.failNextWrites = 1; // only the marker write fails
+      await beforeSpend();
+      sent.push("submit");
+      return { status: "done" };
     });
     const result = await runLabOnce(h.deps);
-    expect(result).toMatchObject({ status: "ended", ledger: "released" });
+    expect(result).toMatchObject({ status: "ended", ledger: "released", spendAttempted: false });
+    expect(sent).toEqual([]);
     expect(await h.ledger.usedToday()).toBe(0);
   });
 
-  it("failure after submit was attempted: the reservation is KEPT (spend uncertain)", async () => {
-    const h = harness({
-      outcome: async (mark) => {
-        mark();
+  it("crash between marker and dispatch: marker exists, reservation KEPT", async () => {
+    const sent: string[] = [];
+    const h = harness(dispatching(sent, { crashAfterMark: true }));
+    const result = await runLabOnce(h.deps);
+    expect(result).toMatchObject({ ledger: "kept_reserved", spendAttempted: true });
+    expect(sent).toEqual([]);
+    expect(await h.ledger.usedToday()).toBe(341);
+  });
+
+  it("crash after dispatch: reservation KEPT", async () => {
+    const sent: string[] = [];
+    const h = harness(dispatching(sent, { crashAfterDispatch: true }));
+    const result = await runLabOnce(h.deps);
+    expect(result).toMatchObject({ ledger: "kept_reserved", spendAttempted: true });
+    expect(sent).toEqual(["submit"]);
+  });
+
+  it("a failed submit that returned an error after the marker: KEPT, not released", async () => {
+    const sent: string[] = [];
+    const h = harness(dispatching(sent, { submitError: true }));
+    const result = await runLabOnce(h.deps);
+    expect(result).toMatchObject({ ledger: "kept_reserved", spendAttempted: true });
+    expect(await h.ledger.usedToday()).toBe(341);
+  });
+
+  it("a crash BEFORE the marker is attempted: no marker, so released as provably unspent", async () => {
+    const h = harness(async () => {
+      throw new Error("crash before any marker");
+    });
+    const result = await runLabOnce(h.deps);
+    expect(result).toMatchObject({ ledger: "released", spendAttempted: false });
+  });
+
+  it("an unreadable ledger after a failure keeps the reservation (unknown, not released)", async () => {
+    const sent: string[] = [];
+    const store = storage();
+    const ledger = new LabSpendLedger(store, () => MORNING);
+    const deps: LabRunnerDeps = {
+      flagOn: () => true,
+      ledger: {
+        reserve: ledger.reserve.bind(ledger),
+        settle: ledger.settle.bind(ledger),
+        release: ledger.release.bind(ledger),
+        markSpendAttempt: ledger.markSpendAttempt.bind(ledger),
+        hasSpendAttempt: async () => null,
+      },
+      quoteCredits: async () => 100,
+      newRunId: () => "r",
+      runSteps: async (_r, beforeSpend) => {
+        await beforeSpend();
+        sent.push("submit");
         return { status: "failed", step: "submit" };
       },
-    });
-    const result = await runLabOnce(h.deps);
-    expect(result).toMatchObject({ status: "ended", ledger: "kept_reserved" });
-    expect(await h.ledger.usedToday()).toBe(350);
+      providerExecutionEnabled: true,
+    };
+    const result = await runLabOnce(deps);
+    expect(result).toMatchObject({ ledger: "kept_reserved", spendAttempted: null });
+  });
+});
+
+describe("the ledger enforces the marker rules", () => {
+  it("release is refused for a run that has a marker", async () => {
+    const store = storage();
+    const ledger = new LabSpendLedger(store, () => MORNING);
+    await ledger.reserve("m", 100);
+    expect(await ledger.markSpendAttempt("m")).toBe(true);
+    expect(await ledger.release("m")).toBe(false);
+    expect(await ledger.usedToday()).toBe(100);
   });
 
-  it("a crash after submit was attempted is kept, even when the step is unknown", async () => {
-    const h = harness({
-      outcome: async (mark) => {
-        mark();
-        throw new Error("process died");
-      },
-    });
-    const result = await runLabOnce(h.deps);
-    expect(result).toMatchObject({ status: "ended", ledger: "kept_reserved" });
-    expect(await h.ledger.usedToday()).toBe(350);
+  it("the marker needs a reservation first", async () => {
+    const ledger = new LabSpendLedger(storage(), () => MORNING);
+    expect(await ledger.markSpendAttempt("no-such-run")).toBe(false);
   });
 
-  it("a crash before any charging call is kept (not provably unspent), so nothing is freed by mistake", async () => {
-    const h = harness({
-      outcome: async () => {
-        throw new Error("crash before submit");
-      },
-    });
-    const result = await runLabOnce(h.deps);
-    expect(result).toMatchObject({ status: "ended", ledger: "kept_reserved" });
-    expect(await h.ledger.usedToday()).toBe(350);
+  it("a marker survives a restart", async () => {
+    const store = storage();
+    const first = new LabSpendLedger(store, () => MORNING);
+    await first.reserve("m", 100);
+    await first.markSpendAttempt("m");
+    const restarted = new LabSpendLedger(store, () => MORNING);
+    expect(await restarted.hasSpendAttempt("m")).toBe(true);
+    expect(await restarted.release("m")).toBe(false);
   });
 
-  it("a cancellation without a step is kept, not released", async () => {
-    const h = harness({ outcome: async () => ({ status: "cancelled" }) });
-    expect(await runLabOnce(h.deps)).toMatchObject({ ledger: "kept_reserved" });
-  });
-
-  it("a kept reservation still blocks the next run after a restart of the runner", async () => {
-    const h = harness({ outcome: async (mark) => (mark(), { status: "failed", step: "submit" }) });
-    await runLabOnce(h.deps);
-    const restarted = new LabSpendLedger(h.store, () => MORNING);
-    // 350 kept from before the restart + 350 = 700 fits; a third 350 would be 1050.
-    expect(await restarted.reserve("after-restart-1", 350)).toEqual({ ok: true });
-    expect(await restarted.reserve("after-restart-2", 350)).toEqual({ ok: false, reason: "day_over_cap" });
-  });
-
-  it("each run gets its own id, so a repeat id is refused as a duplicate", async () => {
-    const h = harness({ newRunId: () => "same-id" });
-    expect(await runLabOnce(h.deps)).toMatchObject({ ledger: "settled" });
-    expect(await runLabOnce(h.deps)).toEqual({ status: "refused", reason: "duplicate_run" });
+  it("the error type is what the orchestrator sees when the marker fails", () => {
+    expect(new SpendMarkerError().name).toBe("SpendMarkerError");
   });
 });

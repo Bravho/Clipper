@@ -45,6 +45,7 @@ function deps(
     fetchTestMedia: async (name: string) => new File(["x"], name),
     quoteCapState: async () => ({ spentTodayCredits: 0, quotedRunCredits: 100 }),
     createDraft: async () => "req-1",
+    beforeSpend: async () => undefined,
     submit: async () => undefined,
     waitForContent: async () => CONTENT,
     approveContent: async () => undefined,

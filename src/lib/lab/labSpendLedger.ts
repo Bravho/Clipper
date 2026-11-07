@@ -38,6 +38,11 @@ export interface LabLedgerState {
   reservations: LabReservation[];
   /** Every run id ever reserved, so an id is single-use. Optional for older files. */
   seenRunIds?: string[];
+  /**
+   * Runs whose spend-attempt marker was persisted BEFORE the first chargeable
+   * request was dispatched. A run with no marker provably dispatched nothing.
+   */
+  spendAttempted?: string[];
 }
 
 export interface LabLedgerStorage {
@@ -64,6 +69,9 @@ function isState(value: unknown): value is LabLedgerState {
   if (!Object.values(v.charged).every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0)) return false;
   if (!Array.isArray(v.reservations)) return false;
   if (v.seenRunIds !== undefined && (!Array.isArray(v.seenRunIds) || !v.seenRunIds.every((id) => typeof id === "string"))) {
+    return false;
+  }
+  if (v.spendAttempted !== undefined && (!Array.isArray(v.spendAttempted) || !v.spendAttempted.every((id) => typeof id === "string"))) {
     return false;
   }
   return v.reservations.every(
@@ -269,10 +277,46 @@ export class LabSpendLedger {
    * or was cancelled before the first charging call. Anything uncertain (a crash,
    * a timeout after submit, an unknown response) must stay reserved.
    */
+  /**
+   * Persist the spend-attempt marker for a run. MUST succeed before any
+   * chargeable request is dispatched. Returns false if the marker could not be
+   * persisted, in which case the caller must not dispatch.
+   */
+  markSpendAttempt(runId: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const state = await this.load();
+      if (!state) return false;
+      if (!state.reservations.some((r) => r.runId === runId)) return false;
+      const marked = state.spendAttempted ?? [];
+      if (marked.includes(runId)) return true;
+      state.spendAttempted = [...marked, runId];
+      await this.storage.write(state);
+      return true;
+    }).catch(() => false);
+  }
+
+  /**
+   * true: a marker exists, so spend may have happened.
+   * false: no marker, so nothing was dispatched.
+   * null: the state could not be read, so the answer is unknown.
+   */
+  hasSpendAttempt(runId: string): Promise<boolean | null> {
+    return this.exclusive(async () => {
+      const state = await this.load();
+      if (!state) return null;
+      return (state.spendAttempted ?? []).includes(runId);
+    }).catch(() => null);
+  }
+
+  /**
+   * Free a reservation. Refused when a spend-attempt marker exists for the run:
+   * the marker means a chargeable request may have been sent.
+   */
   release(runId: string): Promise<boolean> {
     return this.exclusive(async () => {
       const state = await this.load();
       if (!state) return false;
+      if ((state.spendAttempted ?? []).includes(runId)) return false;
       const before = state.reservations.length;
       state.reservations = state.reservations.filter((r) => r.runId !== runId);
       if (state.reservations.length === before) return false;
