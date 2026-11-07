@@ -1,11 +1,11 @@
 import { createReadStream, promises as fs } from "node:fs";
 import { Readable } from "node:stream";
-import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/authOptions";
 import { Role } from "@/domain/enums/Role";
+import { decideLabAccess, isSafeLabMediaName } from "@/lib/lab/labAccess";
 
 /**
  * Lab auto-run only: serves one source video from a fixed folder on the
@@ -18,51 +18,38 @@ import { Role } from "@/domain/enums/Role";
  */
 
 const LAB_MEDIA_DIR = process.env.LAB_MEDIA_DIR ?? "D:\\testing videos";
-const ALLOWED_EXTENSIONS = new Set([".mp4", ".mov", ".m4v"]);
-
-function tokenMatches(presented: string | null, expected: string): boolean {
-  if (!presented) return false;
-  const a = Buffer.from(presented);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
-  if (process.env.LAB_AUTORUN_ENABLED !== "true") {
-    return NextResponse.json({ error: "Not found." }, { status: 404 });
-  }
-
-  // Either the runner's bearer token (Mar-PC runner), or the signed-in LAB test
-  // account itself (the test phone). Never a real user's session.
-  const expected = process.env.LAB_RUNNER_TOKEN ?? "";
-  const header = request.headers.get("authorization");
-  const presented = header?.startsWith("Bearer ") ? header.slice(7).trim() : null;
-  const tokenOk = Boolean(expected) && tokenMatches(presented, expected);
-
-  let labSessionOk = false;
-  if (!tokenOk) {
-    const labEmail = (process.env.DEVICE_RENDER_LAB_TEST_EMAIL ?? "").trim().toLowerCase();
-    const session = await getServerSession(authOptions);
-    labSessionOk =
-      Boolean(labEmail) &&
-      session?.user?.role === Role.Requester &&
-      (session.user.email ?? "").trim().toLowerCase() === labEmail;
-  }
-  if (!tokenOk && !labSessionOk) {
-    return NextResponse.json({ error: "Unauthorised." }, { status: 401 });
+  // Flag first (off = 404), then the runner token, then the exact lab account.
+  // Rules live in src/lib/lab/labAccess.ts and are unit-tested there.
+  const needsSession =
+    process.env.LAB_AUTORUN_ENABLED === "true" &&
+    request.headers.get("authorization") === null;
+  const session = needsSession ? await getServerSession(authOptions) : null;
+  const decision = decideLabAccess({
+    env: process.env,
+    authorizationHeader: request.headers.get("authorization"),
+    session,
+    requesterRole: Role.Requester,
+  });
+  if (!decision.ok) {
+    return NextResponse.json(
+      { error: decision.status === 404 ? "Not found." : "Unauthorised." },
+      { status: decision.status }
+    );
   }
 
   const { name } = await params;
-  const decoded = decodeURIComponent(name);
-  // Plain file name only: no separators, no parent references.
-  if (
-    decoded !== path.basename(decoded) ||
-    decoded.includes("..") ||
-    !ALLOWED_EXTENSIONS.has(path.extname(decoded).toLowerCase())
-  ) {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(name);
+  } catch {
+    return NextResponse.json({ error: "Bad file name." }, { status: 400 });
+  }
+  if (!isSafeLabMediaName(decoded)) {
     return NextResponse.json({ error: "Bad file name." }, { status: 400 });
   }
 
