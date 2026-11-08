@@ -16,6 +16,10 @@ import {
 import { AdminStatusBadge } from "@/features/admin/components/AdminStatusBadge";
 import { RequestJourneyTimeline } from "@/features/admin/components/RequestJourneyTimeline";
 import { adminRequestJourneyService } from "@/services/admin/AdminRequestJourneyService";
+import { labRunsForRequest } from "@/lib/lab/labAdminView";
+import { createFileLedgerStorage } from "@/lib/lab/labSpendLedger";
+import { labLedgerDir } from "@/lib/lab/labServerLedger";
+import path from "node:path";
 
 export const metadata: Metadata = { title: "Request Detail — Admin" };
 
@@ -45,6 +49,8 @@ export default async function AdminRequestDetailPage({
     adminRequestJourneyService.extrasFor(id),
   ]);
   const jobHistory = job ? await videoGenerationJobRepository.listStepHistory(job.id) : [];
+  // Lab auto-run record (read-only). null means the file could not be read.
+  const labRuns = await labRunsForRequest(createFileLedgerStorage(path.join(labLedgerDir(), "ledger.json")), id);
 
   const now = new Date();
   const isOverdue =
@@ -306,6 +312,24 @@ export default async function AdminRequestDetailPage({
                     >
                       {link.url}
                     </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Lab auto-run (read-only): runs linked to this request by the lab test path */}
+          <section className="rounded-lg border border-slate-200 bg-white p-5 space-y-2 text-sm">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Lab auto-run (test)</h2>
+            {labRuns === null ? (
+              <p className="text-slate-500">The lab record could not be read. Unknown, not none.</p>
+            ) : labRuns.length === 0 ? (
+              <p className="text-slate-500">No lab auto-run is linked to this request.</p>
+            ) : (
+              <ul className="space-y-1">
+                {labRuns.map((run) => (
+                  <li key={run.runId} className="font-mono text-xs">
+                    run {run.runId.slice(0, 8)}… · claims {run.attemptCount} · uploads authorised {run.uploadsAuthorised} · spend recorded: {run.markerRecorded ? "yes" : "no"} · reserved {run.reservedCredits} · unresolved claims {run.unresolvedClaims}
                   </li>
                 ))}
               </ul>
