@@ -20,6 +20,8 @@ import { ILineAccountRepository } from '@/repositories/interfaces/ILineAccountRe
 import { getShopVoiceParticle } from '@/config/lineIntake';
 import { PACKAGES, findPackageByCode } from '@/config/stripePackages';
 import { uploadLineAsset } from '@/lib/line/lineStorage';
+import { runDeleteClipStep } from '@/services/line/lineDeleteClipFlow';
+import { uploadedAssetRepository } from '@/repositories/index';
 import {
   MAX_REVISIONS_PER_CLIP,
   MAX_CLIP_DURATION_SECONDS,
@@ -270,6 +272,25 @@ export async function processLineEvent(
   );
   const state = convState?.state ?? 'idle';
   const context = { ...(convState?.context ?? {}) } as Record<string, unknown>;
+
+  // ── Delete a clip, only after the shop confirms (lineDeleteClipFlow) ──────
+  const deleteStep = await runDeleteClipStep({
+    text,
+    state,
+    context,
+    deps: {
+      listClips: async (requestId) =>
+        (await uploadedAssetRepository.findByRequestId(requestId)).map((a) => ({ id: a.id })),
+      removeClip: (_requestId, clipId) => uploadedAssetRepository.deleteById(clipId),
+    },
+  });
+  if (deleteStep.handled) {
+    await opts.lineAccountRepo.upsertConversationState(
+      opts.lineChannelId, lineUserId, deleteStep.nextState, deleteStep.nextContext
+    );
+    if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: deleteStep.reply }]);
+    return { escalated: false, intent: 'delete_clip' };
+  }
 
   // ── Routine intents (always handled regardless of state) ──────────────────
   if (ROUTINE_INTENTS.has(intent)) {
