@@ -16,7 +16,7 @@
  */
 
 import { calcPipelineCost, STUDIO_MAX_DURATION_SECONDS } from "@/config/credits";
-import { LAB_LEDGER_PER_RUN_CAP } from "@/lib/lab/labSpendLedger";
+import { LAB_LEDGER_PER_RUN_CAP } from "@/lib/lab/labLimits";
 
 export const LAB_FIXED_DURATION_SECONDS = 15;
 export const LAB_FIXED_CHANNELS = 1;

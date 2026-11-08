@@ -21,6 +21,7 @@ import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
+// Keep this equal to labLimits.ts. This file must stay self-contained (its test transpiles it alone).
 export const LAB_LEDGER_PER_RUN_CAP = 350;
 export const LAB_LEDGER_PER_DAY_CAP = 1000;
 export const LAB_LEDGER_TIME_ZONE = "Asia/Bangkok";

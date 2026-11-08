@@ -25,6 +25,8 @@ import { getLineChannelSecret } from '@/config/lineIntake';
 import { LineClient } from '@/lib/line/LineClient';
 import { lineAccountRepository, userRepository, servicePackageRepository, clipRequestRepository,
   uploadedAssetRepository, videoGenerationJobRepository, createReviewService } from '@/repositories/index';
+import { notifyOpenBotHandoff } from '@/lib/line/openbotHandoffWebhook';
+import { takeoverActive as isTakeoverActive } from '@/services/line/lineHandoffPolicy';
 import { lineRequestStatus } from '@/services/line/lineRequestStatus';
 import { LineIntakeService } from '@/services/line/LineIntakeService';
 import { getDefaultTypeCfg } from '@/services/review/ReviewService';
@@ -175,9 +177,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         },
         createReviewItem: async ({ lineUserId, text, intent }) => {
           const account = await intake.ensureAccount(lineUserId);
-          await createReviewService().createItem({ typeKey: 'customer_reply', shopUserId: account.userId,
+          const { item: handoffItem, created: handoffCreated } = await createReviewService().createItem({ typeKey: 'customer_reply', shopUserId: account.userId,
             title: 'LINE: ' + intent, payload: { text, lineUserId }, signals: { wants_human: intent === 'wants_human' },
             idempotencyKey: 'line:' + eventId, typeCfg: { ...getDefaultTypeCfg('customer_reply'), alwaysReview: true } });
+          if (handoffCreated) {
+            const notice = await notifyOpenBotHandoff({ itemId: handoffItem.id, isTest: process.env.LINE_TEST_MODE === 'true', takeoverActive: isTakeoverActive(account) });
+            if (notice === 'failed') console.error('[line/webhook] OpenBot handoff notice failed; item is in the review queue');
+          }
         },
       });
       if (outcome.intent === 'file_error' || outcome.intent === 'submit_error') throw new Error(outcome.intent);
