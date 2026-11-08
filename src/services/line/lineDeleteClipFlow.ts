@@ -7,7 +7,8 @@
 export const DELETE_CONFIRM_STATE = 'awaiting_delete_confirm';
 
 export interface DeleteClipDeps {
-  listClips(requestId: string): Promise<{ id: string }[]>;
+  /** `url` is an expiring private link so the shop can check the clip first. */
+  listClips(requestId: string): Promise<{ id: string; url?: string }[]>;
   removeClip(requestId: string, clipId: string): Promise<void>;
 }
 
@@ -80,9 +81,15 @@ export async function runDeleteClipStep(input: DeleteClipInput): Promise<DeleteC
   if (clips.length === 0) {
     return { handled: true, reply: 'ตอนนี้ไม่มีคลิปให้ลบค่ะ', nextState: state, nextContext: context };
   }
+  const links = clips.map((c, i) =>
+    c.url ? `คลิปที่ ${i + 1}: ${c.url}` : `คลิปที่ ${i + 1}: (เปิดดูลิงก์ไม่ได้ตอนนี้)`
+  );
   return {
     handled: true,
-    reply: `ต้องการลบคลิปเก่า ${clips.length} คลิปใช่ไหมคะ? ลบแล้วกู้คืนไม่ได้ค่ะ\nพิมพ์ "ยืนยันลบ" เพื่อลบ หรือ "ยกเลิก" เพื่อไม่ลบ`,
+    reply:
+      `ต้องการลบคลิปเก่า ${clips.length} คลิปใช่ไหมคะ? ลบแล้วกู้คืนไม่ได้ค่ะ\n` +
+      `ดูคลิปก่อนได้ที่ลิงก์นี้ (หมดอายุใน 30 นาที)\n${links.join('\n')}\n` +
+      `พิมพ์ "ยืนยันลบ" เพื่อลบ หรือ "ยกเลิก" เพื่อไม่ลบ`,
     nextState: DELETE_CONFIRM_STATE,
     nextContext: { ...context, previousState: state, pendingDeleteIds: clips.map((c) => c.id) },
   };

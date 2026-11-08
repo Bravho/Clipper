@@ -63,3 +63,6 @@ coverage/
 .env.local.*
 
 /artifacts/google-play/*.aab
+
+# graphify code map (generated, large; rebuild with `graphify update`)
+/graphify-out/

@@ -87,7 +87,8 @@ export class LineIntakeService {
     const files = context.files as (string | { storageKey: string; fileSizeBytes: number })[];
     if (!files?.length) throw new Error('files_required');
     const request = existing ?? await this.requests.create({ userId: account.userId, title: 'LINE shop video',
-      description: String(context.brief ?? ''), targetAudience: '', targetPlatforms: [Platform.TikTok],
+      description: String(context.brief ?? ''), placeName: String(context.placeName ?? '').trim() || undefined,
+      targetAudience: '', targetPlatforms: [Platform.TikTok],
       preferredStyle: '', preferredLanguage: 'th', durationSeconds: duration, intakeChannel: 'line',
       renderLane: 'mac_mini', packageOrderId: orderId, externalRef: String(context.intakeId),
       shopReviewPreferences: { storyboard: context.reviewStoryboard === true, voice: context.reviewVoice === true },

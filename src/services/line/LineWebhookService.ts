@@ -19,7 +19,8 @@ import { ILineClient, LineMessage } from '@/lib/line/ILineClient';
 import { ILineAccountRepository } from '@/repositories/interfaces/ILineAccountRepository';
 import { getShopVoiceParticle } from '@/config/lineIntake';
 import { PACKAGES, findPackageByCode } from '@/config/stripePackages';
-import { uploadLineAsset } from '@/lib/line/lineStorage';
+import { uploadLineAsset, getLineAssetSignedUrl } from '@/lib/line/lineStorage';
+import { extractPlaceFromBrief, retryLocationJob } from '@/services/line/locationBridge';
 import { runDeleteClipStep } from '@/services/line/lineDeleteClipFlow';
 import { uploadedAssetRepository } from '@/repositories/index';
 import {
@@ -58,6 +59,7 @@ export type ConvState =
   | 'greeting'
   | 'awaiting_package_choice'
   | 'awaiting_brief'
+  | 'awaiting_place'
   | 'awaiting_files'
   | 'in_progress'
   | 'awaiting_review';
@@ -280,7 +282,15 @@ export async function processLineEvent(
     context,
     deps: {
       listClips: async (requestId) =>
-        (await uploadedAssetRepository.findByRequestId(requestId)).map((a) => ({ id: a.id })),
+        Promise.all(
+          (await uploadedAssetRepository.findByRequestId(requestId)).map(async (a) => {
+            try {
+              return { id: a.id, url: await getLineAssetSignedUrl(a.storageKey) };
+            } catch {
+              return { id: a.id };
+            }
+          })
+        ),
       removeClip: (_requestId, clipId) => uploadedAssetRepository.deleteById(clipId),
     },
   });
@@ -413,9 +423,55 @@ export async function processLineEvent(
       return { escalated: false, intent: 'review_preference' };
     }
   }
+  // Retry after a failed location lookup (asked once): the shop's text is the new place name.
+  if (state === 'awaiting_place_retry') {
+    const requestId = String(context['requestId'] ?? '');
+    const place = text.trim().slice(0, 150);
+    const retry = place && requestId ? retryLocationJob(requestId, place, Date.now()) : { ok: false as const, error: 'not_waiting_for_info' as const };
+    await opts.lineAccountRepo.upsertConversationState(
+      opts.lineChannelId, lineUserId, 'in_progress', { requestId }
+    );
+    if (replyToken) {
+      await opts.lineClient.reply(replyToken, [{ type: 'text', text: retry.ok
+        ? 'ขอบคุณค่ะ กำลังตรวจสอบสถานที่อีกครั้ง'
+        : 'ขออภัยค่ะ ตอนนี้ไม่สามารถรับชื่อสถานที่เพิ่มได้ ทีมงานจะติดต่อกลับค่ะ' }]);
+    }
+    return { escalated: false, intent: retry.ok ? 'place_retry_queued' : 'place_retry_refused' };
+  }
+  // Place name: asked only when the shop did not already give one in the brief.
+  if (state === 'awaiting_place') {
+    const place = text.trim().slice(0, 150);
+    if (!place) {
+      if (replyToken) await opts.lineClient.reply(replyToken, [{ type: 'text', text: 'กรุณาพิมพ์ชื่อสถานที่ให้ชัดเจนค่ะ' }]);
+      return { escalated: false, intent: 'place_missing' };
+    }
+    context['placeName'] = place;
+    await opts.lineAccountRepo.upsertConversationState(
+      opts.lineChannelId, lineUserId, 'awaiting_storyboard_preference', context
+    );
+    if (replyToken) {
+      await opts.lineClient.reply(replyToken, [
+        { type: 'text', text: 'ต้องการตรวจสอบร่างโครงวิดีโอก่อนการตัดต่อจริงหรือไม่? yes / no' },
+      ]);
+    }
+    return { escalated: false, intent: 'place_collected' };
+  }
   // Brief collection: awaiting_brief state → collect text as brief
   if (state === 'awaiting_brief') {
     context['brief'] = text;
+    const markedPlace = extractPlaceFromBrief(text);
+    if (markedPlace) context['placeName'] = markedPlace;
+    if (!context['placeName']) {
+      await opts.lineAccountRepo.upsertConversationState(
+        opts.lineChannelId, lineUserId, 'awaiting_place', context
+      );
+      if (replyToken) {
+        await opts.lineClient.reply(replyToken, [
+          { type: 'text', text: 'ร้านอยู่ที่ไหนคะ? กรุณาพิมพ์ชื่อสถานที่ให้ตรงตามที่เห็นบนแผนที่ (เช่น ชื่อร้านและย่าน)' },
+        ]);
+      }
+      return { escalated: false, intent: 'place_requested' };
+    }
     await opts.lineAccountRepo.upsertConversationState(
       opts.lineChannelId, lineUserId, 'awaiting_storyboard_preference', context
     );
@@ -487,7 +543,7 @@ export async function processLineEvent(
   }
   if (replyToken) {
     await opts.lineClient.reply(replyToken, [
-      { type: 'text', text: unknownMsg(particle) },
+      { type: 'text', text: escalateMsg(particle) },
     ]);
   }
   return { escalated: true, intent: 'unknown' };

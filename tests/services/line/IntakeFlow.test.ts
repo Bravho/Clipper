@@ -46,6 +46,9 @@ test('real state machine blocks unpaid checkout, collects preferences and privat
   await packages.updateOrderStatus(String(state!.context.orderId), 'active');
   await send('continue');
   await send('A restaurant serving noodles');
+  // No place in the brief, so the bot asks for it first.
+  expect(reply.mock.calls.at(-1)?.[1][0].text).toContain('ร้านอยู่ที่ไหนคะ');
+  await send('Pho 54 Bangkok');
   expect(reply.mock.calls.at(-1)?.[1][0].text).toBe('ต้องการตรวจสอบร่างโครงวิดีโอก่อนการตัดต่อจริงหรือไม่? yes / no');
   await send('โอเค');
   expect(reply.mock.calls.at(-1)?.[1][0].text).toBe('ต้องการตรวจสอบเสียงพากย์ก่อนการตัดต่อจริงหรือไม่? yes / no');

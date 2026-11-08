@@ -53,6 +53,30 @@ describe('first request asks for confirmation and deletes nothing', () => {
   });
 });
 
+describe('old clip links in the confirmation question', () => {
+  it('sends each clip link so the shop can check it before confirming', async () => {
+    const d = deps();
+    d.deps.listClips = jest.fn(async () => [
+      { id: 'c1', url: 'https://example.test/c1' },
+      { id: 'c2', url: 'https://example.test/c2' },
+    ]);
+    const step = await runDeleteClipStep({ text: 'ลบคลิปเก่า', state: 'in_progress', context: ctx, deps: d.deps });
+    const reply = (step as { reply: string }).reply;
+    expect(reply).toContain('https://example.test/c1');
+    expect(reply).toContain('https://example.test/c2');
+    expect(reply).toMatch(/ยืนยันลบ/);
+    expect(d.removed).toEqual([]);
+  });
+
+  it('still asks when a link cannot be made, and says so', async () => {
+    const d = deps();
+    d.deps.listClips = jest.fn(async () => [{ id: 'c1' }]);
+    const step = await runDeleteClipStep({ text: 'ลบคลิปเก่า', state: 'in_progress', context: ctx, deps: d.deps });
+    expect((step as { reply: string }).reply).toMatch(/เปิดดูลิงก์ไม่ได้/);
+    expect(d.removed).toEqual([]);
+  });
+});
+
 describe('confirmation', () => {
   const pending = { ...ctx, previousState: 'in_progress', pendingDeleteIds: ['c1', 'c2'] };
 

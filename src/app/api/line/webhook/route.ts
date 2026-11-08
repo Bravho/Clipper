@@ -146,6 +146,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const { videoGenerationService } = await import('@/services/VideoGenerationService');
           const request = await clipRequestRepository.findById(submitted.requestId);
           if (!request) throw new Error('missing_request');
+          // Coordinates come from LocBot via the bridge; the result is written back to this request.
+          const { createLocationJob, getLocationJob } = await import('@/services/line/locationBridge');
+          if (request.placeName && !getLocationJob(submitted.requestId, Date.now())) {
+            createLocationJob(submitted.requestId, request.placeName, Date.now());
+          }
           const assets = await uploadedAssetRepository.findByRequestId(request.id);
           const { withLineStorage } = await import('@/lib/line/storageContext');
           await withLineStorage(true, () => videoGenerationService.initializePipeline(request.id, request.userId, {

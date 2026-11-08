@@ -123,7 +123,10 @@ public class DeviceVideoRenderPlugin extends Plugin {
     @PluginMethod
     public void renderMaster(PluginCall call) {
         String sourceUrl = call.getString("sourceUrl");
-        if (sourceUrl == null || (!sourceUrl.startsWith("https://") && !sourceUrl.startsWith("file://"))) {
+        // Debug builds only: the adb-reverse link to Mar-PC is plain HTTP on 127.0.0.1.
+        boolean localDebugLink = (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 && sourceUrl != null
+                && sourceUrl.startsWith("http://127.0.0.1:");
+        if (sourceUrl == null || (!sourceUrl.startsWith("https://") && !sourceUrl.startsWith("file://") && !localDebugLink)) {
             call.reject("A HTTPS or staged file URL is required");
             return;
         }
@@ -145,7 +148,7 @@ public class DeviceVideoRenderPlugin extends Plugin {
         final File inputFile = activeInput;
         transfers.execute(() -> {
             try {
-                if (sourceUrl.startsWith("https://")) download(sourceUrl, inputFile);
+                if (sourceUrl.startsWith("https://") || localDebugLink) download(sourceUrl, inputFile);
                 else copyStagedSource(sourceUrl, inputFile);
                 getActivity().runOnUiThread(() -> {
                     if (activeCall == call) startExport(call);
