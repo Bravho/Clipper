@@ -283,3 +283,45 @@ test.each([{ userId: 'other-shop', isTest: false }, { userId: 'shop', isTest: tr
   (repos.clipRequestRepository.findById as jest.Mock).mockResolvedValue({ id, ...owner, status: 'Editing' });
   expect((await GET(request({}), { params: { itemId: d.item.id } })).status).toBe(404);
 });
+
+describe('sendNow: send straight away, keep the queue as the fallback', () => {
+  it('sends once in this request, marks the row sent, and returns sent:true', async () => {
+    const d = await setup();
+    const push = jest.spyOn(LineClient.prototype, 'push').mockResolvedValue(undefined);
+    const markSent = jest.spyOn(repos.reviewOutboxRepository, 'markSent');
+    const res = await reply(request({ ...d.body, sendNow: true }));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).toMatchObject({ queued: true, sent: true });
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith('PRIVATE_LINE_USER', [{ type: 'text', text: 'reply text' }], json.outboxEventId);
+    expect(markSent).toHaveBeenCalledTimes(1);
+  });
+
+  it('when LINE push fails, the message stays queued and the reply says sent:false', async () => {
+    const d = await setup();
+    jest.spyOn(LineClient.prototype, 'push').mockRejectedValue(new Error('line down'));
+    const markSent = jest.spyOn(repos.reviewOutboxRepository, 'markSent');
+    const res = await reply(request({ ...d.body, sendNow: true }));
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ queued: true, sent: false });
+    expect(markSent).not.toHaveBeenCalled();
+    expect(d.store.size).toBe(1);
+  });
+
+  it('without sendNow nothing is pushed here (the worker still sends it)', async () => {
+    const d = await setup();
+    const push = jest.spyOn(LineClient.prototype, 'push').mockResolvedValue(undefined);
+    const res = await reply(request({ ...d.body }));
+    expect(res.status).toBe(202);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('during takeover, RCaveBot cannot send even with sendNow', async () => {
+    const d = await setup();
+    await d.accounts.setTakeover(d.account.id, true, new Date(Date.now() + 60000));
+    const push = jest.spyOn(LineClient.prototype, 'push').mockResolvedValue(undefined);
+    expect((await reply(request({ ...d.body, sendNow: true }))).status).toBe(409);
+    expect(push).not.toHaveBeenCalled();
+  });
+});

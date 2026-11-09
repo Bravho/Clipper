@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { withLineHandoffTransaction } from '@/repositories';
+import { withLineHandoffTransaction, reviewOutboxRepository } from '@/repositories';
+import { LineClient } from '@/lib/line/LineClient';
 import { adminAuth, inScope, invalid, notFound, positiveLimit, scopedItem, takeoverActive } from '@/services/line/handoffAdmin';
 
 const schema = z.object({
@@ -9,6 +10,8 @@ const schema = z.object({
   idempotencyKey: z.string().min(8).max(100).regex(/^[A-Za-z0-9_.:-]+$/),
   expectedVersion: z.number().int().positive().optional(), resolve: z.boolean().default(false),
   actor: z.enum(['rcavebot', 'human']), allowDuringTakeover: z.boolean().optional(),
+  /** Send to LINE now, in this request. If the send fails, the message stays queued for the worker. */
+  sendNow: z.boolean().default(false),
 }).refine(b => b.itemId || b.conversationRef, 'missing_ids')
   .refine(b => !b.itemId || !b.resolve || b.expectedVersion !== undefined, 'expectedVersion_required');
 
@@ -56,9 +59,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       await createReviewService().decide({ itemId: context.item.id, expectedVersion: b.expectedVersion!,
           actorVia: 'grokbot_app', decision: 'manual_reply', replyText: b.text, suppressReplyOutbox: true });
     }
-    return NextResponse.json({ queued: true, outboxEventId: event.eventId }, { status: 202 });
+    return { queuedEventId: event.id, eventId: event.eventId, lineUserId: account.lineUserId, text: b.text };
   }).catch(error => {
     if ((error as { code?: string }).code === 'version_conflict') return NextResponse.json({ error: 'version_conflict' }, { status: 409 });
     throw error;
+  }).then(async result => {
+    if (result instanceof NextResponse) return result;
+    if (!b.sendNow) return NextResponse.json({ queued: true, outboxEventId: result.eventId }, { status: 202 });
+    // Send after the transaction has committed. The eventId is the LINE retry key, so a retry cannot double-send.
+    try {
+      await new LineClient().push(result.lineUserId, [{ type: 'text', text: result.text }], result.eventId);
+    } catch {
+      // Not delivered: leave it queued for the worker, and say so.
+      return NextResponse.json({ queued: true, sent: false, outboxEventId: result.eventId }, { status: 202 });
+    }
+    await reviewOutboxRepository.markSent(result.queuedEventId);
+    return NextResponse.json({ queued: true, sent: true, outboxEventId: result.eventId }, { status: 200 });
   });
 }
