@@ -129,7 +129,7 @@ test('normal created item with no next reminder becomes due at configured age', 
   const opts = makeOpts(post);
   jest.setSystemTime(Date.now() + 6 * 3600000 + 1);
   expect((await runReviewReminders(repo, opts)).reminded).toBe(1);
-  expect(JSON.parse(post.mock.calls[0][1] as string).event).toBe('reminder');
+  expect(JSON.parse(post.mock.calls[0][1] as string).data.event).toBe('reminder');
   expect((await runReviewReminders(repo, opts)).reminded).toBe(0);
   jest.useRealTimers();
 });

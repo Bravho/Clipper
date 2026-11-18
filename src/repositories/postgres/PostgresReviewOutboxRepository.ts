@@ -38,14 +38,14 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
   }
 
   async findByDedupeKey(key: string): Promise<OutboxEvent | null> {
-    const { rows } = await this.db.query("SELECT * FROM review_outbox WHERE channel='grokbot_app' AND dedupe_key=$1", [key]);
+    const { rows } = await this.db.query("SELECT * FROM review_outbox WHERE channel='revbot_app' AND dedupe_key=$1", [key]);
     return rows[0] ? rowToEvent(rows[0]) : null;
   }
   async listRecentReplies(accountId?: string, since?: Date): Promise<OutboxEvent[]> {
     const { rows } = await this.db.query(`SELECT o.*, COALESCE(ri.shop_user_id::text, la.user_id::text) AS owner_shop_id
       FROM review_outbox o LEFT JOIN review_items ri ON ri.id=o.review_item_id
       LEFT JOIN line_accounts la ON la.id::text=o.payload->>'lineAccountId'
-      WHERE o.channel='grokbot_app' AND o.event_type='line.reply'
+      WHERE o.channel='revbot_app' AND o.event_type='line.reply'
       AND ($2::timestamptz IS NULL OR o.created_at > $2)
       AND ($1::text IS NULL OR o.payload->>'lineAccountId'=$1)
       ORDER BY o.created_at DESC`, [accountId ?? null, since ?? null]);
@@ -105,7 +105,7 @@ export class PostgresReviewOutboxRepository implements IReviewOutboxRepository {
        DO UPDATE SET dedupe_key=EXCLUDED.dedupe_key RETURNING *`,
       [
         input.eventType,
-        input.channel ?? 'grokbot_app',
+        input.channel ?? 'revbot_app',
         input.reviewItemId ?? null,
         input.dedupeKey ?? null,
         JSON.stringify(input.payload),

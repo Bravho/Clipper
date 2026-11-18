@@ -8,7 +8,7 @@ export type ReviewRenderState = 'none' | 'queued' | 'rendering' | 'done' | 'fail
 export type ReviewDecisionMode = 'review' | 'auto' | 'sampled';
 
 /** How the decision was made. */
-export type ReviewDecidedVia = 'grokbot_app' | 'web' | 'auto' | 'system';
+export type ReviewDecidedVia = 'revbot_app' | 'grokbot_app' | 'web' | 'auto' | 'system';
 
 export type ReviewResolution =
   | 'approved'

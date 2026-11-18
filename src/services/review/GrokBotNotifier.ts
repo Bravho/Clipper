@@ -20,13 +20,13 @@
  * may itself embed a secret) are never logged.
  */
 
-import { createHmac } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
 import type { ReviewItem } from '@/domain/models/ReviewItem';
 
 type NotifiableItem = Pick<ReviewItem, 'id' | 'shortCode' | 'typeKey' | 'requestId' | 'packageOrderId' | 'payload' | 'assetRefs' | 'signals'>;
 
 export interface GrokBotPayload {
-  event: 'review_pending' | 'review_needed' | 'escalation' | 'reminder' | 'takeover_on';
+  event: 'review_pending' | 'review_needed' | 'escalation' | 'reminder' | 'takeover_on' | 'first_video';
   requestId: string | null;
   itemId: string;
   shortCode: string;
@@ -38,11 +38,15 @@ export interface GrokBotPayload {
   /** Short Thai issue strings from the storyboard AI pre-review. Absent when all checks passed. No PII. */
   precheckIssues?: string[];
   visualShotFlags?: { sceneIndex: number; assetId: string; rule: string; measuredValue: number }[];
+  /** rclipper.com review page for Tho. Only set on first_video events. */
+  reviewUrl?: string;
   notifiedAt: string;
 }
 
 export interface GrokBotNotifierOptions {
   event?: GrokBotPayload['event'];
+  /** Review page link, sent with first_video events. */
+  reviewUrl?: string;
   throwOnFailure?: boolean;
   /** Generate a signed expiring URL for a storage key. Injected so tests can mock it. */
   signedUrl: (storageKey: string, ttlSeconds: number) => Promise<string>;
@@ -107,6 +111,11 @@ function sign(body: string, key: string, timestamp: number): string {
   return createHmac('sha256', key).update(`${timestamp}.${body}`).digest('hex');
 }
 
+/** OpenBot routine webhook signature: HMAC-SHA256 over "<timestamp>.<deliveryId>.<body>". */
+export function signOpenBot(body: string, key: string, timestamp: number, deliveryId: string): string {
+  return createHmac('sha256', key).update(`${timestamp}.${deliveryId}.${body}`).digest('hex');
+}
+
 export async function defaultPost(
   url: string,
   body: string,
@@ -166,24 +175,29 @@ export async function notifyGrokBot(
       return [{ sceneIndex: f.sceneIndex as number, assetId: f.assetId, rule: String(f.rule), measuredValue: f.measuredValue }];
     }) } : {}),
     notifiedAt: new Date().toISOString(),
+    ...(opts.reviewUrl ? { reviewUrl: opts.reviewUrl } : {}),
   };
 
   // Strict allowlist for handoffs: customer-controlled fields never leave here.
-  const body = JSON.stringify(item.typeKey === 'customer_reply' ? {
+  const innerBody = JSON.stringify(item.typeKey === 'customer_reply' ? {
     event: opts.event ?? 'escalation', requestId: item.requestId ?? null,
     itemId: item.id, shortCode: item.shortCode, typeKey: item.typeKey, orderId: item.packageOrderId ?? null,
     summaryTh: opts.event === 'takeover_on' ? 'ทีมงานเข้ารับช่วงการสนทนาแล้ว (takeover)'
       : 'ลูกค้าส่งข้อความที่ระบบตอบไม่ได้ — รอทีมงาน/RCaveBot ตอบ', previewLinks: [],
     notifiedAt: payload.notifiedAt,
   } : payload);
+  // OpenBot routine webhook format: {type, occurredAt, data}, signed over "<ts>.<deliveryId>.<body>".
+  const eventType = opts.event ?? (item.typeKey === 'customer_reply' ? 'escalation' : 'review_needed');
+  const body = JSON.stringify({ type: eventType, occurredAt: payload.notifiedAt, data: JSON.parse(innerBody) });
   const timestamp = Math.floor(Date.now() / 1000);
+  const deliveryId = randomUUID();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Authorization': authHeaderValue,
-    'X-Grokbot-Timestamp': String(timestamp),
+    'x-openbot-timestamp': String(timestamp),
+    'x-openbot-delivery-id': deliveryId,
   };
   if (webhookKey) {
-    headers['X-Grokbot-Signature'] = `sha256=${sign(body, webhookKey, timestamp)}`;
+    headers['x-openbot-signature'] = `sha256=${signOpenBot(body, webhookKey, timestamp, deliveryId)}`;
   }
 
   // Build redaction list: key, URL, auth header value (cleaned and original env), token portion.

@@ -57,7 +57,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         resolve: b.resolve, expectedVersion: b.expectedVersion ?? null } });
     if (context && b.resolve) {
       await createReviewService().decide({ itemId: context.item.id, expectedVersion: b.expectedVersion!,
-          actorVia: 'grokbot_app', decision: 'manual_reply', replyText: b.text, suppressReplyOutbox: true });
+          actorVia: 'revbot_app', decision: 'manual_reply', replyText: b.text, suppressReplyOutbox: true });
     }
     return { queuedEventId: event.id, eventId: event.eventId, lineUserId: account.lineUserId, text: b.text };
   }).catch(error => {

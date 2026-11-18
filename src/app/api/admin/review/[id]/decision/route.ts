@@ -87,7 +87,7 @@ export async function POST(
       expectedVersion: version as number,
       // Token automation has no users-row identity; leave the nullable UUID FK null.
       actorUserId: undefined,
-      actorVia: 'grokbot_app',
+      actorVia: 'revbot_app',
       decision: decision as 'approve' | 'reject' | 'manual_reply',
       replyText: typeof replyText === 'string' ? replyText : undefined,
     });

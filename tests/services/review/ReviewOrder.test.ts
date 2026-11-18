@@ -153,14 +153,14 @@ test('shop-reviewed gates produce shop audience; un-reviewed video gate produces
   const byType = Object.fromEntries(items.map(i => [i.typeKey, i.payload.audience]));
   expect(byType.script).toBe('shop');
   expect(byType.tts).toBe('shop');
-  expect(byType.video).toBe('admin');
+  expect(byType.video).toBe('revbot');
 });
 
 test('gateAudience helper returns correct audience for all gate combinations', () => {
   expect(gateAudience({ shopReviewPreferences: { storyboard: false } } as never, LINE_REVIEW_GATES[0])).toBe('admin');
   expect(gateAudience({ shopReviewPreferences: { storyboard: true } } as never, LINE_REVIEW_GATES[0])).toBe('shop');
   expect(gateAudience({ shopReviewPreferences: { voice: true } } as never, LINE_REVIEW_GATES[1])).toBe('shop');
-  expect(gateAudience({ shopReviewPreferences: { voice: false } } as never, LINE_REVIEW_GATES[2])).toBe('admin');
+  expect(gateAudience({ shopReviewPreferences: { voice: false } } as never, LINE_REVIEW_GATES[2])).toBe('revbot');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

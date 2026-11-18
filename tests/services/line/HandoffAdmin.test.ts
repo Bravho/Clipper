@@ -70,7 +70,7 @@ test('reply queues once, resolves once, and worker pushes once with UUID retry k
   expect(second.status).toBe(200);
   expect(await second.json()).toEqual({ duplicate: true, outboxEventId: result.outboxEventId });
   expect(d.store.size).toBe(1);
-  expect(await d.items.findById(d.item.id)).toMatchObject({ resolution: 'manual_reply', decidedVia: 'grokbot_app' });
+  expect(await d.items.findById(d.item.id)).toMatchObject({ resolution: 'manual_reply', decidedVia: 'revbot_app' });
   await processLineReviewOutbox(d); await processLineReviewOutbox(d);
   expect(d.client.push).toHaveBeenCalledTimes(1);
   expect(d.client.push).toHaveBeenCalledWith('PRIVATE_LINE_USER', [{ type: 'text', text: 'reply text' }], result.outboxEventId);
@@ -177,7 +177,7 @@ test('escalation dedupes and notifier contains no text, LINE identity, links or 
   await processLineReviewOutbox(d);
   const body = String((fetch.mock.calls[0][1] as RequestInit).body);
   for (const secret of ['PRIVATE_REASON','PRIVATE_CUSTOMER_TEXT','PRIVATE_LINE_USER']) expect(body).not.toContain(secret);
-  expect(JSON.parse(body)).toEqual({ event: 'escalation', itemId: d.item.id, shortCode: d.item.shortCode,
+  expect(JSON.parse(body).data).toEqual({ event: 'escalation', itemId: d.item.id, shortCode: d.item.shortCode,
     typeKey: 'customer_reply', requestId: null, orderId: null, previewLinks: [], notifiedAt: expect.any(String),
     summaryTh: 'ลูกค้าส่งข้อความที่ระบบตอบไม่ได้ — รอทีมงาน/RCaveBot ตอบ' });
   const post = jest.fn(async () => ({ ok: true, status: 200 }));

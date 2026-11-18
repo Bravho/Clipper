@@ -21,7 +21,8 @@ async function resolvePreviewUrls(item: ReviewItem): Promise<{ role: string; url
 export default async function ReviewQueue() {
   await requireRole(Role.Admin);
   const items = await createReviewService().listPending();
-  const adminItems = items.filter(item => item.payload.audience !== 'shop');
+  // RevBot items are decided by RevBot, not shown in the admin queue.
+  const adminItems = items.filter(item => item.payload.audience !== 'shop' && item.payload.audience !== 'revbot');
 
   const previews = await Promise.all(adminItems.map(resolvePreviewUrls));
 

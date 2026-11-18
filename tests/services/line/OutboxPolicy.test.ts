@@ -37,7 +37,7 @@ test.each(['video', 'customer_reply'])('real worker sends %s review creation to 
     await processLineReviewOutbox({ outbox, items, accounts: new MockLineAccountRepository(new Map()), client, execute: jest.fn() });
     expect(post).toHaveBeenCalledTimes(1);
     const body = JSON.parse((post.mock.calls as unknown[][])[0][1] ? ((post.mock.calls as unknown[][])[0][1] as RequestInit).body as string : '{}');
-    expect(body.event).toBe(typeKey === 'video' ? 'review_needed' : 'escalation');
+    expect(body.data.event).toBe(typeKey === 'video' ? 'review_needed' : 'escalation');
     expect(JSON.stringify(body)).not.toContain('private customer message');
     expect(client.push).not.toHaveBeenCalled();
   } finally { global.fetch = originalFetch; delete process.env.GROKBOT_REVIEW_WEBHOOK_URL; delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY; }

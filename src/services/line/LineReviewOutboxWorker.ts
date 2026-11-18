@@ -49,7 +49,7 @@ export async function processLineReviewOutbox(deps: {
     // Only an explicit human reply may bypass takeover. It never runs automation.
     const manualReply = event.eventType === 'review.decided' && event.payload.decision === 'manual_reply'
       && item?.resolution === 'manual_reply'
-      && ['web', 'grokbot_app'].includes(item.decidedVia ?? '') && typeof item.finalPayload?.reply_text === 'string';
+      && ['web', 'revbot_app'].includes(item.decidedVia ?? '') && typeof item.finalPayload?.reply_text === 'string';
     const userId = item?.shopUserId ?? (typeof event.payload.user_id === 'string' ? event.payload.user_id : null);
     const accounts = userId ? await deps.accounts.findByUserId(userId) : [];
     if (manualReply && event.payload.allowDuringTakeover !== true && accounts.some(takeoverActive)) {

@@ -311,7 +311,7 @@ describe('GrokBotNotifier — precheckIssues forwarded from signals', () => {
 
     let capturedPayload: Record<string, unknown> | undefined;
     const postFn = jest.fn(async (_url: string, body: string) => {
-      capturedPayload = JSON.parse(body) as Record<string, unknown>;
+      capturedPayload = (JSON.parse(body) as { data: Record<string, unknown> }).data;
       return { ok: true, status: 200 };
     });
     const signedUrl = jest.fn(async (key: string) => `https://cdn.example.com/${key}`);

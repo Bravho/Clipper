@@ -13,7 +13,9 @@ import { runVisualPrecheck } from './StoryboardVisualPrecheck';
 import type { StoryboardScene } from '@/domain/models/VideoGenerationJob';
 
 export const LINE_REVIEW_GATES = ['awaiting_content_approval', 'awaiting_voice_approval', 'awaiting_overlay_approval'] as const;
-export function gateAudience(request: ClipRequest, step: string): 'shop' | 'admin' {
+export function gateAudience(request: ClipRequest, step: string): 'shop' | 'admin' | 'revbot' {
+  // Final video (overlay) gate: RevBot decides by itself; the shop gets the result.
+  if (step === LINE_REVIEW_GATES[2]) return 'revbot';
   return (step === LINE_REVIEW_GATES[0] && request.shopReviewPreferences?.storyboard) ||
     (step === LINE_REVIEW_GATES[1] && request.shopReviewPreferences?.voice) ? 'shop' : 'admin';
 }
@@ -113,13 +115,26 @@ export async function onLineReviewGate(request: ClipRequest, job: VideoGeneratio
   }
   // ---------------------------------------------------------------------------
 
-  await createReviewService().createItem({ typeKey, shopUserId: request.userId, requestId: request.id,
+  const created = await createReviewService().createItem({ typeKey, shopUserId: request.userId, requestId: request.id,
     jobId: job.id, gateStep: job.currentStep, packageOrderId: request.packageOrderId ?? undefined,
     title: typeKey + ' review', payload: { script: reviewJob.approvedScriptThai ?? reviewJob.scriptThai ?? '',
       storyboard: reviewJob.approvedStoryboard ?? reviewJob.storyboard, audience: precheckSignals.visualShotFlags ? 'admin' : gateAudience(request, job.currentStep) },
     assetRefs: asset ? [{ asset_id: asset.id, storage_key: asset.storageKey, mime: asset.mimeType, role: index === 1 ? 'voice' : 'preview' }] : [],
     signals: precheckSignals, typeCfg: { ...getDefaultTypeCfg(typeKey), alwaysReview: true },
     idempotencyKey: 'gate:' + job.id + ':' + job.currentStep + ':' + (asset?.id ?? request.revisionCount ?? 0) });
+  // First generated video of a request: tell Tho through RevBot, with the review page link.
+  // Information only; Tho does not approve it.
+  if (job.currentStep === LINE_REVIEW_GATES[2] && (request.revisionCount ?? 0) === 0) {
+    const { notifyGrokBot } = await import('@/services/review/GrokBotNotifier');
+    const { spacesSignedUrl } = await import('@/lib/spaces');
+    await notifyGrokBot(created.item, { event: 'first_video', reviewUrl: reviewPageUrl(), signedUrl: spacesSignedUrl })
+      .catch(err => console.error('[first_video] notice failed:', err instanceof Error ? err.message : 'unknown'));
+  }
+}
+
+/** rclipper.com review page for Tho. REVIEW_PAGE_URL overrides the default. */
+export function reviewPageUrl(): string {
+  return process.env.REVIEW_PAGE_URL?.trim() || 'https://rclipper.com/admin/review';
 }
 
 // Called after the transactional decision commits. Retries are safe because the

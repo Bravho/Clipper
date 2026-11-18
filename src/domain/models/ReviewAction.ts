@@ -5,7 +5,7 @@ export type ReviewActionType =
   | 'reminder_sent' | 'customer_noticed' | 'overdue' | 'expired'
   | 'superseded' | 'comment' | 'applied' | 'apply_failed';
 
-export type ReviewActorVia = 'grokbot_app' | 'web' | 'auto' | 'system' | 'grokbot';
+export type ReviewActorVia = 'revbot_app' | 'grokbot_app' | 'web' | 'auto' | 'system' | 'grokbot';
 
 export type ReviewReasonCode =
   | 'wrong_price' | 'wrong_menu_name' | 'wrong_shop_info' | 'hallucinated_claim'

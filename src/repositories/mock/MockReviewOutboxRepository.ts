@@ -22,7 +22,7 @@ export class MockReviewOutboxRepository implements IReviewOutboxRepository {
   }
 
   async findByDedupeKey(key: string): Promise<OutboxEvent | null> {
-    return [...this.store.values()].find(e => e.dedupeKey === key && e.channel === 'grokbot_app') ?? null;
+    return [...this.store.values()].find(e => e.dedupeKey === key && e.channel === 'revbot_app') ?? null;
   }
   async listRecentReplies(accountId?: string, since?: Date): Promise<OutboxEvent[]> {
     return [...this.store.values()].filter(e => e.eventType === 'line.reply' && (!since || e.createdAt > since)
@@ -59,7 +59,7 @@ export class MockReviewOutboxRepository implements IReviewOutboxRepository {
       id: String(++this.seq),
       eventId: crypto.randomUUID(),
       eventType: input.eventType,
-      channel: input.channel ?? 'grokbot_app',
+      channel: input.channel ?? 'revbot_app',
       reviewItemId: input.reviewItemId ?? null,
       dedupeKey: input.dedupeKey ?? null,
       payload: input.payload,

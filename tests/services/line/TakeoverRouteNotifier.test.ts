@@ -24,7 +24,7 @@ test('real takeover route enqueues notification delivered by real worker', async
     await processLineReviewOutbox({ outbox: reviewOutboxRepository, accounts: lineAccountRepository,
       items: new MockReviewItemRepository(new Map()), client, execute: jest.fn() });
     const body = JSON.parse((post.mock.calls[0][1] as RequestInit).body as string);
-    expect(body.event).toBe('takeover_on');
+    expect(body.data.event).toBe('takeover_on');
     expect(JSON.stringify(body)).not.toContain('private-line-id');
     expect(client.push).not.toHaveBeenCalled();
   } finally { global.fetch = original; delete process.env.REVIEW_ADMIN_TOKEN; delete process.env.GROKBOT_REVIEW_WEBHOOK_URL; delete process.env.GROKBOT_REVIEW_WEBHOOK_KEY; }

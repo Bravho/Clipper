@@ -91,7 +91,7 @@ test('unfixable flags survive and notifier serializes only allowed fields', asyn
   const postFn = jest.fn(async () => ({ ok: true,status: 200 }));
   await notifyGrokBot({ id: 'item', shortCode: 'TEST', typeKey: 'script', requestId: 'request', packageOrderId: null, payload: { audience: 'admin' }, assetRefs: [], signals: { visualShotFlags: result.flags.map(f => ({ ...f, email: 'private@example.invalid' })) } } as unknown as ReviewItem,{ signedUrl: jest.fn(),postFn });
   const body = (postFn.mock.calls as unknown as [string,string,unknown][])[0][1];
-  expect(JSON.parse(body).visualShotFlags).toEqual(result.flags); expect(body).not.toContain('private@');
+  expect(JSON.parse(body).data.visualShotFlags).toEqual(result.flags); expect(body).not.toContain('private@');
 });
 test('analysis samples 3 frames, parses cuts and stores post-crop metrics', async () => {
   const run = jest.fn(async () => ({ stdout: Buffer.from('jpeg'), stderr: 'pts_time:1.5 pts_time:7.25' }));

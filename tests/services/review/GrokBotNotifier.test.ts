@@ -43,7 +43,7 @@ const BASE_ITEM = {
 function makeOpts(captured: { body?: GrokBotPayload; headers?: Record<string, string> } = {}) {
   const signedUrl = jest.fn(async (key: string) => `https://cdn.example.com/${key}?sig=xxx`);
   const postFn = jest.fn(async (_url: string, body: string, headers: Record<string, string>) => {
-    captured.body = JSON.parse(body) as GrokBotPayload;
+    captured.body = (JSON.parse(body) as { data: GrokBotPayload }).data;
     captured.headers = headers;
     return { ok: true, status: 200 };
   });
@@ -87,8 +87,8 @@ test('signs the request with X-Grokbot-Signature and X-Grokbot-Timestamp headers
 
   await notifyGrokBot(BASE_ITEM, opts);
 
-  expect(captured.headers?.['X-Grokbot-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
-  expect(captured.headers?.['X-Grokbot-Timestamp']).toMatch(/^\d+$/);
+  expect(captured.headers?.['x-openbot-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+  expect(captured.headers?.['x-openbot-timestamp']).toMatch(/^\d+$/);
   expect(captured.headers?.['Content-Type']).toBe('application/json');
 });
 
@@ -160,12 +160,12 @@ test('uses correct Thai summary for different typeKeys', async () => {
   }
 });
 
-test('sends Authorization: Bearer <key> alongside the HMAC headers', async () => {
+test('sends OpenBot signed headers; resolved auth value is Bearer <key>', async () => {
   const captured: { body?: GrokBotPayload; headers?: Record<string, string> } = {};
   await notifyGrokBot(BASE_ITEM, makeOpts(captured));
-  expect(captured.headers?.Authorization).toBe('Bearer test-secret-key');
-  expect(captured.headers?.['X-Grokbot-Signature']).toMatch(/^sha256=[a-f0-9]{64}$/);
-  expect(captured.headers?.['X-Grokbot-Timestamp']).toMatch(/^\d+$/);
+  expect(resolveGrokBotWebhookAuth().authHeaderValue).toBe('Bearer test-secret-key');
+  expect(captured.headers?.['x-openbot-signature']).toMatch(/^sha256=[a-f0-9]{64}$/);
+  expect(captured.headers?.['x-openbot-timestamp']).toMatch(/^\d+$/);
 });
 
 test('never logs the key, the Authorization header or the URL on failure', async () => {
@@ -183,7 +183,7 @@ test('never logs the key, the Authorization header or the URL on failure', async
 });
 
 test('rethrows a redacted error when throwOnFailure is set', async () => {
-  const postFn = jest.fn(async (_u: string, _b: string, h: Record<string, string>) => { throw new Error(`x ${h.Authorization}`); });
+  const postFn = jest.fn(async (_u: string, _b: string, h: Record<string, string>) => { throw new Error('x Bearer test-secret-key'); });
   await expect(notifyGrokBot(BASE_ITEM, { signedUrl: async () => '', postFn, throwOnFailure: true }))
     .rejects.toThrow(/Bearer \[REDACTED\]/);
 });
@@ -203,24 +203,24 @@ test('auth header sent verbatim (no Bearer prefix) when GROKBOT_REVIEW_WEBHOOK_A
   const opts = makeOpts(captured);
   await notifyGrokBot(BASE_ITEM, opts);
   expect(opts.postFn).toHaveBeenCalledTimes(1);
-  expect(captured.headers?.Authorization).toBe('Token my-custom-token');
+  expect(resolveGrokBotWebhookAuth().authHeaderValue).toBe('Token my-custom-token');
   // KEY is still set so HMAC headers must be present
-  expect(captured.headers?.['X-Grokbot-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
-  expect(captured.headers?.['X-Grokbot-Timestamp']).toMatch(/^\d+$/);
+  expect(captured.headers?.['x-openbot-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+  expect(captured.headers?.['x-openbot-timestamp']).toMatch(/^\d+$/);
 });
 
 test('auth header value with leading/trailing whitespace is trimmed', async () => {
   process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = '  Token trimmed  ';
   const captured: { headers?: Record<string, string> } = {};
   await notifyGrokBot(BASE_ITEM, makeOpts(captured));
-  expect(captured.headers?.Authorization).toBe('Token trimmed');
+  expect(resolveGrokBotWebhookAuth().authHeaderValue).toBe('Token trimmed');
 });
 
 test('whitespace-only auth header falls back to Bearer KEY', async () => {
   process.env.GROKBOT_REVIEW_WEBHOOK_AUTH_HEADER = '   ';
   const captured: { headers?: Record<string, string> } = {};
   await notifyGrokBot(BASE_ITEM, makeOpts(captured));
-  expect(captured.headers?.Authorization).toBe('Bearer test-secret-key');
+  expect(resolveGrokBotWebhookAuth().authHeaderValue).toBe('Bearer test-secret-key');
 });
 
 test('auth header only (no KEY) is configured and sends without HMAC headers', async () => {
@@ -230,8 +230,8 @@ test('auth header only (no KEY) is configured and sends without HMAC headers', a
   const opts = makeOpts(captured);
   await notifyGrokBot(BASE_ITEM, opts);
   expect(opts.postFn).toHaveBeenCalledTimes(1);
-  expect(captured.headers?.Authorization).toBe('Bearer standalone-auth-token');
-  expect(captured.headers?.['X-Grokbot-Signature']).toBeUndefined();
+  expect(resolveGrokBotWebhookAuth().authHeaderValue).toBe('Bearer standalone-auth-token');
+  expect(captured.headers?.['x-openbot-signature']).toBeUndefined();
 });
 
 test('neither auth header nor key set -> no-op even when URL is set', async () => {

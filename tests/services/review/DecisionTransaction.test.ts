@@ -39,7 +39,7 @@ test('automation decision uses nullable UUID foreign keys', async () => {
     }
     if (sql.startsWith('INSERT INTO review_actions')) {
       expect(params?.[3]).toBeNull();
-      expect(params?.[4]).toBe('grokbot_app');
+      expect(params?.[4]).toBe('revbot_app');
     }
     return { rows: [row], rowCount: 1 };
   });

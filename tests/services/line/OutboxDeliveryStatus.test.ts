@@ -70,7 +70,7 @@ describe('notifier events (review.created / handoff.escalate / takeover_on)', ()
 
 describe('LINE pushes (review.decided / line.delivery)', () => {
   async function decidedManualReply(d: Awaited<ReturnType<typeof setup>>) {
-    await d.items.update(d.item.id, { status: 'edited', resolution: 'manual_reply', decidedVia: 'grokbot_app',
+    await d.items.update(d.item.id, { status: 'edited', resolution: 'manual_reply', decidedVia: 'revbot_app',
       finalPayload: { reply_text: 'hello' } } as never);
     return d.outbox.enqueue({ eventType: 'review.decided', reviewItemId: d.item.id,
       payload: { decision: 'manual_reply', reply_text: 'hello' } });
